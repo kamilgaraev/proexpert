@@ -305,6 +305,158 @@ final class DesignCompositionTest extends TestCase
         $this->assertSame($artifact->id, $revision->composition['legacy_snapshot']['artifacts'][0]['id']);
     }
 
+    public function test_rd_brand_aliases_do_not_change_custom_group_or_document_codes(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowCompositionPermissions();
+        foreach (['AR' => 'АР', 'ar' => 'АР', 'AS' => 'АС', 'KR' => 'КР', 'OV' => 'ОВ', 'VK' => 'ВК', 'EM' => 'ЭМ', 'SS' => 'СС', 'HVAC-custom' => 'HVAC-custom'] as $brand => $expected) {
+            $preview = app(DesignCompositionService::class)->preview($context->organization->id, $context->user, [
+                'project_id' => $project->id, 'project_stage' => 'rd',
+                'composition' => ['brand' => $brand, 'document_groups' => [['code' => 'AR', 'title' => 'АС', 'documents' => [['document_code' => 'AR-01', 'document_title' => 'АР']]]]],
+            ]);
+            self::assertSame($expected, $preview['brand']);
+            self::assertSame('AR', $preview['document_groups'][0]['code']);
+            self::assertSame('АС', $preview['document_groups'][0]['title']);
+            self::assertSame('AR-01', $preview['document_groups'][0]['documents'][0]['document_code']);
+        }
+    }
+
+    public function test_revision_changes_document_type_without_replacing_existing_files_or_history(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowCompositionPermissions();
+        $package = $this->package($context->user, $project, 'rd', null);
+        $composition = ['brand' => 'AR', 'document_groups' => [['code' => 'AR', 'title' => 'АР', 'documents' => [['document_code' => 'AR-01', 'artifact_type' => 'text_document']]]]];
+        $service = app(DesignCompositionService::class);
+        $first = $service->createRevision($package, $context->user, ['composition' => $composition]);
+        $originalComposition = $first->composition;
+        $originalFingerprint = $first->fingerprint;
+        $artifact = $package->artifacts()->sole();
+        $version = $artifact->versions()->create([
+            'organization_id' => $package->organization_id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+            'title' => 'Чертёж', 'version_number' => '1', 'revision' => 'Р1',
+            'source_format' => 'pdf', 'source_file_path' => "org-{$package->organization_id}/old/plan.pdf",
+            'source_original_name' => 'plan.pdf', 'source_mime_type' => 'application/pdf',
+            'source_size_bytes' => 128, 'status' => 'current', 'is_current' => true,
+        ])->fresh();
+        $originalVersion = $version->getAttributes();
+        $composition['document_groups'][0]['documents'][0]['artifact_type'] = 'drawing_set';
+        $second = $service->createRevision($package->fresh(), $context->user, [
+            'composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1,
+        ]);
+
+        self::assertSame('drawing_set', $artifact->fresh()->artifact_type->value);
+        self::assertSame($artifact->id, $package->artifacts()->sole()->id);
+        self::assertSame($originalVersion, $version->fresh()->getAttributes());
+        self::assertSame($originalComposition, $first->fresh()->composition);
+        self::assertSame($originalFingerprint, $first->fresh()->fingerprint);
+        self::assertSame('АР', $second->composition['brand']);
+
+        unset($composition['document_groups'][0]['documents'][0]['artifact_type']);
+        $service->createRevision($package->fresh(), $context->user, [
+            'composition' => $composition, 'expected_revision' => 2, 'expected_state_version' => 1,
+        ]);
+        self::assertSame('drawing_set', $artifact->fresh()->artifact_type->value);
+    }
+
+    public function test_revision_blocks_model_document_conversion_with_existing_versions(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowCompositionPermissions();
+        foreach (['model' => 'drawing_set', 'drawing_set' => 'model'] as $originalType => $nextType) {
+            $package = $this->package($context->user, $project, 'rd');
+            $composition = ['brand' => 'AR', 'document_groups' => [['code' => 'CUSTOM', 'documents' => [['document_code' => 'DOC-01', 'artifact_type' => $originalType]]]]];
+            $service = app(DesignCompositionService::class);
+            $revision = $service->createRevision($package, $context->user, ['composition' => $composition]);
+            $artifact = $package->artifacts()->sole();
+            $version = $artifact->versions()->create([
+                'organization_id' => $package->organization_id, 'project_id' => $project->id,
+                'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+                'title' => 'Исходный файл', 'version_number' => '1', 'source_format' => $originalType === 'model' ? 'ifc' : 'pdf',
+                'source_file_path' => "org-{$package->organization_id}/old/source", 'source_size_bytes' => 128,
+                'source_original_name' => $originalType === 'model' ? 'source.ifc' : 'source.pdf',
+                'source_mime_type' => $originalType === 'model' ? 'application/octet-stream' : 'application/pdf',
+                'status' => 'current', 'is_current' => true,
+            ]);
+            $composition['document_groups'][0]['documents'][0]['artifact_type'] = $nextType;
+            try {
+                $service->createRevision($package->fresh(), $context->user, [
+                    'composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1,
+                ]);
+                self::fail('A loaded model and document must not be reclassified across the model boundary.');
+            } catch (DomainException $exception) {
+                self::assertSame(trans_message('design_composition.errors.model_type_change_has_files'), $exception->getMessage());
+            }
+            self::assertSame($originalType, $artifact->fresh()->artifact_type->value);
+            self::assertSame($revision->id, $package->fresh()->composition_revision_id);
+            self::assertSame(1, $package->artifacts()->sole()->versions()->count());
+            self::assertSame($version->id, $artifact->versions()->sole()->id);
+            self::assertSame(1, DesignCompositionRevision::query()->where('package_id', $package->id)->count());
+        }
+    }
+
+    public function test_revision_can_change_type_of_an_empty_document_slot(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowCompositionPermissions();
+        $package = $this->package($context->user, $project, 'rd');
+        $composition = ['brand' => 'AR', 'document_groups' => [['code' => 'CUSTOM', 'documents' => [['document_code' => 'DOC-01', 'artifact_type' => 'text_document']]]]];
+        $service = app(DesignCompositionService::class);
+        $service->createRevision($package, $context->user, ['composition' => $composition]);
+        $artifact = $package->artifacts()->sole();
+        $composition['document_groups'][0]['documents'][0]['artifact_type'] = 'model';
+        $service->createRevision($package->fresh(), $context->user, [
+            'composition' => $composition, 'expected_revision' => 1, 'expected_state_version' => 1,
+        ]);
+        self::assertSame('model', $artifact->fresh()->artifact_type->value);
+        self::assertSame($artifact->id, $package->artifacts()->sole()->id);
+    }
+
+    public function test_package_projects_legacy_brand_without_rewriting_the_revision(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowCompositionPermissions();
+        $package = $this->package($context->user, $project, 'rd', null);
+        $revision = app(DesignCompositionService::class)->createRevision($package, $context->user, [
+            'composition' => ['brand' => 'AR', 'document_groups' => [['code' => 'AR', 'title' => 'АР', 'documents' => [['document_code' => 'AR-01']]]]],
+        ]);
+        $legacy = $revision->composition;
+        $legacy['brand'] = 'AR';
+        $revision->update(['composition' => $legacy, 'fingerprint' => 'original-fingerprint']);
+        $package = $package->fresh()->load(['currentComposition', 'sections']);
+        $resource = new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource($package);
+        $data = $resource->response(\Illuminate\Http\Request::create('/'))->getData(true)['data'];
+        self::assertSame('АР', $data['brand']);
+        self::assertNull($data['discipline']);
+        self::assertSame(1, $data['composition_revision_number']);
+        self::assertSame('document_group', $data['document_groups'][0]['position_kind']);
+        self::assertSame($data['sections'][0]['id'], $data['document_groups'][0]['id']);
+        self::assertSame('AR', $data['document_groups'][0]['code']);
+        self::assertSame($legacy, $revision->fresh()->composition);
+        self::assertSame('original-fingerprint', $revision->fresh()->fingerprint);
+        $revisionData = (new DesignCompositionRevisionResource($revision))->resolve();
+        self::assertSame('AR', $revisionData['composition']['brand']);
+        self::assertSame('АР', $revisionData['effective_composition']['brand']);
+
+        $package->update(['status' => 'under_norm_control']);
+        $transitioned = app(\App\BusinessModules\Features\DesignManagement\Services\DesignWorkflowService::class)
+            ->transition($package->fresh(), (int) $context->user->id, 'return_to_work', 'Уточнение документации');
+        $transitionData = (new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource($transitioned))->resolve();
+        self::assertSame('АР', $transitionData['brand']);
+        self::assertSame(1, $transitionData['composition_revision_number']);
+
+        $otherPackage = $this->package($context->user, $project, 'rd');
+        $otherPackage->update(['composition_revision_id' => $revision->id]);
+        $otherResource = new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource($otherPackage->fresh()->load('currentComposition'));
+        self::assertNull($otherResource->resolve()['brand']);
+    }
+
     private function pdPayload(int $projectId): array { return ['project_id' => $projectId, 'project_stage' => 'pd', 'composition' => ['sections' => [['code' => 'AR', 'title' => 'Архитектурные решения', 'required' => true]]]]; }
     private function package(User $user, Project $project, string $stage, ?string $discipline = 'AR'): DesignPackage { return DesignPackage::query()->create(['organization_id' => $project->organization_id, 'project_id' => $project->id, 'created_by' => $user->id, 'updated_by' => $user->id, 'title' => 'Тестовый комплект', 'project_stage' => $stage, 'discipline' => $discipline, 'status' => 'draft', 'metadata' => []]); }
     private function allowCompositionPermissions(): void { $this->mock(AuthorizationService::class, function (MockInterface $mock): void { $mock->shouldReceive('can')->andReturn(true); }); }

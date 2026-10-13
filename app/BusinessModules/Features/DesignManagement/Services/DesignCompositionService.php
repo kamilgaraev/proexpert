@@ -9,6 +9,8 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevisi
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignArtifactTypeEnum;
+use App\BusinessModules\Features\DesignManagement\Support\DesignBrand;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use DomainException;
@@ -178,9 +180,9 @@ final class DesignCompositionService
             $this->assertUniqueCodes($sections, $preservedDocumentCodes);
             $result['sections'] = $sections;
         } elseif ($stage === 'rd') {
-            $brand = trim((string) ($composition['brand'] ?? ''));
+            $brand = DesignBrand::normalize((string) ($composition['brand'] ?? ''));
             $groups = array_values($composition['document_groups'] ?? []);
-            if ($brand === '' || $groups === []) {
+            if ($brand === null || $groups === []) {
                 throw new DomainException(trans_message('design_composition.errors.rd_brand_and_groups_required'));
             } $result['brand'] = $brand;
             $this->assertUniqueCodes($groups, $preservedDocumentCodes);
@@ -229,6 +231,9 @@ final class DesignCompositionService
                 }
                 $documentCodes[$documentCode] = true;
                 $document['document_code'] = $preservedDocumentCodes[$code][$documentCode] ?? $documentCode;
+                if (isset($document['artifact_type']) && DesignArtifactTypeEnum::tryFrom((string) $document['artifact_type']) === null) {
+                    throw new DomainException(trans_message('design_composition.errors.invalid_document_type'));
+                }
             }
             unset($document);
             $item['documents'] = array_values($documents);
@@ -263,9 +268,17 @@ final class DesignCompositionService
             foreach ($metadata['documents'] as $document) {
                 if (! is_array($document) || trim((string) ($document['document_code'] ?? '')) === '') continue;
                 $artifact = DesignArtifact::query()->firstOrCreate(['package_id' => $package->id, 'section_id' => $section->id, 'document_code' => (string) $document['document_code']], ['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'created_by' => $actor->id, 'updated_by' => $actor->id, 'artifact_type' => (string) ($document['artifact_type'] ?? 'text_document'), 'title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'status' => 'active', 'metadata' => ['composition_managed' => true, 'composition_active' => true]]);
+                $type = isset($document['artifact_type']) ? DesignArtifactTypeEnum::tryFrom((string) $document['artifact_type']) : $artifact->artifact_type;
+                if ($type === null) {
+                    throw new DomainException(trans_message('design_composition.errors.invalid_document_type'));
+                }
+                $crossesModelBoundary = ($artifact->artifact_type === DesignArtifactTypeEnum::MODEL) !== ($type === DesignArtifactTypeEnum::MODEL);
+                if ($crossesModelBoundary && ($artifact->versions()->exists() || $artifact->sheets()->exists())) {
+                    throw new DomainException(trans_message('design_composition.errors.model_type_change_has_files'));
+                }
                 $artifactMetadata = $artifact->metadata ?? [];
                 $artifactMetadata['composition_active'] = true;
-                $artifact->update(['title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'metadata' => $artifactMetadata, 'updated_by' => $actor->id]);
+                $artifact->update(['artifact_type' => $type, 'title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'metadata' => $artifactMetadata, 'updated_by' => $actor->id]);
             }
         }
     }

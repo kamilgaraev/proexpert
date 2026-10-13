@@ -22,6 +22,11 @@ final class DesignPackageSectionResource extends JsonResource
             'organization_id' => $section->organization_id,
             'project_id' => $section->project_id,
             'package_id' => $section->package_id,
+            'position_kind' => match ($this->enumValue($section->project_stage)) {
+                'pd' => 'section',
+                'rd' => 'document_group',
+                default => 'item',
+            },
             'template_id' => $section->template_id,
             'code' => $section->code,
             'title' => $section->title,
