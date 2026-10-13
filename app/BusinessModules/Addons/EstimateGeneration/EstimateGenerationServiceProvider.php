@@ -900,6 +900,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\CancelEstimateChangeProposal::class);
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
+        $this->app->bind(\App\BusinessModules\Addons\EstimateGeneration\Services\Billing\StoppedSessionQuotaReleaser::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);
         $this->app->singleton(EstimateGenerationSessionReconciler::class, ReconcileEstimateGenerationDocuments::class);
         $this->app->singleton(DocumentMutationSessionReconciler::class, ReconcileEstimateGenerationDocuments::class);

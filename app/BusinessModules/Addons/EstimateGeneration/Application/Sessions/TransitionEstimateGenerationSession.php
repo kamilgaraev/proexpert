@@ -20,6 +20,7 @@ final class TransitionEstimateGenerationSession
         private EstimateGenerationActionAuthorization $authorizer,
         private SessionProcessingStopper $documents,
         private RetryableEstimateGenerationSessionRepository $repository,
+        private \App\BusinessModules\Addons\EstimateGeneration\Services\Billing\StoppedSessionQuotaReleaser $quota,
     ) {}
 
     public function handle(
@@ -41,6 +42,7 @@ final class TransitionEstimateGenerationSession
                 $updated = $this->workflow->transition($locked, $event);
                 if (in_array($event, [EstimateGenerationEvent::Cancelled, EstimateGenerationEvent::Archived], true)) {
                     $this->documents->haltForSession($updated, $actor);
+                    $this->quota->releaseCancelledReservation($updated);
                     if (config('estimate-generation.credits.enabled', false) || isset($updated->input_payload['generation_credit_operation_id'])
                         || isset($updated->input_payload['documents_credit_operation_id'])) {
                         app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abortForSession($updated);

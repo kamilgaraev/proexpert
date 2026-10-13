@@ -45,7 +45,7 @@ final class RecoverEstimateGenerationPipelines
         $checkpoints = EstimateGenerationPipelineCheckpoint::query()
             ->whereIn('session_id', $sessions->modelKeys())
             ->whereIn('status', [CheckpointStatus::Running->value, CheckpointStatus::Completed->value, CheckpointStatus::Failed->value])
-            ->get(['session_id', 'generation_attempt_id', 'stage', 'status', 'lease_expires_at'])
+            ->get(['session_id', 'generation_attempt_id', 'stage', 'status', 'lease_expires_at', 'attempt_count'])
             ->groupBy('session_id');
         $dispatched = 0;
 
@@ -68,6 +68,15 @@ final class RecoverEstimateGenerationPipelines
                 ->all();
             $next = collect(ProcessingStage::cases())->first(static fn (ProcessingStage $stage): bool => ! isset($done[$stage->value]));
             if (! $next instanceof ProcessingStage) {
+                continue;
+            }
+            $attempts = (int) $attemptRows->filter(static fn ($row): bool => $row->stage === $next)->sum('attempt_count');
+            if (\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRetryBudget::exhausted($attempts)) {
+                app(HandleEstimateGenerationDraftFailure::class)->handle(
+                    FailureExecutionSnapshot::capture($session, 'recover_generation_pipeline', $attempt),
+                    new \App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException(
+                        \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory::Terminal, 'pipeline_stage_retry_exhausted'));
+
                 continue;
             }
             GenerateEstimateDraftJob::dispatch(

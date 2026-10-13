@@ -21,6 +21,11 @@ final class SimpleFailureRecoveryPolicy
             return FailureRecoveryOutcome::Ignore;
         }
 
+        if ($failure->category === FailureCategory::Recoverable
+            && \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRetryBudget::exhausted($failure->context->attempt)) {
+            return $hasUsableDraft ? FailureRecoveryOutcome::NeedsInput : FailureRecoveryOutcome::Terminal;
+        }
+
         return match ($failure->category) {
             FailureCategory::Recoverable => FailureRecoveryOutcome::Retry,
             FailureCategory::UserActionRequired => FailureRecoveryOutcome::NeedsInput,

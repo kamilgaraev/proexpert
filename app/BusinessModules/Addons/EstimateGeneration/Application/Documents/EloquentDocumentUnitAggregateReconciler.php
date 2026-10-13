@@ -150,8 +150,9 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'status' => $status,
                     'processing_stage' => 'completed',
                     'progress_percent' => 100,
-                    'quality_score' => $status === 'ready' ? 1.0 : null,
-                    'quality_level' => $status === 'ready' ? 'good' : null,
+                    // Processing completion is observable; extraction accuracy has not been calibrated.
+                    'quality_score' => null,
+                    'quality_level' => null,
                     'quality_flags' => $this->qualityFlags($document, $excludedCount, $outcome),
                     'facts_summary' => [
                         'processing_outcome' => $outcome->toArray(),

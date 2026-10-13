@@ -65,6 +65,28 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
         $action->handle($session, 2, EstimateGenerationEvent::Cancelled, new User(['current_organization_id' => 10, 'is_active' => true]));
     }
 
+    #[Test]
+    public function denied_actor_cannot_stop_processing_release_quota_or_change_state(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::ReadyToGenerate);
+        $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
+        $authorization->method('authorize')->willThrowException(new \Illuminate\Auth\Access\AuthorizationException);
+        $stopper = $this->createMock(SessionProcessingStopper::class);
+        $stopper->expects(self::never())->method('haltForSession');
+        $quota = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Services\Billing\StoppedSessionQuotaReleaser::class);
+        $quota->expects(self::never())->method('releaseCancelledReservation');
+        $repository = $this->createMock(RetryableEstimateGenerationSessionRepository::class);
+        $repository->method('withLockedSession')->willReturnCallback(static fn (int $id, int $organizationId, int $projectId, callable $callback): EstimateGenerationSession => $callback($session));
+        $action = new TransitionEstimateGenerationSession(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new TransitionTestStateStore($session)), $authorization, $stopper, $repository, $quota);
+        try {
+            $action->handle($session, 3, EstimateGenerationEvent::Cancelled, new User(['current_organization_id' => 10, 'is_active' => true]));
+            self::fail('An unauthorized actor changed the session.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertSame(EstimateGenerationStatus::ReadyToGenerate, $session->status);
+            self::assertSame(3, $session->state_version);
+        }
+    }
+
     private function action(EstimateGenerationSession $session, EstimateGenerationEvent $event, bool $willTransition = true): TransitionEstimateGenerationSession
     {
         $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
@@ -76,9 +98,12 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
         $repository = $this->createMock(RetryableEstimateGenerationSessionRepository::class);
         $repository->expects(self::once())->method('withLockedSession')->with(71, 10, 20, self::isType('callable'))
             ->willReturnCallback(static fn (int $id, int $organizationId, int $projectId, callable $callback): EstimateGenerationSession => $callback($session));
+        $quota = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Services\Billing\StoppedSessionQuotaReleaser::class);
+        $quota->expects($willTransition && in_array($event, [EstimateGenerationEvent::Cancelled, EstimateGenerationEvent::Archived], true)
+            ? self::once() : self::never())->method('releaseCancelledReservation')->with(self::identicalTo($session));
 
         return new TransitionEstimateGenerationSession(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new TransitionTestStateStore($session)),
-            $authorization, $stopper, $repository);
+            $authorization, $stopper, $repository, $quota);
     }
 
     private function session(EstimateGenerationStatus $status, ?EstimateGenerationStatus $resume = null): EstimateGenerationSession

@@ -18,7 +18,7 @@ use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\Query\Builder;
 
-final readonly class AiEstimateQuotaService
+final readonly class AiEstimateQuotaService implements StoppedSessionQuotaReleaser
 {
     public const SNAPSHOT_QUERY_BUDGET = 3;
 
@@ -87,6 +87,28 @@ final readonly class AiEstimateQuotaService
         }, 3);
 
         return $this->snapshotForSession($organizationKey, $sessionKey);
+    }
+
+    /** Release only an unused legacy slot of an already stopped session, never a monetary wallet or confirmed use. */
+    public function releaseCancelledReservation(EstimateGenerationSession $session): void
+    {
+        $this->database->transaction(function () use ($session): void {
+            $locked = EstimateGenerationSession::query()->whereKey($session->getKey())
+                ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+                ->lockForUpdate()->firstOrFail();
+            if (! in_array($locked->status, [EstimateGenerationStatus::Cancelled, EstimateGenerationStatus::Archived], true)
+                || $this->hasUsableDraft($locked)) {
+                return;
+            }
+            $reservation = $this->database->table(self::TABLE)->where('organization_id', $locked->organization_id)
+                ->where('session_id', $locked->getKey())->lockForUpdate()->first();
+            if ($reservation === null || $reservation->status !== self::RESERVED) {
+                return;
+            }
+            $this->database->table(self::TABLE)->where('organization_id', $locked->organization_id)
+                ->where('session_id', $locked->getKey())->where('status', self::RESERVED)
+                ->update(['status' => self::RELEASED, 'released_at' => now()]);
+        }, 3);
     }
 
     public function snapshot(string $organizationId): QuotaSnapshot
