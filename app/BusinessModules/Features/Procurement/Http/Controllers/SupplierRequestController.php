@@ -11,6 +11,8 @@ use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -123,14 +125,20 @@ class SupplierRequestController extends Controller
     public function bulkStore(StoreBulkSupplierRequestsRequest $request): JsonResponse
     {
         try {
+            $actor = $request->user();
+            if (!$actor instanceof User) {
+                throw new AuthorizationException();
+            }
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $supplierRequests = $this->service->createMany($organizationId, $request->validated(), $request->user()?->id);
+            $supplierRequests = $this->service->createMany($organizationId, $request->validated(), $actor);
 
             return AdminResponse::success(
                 SupplierRequestResource::collection(collect($supplierRequests)),
                 trans_message('procurement.supplier_requests.bulk_created'),
                 201
             );
+        } catch (AuthorizationException $e) {
+            throw $e;
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\Exception $e) {
