@@ -87,6 +87,96 @@ final class ConstructionJournalCollaborationTest extends TestCase
         self::assertFalse($access->canRead($users[0], $journal));
     }
 
+    public function test_project_access_reads_one_fresh_query_for_membership_assignment_and_project_scope(): void
+    {
+        [$project, $organizations, $users] = $this->fixture();
+        $access = app(ConstructionJournalAccessService::class);
+        $actor = $users[0];
+        $this->app->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/construction-journals/1'));
+        self::assertTrue($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('organization_user')->where('user_id', $actor->id)->update(['project_access_mode' => 'assigned_projects']);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        $project->users()->attach($actor->id, ['is_active' => true]);
+        self::assertTrue($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('organization_user')->where('user_id', $actor->id)->update(['project_access_mode' => 'legacy_unknown']);
+        self::assertTrue($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('users')->where('id', $actor->id)->update(['deleted_at' => now()]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('users')->where('id', $actor->id)->update(['deleted_at' => null]);
+        DB::table('project_user')->where('project_id', $project->id)->where('user_id', $actor->id)->update(['is_active' => false]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('organization_user')->where('user_id', $actor->id)->update(['project_access_mode' => 'all_projects', 'is_active' => false]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('organization_user')->where('user_id', $actor->id)->update(['is_active' => true]);
+        DB::table('organizations')->where('id', $organizations[0]->id)->update(['is_active' => false]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('organizations')->where('id', $organizations[0]->id)->update(['is_active' => true]);
+        self::assertTrue($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('projects')->where('id', $project->id)->update(['is_archived' => true]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+        DB::table('projects')->where('id', $project->id)->update(['is_archived' => false]);
+        $foreign = Project::factory()->create(['organization_id' => $organizations[4]->id]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $foreign)));
+        self::assertTrue($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($users[3], $project)));
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $organizations[3]->id)->update(['is_active' => false]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($users[3], $project)));
+        DB::table('projects')->where('id', $project->id)->update(['deleted_at' => now()]);
+        self::assertFalse($this->accessWithOneQuery(fn (): bool => $access->canAccessProject($actor, $project)));
+    }
+
+    public function test_approval_activity_is_fresh_in_one_query_and_preserves_failure_reasons(): void
+    {
+        [$project, $organizations, $users, $contract] = $this->fixture();
+        $journal = app(ConstructionJournalService::class)->createJournal($project, ['name' => 'Журнал', 'contract_id' => $contract->id], $users[3]);
+        $journal->setRelation('project', $project);
+        $access = app(ConstructionJournalAccessService::class);
+        $this->app->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/construction-journals/1'));
+        self::assertSame((int) $organizations[2]->id, $this->accessWithOneQuery(fn (): int => $access->approvalOrganizationId($journal)));
+        foreach ([
+            [$organizations[3], 'access_denied'],
+            [$organizations[2], 'hierarchy_inactive_organization'],
+        ] as [$organization, $reason]) {
+            DB::table('organizations')->where('id', $organization->id)->update(['is_active' => false]);
+            $context = $this->accessWithOneQuery(fn (): array => $access->approvalContext($journal));
+            self::assertSame('unconfigured', $context['mode']);
+            self::assertSame(trans_message('construction_journal.errors.'.$reason), $context['message']);
+            DB::table('organizations')->where('id', $organization->id)->update(['is_active' => true]);
+            self::assertSame((int) $organizations[2]->id, $this->accessWithOneQuery(fn (): int => $access->approvalOrganizationId($journal)));
+        }
+        DB::table('organizations')->where('id', $organizations[3]->id)->update(['deleted_at' => now()]);
+        self::assertSame(trans_message('construction_journal.errors.access_denied'), $this->accessWithOneQuery(fn (): array => $access->approvalContext($journal))['message']);
+    }
+
+    public function test_visible_performer_keeps_scoped_fallback_when_membership_changes_after_preflight(): void
+    {
+        [$project, $organizations, $users] = $this->fixture();
+        $realParticipants = app(ProjectParticipantService::class);
+        $participants = \Mockery::mock(ProjectParticipantService::class);
+        $participants->shouldReceive('getHierarchyWithActivity')->once()->andReturnUsing(function (Project $current) use ($realParticipants, $organizations): array {
+            DB::table('project_organization')->where('project_id', $current->id)->where('organization_id', $organizations[3]->id)->update(['is_active' => false]);
+
+            return $realParticipants->getHierarchyWithActivity($current);
+        });
+        $access = new ConstructionJournalAccessService($participants, app(\App\Services\Project\UserProjectAccessService::class), app(AuthorizationService::class));
+        self::assertSame([(int) $organizations[3]->id], $access->visiblePerformerIds($users[3], $project));
+        self::assertFalse($access->canAccessProject($users[3], $project));
+    }
+
+    private function accessWithOneQuery(\Closure $read): mixed
+    {
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $result = $read();
+            self::assertCount(1, DB::getQueryLog());
+
+            return $result;
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
     public function test_manual_work_can_be_rejected_resubmitted_and_confirmed_without_estimate_or_schedule(): void
     {
         [$project, $organizations, $users, $contract] = $this->fixture();

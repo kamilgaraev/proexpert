@@ -48,6 +48,28 @@ class UserProjectAccessService
             ->exists();
     }
 
+    public function canAccessCurrentOrganizationProject(User $user, Project $project): bool
+    {
+        $organizationId = (int) $user->current_organization_id;
+        if ($organizationId <= 0) {
+            return false;
+        }
+
+        $assignment = $project->users()->where('users.id', $user->id)
+            ->where('project_user.is_active', true)->selectRaw('1')->toBase();
+        $membership = $user->organizations()->where('organizations.id', $organizationId)
+            ->where('organizations.is_active', true)->wherePivot('is_active', true)
+            ->where(static function (Builder $query) use ($assignment): void {
+                $query->where('organization_user.project_access_mode', UserProjectAccessMode::ALL_PROJECTS->value)
+                    ->orWhereExists($assignment);
+            })
+            ->selectRaw('1')->toBase();
+
+        return Project::query()->useWritePdo()->whereKey($project->id)
+            ->accessibleByOrganization($organizationId)->where('is_archived', false)
+            ->whereExists($membership)->exists();
+    }
+
     public function syncAssignments(User $member, int $organizationId, array $projectIds, User $actor): void
     {
         $organizationProjectIds = Project::query()
