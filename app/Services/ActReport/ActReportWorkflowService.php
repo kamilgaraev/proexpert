@@ -206,7 +206,7 @@ class ActReportWorkflowService
             'contract.organization',
             'completedWorks.workType',
             'completedWorks.user',
-            'lines',
+            'lines.completedWork',
             'files',
         ]);
 

@@ -1486,6 +1486,132 @@ class ActReportsPreviewTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_pto_draft_official_pdf_exports_report_a_validation_error(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-OFFICIAL');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PTO-OFFICIAL', 1);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}")
+                ->assertUnprocessable()
+                ->assertJsonPath('message', trans_message('act_reports.official_export_requires_approved_act'));
+        }
+    }
+
+    public function test_pto_pdf_previews_render_without_approving_or_changing_act_amount(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-PREVIEW');
+        $contract->update(['is_fixed_amount' => true]);
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $disk = \Illuminate\Support\Facades\Storage::fake('pto-preview');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+            $mock->shouldReceive('temporaryUrl')->andReturn('https://example.test/preview.pdf');
+        });
+
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PTO-PREVIEW', 1);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}?mode=preview")
+                ->assertOk()->assertJsonPath('data.url', 'https://example.test/preview.pdf');
+        }
+        self::assertCount(2, $disk->allFiles());
+        foreach ($disk->allFiles() as $file) {
+            self::assertStringContainsString('/previews/', $file);
+            $document = (new \Smalot\PdfParser\Parser)->parseContent($disk->get($file));
+            self::assertStringContainsString('ЧЕРНОВИК', $document->getText());
+            self::assertStringContainsString('1 000,00', $document->getText());
+            if (str_contains($file, '/ks2/')) {
+                self::assertStringContainsString('100 000,00', $document->getText());
+            }
+        }
+        self::assertSame('draft', $act->fresh()->status);
+        self::assertFalse($act->fresh()->is_approved);
+        self::assertSame('1000.00', (string) $act->fresh()->amount);
+
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}")
+                ->assertOk();
+        }
+        $officialFiles = array_values(array_filter($disk->allFiles(), static fn (string $file): bool => ! str_contains($file, '/previews/')));
+        self::assertCount(2, $officialFiles);
+        foreach ($officialFiles as $file) {
+            $document = (new \Smalot\PdfParser\Parser)->parseContent($disk->get($file));
+            self::assertStringNotContainsString('ЧЕРНОВИК', $document->getText());
+            self::assertStringContainsString('1 000,00', $document->getText());
+        }
+    }
+
+    public function test_pto_pdf_preview_rejects_unknown_modes_and_annulled_acts(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-INVALID');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PTO-INVALID', 1);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}?mode=unknown")
+                ->assertUnprocessable()->assertJsonValidationErrors('mode');
+        }
+        $act->update(['status' => ContractPerformanceAct::STATUS_ANNULLED]);
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}?mode=preview")
+                ->assertUnprocessable();
+        }
+    }
+
+    public function test_pto_preview_keeps_export_permission_and_organization_scope(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-SCOPE');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'PTO-SCOPE', 1);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+        $this->allowPermissionsExcept('act_reports.export.pdf');
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}?mode=preview")->assertForbidden();
+        }
+        $this->allowPermissions();
+        $foreignUser = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
+        foreach (['pdf', 'ks3/pdf'] as $format) {
+            $this->actingAs($foreignUser, 'api_admin')->getJson("/api/v1/admin/act-reports/{$act->id}/export/{$format}?mode=preview")->assertForbidden();
+        }
+    }
+
+    public function test_pto_wizard_persists_captured_unit_and_recovers_legacy_null_units_on_show(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-UNIT');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 18102, 100);
+        $work->update(['additional_info' => ['unit_of_measurement' => 'м²']]);
+        $response = $this->actingAs($user, 'api_admin')->postJson('/api/v1/admin/act-reports/create-from-wizard', [
+            'contract_id' => $contract->id,
+            'act_document_number' => 'PTO-UNIT',
+            'act_date' => '2026-04-20',
+            'period_start' => '2026-04-01',
+            'period_end' => '2026-04-30',
+            'selected_works' => [['completed_work_id' => $work->id, 'quantity' => 100]],
+        ])->assertCreated()->assertJsonPath('data.lines.0.unit', 'м²');
+        $actId = $response->json('data.id');
+        self::assertSame('м²', PerformanceActLine::where('performance_act_id', $actId)->firstOrFail()->getRawOriginal('unit'));
+        DB::table('performance_act_lines')->where('performance_act_id', $actId)->update(['unit' => null]);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+        $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$actId}")->assertOk()->assertJsonPath('data.lines.0.unit', 'м²');
+        self::assertNull(PerformanceActLine::where('performance_act_id', $actId)->firstOrFail()->getRawOriginal('unit'));
+    }
+
     private function allowPermissions(bool $allowed = true): void
     {
         $this->mock(AuthorizationService::class, function ($mock) use ($allowed): void {

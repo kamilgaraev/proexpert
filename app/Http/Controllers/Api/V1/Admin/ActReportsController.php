@@ -11,6 +11,7 @@ use App\Http\Requests\Api\V1\Admin\ActReport\AnnulActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\ApproveContractPeriodCertificateRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\BulkExportActReportsRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\CreateContractPeriodCertificateRequest;
+use App\Http\Requests\Api\V1\Admin\ActReport\ExportActPdfRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\PreviewActRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\RejectActReportRequest;
 use App\Http\Requests\Api\V1\Admin\ActReport\StoreActFromWizardRequest;
@@ -514,9 +515,9 @@ class ActReportsController extends Controller
         }
     }
 
-    public function exportPdf(Request $request, ContractPerformanceAct $act): JsonResponse
+    public function exportPdf(ExportActPdfRequest $request, ContractPerformanceAct $act): JsonResponse
     {
-        return $this->export($request, $act, ActReportAccessService::PERMISSION_EXPORT_PDF, 'pdf');
+        return $this->export($request, $act, ActReportAccessService::PERMISSION_EXPORT_PDF, 'pdf', $request->isPreview());
     }
 
     public function exportExcel(Request $request, ContractPerformanceAct $act): JsonResponse
@@ -529,14 +530,14 @@ class ActReportsController extends Controller
         return $this->export($request, $act, ActReportAccessService::PERMISSION_EXPORT_EXCEL, 'ks3_excel');
     }
 
-    public function exportKS3Pdf(Request $request, mixed $act): JsonResponse
+    public function exportKS3Pdf(ExportActPdfRequest $request, mixed $act): JsonResponse
     {
         try {
             $organizationId = $this->accessService->currentOrganizationId($request);
             $act = $this->accessService->resolveAccessibleAct($request, $act);
             $this->accessService->authorize($request, ActReportAccessService::PERMISSION_EXPORT_PDF, $organizationId);
 
-            return AdminResponse::success($this->exportService->exportKS3Pdf($act));
+            return AdminResponse::success($this->exportService->exportKS3Pdf($act, $request->isPreview()));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (Throwable $e) {
@@ -725,7 +726,8 @@ class ActReportsController extends Controller
         Request $request,
         ContractPerformanceAct $act,
         string $permission,
-        string $format
+        string $format,
+        bool $preview = false
     ): JsonResponse {
         try {
             $organizationId = $this->accessService->currentOrganizationId($request);
@@ -733,7 +735,7 @@ class ActReportsController extends Controller
             $this->accessService->authorize($request, $permission, $organizationId);
 
             $payload = match ($format) {
-                'pdf' => $this->exportService->exportPdf($act),
+                'pdf' => $this->exportService->exportPdf($act, $preview),
                 'excel' => $this->exportService->exportExcel($act),
                 'ks3_excel' => $this->exportService->exportKS3Excel($act),
             };

@@ -177,7 +177,7 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             ->assertDontSee('Foreign project equipment secret');
     }
 
-    public function test_schedule_created_from_estimate_includes_zero_cost_unsectioned_work(): void
+    public function test_pto_schedule_import_accepts_historical_start_and_keeps_task_readback(): void
     {
         $context = AdminApiTestContext::create();
         $this->activateSchedulePackage($context);
@@ -255,13 +255,16 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             'is_manual' => true,
         ]);
 
+        $plannedStart = now()->subDays(20)->toDateString();
         $createResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/schedules/from-estimate", [
                 'estimate_id' => $estimate->id,
+                'start_date' => $plannedStart,
                 'options' => ['auto_calculate_dates' => true],
             ])
             ->assertCreated()
-            ->assertJsonPath('success', true);
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.planned_start_date', $plannedStart);
         $scheduleId = $createResponse->json('data.id');
         $this->assertNotNull($scheduleId);
 

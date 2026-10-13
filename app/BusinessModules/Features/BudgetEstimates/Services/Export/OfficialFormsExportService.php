@@ -82,32 +82,37 @@ class OfficialFormsExportService
         return $s3Path;
     }
 
-    public function exportKS2ToPdf(ContractPerformanceAct $act, Contract $contract): string
+    public function exportKS2ToPdf(ContractPerformanceAct $act, Contract $contract, bool $preview = false): string
     {
-        $this->assertActApprovedForExport($act);
+        $this->assertActApprovedForExport($act, $preview);
         $data = $this->prepareKS2Data($act, $contract);
+        $data['is_draft'] = $preview;
         $pdf = Pdf::loadView('estimates.exports.ks2', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
-        $path = "exports/acts/ks2/{$filename}";
+        $path = $preview
+            ? 'exports/acts/previews/ks2/'.\Illuminate\Support\Str::uuid().'_'.$filename
+            : "exports/acts/ks2/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $contract->organization);
     }
 
-    public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract): string
+    public function exportKS3ToPdf(ContractPerformanceAct $act, Contract $contract, bool $preview = false): string
     {
-        $this->assertActApprovedForExport($act);
-        $data = $this->prepareKS3Data($act, $contract);
+        $this->assertActApprovedForExport($act, $preview);
+        $data = $this->prepareKS3Data($act, $contract, $preview);
         $pdf = Pdf::loadView('estimates.exports.ks3', $data)
             ->setPaper('a4', 'landscape')
             ->setOption('defaultFont', 'DejaVu Serif');
 
         $actNumber = $act->act_document_number ?? $act->id;
         $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";
-        $path = "exports/acts/ks3/{$filename}";
+        $path = $preview
+            ? 'exports/acts/previews/ks3/'.\Illuminate\Support\Str::uuid().'_'.$filename
+            : "exports/acts/ks3/{$filename}";
 
         return $this->savePdfToS3($pdf, $path, $contract->organization);
     }
@@ -990,7 +995,7 @@ class OfficialFormsExportService
         ];
     }
 
-    protected function prepareKS3Data(ContractPerformanceAct $act, Contract $contract): array
+    protected function prepareKS3Data(ContractPerformanceAct $act, Contract $contract, bool $preview = false): array
     {
         $act->loadMissing([
             'lines.estimateItem',
@@ -1007,7 +1012,7 @@ class OfficialFormsExportService
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
 
-        $aggregates = $this->ks3LineAggregates($act);
+        $aggregates = $this->ks3LineAggregates($act, $preview);
         $yearTotal = $aggregates['year_total'];
         $totalFromStart = $aggregates['total_from_start'];
         $periodTotal = $aggregates['period_total'] ?? $actAmount;
@@ -1036,16 +1041,16 @@ class OfficialFormsExportService
             'period_end' => $periodEnd,
             'document_date' => $act->act_date,
             'document_number' => $act->act_document_number ?? str_pad((string) $act->id, 10, '0', STR_PAD_LEFT),
-            'is_draft' => false,
+            'is_draft' => $preview,
             'customer_org' => $customerOrg,
             'contractor' => $contractor,
             'project' => $contract->project,
         ];
     }
 
-    protected function ks3LineAggregates(ContractPerformanceAct $act): array
+    protected function ks3LineAggregates(ContractPerformanceAct $act, bool $preview = false): array
     {
-        $fromCertificate = $this->ks3CertificateSnapshot($act);
+        $fromCertificate = $preview ? null : $this->ks3CertificateSnapshot($act);
         if ($fromCertificate !== null) {
             return $fromCertificate['aggregates'];
         }
@@ -1058,6 +1063,9 @@ class OfficialFormsExportService
             ->whereRaw('COALESCE(period_end, act_date) <= ?', [$periodEnd->toDateString()])
             ->with(['lines.estimateItem', 'lines.completedWork.workType', 'completedWorks.workType'])
             ->get();
+        if ($preview && ! $acts->contains('id', $act->id)) {
+            $acts->push($act);
+        }
         $yearStart = $periodEnd->copy()->startOfYear();
         $lines = [];
         $yearTotal = 0.0;
@@ -1592,13 +1600,16 @@ class OfficialFormsExportService
         }
     }
 
-    private function assertActApprovedForExport(ContractPerformanceAct $act): void
+    private function assertActApprovedForExport(ContractPerformanceAct $act, bool $preview = false): void
     {
+        if ($preview && in_array($act->status, [ContractPerformanceAct::STATUS_DRAFT, ContractPerformanceAct::STATUS_PENDING_APPROVAL, ContractPerformanceAct::STATUS_REJECTED], true)) {
+            return;
+        }
         if (! (bool) $act->is_approved || ! in_array($act->status, [
             ContractPerformanceAct::STATUS_APPROVED,
             ContractPerformanceAct::STATUS_SIGNED,
         ], true)) {
-            throw new \DomainException(trans_message('act_reports.official_export_requires_approved_act'));
+            throw new \App\Exceptions\BusinessLogicException(trans_message('act_reports.official_export_requires_approved_act'), 422);
         }
     }
 

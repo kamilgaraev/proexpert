@@ -26,7 +26,7 @@ class CreateScheduleFromEstimateRequest extends FormRequest
         return [
             'estimate_id' => 'required|integer|exists:estimates,id',
             'name' => 'sometimes|nullable|string|max:255',
-            'start_date' => 'sometimes|nullable|date|after_or_equal:today',
+            'start_date' => 'sometimes|nullable|date',
             'options' => 'sometimes|nullable|array',
             'options.workers_count' => 'sometimes|integer|min:1|max:100',
             'options.hours_per_day' => 'sometimes|integer|min:1|max:24',
@@ -47,7 +47,6 @@ class CreateScheduleFromEstimateRequest extends FormRequest
         return [
             'estimate_id.required' => trans_message('schedule_management.validation.estimate_required'),
             'estimate_id.exists' => trans_message('schedule_management.validation.estimate_not_found'),
-            'start_date.after_or_equal' => trans_message('schedule_management.validation.start_date_past'),
             'options.workers_count.min' => trans_message('schedule_management.validation.workers_count_min'),
             'options.workers_count.max' => trans_message('schedule_management.validation.workers_count_max'),
             'options.hours_per_day.min' => trans_message('schedule_management.validation.hours_per_day_min'),

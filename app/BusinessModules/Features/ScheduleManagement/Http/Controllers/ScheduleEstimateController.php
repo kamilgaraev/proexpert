@@ -54,9 +54,14 @@ class ScheduleEstimateController extends Controller
                 );
             }
 
+            $options = $validated['options'] ?? [];
+            if (isset($validated['start_date'])) {
+                $options['start_date'] = $validated['start_date'];
+            }
+
             $schedule = $this->importService->createScheduleFromEstimate(
                 $estimate,
-                $validated['options'] ?? []
+                $options
             );
 
             return AdminResponse::success(
