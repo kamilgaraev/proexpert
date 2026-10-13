@@ -9,6 +9,7 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Contract;
 use App\Models\EstimateItem;
+use App\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -29,10 +30,15 @@ final class JournalRowContractService
             });
     }
 
-    public function resolveForWrite(ConstructionJournalEntry $entry, array $row, ?Model $existing = null, bool $isWorkVolume = true): ?int
+    public function resolveForWrite(ConstructionJournalEntry $entry, array $row, ?Model $existing = null, bool $isWorkVolume = true, ?User $actor = null): ?int
     {
+        $entry->loadMissing('journal.project');
+        $fieldEntry = $actor !== null && ! app(JournalFieldVisibility::class)->capabilities($actor, $entry->journal->project)['can_manage_contracts'];
+        if ($fieldEntry) {
+            unset($row['contract_id']);
+        }
         if (! array_key_exists('contract_id', $row)) {
-            if ($existing) {
+            if ($existing && ! ($fieldEntry && app(JournalAutomaticContractService::class)->isAutomatic($existing))) {
                 if ((int) ($row['estimate_item_id'] ?? 0) !== (int) ($existing->estimate_item_id ?? 0)) {
                     $this->assertAssignment($entry->journal, $existing->contract_id, $row['estimate_item_id'] ?? null);
                 }
@@ -42,6 +48,12 @@ final class JournalRowContractService
 
             $entry->loadMissing('journal');
             $allowedIds = $this->contracts($entry->journal)->whereIn('status', ['active', 'completed'])->pluck('id')->all();
+            if ($fieldEntry) {
+                $contractId = app(JournalAutomaticContractService::class)->resolve($entry, $row, $allowedIds, $isWorkVolume, $existing);
+                $this->assertAssignment($entry->journal, $contractId, $row['estimate_item_id'] ?? null);
+
+                return $contractId;
+            }
             $defaultId = in_array($entry->journal->contract_id, $allowedIds, true) ? $entry->journal->contract_id : null;
             $item = ! empty($row['estimate_item_id']) ? EstimateItem::query()->find($row['estimate_item_id']) : null;
             if ($item) {

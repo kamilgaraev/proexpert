@@ -100,6 +100,10 @@ class EstimateController extends Controller
             ->firstOrFail();
 
         $this->authorize('view', $estimateModel);
+        $visibility = app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource([], $request->user(), (int) $estimateModel->project_id);
+        if (! $visibility['can_view_contracts'] || ! $visibility['can_view_financials']) {
+            return AdminResponse::success(new EstimateResource($estimateModel));
+        }
 
         // Грузим только плоские связи для меты. Не грузим sections.items!
         $estimateModel->load(['project', 'approvedBy']);
@@ -266,6 +270,10 @@ class EstimateController extends Controller
             ->firstOrFail();
 
         $this->authorize('view', $estimateModel);
+        $visibility = app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource([], $request->user(), (int) $estimateModel->project_id);
+        if (! $visibility['can_view_contracts'] || ! $visibility['can_view_financials']) {
+            return AdminResponse::error(trans_message('errors.unauthorized'), 403);
+        }
 
         if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
             $snapshotPath = (string) $estimateModel->structure_cache_path;

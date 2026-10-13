@@ -16,7 +16,7 @@ class EstimateListResource extends JsonResource
         $coverage = app(EstimateCoverageService::class)->getCoverageForEstimate($estimate);
         $primaryContract = $coverage['primary_contract']['contract'] ?? null;
 
-        return [
+        $payload = [
             'id' => $estimate->id,
             'number' => $estimate->number,
             'name' => $estimate->name,
@@ -38,6 +38,8 @@ class EstimateListResource extends JsonResource
             'created_at' => $estimate->created_at?->toISOString(),
             'updated_at' => $estimate->updated_at?->toISOString(),
         ];
+
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($payload, $request->user(), (int) $estimate->project_id);
     }
 }
 

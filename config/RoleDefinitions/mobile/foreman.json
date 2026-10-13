@@ -1,7 +1,7 @@
 {
   "name": "Прораб",
   "slug": "foreman",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "context": "project",
   "interface": "mobile",
   "description": "Руководство строительным процессом на объекте",
@@ -36,10 +36,6 @@
       "projects.view",
       "projects.materials.view",
       "projects.work_types.view"
-    ],
-    "contract-management": [
-      "contracts.view",
-      "contracts.completed_works.view"
     ],
     "catalog-management": [
       "materials.view",
@@ -131,7 +127,6 @@
       "site_requests.calendar.view"
     ],
     "budget-estimates": [
-      "budget-estimates.view",
       "construction-journal.view",
       "construction-journal.create",
       "construction-journal.edit",

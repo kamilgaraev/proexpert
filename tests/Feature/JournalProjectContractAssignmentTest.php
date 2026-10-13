@@ -32,6 +32,7 @@ final class JournalProjectContractAssignmentTest extends TestCase
     use EnablesImmutableAuditWriter;
 
     private ?int $deniedUser = null;
+    private ?int $fieldUser = null;
 
     protected function setUp(): void
     {
@@ -39,7 +40,7 @@ final class JournalProjectContractAssignmentTest extends TestCase
         $this->enableImmutableAuditWriter();
         Notification::fake();
         $this->mock(AuthorizationService::class, function ($mock): void {
-            $mock->shouldReceive('can')->andReturnUsing(fn (User $user): bool => $user->id !== $this->deniedUser);
+            $mock->shouldReceive('can')->andReturnUsing(fn (User $user, string $permission): bool => $user->id !== $this->deniedUser && ($user->id !== $this->fieldUser || ! in_array($permission, ['construction-journal.approve', 'construction-journal.edit_all', 'construction-journal.*', 'contracts.view', 'contracts.amounts.view', 'budget-estimates.finance.view', 'finance.view_project_budget'], true)));
             $mock->shouldReceive('hasRole')->andReturn(false);
         });
     }
@@ -174,12 +175,12 @@ final class JournalProjectContractAssignmentTest extends TestCase
         $journal = $this->journal($user, $project);
         $entry = $this->entry($user, $journal, $item, [['quantity' => 2, 'contract_id' => $first->id], ['quantity' => 3, 'contract_id' => $second->id], ['quantity' => 1, 'contract_id' => null]]);
         $queries = app(JournalEntryQueryService::class);
-        $summary = $queries->summary($journal, ['contract_id' => $first->id]);
+        $summary = $queries->summary($journal, ['contract_id' => $first->id], $user);
         self::assertSame(1, $summary['total_entries']);
         self::assertSame(1, $summary['total_rows']);
         self::assertSame(0, $summary['unassigned_rows']);
-        self::assertSame(1, $queries->summary($journal, ['unassigned_only' => 'true'])['total_rows']);
-        self::assertSame($entry->id, $queries->query($journal, ['contract_id' => $first->id])->firstOrFail()->id);
+        self::assertSame(1, $queries->summary($journal, ['unassigned_only' => 'true'], $user)['total_rows']);
+        self::assertSame($entry->id, $queries->query($journal, ['contract_id' => $first->id], $user)->firstOrFail()->id);
     }
 
     public function test_contract_of_another_project_is_rejected(): void
@@ -429,6 +430,208 @@ final class JournalProjectContractAssignmentTest extends TestCase
             }
             DB::beginTransaction();
         }
+    }
+
+    public function test_field_input_ignores_contract_choice_and_only_assigns_unique_link(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        $journal = $this->journal($user, $project, $first);
+        $this->fieldUser = $user->id;
+        $ambiguous = $this->entry($user, $journal, $item, [['quantity' => 2, 'contract_id' => $second->id]]);
+        self::assertNull($ambiguous->workVolumes()->firstOrFail()->contract_id);
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $unique = $this->entry($user, $journal, $item, [['quantity' => 1, 'contract_id' => null]]);
+        $row = $unique->workVolumes()->firstOrFail();
+        self::assertSame($first->id, $row->contract_id);
+        app(ConstructionJournalService::class)->updateEntry($unique, ['work_volumes' => [[
+            'id' => $row->id, 'estimate_item_id' => $item->id, 'quantity' => 2, 'contract_id' => null,
+        ]]], $user);
+        self::assertSame($first->id, $row->fresh()->contract_id);
+        self::assertNull($ambiguous->workVolumes()->firstOrFail()->contract_id);
+    }
+
+    public function test_field_payload_and_options_hide_contracts_including_reporting_snapshots(): void
+    {
+        [$user, $project, $item, $first] = $this->fixture();
+        $journal = $this->journal($user, $project, $first);
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 1, 'contract_id' => $first->id]]);
+        $this->fieldUser = $user->id;
+        $payload = app(\App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService::class)->mapEntry($entry, $user);
+        self::assertFalse($payload['can_manage_contracts']);
+        self::assertFalse($payload['can_view_financials']);
+        self::assertArrayNotHasKey('contract_id', $payload['workVolumes'][0]);
+        self::assertArrayNotHasKey('contract', $payload['journal']);
+        self::assertArrayNotHasKey('contract_links', $payload['workVolumes'][0]['estimateItem']);
+        $options = app(\App\Services\ConstructionJournal\ConstructionJournalFormOptionsService::class)->build($user, $journal);
+        self::assertArrayNotHasKey('contracts', $options);
+        self::assertArrayHasKey('remaining_quantity', $options['estimates'][0]['items'][0]);
+        self::assertArrayNotHasKey('unassigned_rows', app(JournalEntryQueryService::class)->summary($journal, [], $user));
+        $entry->forceFill(['source_entry_id' => $entry->id, 'source_entry_snapshot' => ['workVolumes' => [[
+            'id' => 99, 'quantity' => 2, 'contract_id' => $first->id, 'contract' => ['number' => $first->number], 'unit_price' => 123,
+        ]]]]);
+        $snapshot = app(\App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService::class)->mapEntry($entry, $user);
+        self::assertSame([['id' => 99, 'quantity' => 2]], $snapshot['workVolumes']);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(JournalEntryQueryService::class)->query($journal, ['contract_id' => $first->id], $user);
+    }
+
+    public function test_pto_queue_contains_only_approved_original_unassigned_entries_and_refreshes_after_assignment(): void
+    {
+        [$user, $project, $item, $first] = $this->fixture();
+        $journal = $this->journal($user, $project);
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 1, 'contract_id' => null]]);
+        $this->entry($user, $journal, $item, [['quantity' => 2, 'contract_id' => null]]);
+        $this->approve($entry, $user);
+        $queue = app(\App\Services\Pto\PtoJournalAllocationQueue::class);
+        $page = $queue->list($user, (int) $project->organization_id, ['project_id' => $project->id]);
+        self::assertSame(1, $page['paginator']->total());
+        self::assertSame(1, $page['summary']['unassigned_rows']);
+        self::assertSame($entry->id, $page['paginator']->items()[0]['id']);
+        $factId = $entry->completedWorks()->firstOrFail()->id;
+        app(JournalContractAssignmentService::class)->assign($journal, $entry->fresh(), 'work-volumes', $entry->workVolumes()->firstOrFail()->id, $first->id, 'Распределение ПТО', $user);
+        self::assertSame($factId, $entry->completedWorks()->firstOrFail()->id);
+        self::assertSame(0, $queue->list($user, (int) $project->organization_id, ['project_id' => $project->id])['paginator']->total());
+        $this->fieldUser = $user->id;
+        $this->expectException(\App\Exceptions\BusinessLogicException::class);
+        $queue->list($user, (int) $project->organization_id, ['project_id' => $project->id]);
+    }
+
+    public function test_field_resources_and_snapshot_guards_hide_financial_and_contract_data(): void
+    {
+        [$user, $project, $item, $first] = $this->fixture();
+        $journal = $this->journal($user, $project, $first);
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 1, 'contract_id' => $first->id]]);
+        $this->fieldUser = $user->id;
+        $this->actingAs($user);
+        $request = \Illuminate\Http\Request::create('/projects/'.$project->id.'/works/export/excel');
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('current_organization_id', $project->organization_id);
+        $route = new \Illuminate\Routing\Route('GET', 'projects/{project}/works/export/excel', fn () => null);
+        $route->bind($request);
+        $request->setRouteResolver(fn () => $route);
+        $this->app->instance('request', $request);
+        $item->load('estimate', 'contractLinks.contract');
+        $payload = (new \App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource($item))->resolve($request);
+        self::assertArrayNotHasKey('unit_price', $payload);
+        self::assertArrayNotHasKey('contract_links', $payload);
+        $estimate = $item->estimate;
+        $list = (new \App\Http\Resources\Api\V1\Admin\Estimate\EstimateListResource($estimate))->resolve($request);
+        self::assertArrayNotHasKey('total_amount', $list);
+        self::assertArrayNotHasKey('contract', $list);
+        $completed = $entry->completedWorks()->firstOrFail();
+        $fact = (new \App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource($completed))->resolve($request);
+        self::assertArrayNotHasKey('price', $fact);
+        self::assertArrayNotHasKey('contract_id', $fact);
+        $mobile = (new \App\BusinessModules\Features\WorkflowManagement\Http\Resources\MobileWorkflowTaskResource($completed))->resolve($request);
+        self::assertArrayNotHasKey('contract_label', $mobile);
+        self::assertArrayNotHasKey('total_amount', $mobile);
+        $controller = app(\App\Http\Controllers\Api\V1\Admin\EstimateController::class);
+        $detail = $controller->show($request, $project->id, $estimate->id);
+        self::assertSame(200, $detail->getStatusCode());
+        self::assertArrayNotHasKey('tree', $detail->getData(true));
+        self::assertSame(403, $controller->structure($request, $project->id, $estimate->id)->getStatusCode());
+        self::assertSame(403, app(\App\Http\Controllers\Api\V1\Admin\CompletedWorkController::class)->exportExcel($request)->getStatusCode());
+        $snapshot = app(\App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService::class)->snapshotEntry($entry, $user);
+        self::assertSame($first->id, $snapshot['workVolumes'][0]['contract_id']);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\ConstructionJournal\JournalExportWorkflowService::class)->request($user, $journal, 'ks6', 'pdf', [], 'field-private');
+    }
+
+    public function test_field_auto_assignment_respects_remaining_quantity_and_split_rows(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $journal = $this->journal($user, $project, $first);
+        $this->fieldUser = $user->id;
+        $over = $this->entry($user, $journal, $item, [['quantity' => 12]]);
+        self::assertNull($over->workVolumes()->firstOrFail()->contract_id);
+        $split = $this->entry($user, $journal, $item, [['quantity' => 6], ['quantity' => 6]]);
+        self::assertSame([$first->id, null], $split->workVolumes()->orderBy('id')->pluck('contract_id')->all());
+        app(JournalApprovalService::class)->submitForApproval($over, $user);
+        app(JournalApprovalService::class)->submitForApproval($split, $user);
+        $this->fieldUser = null;
+        app(JournalApprovalService::class)->approve($over->fresh(), $user);
+        app(JournalApprovalService::class)->approve($split->fresh(), $user);
+        self::assertSame(24.0, (float) $journal->entries()->where('status', 'approved')->get()->sum(fn ($entry) => $entry->workVolumes()->sum('quantity')));
+        self::assertSame(6.0, (float) $split->completedWorks()->where('contract_id', $first->id)->sum('quantity'));
+        $request = \Illuminate\Http\Request::create('/');
+        $request->setUserResolver(fn () => $user);
+        $fact = (new \App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource($over->completedWorks()->firstOrFail()))->resolve($request);
+        self::assertNull($fact['contract_id']);
+    }
+
+    public function test_field_auto_draft_recalculates_before_submission_when_another_entry_reserves_the_contract(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $journal = $this->journal($user, $project);
+        $this->fieldUser = $user->id;
+        $draft = $this->entry($user, $journal, $item, [['quantity' => 6]]);
+        $factId = $draft->completedWorks()->firstOrFail()->id;
+        self::assertSame($first->id, $draft->workVolumes()->firstOrFail()->contract_id);
+        $this->fieldUser = null;
+        $reserved = $this->entry($user, $journal, $item, [['quantity' => 6, 'contract_id' => $first->id]]);
+        app(JournalApprovalService::class)->submitForApproval($reserved, $user);
+        $this->fieldUser = $user->id;
+        app(JournalApprovalService::class)->submitForApproval($draft, $user);
+        self::assertNull($draft->workVolumes()->firstOrFail()->contract_id);
+        self::assertSame($factId, $draft->completedWorks()->firstOrFail()->id);
+        self::assertNull($draft->completedWorks()->firstOrFail()->contract_id);
+        $this->fieldUser = null;
+        app(JournalApprovalService::class)->approve($draft->fresh(), $user);
+        ContractEstimateItem::where('contract_id', $first->id)->update(['quantity' => 30]);
+        app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->refreshLockedEntry($draft->fresh(), $user);
+        self::assertNull($draft->workVolumes()->firstOrFail()->contract_id);
+    }
+
+    public function test_field_edit_refreshes_auto_draft_but_preserves_explicit_pto_null(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $journal = $this->journal($user, $project);
+        $this->fieldUser = $user->id;
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 2]]);
+        $row = $entry->workVolumes()->firstOrFail();
+        $service = app(ConstructionJournalService::class);
+        $input = ['id' => $row->id, 'estimate_item_id' => $item->id, 'quantity' => 12];
+        $service->updateEntry($entry, ['work_volumes' => [$input]], $user);
+        self::assertNull($row->fresh()->contract_id);
+        $this->fieldUser = null;
+        $service->updateEntry($entry->fresh(), ['work_volumes' => [[...$input, 'contract_id' => null]]], $user);
+        $this->fieldUser = $user->id;
+        $service->updateEntry($entry->fresh(), ['work_volumes' => [[...$input, 'quantity' => 1]]], $user);
+        self::assertNull($row->fresh()->contract_id);
+        self::assertFalse(app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->isAutomatic($row->fresh()));
+    }
+
+    public function test_field_internal_refresh_uses_current_approved_state_instead_of_stale_draft(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $journal = $this->journal($user, $project);
+        $this->fieldUser = $user->id;
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 2]]);
+        $stale = clone $entry;
+        $this->fieldUser = null;
+        $this->approve($entry, $user);
+        ContractEstimateItem::where('contract_id', $first->id)->delete();
+        DB::transaction(fn () => app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->refreshLockedEntry($stale, $user));
+        self::assertSame($first->id, $entry->workVolumes()->firstOrFail()->contract_id);
+        self::assertSame('approved', $entry->fresh()->status->value);
+    }
+
+    public function test_field_internal_refresh_denies_other_authors_draft_without_edit_all(): void
+    {
+        [$user, $project, $item, $first, $second] = $this->fixture();
+        ContractEstimateItem::where('contract_id', $second->id)->delete();
+        $journal = $this->journal($user, $project);
+        $this->fieldUser = $user->id;
+        $entry = $this->entry($user, $journal, $item, [['quantity' => 2]]);
+        $peer = User::factory()->create(['current_organization_id' => $project->organization_id]);
+        $peer->organizations()->attach($project->organization_id, ['is_active' => true, 'is_owner' => false, 'project_access_mode' => 'all_projects']);
+        $this->fieldUser = $peer->id;
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        DB::transaction(fn () => app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->refreshLockedEntry($entry, $peer));
     }
 
     private function externalFact(User $user, Project $project, EstimateItem $item, ?Contract $contract): void

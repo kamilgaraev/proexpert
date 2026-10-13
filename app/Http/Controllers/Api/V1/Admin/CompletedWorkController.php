@@ -511,6 +511,10 @@ class CompletedWorkController extends Controller
         try {
             $organizationId = (int) Auth::user()->current_organization_id;
             $projectId = (int) $request->route('project');
+            $visibility = app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource([], $request->user(), $projectId);
+            if (! $visibility['can_view_contracts'] || ! $visibility['can_view_financials']) {
+                return AdminResponse::error(trans_message('errors.unauthorized'), 403);
+            }
 
             $filters = $request->only([
                 'contract_id',

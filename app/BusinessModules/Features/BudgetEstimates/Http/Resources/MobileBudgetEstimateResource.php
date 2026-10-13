@@ -22,7 +22,7 @@ final class MobileBudgetEstimateResource extends JsonResource
         $estimate = $this->resource;
         $availableActions = $this->availableActions($request, $estimate);
 
-        return [
+        $payload = [
             'id' => $estimate->id,
             'organization_id' => $estimate->organization_id,
             'project_id' => $estimate->project_id,
@@ -66,6 +66,8 @@ final class MobileBudgetEstimateResource extends JsonResource
             'created_at' => $estimate->created_at?->toIso8601String(),
             'updated_at' => $estimate->updated_at?->toIso8601String(),
         ];
+
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($payload, $request->user(), (int) $estimate->project_id);
     }
 
     private function availableActions(Request $request, Estimate $estimate): array

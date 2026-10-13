@@ -51,6 +51,7 @@ class JournalApprovalService
             }
 
             $fromStatus = $entry->status;
+            app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->refreshLockedEntry($entry, $actor);
             $this->validateEntryForSubmission($entry);
             $this->validateWorkflowForSubmission($entry);
             $this->assertEntryQuantitiesAvailable($entry);
@@ -99,6 +100,7 @@ class JournalApprovalService
             if (! $this->canApprove($approver, $entry)) {
                 throw new DomainException(trans_message('construction_journal.errors.approve_forbidden'));
             }
+            app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->refreshLockedEntry($entry, $approver);
             $this->workflowGuardService->assertJournalEntryConfirmable(
                 $entry,
                 $approver,

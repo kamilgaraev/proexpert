@@ -61,6 +61,7 @@ final class ExecutiveDocumentationServiceProvider extends ServiceProvider
             ->prefix('api/v1/admin/pto')
             ->group(function (): void {
                 Route::get('/work-queue', [PtoWorkspaceController::class, 'queue'])->middleware('authorize:executive-documentation.view');
+                Route::get('/journal-allocations', [PtoWorkspaceController::class, 'journalAllocations'])->middleware(['authorize:executive-documentation.view', 'authorize:construction-journal.approve']);
                 Route::get('/completeness', [PtoWorkspaceController::class, 'completeness'])->middleware('authorize:executive-documentation.view');
                 Route::post('/tasks', [PtoWorkspaceController::class, 'upsertTask'])->middleware('authorize:executive-documentation.edit');
                 Route::post('/tasks/{task}/complete', [PtoWorkspaceController::class, 'completeTask'])->middleware('authorize:executive-documentation.edit');

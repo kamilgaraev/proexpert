@@ -33,7 +33,7 @@ class CompletedWorkResource extends JsonResource
         $totalAmount = $this->resolveTotalAmount($completedQuantity, $price);
         $measurementUnit = $this->resolveMeasurementUnit($scheduleTask);
 
-        return [
+        $payload = [
             'id' => $this->id,
             'version' => \App\Services\CompletedWork\CompletedWorkRevisionToken::forWork($this->resource),
             'organization_id' => $this->organization_id,
@@ -111,6 +111,8 @@ class CompletedWorkResource extends JsonResource
             'created_at' => $this->created_at->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
         ];
+
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($payload, $request->user(), (int) ($this->project_id));
     }
 
     private function resolveContract(?ScheduleTask $scheduleTask): ?Contract
@@ -252,6 +254,10 @@ class CompletedWorkResource extends JsonResource
 
     private function resolveContractLink(?ScheduleTask $scheduleTask): ?ContractEstimateItem
     {
+        if ($this->journal_entry_id !== null && $this->contract_id === null) {
+            return null;
+        }
+
         return $scheduleTask?->estimateItem?->contractLinks?->sortBy('id')->first()
             ?? $this->estimateItem?->contractLinks?->sortBy('id')->first();
     }

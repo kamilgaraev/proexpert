@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services\ConstructionJournal;
 
 use App\Models\ConstructionJournal;
+use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -15,8 +17,12 @@ final class JournalEntryQueryService
 
     public function __construct(private readonly JournalRowContractService $contracts) {}
 
-    public function query(ConstructionJournal $journal, array $filters): Builder
+    public function query(ConstructionJournal $journal, array $filters, User $actor): Builder
     {
+        if ((isset($filters['contract_id']) || $this->unassigned($filters))
+            && ! app(JournalFieldVisibility::class)->capabilities($actor, $journal->project)['can_manage_contracts']) {
+            throw new AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
         $contractId = $this->contractId($filters);
         $unassigned = $this->unassigned($filters);
         if ($contractId !== null && ($unassigned || ! $this->contracts->contracts($journal)->whereKey($contractId)->exists())) {
@@ -65,9 +71,9 @@ final class JournalEntryQueryService
         return $payload;
     }
 
-    public function summary(ConstructionJournal $journal, array $filters): array
+    public function summary(ConstructionJournal $journal, array $filters, User $actor): array
     {
-        $query = $this->query($journal, $filters);
+        $query = $this->query($journal, $filters, $actor);
         $summary = [
             'total_entries' => (clone $query)->count(),
             'approved_entries' => (clone $query)->where('status', 'approved')->count(),
@@ -96,6 +102,10 @@ final class JournalEntryQueryService
             )->first();
             $summary['total_rows'] += (int) ($snapshot?->matching_rows ?? 0);
             $summary['unassigned_rows'] += (int) ($snapshot?->unassigned_rows ?? 0);
+        }
+
+        if (! app(JournalFieldVisibility::class)->capabilities($actor, $journal->project)['can_manage_contracts']) {
+            unset($summary['unassigned_rows']);
         }
 
         return $summary;

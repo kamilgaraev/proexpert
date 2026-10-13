@@ -46,6 +46,15 @@ final class PtoWorkspaceController extends Controller
         return $this->page($result);
     }
 
+    public function journalAllocations(ListPtoWorkQueueRequest $request): JsonResponse
+    {
+        return $this->page(app(\App\Services\Pto\PtoJournalAllocationQueue::class)->list(
+            $request->user(),
+            (int) $request->attributes->get('current_organization_id'),
+            $request->validated(),
+        ));
+    }
+
     public function completeness(ListPtoWorkQueueRequest $request): JsonResponse
     {
         $organizationId = (int) $request->attributes->get('current_organization_id');
