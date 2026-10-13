@@ -1549,14 +1549,13 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->invokePendingSummary($service, false);
     }
 
-    public function test_partial_answer_with_stale_references_still_aborts_publication(): void
+    public function test_partial_answer_with_changed_balance_does_not_publish_or_validate_a_verified_summary(): void
     {
         $service = $this->makeService(new AIToolRegistry);
         $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
         $manager->expects(self::never())->method('saveSummary');
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('assistant_response_sources_stale');
         $this->invokePendingSummary($service, false, 'partial');
+        self::assertNull((new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service));
     }
 
     public function test_partial_answer_with_fresh_references_does_not_create_verified_summary(): void

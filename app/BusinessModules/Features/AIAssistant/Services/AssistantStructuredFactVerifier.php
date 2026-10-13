@@ -10,6 +10,9 @@ final class AssistantStructuredFactVerifier
 {
     public function guard(string $query, string $text, array $toolResults = [], array $requestScope = []): array
     {
+        if (($fields = AssistantFactIntentClassifier::organizationLegalFields($query)) !== null) {
+            return $this->verifiedOrganizationLegalProfile($fields, $text, $toolResults);
+        }
         if (\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query) !== null) {
             return $this->verifiedConcreteUnitPrice($query, $text, $toolResults);
         }
@@ -44,6 +47,9 @@ final class AssistantStructuredFactVerifier
 
     public function confirmedResults(array $toolResults, ?string $query = null, array $requestScope = []): array
     {
+        if ($query !== null && ($fields = AssistantFactIntentClassifier::organizationLegalFields($query)) !== null) {
+            return $this->verifiedOrganizationLegalProfile($fields, '', $toolResults);
+        }
         if ($query !== null && \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query) !== null) {
             return $this->verifiedConcreteUnitPrice($query, '', $toolResults);
         }
@@ -58,6 +64,31 @@ final class AssistantStructuredFactVerifier
             return $this->verifiedCount($query, '', $toolResults, $requestScope);
         }
         return $this->verifiedResults(null, '', $toolResults, $query);
+    }
+
+    private function verifiedOrganizationLegalProfile(array $requiredGroups, string $text, array $toolResults): array
+    {
+        $candidates = [];
+        foreach ($toolResults as $result) {
+            $evidence = is_array($result) ? ($result['structured_fact_evidence'] ?? null) : null;
+            if (! is_array($evidence) || ! $this->trusted($evidence) || AssistantPresentationPlanner::hasIncompleteScope($result)
+                || count($evidence['rows']) !== 1 || ($evidence['rows'][0]['entity_type'] ?? null) !== 'core_organization') { continue; }
+            $row = $evidence['rows'][0];
+            if ((string) $row['entity_id'] !== (string) ($row['source_ref']['organization_id'] ?? '')) { continue; }
+            foreach ($requiredGroups as $group) {
+                if (array_intersect(array_keys($row['fields']), $group) === []) { continue 2; }
+            }
+            $reference = $row['source_ref'];
+            $row['fields'] = array_intersect_key($row['fields'], array_flip(['name', 'legal_name', 'tax_number', 'registration_number', 'verification_status', 'is_verified']));
+            $row['source_ref']['navigation']['url'] = '';
+            $answer = AssistantStructuredFactFormatter::payload([$row], $evidence['fetched_at'])['server_formatted_facts'];
+            $key = AssistantSourceReferenceIdentity::key([$reference['organization_id'] ?? null, $row['entity_id'], $row['fields']]);
+            $candidates[$key] = ['text' => $answer, 'source_refs' => [$reference], 'validation_status' => 'partial',
+                'replaced' => $answer !== $text, 'needs_clarification' => false, 'structured_evidence_truncated' => false];
+        }
+
+        return count($candidates) === 1 ? reset($candidates) : ['text' => trans_message('ai_assistant_facts.live_proof_required'),
+            'source_refs' => [], 'validation_status' => 'partial', 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
     }
 
     private function verifiedConcreteUnitPrice(string $query, string $text, array $toolResults): array
