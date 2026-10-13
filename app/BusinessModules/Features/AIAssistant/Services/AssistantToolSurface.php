@@ -64,11 +64,17 @@ final class AssistantToolSurface
             '/отч[её]т|report/iu' => ['get_project_report_catalog'],
             '/тендер/iu' => ['get_project_tender_decisions'],
             '/заявк/iu' => ['get_project_site_request_queue'],
-            '/(?<!\pL)акт[а-яё]*.*(?:согласован|решени|одобрен)|(?:согласован|одобрен).*\bакт/iu' => ['get_project_act_readiness'],
+            \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectActReader::INTENT_PATTERN => ['get_project_act_readiness'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);
             }
+        }
+        foreach (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS as $name => $reader) {
+            if ($reader::hasIntent($query)) { $selected[] = $name; }
+        }
+        foreach (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::NAMED_TOOLS as $name => $reader) {
+            if ($reader::hasIntent($query)) { $selected[] = $name; }
         }
         if (($plan['request_understanding']['primary_intent'] ?? null) === 'generate_report'
             || preg_match('/pdf|отч[её]т|report|сформируй|выгруз/iu', $signals)) {

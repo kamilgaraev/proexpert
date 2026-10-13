@@ -41,6 +41,15 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
+        if (($operational['name'] ?? null) === 'get_contract_supplementary_readiness') {
+            $number = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantContractSupplementaryReader::contractNumber($query);
+            return $number === null || $scope->requested && $scope->projectId === null ? null : ['name' => $operational['name'],
+                'arguments' => ['contract_number' => $number, 'project_id' => $scope->requested ? $scope->projectId : null,
+                    'project_query' => $scope->requested ? null : \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantContractSupplementaryReader::projectQuery($query)]];
+        }
+        if (isset(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS[$operational['name'] ?? ''])) {
+            return ['name' => $operational['name'], 'arguments' => ['scope' => 'organization']];
+        }
         if (($operational['name'] ?? null) === 'get_project_tender_decisions'
             && ($scope->projectId !== null || AssistantRequestProjectScope::organizationWide($query))) {
             return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]];

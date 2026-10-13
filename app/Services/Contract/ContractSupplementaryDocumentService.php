@@ -47,6 +47,23 @@ final class ContractSupplementaryDocumentService
         return ['items' => $items, 'can_create' => $canCreate, 'blocked_reason' => $blocked];
     }
 
+    public function readinessFacts(User $actor, int $organizationId, int $contractId): array
+    {
+        $this->views->findReadOnly($actor, $organizationId, $contractId);
+        $this->assertParty($actor, $organizationId, $contractId);
+        $query = DB::table('contract_supplementary_documents')->where('contract_id', $contractId);
+        $pending = (clone $query)->whereNotIn('status', ['applied', 'cancelled']);
+        $examples = (clone $pending)->orderByDesc('id')->limit(20)->select(['id', 'number', 'agreement_date', 'status'])
+            ->selectSub(DB::table('contract_supplementary_activations')->whereColumn('document_id', 'contract_supplementary_documents.id')
+                ->where('status', '<>', 'cancelled')->orderByDesc('id')->limit(1)->select('status'), 'activation_status')
+            ->selectSub(DB::table('contract_supplementary_activations')->whereColumn('document_id', 'contract_supplementary_documents.id')
+                ->where('status', '<>', 'cancelled')->orderByDesc('id')->limit(1)->select('effective_date'), 'effective_date')->get()
+            ->map(static fn (object $row): array => ['id' => (int) $row->id, 'number' => $row->number, 'date' => $row->agreement_date,
+                'status' => $row->status, 'activation_status' => $row->activation_status, 'effective_date' => $row->effective_date])->all();
+        return ['total' => (clone $query)->count(), 'pending' => (clone $pending)->count(),
+            'applied' => (clone $query)->where('status', 'applied')->count(), 'examples' => $examples];
+    }
+
     public function create(User $actor, int $organizationId, int $contractId, string $templateId, int $templateVersion, string $number, string $agreementDate, string $key): array
     {
         $this->authorizeEdit($actor, $organizationId);

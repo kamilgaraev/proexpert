@@ -6,13 +6,13 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
 final class AssistantOperationalReaderRegistry
 {
-    private const TOPICS = ['/журнал/iu', '/безопасност|охран[а-яё]*\s+труд|происшеств|нарушен/iu',
+    private const TOPICS = ['/журнал(?![а-яё]*\s+(?:событи|действи))/iu', '/безопасност|охран[а-яё]*\s+труд|происшеств|нарушен/iu',
         '/rfi|вопрос[а-яё]*\s+проектировщик|изменен[а-яё]*.*(?:согласован|решени|влияни)/iu',
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
         '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu',
         '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu',
-        '/(?<!\pL)акт[а-яё]*.*(?:согласован|решени|одобрен)|(?:согласован|одобрен).*\bакт/iu',
+        AssistantProjectActReader::INTENT_PATTERN,
         '/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', '/тендер/iu',
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
     public const TOOLS = [
@@ -30,22 +30,41 @@ final class AssistantOperationalReaderRegistry
         'get_project_staff_roster' => AssistantProjectStaffReader::class,
         'get_project_act_readiness' => AssistantProjectActReader::class,
     ];
+    public const ORGANIZATION_TOOLS = [
+        'get_organization_project_roster' => AssistantOrganizationProjectsReader::class,
+        'get_organization_supplier_roster' => AssistantOrganizationSuppliersReader::class,
+        'get_organization_activity_summary' => AssistantOrganizationActivityReader::class,
+        'get_organization_notifications' => AssistantOrganizationNotificationsReader::class,
+    ];
+    public const NAMED_TOOLS = ['get_contract_supplementary_readiness' => AssistantContractSupplementaryReader::class];
 
     public static function forReference(string $type): ?string
     {
-        foreach (self::TOOLS as $class) { if ($class::TYPE === $type) { return $class; } }
+        foreach ([...self::TOOLS, ...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $class) { if ($class::TYPE === $type) { return $class; } }
         return null;
     }
 
     public static function intent(string $query): ?array
     {
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) { return null; }
-        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|поставщик|поставк|закуп|снабжен|склад|табел|техник|при[её]мк/iu', $query) === 1
+        foreach (self::NAMED_TOOLS as $name => $class) {
+            if (! $class::hasIntent($query)) { continue; }
+            foreach (self::TOPICS as $pattern) { if (preg_match($pattern, $query) === 1) { return null; } }
+            foreach (self::ORGANIZATION_TOOLS as $organizationReader) { if ($organizationReader::hasIntent($query)) { return null; } }
+            return $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
+        }
+        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|поставк|закуп|снабжен|склад|табел|техник|при[её]мк/iu', $query) === 1
+            || preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query)
             || preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query)) { return null; }
         $topics = 0;
         foreach (self::TOPICS as $pattern) {
             if (preg_match($pattern, $query) === 1) { $topics++; }
         }
+        $organizationMatches = [];
+        foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if ($class::hasIntent($query)) { $organizationMatches[] = $class::matches($query) ? ['name' => $name, 'reader' => $class] : null; }
+        }
+        if ($organizationMatches !== []) { return $topics === 0 && count($organizationMatches) === 1 ? $organizationMatches[0] : null; }
         if ($topics !== 1) { return null; }
         $matches = [];
         foreach (self::TOOLS as $name => $class) { if ($class::matches($query)) { $matches[] = ['name' => $name, 'reader' => $class]; } }
@@ -55,6 +74,8 @@ final class AssistantOperationalReaderRegistry
 
     public static function hasIntent(string $query): bool
     {
+        foreach (self::ORGANIZATION_TOOLS as $class) { if ($class::hasIntent($query)) { return true; } }
+        foreach (self::NAMED_TOOLS as $class) { if ($class::hasIntent($query)) { return true; } }
         foreach (self::TOPICS as $pattern) { if (preg_match($pattern, $query) === 1) { return true; } }
         return false;
     }

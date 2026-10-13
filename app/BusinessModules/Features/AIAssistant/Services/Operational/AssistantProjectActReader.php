@@ -11,10 +11,11 @@ use Illuminate\Auth\Access\AuthorizationException;
 final readonly class AssistantProjectActReader extends AssistantProjectOperationalReader
 {
     public const TYPE = 'live_project_act_readiness_projection';
+    public const INTENT_PATTERN = '/(?<!\pL)акт(?:ы|а|у|ом|е|ов|ам|ами|ах)?(?!\pL)[\s\S]*(?:согласован|решени|одобрен)|(?:согласован|одобрен)[\s\S]*(?<!\pL)акт(?:ы|а|у|ом|е|ов|ам|ами|ах)?(?!\pL)/iu';
 
     public static function matches(string $query): bool
     {
-        return preg_match('/(?<!\pL)акт[а-яё]*.*(?:согласован|решени|одобрен)|(?:согласован|одобрен).*\bакт/iu', $query) === 1
+        return preg_match(self::INTENT_PATTERN, $query) === 1
             && preg_match('/создай|удали|отправь|согласуй|одобри|подпиши|измени|оплат|исполнительн|наряд|журнал|бюджет|расход|смет|(?:какие|покажи|список|перечисли)\s+(?:действующ[а-яё]*\s+|активн[а-яё]*\s+)?договор|услови[а-яё]*\s+договор/iu', $query) !== 1;
     }
 
