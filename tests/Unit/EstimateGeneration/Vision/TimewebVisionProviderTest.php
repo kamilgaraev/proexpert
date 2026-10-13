@@ -1821,6 +1821,61 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame(4081, $this->attempts[0]->outputTokens);
     }
 
+    public function test_document_injection_corpus_keeps_server_model_scope_and_replays_without_extra_http(): void
+    {
+        Http::preventStrayRequests();
+        $corpus = json_decode((string) file_get_contents(base_path('tests/Fixtures/EstimateGeneration/Vision/document-injection-corpus.json')), true, flags: JSON_THROW_ON_ERROR);
+        $providerResponse = [];
+        Http::fake(static function () use (&$providerResponse) {
+            return Http::response($providerResponse, 200);
+        });
+        foreach ($corpus as $index => $attack) {
+            $providerResponse = $this->response([
+                'organization_id' => 999, 'project_id' => 999, 'session_id' => 999,
+                'model' => 'forged-model', 'budget' => 999999, 'permissions' => ['*'],
+                'credit_operation_id' => 'foreign-operation', 'instructions' => $attack['instruction'],
+            ]);
+            $input = $this->input(claim: 200 + $index, auxiliaryText: $attack['instruction']);
+            foreach (['first', 'replay'] as $delivery) {
+                try {
+                    $this->provider()->analyze($input);
+                    self::fail('Policy override was accepted: '.$attack['id'].'/'.$delivery);
+                } catch (VisionContractException $error) {
+                    self::assertSame('unsafe_analysis_extension', $error->getMessage(), $attack['id']);
+                }
+            }
+            $usage = $this->attempts[$index];
+            self::assertSame('openai/gpt-6-luna', $usage->requestedModel, $attack['id']);
+            self::assertSame(7, $usage->context->organizationId);
+            self::assertSame(9, $usage->context->projectId);
+            self::assertSame(11, $usage->context->sessionId);
+            Http::assertSentCount($index + 1);
+            Http::assertNotSent(static function ($request): bool {
+                return $request['model'] !== 'openai/gpt-6-luna'
+                    || isset($request['budget']) || isset($request['permissions']) || isset($request['credit_operation_id']);
+            });
+        }
+    }
+
+    public function test_retention_tombstone_refuses_vision_replay_before_any_http_or_new_usage(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        $store = $this->createMock(VisionPhysicalAttemptStore::class);
+        $store->method('claim')->willReturn(new VisionPhysicalAttemptSnapshot(false, 'completed',
+            responsePayload: ['response_retention' => ['version' => 1]], durationMs: 42, priceSnapshot: [], usageRecorded: true));
+        $store->expects(self::never())->method('markWireStarted');
+        $this->app->instance(VisionPhysicalAttemptStore::class, $store);
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('A removed Vision response must not be replayed or resent.');
+        } catch (VisionProviderException $error) {
+            self::assertSame('vision_response_retention_expired', $error->getMessage());
+        }
+        Http::assertNothingSent();
+        self::assertSame([], $this->attempts);
+    }
+
     private function provider(): TimewebVisionProvider
     {
         return app(TimewebVisionProvider::class);

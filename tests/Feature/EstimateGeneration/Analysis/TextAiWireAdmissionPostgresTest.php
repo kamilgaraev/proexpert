@@ -145,6 +145,33 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
         self::assertSame('completed', DB::table('estimate_generation_ai_role_runs')->sole()->status);
     }
 
+    public function test_retention_tombstone_stops_real_http_adapter_even_if_a_session_is_reopened(): void
+    {
+        $history = [];
+        $wire = $this->httpWire($history, [[
+            'index' => 0, 'message' => ['role' => 'assistant', 'content' => '{"work_intents":[]}'],
+            'finish_reason' => 'stop', 'logprobs' => null,
+        ]]);
+        $this->composer($wire)->run($this->input());
+        $attempt = DB::table('estimate_generation_vision_physical_attempts')->sole();
+        DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $attempt->attempt_id)
+            ->update(['response_payload' => json_encode(['response_retention' => ['version' => 1, 'reason' => 'archived_published_response']])]);
+        try {
+            $wire->call('openai/gpt-6-luna', [['role' => 'user', 'content' => 'same operation']], [
+                'max_completion_tokens' => 2048, 'response_format' => ['type' => 'json_object'],
+                'estimate_generation_scope' => ['organization_id' => 10, 'project_id' => 20, 'session_id' => 30, 'state_version' => 1],
+                'estimate_generation_attempt' => ['attempt_id' => $attempt->attempt_id, 'request_fingerprint' => $attempt->request_fingerprint,
+                    'operation' => 'estimate_composition', 'price_snapshot' => json_decode($attempt->price_snapshot, true, flags: JSON_THROW_ON_ERROR)],
+            ]);
+            self::fail('Purged replay fell through into a new physical HTTP request.');
+        } catch (AiWireNotStarted $error) {
+            self::assertSame('text_ai_response_retention_expired', $error->getMessage());
+        }
+        self::assertCount(1, $history);
+        self::assertSame(1, DB::table('estimate_generation_ai_usage')->count());
+        self::assertSame('completed', DB::table('estimate_generation_vision_physical_attempts')->sole()->state);
+    }
+
     public function test_real_sdk_http_transport_is_scoped_reserved_and_replayed_without_another_http_request(): void
     {
         $history = [];

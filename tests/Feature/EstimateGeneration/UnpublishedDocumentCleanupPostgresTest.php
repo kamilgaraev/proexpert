@@ -32,6 +32,100 @@ use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class UnpublishedDocumentCleanupPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    public function test_operator_retry_is_audited_idempotent_scoped_and_rechecks_storage_identity(): void
+    {
+        [, $session] = $this->fixture();
+        config(['legal_archive.audit_writer_secret' => 'fixture-only-cleanup-writer-ABC123xyz789']);
+        $this->enableImmutableAuditWriter();
+        $operator = \App\Models\SystemAdmin::query()->create(['name' => 'Cleanup operator', 'email' => Str::uuid().'@example.test',
+            'password' => 'fixture-only-password', 'role' => 'super_admin', 'is_active' => true]);
+        (new InMemoryS3HttpStorage)->install();
+        $body = 'temporary private document';
+        $path = 'org-'.$session->organization_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.Str::uuid().'.pdf';
+        app(FileService::class)->putImmutable($path, $body, 'application/pdf');
+        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
+        $batch->capture($path, hash('sha256', $body), strlen($body));
+        app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
+        $debt = DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('storage_path', $path)->first();
+        DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->update(['status' => 'exhausted', 'attempts' => 10]);
+        $retry = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryExhaustedDocumentCleanup::class);
+        $request = (string) Str::uuid();
+        $receipt = $retry->handle($session->organization_id, $session->project_id, $session->id, $debt->id,
+            $debt->identity_hash, $request, $operator->id, 'storage_access_restored');
+        $pending = DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->first();
+        self::assertSame('pending', $pending->status);
+        self::assertSame(0, $pending->attempts);
+        self::assertSame($debt->identity_hash, $pending->identity_hash);
+        self::assertSame($receipt, $retry->handle($session->organization_id, $session->project_id, $session->id, $debt->id,
+            $debt->identity_hash, $request, $operator->id, 'storage_access_restored'));
+        $audit = DB::table('immutable_audit_events')->where('id', $receipt)->first();
+        self::assertSame('system_admin', $audit->actor_type);
+        self::assertNull($audit->actor_user_id);
+        self::assertStringNotContainsString($path, json_encode($audit, JSON_THROW_ON_ERROR));
+        self::assertSame(10, json_decode($audit->before_state, true)['attempts']);
+        self::assertSame(1, json_decode($audit->after_state, true)['retry_epoch']);
+        foreach (['scope', 'inactive', 'changed_request'] as $failure) {
+            if ($failure === 'inactive') {
+                $operator->forceFill(['is_active' => false])->save();
+            }
+            try {
+                $retry->handle($failure === 'scope' ? $session->organization_id + 999 : $session->organization_id,
+                    $session->project_id, $session->id, $debt->id, $debt->identity_hash, $request, $operator->id,
+                    $failure === 'changed_request' ? 'storage_transport_restored' : 'storage_access_restored');
+                self::fail('Unauthorized or conflicting retry was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::assertSame(0, DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->value('attempts'));
+            }
+            $operator->forceFill(['is_active' => true])->save();
+        }
+        // Retry changes no storage identity. A replacement under the same key must survive the worker.
+        self::assertTrue(Storage::disk('s3')->put($path, 'replacement private object'));
+        self::assertSame(0, app(RecoverUnpublishedDocumentObjects::class)->handle());
+        self::assertSame('blocked_identity', DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->value('status'));
+        self::assertTrue(app(FileService::class)->existsCurrent($path));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_operator_retry_has_three_audited_epochs_and_cannot_resume_published_objects(): void
+    {
+        [$owner, $session] = $this->fixture();
+        config(['legal_archive.audit_writer_secret' => 'fixture-only-cleanup-writer-ABC123xyz789']);
+        $this->enableImmutableAuditWriter();
+        $operator = \App\Models\SystemAdmin::query()->create(['name' => 'Cleanup operator', 'email' => Str::uuid().'@example.test',
+            'password' => 'fixture-only-password', 'role' => 'super_admin', 'is_active' => true]);
+        $path = 'org-'.$session->organization_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.Str::uuid().'.pdf';
+        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
+        $batch->capture($path, hash('sha256', 'fixture'), 7);
+        app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
+        $debt = DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('storage_path', $path)->first();
+        $retry = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryExhaustedDocumentCleanup::class);
+        for ($epoch = 1; $epoch <= 4; $epoch++) {
+            DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->update(['status' => 'exhausted', 'attempts' => 10]);
+            try {
+                $receipt = $retry->handle($session->organization_id, $session->project_id, $session->id, $debt->id,
+                    $debt->identity_hash, (string) Str::uuid(), $operator->id, 'storage_transport_restored');
+                self::assertLessThanOrEqual(3, $epoch);
+                self::assertSame($epoch, json_decode(DB::table('immutable_audit_events')->where('id', $receipt)->value('after_state'), true)['retry_epoch']);
+            } catch (\InvalidArgumentException $error) {
+                self::assertSame(4, $epoch);
+                self::assertSame('document_cleanup_retry_limit_reached', $error->getMessage());
+            }
+        }
+        EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id, 'user_id' => $owner->id, 'filename' => 'saved.pdf', 'mime_type' => 'application/pdf',
+            'storage_path' => $path, 'file_size_bytes' => 7, 'checksum_sha256' => hash('sha256', 'fixture'), 'status' => 'ignored']);
+        try {
+            $retry->handle($session->organization_id, $session->project_id, $session->id, $debt->id,
+                $debt->identity_hash, (string) Str::uuid(), $operator->id, 'storage_access_restored');
+            self::fail('A saved document must not be requeued for deletion.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('document_cleanup_retry_object_blocked', $error->getMessage());
+        }
+        self::assertSame('exhausted', DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('id', $debt->id)->value('status'));
+    }
+
     public function test_failed_compensation_debt_survives_the_whole_batch_rollback_and_recovers_without_user_documents(): void
     {
         [$actor, $session] = $this->fixture();

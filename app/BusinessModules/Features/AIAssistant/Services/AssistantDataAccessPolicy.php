@@ -698,7 +698,7 @@ final class AssistantDataAccessPolicy
                         ]))
                         ? $candidateColumns : null;
                     if ($sourceColumns !== null) {
-                        $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: false)->select([])->toBase();
+                        $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: count($types ?? []) > 1)->select([])->toBase();
                     }
                     $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
                         splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities, sourceColumns: $sourceColumns)->select($columns)->toBase();

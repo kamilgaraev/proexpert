@@ -262,6 +262,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
             }
             $replayed = in_array($snapshot->state, ['response_received', 'completed'], true);
             if ($replayed) {
+                if (is_array($snapshot->responsePayload)
+                    && array_key_exists(\App\BusinessModules\Addons\EstimateGeneration\Analysis\PruneArchivedAiPhysicalResponses::MARKER, $snapshot->responsePayload)) {
+                    throw new VisionProviderException('vision_response_retention_expired',
+                        safeContext: $this->boundarySafeContext('vision_physical_claim', $model));
+                }
                 if ($snapshot->responsePayload === null || $snapshot->durationMs === null || $snapshot->priceSnapshot === null) {
                     throw new UsageInvariantViolation('Persisted vision response is incomplete.');
                 }
