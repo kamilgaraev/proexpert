@@ -79,7 +79,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         $perPage = max(1, min((int) ($filters['per_page'] ?? 15), 100));
 
         $relations = self::packageRelations();
-        unset($relations['artifacts.currentVersion.derivatives']);
+        unset($relations['artifacts.currentVersion.derivatives'], $relations['artifacts.currentVersion.readyDerivative']);
         $packages = $this->packageQuery($organizationId, $filters, $actor)
             ->withOpenBlockingCount()
             ->with($relations)
@@ -94,12 +94,14 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
     private static function reuseCurrentVersionDerivatives(LengthAwarePaginator $packages): void
     {
         $missingVersions = new Collection;
+        $currentVersions = new Collection;
         foreach ($packages as $package) {
             foreach ($package->artifacts as $artifact) {
                 $currentVersion = $artifact->currentVersion;
                 if (! $currentVersion instanceof DesignArtifactVersion) {
                     continue;
                 }
+                $currentVersions->push($currentVersion);
                 $version = $artifact->versions->firstWhere('id', $currentVersion->id);
                 if ($version instanceof DesignArtifactVersion && $version->relationLoaded('derivatives')) {
                     $currentVersion->setRelation('derivatives', $version->getRelation('derivatives'));
@@ -110,6 +112,11 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         }
         if ($missingVersions->isNotEmpty()) {
             $missingVersions->load(['derivatives' => static fn ($query) => $query->forResponse()]);
+        }
+        foreach ($currentVersions as $version) {
+            $version->setRelation('readyDerivative', $version->derivatives->first(static fn (DesignModelDerivative $derivative): bool => $derivative->status === DesignDerivativeStatusEnum::READY
+                && $derivative->viewer_provider === 'thatopen'
+                && $derivative->derivative_format === 'thatopen_frag'));
         }
     }
 

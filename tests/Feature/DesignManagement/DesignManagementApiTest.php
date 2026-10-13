@@ -2926,7 +2926,7 @@ final class DesignManagementApiTest extends TestCase
             DB::disableQueryLog();
         }
 
-        $this->assertCount(2, $projectionQueries);
+        $this->assertCount(1, $projectionQueries);
         $list->assertJsonPath('data.0.models.0.current_version.id', $version->id);
         $list->assertJsonPath('data.0.models.0.versions.0.id', $historicalVersion->id);
         $list->assertJsonPath('data.0.models.0.versions.1.id', $version->id);
@@ -2955,7 +2955,31 @@ final class DesignManagementApiTest extends TestCase
         $this->assertStringNotContainsString('"transformations"', (string) $show->getContent());
         $this->assertStringNotContainsString('"transformations"', (string) $list->getContent());
 
-        $stored = DesignModelDerivative::query()->where('version_id', $version->id)->firstOrFail();
+        $readyMetadata = $readyDerivative->metadata;
+        $processingDerivative->status = 'ready';
+        $processingDerivative->save();
+        $otherProvider = $readyDerivative->replicate();
+        $otherProvider->viewer_provider = 'xeokit';
+        $otherProvider->save();
+        $converter = \App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version();
+        foreach ([['processing', $converter, 'processing'], ['failed', $converter, 'failed'], ['ready', $converter - 1, 'missing'], ['ready', $converter, 'ready']] as [$storedStatus, $metadataVersion, $expectedStatus]) {
+            $readyDerivative->fill([
+                'status' => $storedStatus,
+                'metadata' => array_replace($readyMetadata, ['converter_version' => $metadataVersion]),
+            ])->save();
+            $caseList = $this->withHeaders($headers)->getJson('/api/v1/admin/design-management/packages?project_id='.$project->id);
+            $caseShow = $this->withHeaders($headers)->getJson("/api/v1/admin/design-management/packages/{$packageId}");
+            $caseList->assertOk()
+                ->assertJsonPath('data.0.derivative.id', $readyDerivative->id)
+                ->assertJsonPath('data.0.derivative.status', $expectedStatus)
+                ->assertJsonPath('data.0.models.0.current_version.derivative.id', $readyDerivative->id)
+                ->assertJsonPath('data.0.models.0.current_version.derivative.status', $expectedStatus);
+            $caseShow->assertOk();
+            self::assertSame($caseShow->json('data.derivative'), $caseList->json('data.0.derivative'));
+            $caseList->assertJsonPath('data.0.models.0.current_version.derivatives.0.id', $otherProvider->id)
+                ->assertJsonPath('data.0.models.0.current_version.derivatives.1.id', $processingDerivative->id);
+        }
+        $stored = $readyDerivative->fresh();
         $slim = DesignModelDerivative::query()->forResponse()->findOrFail($stored->id);
         $this->assertSame([[1, 0, 0, 0]], $stored->metadata['coordinate_transformations']);
         $this->assertSame([[0, 1, 0, 0]], $stored->metadata['ifc_metadata']['transformations']);
