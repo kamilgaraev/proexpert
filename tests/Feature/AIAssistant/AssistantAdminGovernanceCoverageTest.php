@@ -17,6 +17,12 @@ use App\Services\Modules\PackageCatalogService;
 use App\Services\User\AdminUserRolePolicy;
 use App\Services\Landing\PackageService;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+use App\Services\Credits\AICreditService;
+use Illuminate\Support\Str;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -126,5 +132,81 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         self::assertNotContains('working-entry', array_column(array_filter(app(PackageService::class)->getAllPackages($org), static fn (array $row): bool => $row['is_active']), 'slug'));
         $f->owner->organizations()->updateExistingPivot($org, ['is_active' => false]);
         self::assertFalse($modules->matchesReference($f->owner, $org, $effective['source_refs'][0]));
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('snapshotTimezones')]
+    public function test_completed_credit_snapshot_remains_visible_after_charge_but_is_not_replayed_as_a_new_balance(string $timezone): void
+    {
+        $previousConfig = config('app.timezone'); $previousTimezone = date_default_timezone_get();
+        try {
+            config(['app.timezone' => $timezone]); date_default_timezone_set($timezone);
+            $this->assertCompletedCreditSnapshot();
+        } finally { config(['app.timezone' => $previousConfig]); date_default_timezone_set($previousTimezone); }
+    }
+
+    public static function snapshotTimezones(): array
+    {
+        return ['UTC' => ['UTC'], 'Moscow' => ['Europe/Moscow']];
+    }
+
+    private function assertCompletedCreditSnapshot(): void
+    {
+        $f = $this->fixture(); $org = (int) $f->organization->id; $actor = $f->owner;
+        config(['ai-assistant-credits.enforce' => true]);
+        $credits = app(AICreditService::class);
+        $credits->grant($f->organization, 10000, 'purchase', null, 'snapshot-test-'.$org);
+        $conversations = app(ConversationManager::class);
+        $conversation = $conversations->createConversation($org, $actor, 'Баланс');
+        $payload = ['request_id' => (string) Str::uuid(), 'message' => 'Сколько единиц МОСТ осталось для помощника?', 'profile' => 'short',
+            'allow_actions' => false, 'conversation_id' => $conversation->id, 'context' => []];
+        $payload['quote_id'] = $credits->quote($f->organization, $actor, $payload)['quote_id'];
+        $lifecycle = app(AssistantRequestLifecycle::class);
+        $request = $lifecycle->start($f->organization, $actor, $conversation->id, $payload, 'admin')['request'];
+        $scope = app(AssistantCurrentRequest::class); $scope->replace($request);
+        try {
+            $reader = app(AssistantOrganizationCreditBalanceReader::class);
+            $result = $reader->read($actor, $org, ['scope' => 'organization']); $ref = $result['source_refs'][0];
+            self::assertSame($request->request_id, $ref['origin_request_id']);
+            self::assertStringContainsString('до его окончательного списания', $result['server_formatted_answer']);
+            $expectedTime = \Carbon\CarbonImmutable::parse($ref['fetched_at'])->utc()->toIso8601String();
+            self::assertStringContainsString($expectedTime.' (UTC)', $result['server_formatted_answer']);
+            self::assertTrue($reader->matchesReference($actor, $org, $ref));
+            $call = $lifecycle->beforeProviderCall($request, $actor, 100, 100);
+            $lifecycle->recordProviderUsage($request, ['input_tokens' => 100, 'output_tokens' => 100, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'], $call);
+            $message = $conversations->addMessage($conversation, 'assistant', $result['server_formatted_answer'], 0, 'gpt-6-luna', [
+                'request_id' => $request->request_id, 'actor_user_id' => (int) $actor->id, 'request_state' => 'pending',
+                'validation_status' => 'partial', 'source_refs' => [$ref]]);
+            $response = $lifecycle->complete($request, $actor, ['message' => ['id' => $message->id, 'content' => $message->content, 'metadata' => $message->metadata]]);
+            self::assertGreaterThan(0, $response['credit_usage']['charged_minor']);
+            self::assertFalse($reader->matchesReference($actor, $org, $ref));
+            $scope->replace(null);
+            self::assertTrue($reader->matchesReference($actor, $org, $ref));
+            self::assertSame('completed', $lifecycle->status($request->request_id, $actor, $org, 'admin')['status']);
+            self::assertCount(1, $conversations->getHistory($conversation, 10, $actor));
+            self::assertNull($reader->verifiedAnswer($result, $actor, $org));
+            $forged = $ref; $forged['source_version'] = str_repeat('0', 64);
+            self::assertFalse($reader->matchesReference($actor, $org, $forged));
+            $forged = $ref; $forged['origin_request_id'] = (string) Str::uuid();
+            self::assertFalse($reader->matchesReference($actor, $org, $forged));
+            self::assertFalse($reader->matchesReference($f->member, $org, $ref));
+            self::assertFalse($reader->matchesReference($f->foreignOwner, $org, $ref));
+            $scope->replace(new AssistantRequest(['request_id' => (string) Str::uuid(), 'user_id' => (int) $actor->id, 'organization_id' => $org]));
+            self::assertFalse($reader->matchesReference($actor, $org, $ref));
+            $current = $reader->read($actor, $org, ['scope' => 'organization']);
+            self::assertNotSame($ref['origin_request_id'], $current['source_refs'][0]['origin_request_id']);
+            self::assertTrue($reader->matchesReference($actor, $org, $current['source_refs'][0]));
+            $scope->replace(null);
+            $legacy = $ref; unset($legacy['origin_request_id']);
+            $stored = $request->fresh()->response;
+            $stored['message']['metadata']['source_refs'] = [$legacy];
+            $request->updateQuietly(['response' => $stored]);
+            self::assertTrue($reader->matchesReference($actor, $org, $legacy));
+            self::assertSame('completed', $lifecycle->status($request->request_id, $actor, $org, 'admin')['status']);
+            $scope->replace(new AssistantRequest(['request_id' => (string) Str::uuid(), 'user_id' => (int) $actor->id, 'organization_id' => $org]));
+            self::assertFalse($reader->matchesReference($actor, $org, $legacy));
+            $scope->replace(null);
+            $actor->organizations()->updateExistingPivot($org, ['is_active' => false]);
+            self::assertFalse($reader->matchesReference($actor, $org, $legacy));
+        } finally { $scope->replace(null); }
     }
 }

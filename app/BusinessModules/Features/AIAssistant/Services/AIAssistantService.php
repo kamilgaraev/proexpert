@@ -229,6 +229,7 @@ class AIAssistantService
             return $started['response'];
         }
         $this->activeRequest = $started['request'];
+        $previousRequestScope = app(AssistantCurrentRequest::class)->replace($this->activeRequest);
         $requestPayload['request_id'] = $this->activeRequest->request_id;
         try {
             $result = $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
@@ -237,6 +238,7 @@ class AIAssistantService
             $this->requestLifecycle->fail($this->activeRequest, $this->requestErrorCode($exception));
             throw $exception;
         } finally {
+            app(AssistantCurrentRequest::class)->replace($previousRequestScope);
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
@@ -268,6 +270,7 @@ class AIAssistantService
         $this->estimateResolutionAttempted = false;
         $this->resolvedEstimateId = null;
         $this->activeRequest = $request;
+        $previousRequestScope = app(AssistantCurrentRequest::class)->replace($request);
         $this->runtimeTimingEnabled = true;
         $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
         $this->currentImageParts = [];
@@ -287,6 +290,7 @@ class AIAssistantService
             throw $exception;
         } finally {
             $this->runtimeTimingEnabled = false;
+            app(AssistantCurrentRequest::class)->replace($previousRequestScope);
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];

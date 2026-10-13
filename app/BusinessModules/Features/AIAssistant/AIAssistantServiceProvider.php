@@ -114,6 +114,7 @@ class AIAssistantServiceProvider extends ServiceProvider
         );
 
         $this->app->scoped(AIAssistantService::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest::class);
         $this->app->scoped(AssistantRequestLifecycle::class);
         $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter::class);
         $this->app->scoped(AssistantDataAccessPolicy::class);
