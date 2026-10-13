@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ConfirmedCommercialPriceConditions;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ConvertEvaluationPriceUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\SupplierPriceSnapshotReader;
 use App\Models\User;
@@ -65,7 +66,7 @@ final readonly class SaveEvaluationPriceSelection
                 ? $this->suppliers->read($actor, $session, $reference, new DateTimeImmutable('today'),
                     ['material_id' => $item['material_id'] ?? null, 'quantity' => $item['quantity'] ?? null, 'unit' => $item['unit'] ?? null])
                 : $this->catalog->read((int) $session->organization_id, $reference);
-            if ($price === null || ! hash_equals($price['source_hash'], $input['source_hash'])
+            if ($price === null || ($price['applicable'] ?? true) !== true || ! hash_equals($price['source_hash'], $input['source_hash'])
                 || $this->units->convert($price, $item['unit'] ?? null) === null) {
                 throw ValidationException::withMessages(['source_reference' => trans_message('estimate_evaluation.price_changed')]);
             }
@@ -73,7 +74,9 @@ final readonly class SaveEvaluationPriceSelection
             if (($price['stale'] ?? false) === true && ! $staleAccepted) {
                 throw ValidationException::withMessages(['stale_accepted' => trans_message('estimate_evaluation.accept_stale_price')]);
             }
-            $selection = ['work_item_key' => $item['key'], 'source_reference' => $reference, 'source_hash' => $price['source_hash'], 'stale_accepted' => $staleAccepted];
+            $confirmation = (new ConfirmedCommercialPriceConditions)->validate($price, $session, $item, $input['conditions_confirmation'] ?? null);
+            $selection = ['work_item_key' => $item['key'], 'source_reference' => $reference, 'source_hash' => $price['source_hash'],
+                'stale_accepted' => $staleAccepted, 'conditions_confirmation' => $confirmation];
             $proof = $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_price', $selection,
                 trans_message('estimate_evaluation.price_selected'), $input['request_id']);
             $payload['price_selections'][$item['key']] = [...$selection, ...$proof];

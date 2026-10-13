@@ -108,7 +108,7 @@ final class EstimateGenerationEvaluationController extends Controller
 
     public function sources(Request $request, Project $project, EstimateGenerationSession $session, GetEvaluationPriceSources $sources): JsonResponse
     {
-        $input = $request->validate(['work_item_key' => ['required', 'string', 'max:160'], 'source_type' => ['sometimes', 'in:catalog,work_type'],
+        $input = $request->validate(['work_item_key' => ['required', 'string', 'max:160'], 'source_type' => ['sometimes', 'in:catalog,work_type,supplier'],
             'search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
 
         return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id, $input['work_item_key'],
@@ -141,7 +141,14 @@ final class EstimateGenerationEvaluationController extends Controller
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
             'work_item_key' => ['required', 'string', 'max:160'], 'source_reference' => ['required', 'string', 'max:100', 'regex:/\A(?:(?:catalog|work_type):[1-9][0-9]*|supplier:[1-9][0-9]*:[1-9][0-9]*)\z/'],
-            'source_hash' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'], 'stale_accepted' => ['sometimes', 'boolean']]);
+            'source_hash' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'], 'stale_accepted' => ['sometimes', 'boolean'],
+            'conditions_confirmation' => ['sometimes', 'array:region,delivery'],
+            'conditions_confirmation.region' => ['sometimes', 'array:value,basis'],
+            'conditions_confirmation.region.value' => ['required_with:conditions_confirmation.region', 'string', 'max:240'],
+            'conditions_confirmation.region.basis' => ['required_with:conditions_confirmation.region', 'string', 'max:1000'],
+            'conditions_confirmation.delivery' => ['sometimes', 'array:work_item_key,basis'],
+            'conditions_confirmation.delivery.work_item_key' => ['required_with:conditions_confirmation.delivery', 'string', 'max:160'],
+            'conditions_confirmation.delivery.basis' => ['required_with:conditions_confirmation.delivery', 'string', 'max:1000']]);
 
         return AdminResponse::success($prices->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
     }

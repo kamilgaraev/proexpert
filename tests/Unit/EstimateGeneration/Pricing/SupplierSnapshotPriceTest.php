@@ -70,6 +70,43 @@ final class SupplierSnapshotPriceTest extends TestCase
         self::assertFalse($this->read($snapshot, ['material_id' => 12, 'quantity' => '2', 'unit' => 'count'])['applicable']);
     }
 
+    public function test_scaled_supplier_units_keep_the_quoted_quantity_in_the_work_unit(): void
+    {
+        $snapshot = $this->snapshot();
+        $snapshot['lines'][0] = [...$snapshot['lines'][0], 'quantity' => '1', 'unit' => '100 м²', 'unit_price' => '200.50'];
+        $price = $this->read($snapshot, ['material_id' => 12, 'quantity' => '100', 'unit' => 'm2']);
+        self::assertTrue($price['applicable']);
+        $converted = (new \App\BusinessModules\Addons\EstimateGeneration\Pricing\ConvertEvaluationPriceUnit)->convert($price, 'm2');
+        self::assertSame('2.0050', $converted['unit_price']);
+        self::assertSame('100', $converted['price_quantity']);
+        self::assertSame('1', $converted['source_price_quantity']);
+        self::assertFalse($this->read($snapshot, ['material_id' => 12, 'quantity' => '101', 'unit' => 'm2'])['applicable']);
+    }
+
+    public function test_batch_discovery_preserves_the_existing_canonical_source_hash(): void
+    {
+        $snapshot = $this->snapshot();
+        $snapshot['lines'][] = [...$snapshot['lines'][0], 'id' => 16, 'material_id' => 13, 'quantity' => '3', 'unit_price' => '50', 'total_amount' => '150'];
+        $snapshot = [...$snapshot, 'subtotal_amount' => '350.50', 'vat_amount' => '74.10', 'total_amount' => '444.60'];
+        $sources = (new SupplierSnapshotPrice)->extractMany($snapshot, [15 => 'supplier:1:15', 16 => 'supplier:1:16'],
+            new DateTimeImmutable('2026-10-11'), ['material_id' => 12, 'quantity' => '2', 'unit' => 'count']);
+        self::assertCount(2, $sources);
+        self::assertTrue($sources[15]['applicable']);
+        self::assertFalse($sources[16]['applicable']);
+        self::assertSame(hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
+            'header' => $snapshot, 'selected_line' => $snapshot['lines'][0],
+        ])), $sources[15]['source_hash']);
+    }
+
+    public function test_duplicate_or_oversized_source_lines_are_rejected_instead_of_silently_truncated(): void
+    {
+        $snapshot = $this->snapshot();
+        $snapshot['lines'][] = $snapshot['lines'][0];
+        self::assertNull($this->read($snapshot));
+        $snapshot['lines'] = array_fill(0, SupplierSnapshotPrice::MAX_LINES + 1, $snapshot['lines'][0]);
+        self::assertNull($this->read($snapshot));
+    }
+
     private function read(array $snapshot, array $target = []): ?array
     {
         return (new SupplierSnapshotPrice)->extract($snapshot, 15, 'supplier:1:15', new DateTimeImmutable('2026-10-11'), $target);
