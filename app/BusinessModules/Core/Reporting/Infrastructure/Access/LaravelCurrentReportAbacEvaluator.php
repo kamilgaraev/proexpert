@@ -14,6 +14,8 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Domain\Authorization\ValueObjects\PermissionSet;
 use DateTimeImmutable;
+use Illuminate\Database\DatabaseTransactionRecord;
+use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -21,6 +23,8 @@ use Throwable;
 final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvaluator
 {
     private ?string $assignmentCacheKey = null;
+
+    private ?DatabaseTransactionRecord $assignmentCacheTransaction = null;
 
     /** @var Collection<int, UserRoleAssignment>|null */
     private ?Collection $assignmentCache = null;
@@ -66,7 +70,10 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
     private function assignments(int $actorId, DateTimeImmutable $occurredAt): Collection
     {
         $cacheKey = $actorId.'|'.$occurredAt->format('Y-m-d\TH:i:s.uP');
-        if ($cacheKey !== $this->assignmentCacheKey || ! $this->assignmentCache instanceof Collection) {
+        $transaction = $this->currentTransaction();
+        if ($transaction === null || $transaction !== $this->assignmentCacheTransaction
+            || $cacheKey !== $this->assignmentCacheKey || ! $this->assignmentCache instanceof Collection) {
+            $this->customRolePermissionCache = [];
             $this->assignmentCache = UserRoleAssignment::query()
                 ->with([
                     'context.parentContext',
@@ -79,9 +86,20 @@ final class LaravelCurrentReportAbacEvaluator implements CurrentReportAbacEvalua
                 })
                 ->get();
             $this->assignmentCacheKey = $cacheKey;
+            $this->assignmentCacheTransaction = $transaction;
         }
 
         return $this->assignmentCache;
+    }
+
+    private function currentTransaction(): ?DatabaseTransactionRecord
+    {
+        $manager = app('db.transactions');
+        if (! $manager instanceof DatabaseTransactionsManager) { return null; }
+        $connection = DB::connection();
+        $record = $manager->getPendingTransactions()->last(static fn (DatabaseTransactionRecord $transaction): bool =>
+            $transaction->connection === $connection->getName() && $transaction->level === $connection->transactionLevel());
+        return $record instanceof DatabaseTransactionRecord ? $record : null;
     }
 
     private function contextMatches(UserRoleAssignment $assignment, CurrentReportAuthorizationFacts $facts): bool

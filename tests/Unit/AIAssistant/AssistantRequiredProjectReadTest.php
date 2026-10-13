@@ -187,6 +187,21 @@ final class AssistantRequiredProjectReadTest extends TestCase
         return ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
     }
 
+    public function test_report_catalog_answers_availability_without_replacing_actual_report_data(): void
+    {
+        $query = 'Какие доступные отчёты помогут мне контролировать принятый объём работ по объекту и сверять его с актами? Назови отчёты и где их открыть.';
+        $plan = $this->plan($query);
+        self::assertSame(['name' => 'get_project_report_catalog', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_report_catalog', $query));
+        self::assertContains('get_project_report_catalog', \App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface::names(['get_project_report_catalog'], $plan));
+        foreach (['Какие доступные отчёты и сколько потрачено по нашему объекту?', 'Сформируй отчёт о принятом объёме нашего объекта.',
+            'Что написано в доступных отчётах нашего проекта? Приведи выдержки.',
+            'Какие доступные отчёты есть и покажи данные отчёта по принятому объёму нашего объекта?'] as $mixed) {
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_report_catalog', $mixed));
+        }
+        self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Какие доступные отчёты есть и покажи данные отчёта по принятому объёму нашего объекта?')));
+    }
+
     public function test_commercial_executive_and_production_questions_bind_native_project_tools_and_keep_mixed_requests_unforced(): void
     {
         foreach (['Какие коммерческие предложения по нашему объекту ещё ждут нашего решения или ответа заказчика? Что нужно сделать следующим шагом?' => 'get_project_proposal_readiness',

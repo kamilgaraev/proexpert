@@ -60,6 +60,7 @@ final class AssistantToolSurface
             '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu' => ['get_project_executive_readiness'],
             '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu' => ['get_project_production_readiness'],
             '/crm|сделк/iu' => ['get_project_crm_readiness'],
+            '/отч[её]т|report/iu' => ['get_project_report_catalog'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);
