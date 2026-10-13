@@ -18,6 +18,8 @@ class AdminResponse
 
     public const NORMALIZATION_ATTRIBUTE = '_admin_response_normalizing';
 
+    public const DECODED_ARRAY_ATTRIBUTE = '_admin_response_decoded_arrays';
+
     public static function success(
         mixed $data = null,
         ?string $message = null,
@@ -97,6 +99,11 @@ class AdminResponse
     protected static function transformData(mixed $data): mixed
     {
         if (is_array($data)) {
+            $request = app()->bound('request') ? app('request') : null;
+            if ($request instanceof Request && $request->attributes->get(self::DECODED_ARRAY_ATTRIBUTE) === true) {
+                return $data;
+            }
+
             return array_map(static fn (mixed $value): mixed => self::transformData($value), $data);
         }
 

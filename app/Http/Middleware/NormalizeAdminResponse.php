@@ -23,7 +23,10 @@ class NormalizeAdminResponse
         $phaseStartedAt = $checkpoint['started_at'] ?? $phaseStartedAt;
         $hadNormalizationMarker = $request->attributes->has(AdminResponse::NORMALIZATION_ATTRIBUTE);
         $previousNormalizationMarker = $request->attributes->get(AdminResponse::NORMALIZATION_ATTRIBUTE);
+        $hadDecodedArrayMarker = $request->attributes->has(AdminResponse::DECODED_ARRAY_ATTRIBUTE);
+        $previousDecodedArrayMarker = $request->attributes->get(AdminResponse::DECODED_ARRAY_ATTRIBUTE);
         $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, true);
+        $request->attributes->set(AdminResponse::DECODED_ARRAY_ATTRIBUTE, get_class($response) === JsonResponse::class);
 
         try {
             return $this->normalizeResponse($response);
@@ -32,6 +35,11 @@ class NormalizeAdminResponse
                 $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, $previousNormalizationMarker);
             } else {
                 $request->attributes->remove(AdminResponse::NORMALIZATION_ATTRIBUTE);
+            }
+            if ($hadDecodedArrayMarker) {
+                $request->attributes->set(AdminResponse::DECODED_ARRAY_ATTRIBUTE, $previousDecodedArrayMarker);
+            } else {
+                $request->attributes->remove(AdminResponse::DECODED_ARRAY_ATTRIBUTE);
             }
             ApiQueryMetrics::recordProcessingPhase($request, 'response_normalize', $phaseStartedAt, $checkpoint);
         }

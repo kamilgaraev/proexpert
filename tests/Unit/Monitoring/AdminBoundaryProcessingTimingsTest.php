@@ -14,6 +14,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Monitoring\ApiQueryMetrics;
+use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Mockery;
@@ -119,6 +120,7 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
             self::assertSame('fixture failure', $exception->getMessage());
             self::assertSame(1, $this->phases($request)['response_normalize']['count']);
             self::assertFalse($request->attributes->has(AdminResponse::NORMALIZATION_ATTRIBUTE));
+            self::assertFalse($request->attributes->has(AdminResponse::DECODED_ARRAY_ATTRIBUTE));
         }
     }
 
@@ -127,6 +129,7 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         $request = Request::create('/api/v1/admin/design-management/packages', 'GET');
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, new ApiQueryMetrics(true));
         $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, false);
+        $request->attributes->set(AdminResponse::DECODED_ARRAY_ATTRIBUTE, 'previous');
         $this->app->instance('request', $request);
 
         $original = AdminResponse::paginated([['id' => 1]], ['total' => 1]);
@@ -137,6 +140,42 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         self::assertSame(1, $this->phases($request)['list_encode']['count']);
         self::assertSame(1, $this->phases($request)['response_normalize']['count']);
         self::assertFalse($request->attributes->get(AdminResponse::NORMALIZATION_ATTRIBUTE));
+        self::assertSame('previous', $request->attributes->get(AdminResponse::DECODED_ARRAY_ATTRIBUTE));
+    }
+
+    public function test_custom_response_payload_keeps_recursive_conversion_and_restores_native_marker(): void
+    {
+        $request = $this->request();
+        $request->attributes->set(AdminResponse::DECODED_ARRAY_ATTRIBUTE, true);
+        $this->app->instance('request', $request);
+        $dto = Mockery::mock(Arrayable::class);
+        $dto->shouldReceive('toArray')->once()->andReturn(['fixture' => true]);
+        $original = Mockery::mock(JsonResponse::class)->makePartial();
+        $original->shouldReceive('getData')->once()->with(true)->andReturn(['success' => true, 'data' => [['nested' => $dto]], 'meta' => ['total' => 1]]);
+        $original->shouldReceive('getStatusCode')->andReturn(200);
+        $original->headers = new \Symfony\Component\HttpFoundation\ResponseHeaderBag;
+
+        $response = (new NormalizeAdminResponse)->handle($request, fn () => $original);
+
+        self::assertInstanceOf(JsonResponse::class, $response);
+        self::assertSame([['nested' => ['fixture' => true]]], $response->getData(true)['data']);
+        self::assertSame(['total' => 1], $response->getData(true)['meta']);
+        self::assertTrue($request->attributes->get(AdminResponse::DECODED_ARRAY_ATTRIBUTE));
+    }
+
+    public function test_native_normalization_preserves_nested_scalar_and_pagination_payloads(): void
+    {
+        $request = $this->request();
+        $this->app->instance('request', $request);
+        $data = [['nested' => ['empty' => [], 'null' => null, 'boolean' => false, 'float' => 2.5, 'unicode' => 'МОСТ']]];
+        foreach ([new JsonResponse(['data' => $data, 'current_page' => 1, 'last_page' => 2, 'per_page' => 1, 'total' => 2, 'next_page_url' => '/fixture']), AdminResponse::paginated($data, ['total' => 2], 'fixture', 201, ['count' => 1], ['next' => '/fixture'])] as $original) {
+            $response = (new NormalizeAdminResponse)->handle($request, fn () => $original);
+            self::assertInstanceOf(JsonResponse::class, $response);
+            self::assertSame($data, $response->getData(true)['data']);
+            self::assertSame(2, $response->getData(true)['meta']['total']);
+            self::assertSame($original->getStatusCode(), $response->getStatusCode());
+            self::assertFalse($request->attributes->has(AdminResponse::DECODED_ARRAY_ATTRIBUTE));
+        }
     }
 
     private function request(): Request
