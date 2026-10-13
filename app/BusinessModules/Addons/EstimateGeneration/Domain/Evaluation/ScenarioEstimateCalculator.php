@@ -109,7 +109,7 @@ final class ScenarioEstimateCalculator
                 $price = $position['price_snapshot'];
                 $deliveryKey = is_array($price) ? ($price['delivery_work_item_key'] ?? null) : null;
                 $linked = is_string($deliveryKey) ? ($byKey[$deliveryKey] ?? null) : null;
-                if ($linked === null || $deliveryKey === $position['key'] || ($linked['work_key'] ?? null) !== 'delivery'
+                if ($linked === null || $deliveryKey === $position['key'] || ($linked['coverage_requirement'] ?? $linked['work_key'] ?? null) !== 'delivery'
                     || ! is_string($position['entity_id'] ?? null) || ($linked['entity_id'] ?? null) !== $position['entity_id']
                     || ($linked['section'] ?? null) !== $position['section'] || ($linked['pricing_status'] ?? null) !== 'calculated'
                     || ($linked['price_snapshot']['conditions_missing'] ?? []) !== [] || ($linked['money_breakdown'] ?? null) === null

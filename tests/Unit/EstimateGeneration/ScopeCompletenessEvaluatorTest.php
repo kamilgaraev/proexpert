@@ -16,6 +16,22 @@ use PHPUnit\Framework\TestCase;
 
 final class ScopeCompletenessEvaluatorTest extends TestCase
 {
+    public function test_specific_work_identity_preserves_coverage_of_the_same_entity_and_legacy_positions(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $entities = [new Entity('wall:1', 1, 2, 3, $version, 'wall', 'wall:1'), new Entity('wall:2', 1, 2, 3, $version, 'wall', 'wall:2')];
+        $positions = [['key' => 'prepare', 'section' => 'finishing', 'entity_id' => 'wall:1', 'work_key' => 'rough.walls', 'coverage_requirement' => 'preparation'],
+            ['key' => 'paint', 'section' => 'finishing', 'entity_id' => 'wall:1', 'work_key' => 'finish.paint', 'coverage_requirement' => 'finishing']];
+        $snapshot = new ProjectModelSnapshot($entities, [], [], []);
+        $evaluator = new ScopeCompletenessEvaluator;
+        $covered = $evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['wall:1']], $positions);
+        self::assertTrue($covered['scope_complete']);
+        self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['wall:2']], $positions)['scope_complete']);
+        $legacy = array_map(static fn (array $position): array => [...array_diff_key($position, ['coverage_requirement' => true]),
+            'work_key' => $position['coverage_requirement']], $positions);
+        self::assertTrue($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['wall:1']], $legacy)['scope_complete']);
+    }
+
     public function test_water_test_program_cannot_close_electricity_or_another_water_entity(): void
     {
         $version = 'sha256:'.str_repeat('a', 64);

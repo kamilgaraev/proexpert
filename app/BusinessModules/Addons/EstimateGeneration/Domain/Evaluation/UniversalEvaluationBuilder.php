@@ -49,7 +49,8 @@ final readonly class UniversalEvaluationBuilder
                     }
                     $position = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'], 'section' => $sectionKey,
                         'package_key' => $estimate['key'], 'entity_id' => $entityId, 'unit' => $item['unit'] ?? null,
-                        'work_key' => $item['metadata']['requirement_key'] ?? $item['work_key'] ?? $item['key'],
+                        'work_key' => $item['work_key'] ?? $item['key'],
+                        'coverage_requirement' => $item['metadata']['requirement_key'] ?? $item['work_key'] ?? $item['key'],
                         'quantity' => $item['quantity'] ?? null, 'quantity_status' => $item['quantity_status'] ?? 'unknown',
                         'quantity_formula' => $quantity['formula_key'] ?? null, 'quantity_basis' => $quantity,
                         'quantity_evidence_details' => $this->quantityEvidenceDetails($quantity, $factsById, $proofsById),

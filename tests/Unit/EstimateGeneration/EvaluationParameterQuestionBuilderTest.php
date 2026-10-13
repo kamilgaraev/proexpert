@@ -74,9 +74,9 @@ final class EvaluationParameterQuestionBuilderTest extends TestCase
         $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'quantity_coverage_warnings' => [$this->warning()],
             'local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [
                 ['key' => 'paint', 'work_key' => 'finish.paint', 'name' => 'Окраска стен', 'quantity' => null, 'unit' => 'm2',
-                    'metadata' => ['scope_entity_id' => 'wall:1']],
+                    'metadata' => ['scope_entity_id' => 'wall:1', 'requirement_key' => 'finishing']],
                 ['key' => 'plaster', 'work_key' => 'rough.walls', 'name' => 'Штукатурка стен', 'quantity' => null, 'unit' => 'm2',
-                    'metadata' => ['scope_entity_id' => 'wall:1']],
+                    'metadata' => ['scope_entity_id' => 'wall:1', 'requirement_key' => 'finishing']],
             ]]]]]];
         $result = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([$this->entity()], [], [], []));
         self::assertLessThanOrEqual(3, count($result['priority_questions']));
