@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Resources\OrganizationResource\Pages;
 
 use App\Filament\Actions\LegacyEstimatorReconciliationAction;
+use App\Filament\Actions\LegacyEstimatorRefundResolutionAction;
 use App\Filament\Actions\LegacyEstimatorRestoreAction;
 use App\Filament\Resources\OrganizationResource;
 use App\Models\Organization;
@@ -24,6 +25,7 @@ class ViewOrganization extends ViewRecord
         if ($organization instanceof Organization) {
             $actions[] = LegacyEstimatorReconciliationAction::make($organization);
             $actions[] = LegacyEstimatorRestoreAction::make($organization);
+            $actions[] = LegacyEstimatorRefundResolutionAction::make($organization);
         }
 
         return $actions;

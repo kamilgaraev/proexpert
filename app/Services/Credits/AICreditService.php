@@ -373,6 +373,47 @@ final class AICreditService
         $this->grantInternal($organization, 0, 'conversion', null, $idempotencyKey, $commercialOrderId, $metadata, true);
     }
 
+    /** Financial authorization and immutable receipt belong to the calling reconciliation service.
+     * Reduces or releases one held lot without granting units or rewriting its original grant.
+     */
+    public function resolveLegacyRefundHold(Organization $organization, int $lotId, int $expectedRemainingMinor,
+        int $expectedRefundMinor, int $remainingMinor, string $idempotencyKey, array $metadata): void
+    {
+        DB::transaction(function () use ($organization, $lotId, $expectedRemainingMinor, $expectedRefundMinor, $remainingMinor, $idempotencyKey, $metadata): void {
+            $wallet = $this->walletForUpdate((int) $organization->id);
+            $lot = AICreditLot::query()->whereKey($lotId)->where('organization_id', $organization->id)->lockForUpdate()->firstOrFail();
+            if ($lot->source !== 'conversion' || ($lot->metadata['migration_version'] ?? null) !== 'estimator-paid:v1'
+                || ($lot->metadata[AICreditLot::LEGACY_REFUND_HOLD] ?? false) !== true
+                || (int) $lot->remaining_minor !== $expectedRemainingMinor
+                || ($lot->metadata['legacy_estimator_refund_amount_minor'] ?? null) !== $expectedRefundMinor
+                || $remainingMinor < 0 || $remainingMinor > $expectedRemainingMinor
+                || ! is_int($metadata['resolution_id'] ?? null) || $metadata['resolution_id'] < 1
+                || ! is_int($metadata['rounding_remainder_micro_rub'] ?? null) || $metadata['rounding_remainder_micro_rub'] < 0
+                || ! is_string($metadata['proof_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $metadata['proof_hash']) !== 1) {
+                throw new DomainException('legacy_estimator_refund_resolution_lot_changed');
+            }
+            if (AICreditReservation::query()->where('organization_id', $organization->id)->where('status', 'reserved')
+                ->whereHas('allocations', fn ($query) => $query->where('ai_credit_lot_id', $lotId))->exists()
+                || AICreditLedgerEntry::query()->where('organization_id', $organization->id)->where('idempotency_key', $idempotencyKey)->exists()) {
+                throw new DomainException('legacy_estimator_refund_resolution_reserve_or_replay_changed');
+            }
+            $revoke = $expectedRemainingMinor - $remainingMinor;
+            if ($revoke > (int) $wallet->balance_minor - (int) $wallet->reserved_minor) {
+                throw new DomainException('legacy_estimator_refund_resolution_wallet_changed');
+            }
+            $lotMetadata = (array) $lot->metadata;
+            $lotMetadata[AICreditLot::LEGACY_REFUND_HOLD] = false;
+            $lotMetadata['legacy_refund_resolution_id'] = $metadata['resolution_id'];
+            $lotMetadata['legacy_resolution_remainder_micro_rub'] = $metadata['rounding_remainder_micro_rub'];
+            $lot->forceFill(['remaining_minor' => $remainingMinor, 'metadata' => $lotMetadata])->save();
+            if ($revoke > 0) {
+                $wallet->decrement('balance_minor', $revoke);
+                $wallet->refresh();
+            }
+            $this->appendJournal($wallet, 'hold_resolution', -$revoke, 'lot', (string) $lotId, $idempotencyKey, $metadata);
+        }, 1);
+    }
+
     /** The caller authorizes the financial correction; only an entirely unused, unreserved conversion lot can be restored. */
     public function reverseUnusedConversion(Organization $organization, int $grantId, string $idempotencyKey, array $metadata): void
     {

@@ -6,7 +6,9 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\LegacyEstimatorReconciliationData;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\LegacyEstimatorRefundResolutionData;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\ReconcileLegacyEstimatorPaidBalance;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\ResolveLegacyEstimatorRefundHold;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\RestoreLegacyEstimatorPaidBalance;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
@@ -175,6 +177,223 @@ final class LegacyEstimatorReconciliationPostgresTest extends EstimateGeneration
         self::assertSame(20, app(CommercialQuotaService::class)->getEffectiveAiEstimateMonthlyLimits([(int) $organization->id])[$organization->id]);
         self::assertSame($before->proof_hash, DB::table(ReconcileLegacyEstimatorPaidBalance::TABLE)->where('id', $receipt['reconciliation_id'])->value('proof_hash'));
         self::assertSame('10.00', $allocation->fresh()->quantity);
+    }
+
+    public function test_refund_resolution_reduces_only_the_held_lot_and_preserves_the_original_proof(): void
+    {
+        [$actor, $organization, $id, $order] = $this->heldFixture();
+        $proof = DB::table(ReconcileLegacyEstimatorPaidBalance::TABLE)->where('id', $id)->value('proof');
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        $preview = $service->preview((int) $actor->id, (int) $organization->id, $id);
+        self::assertSame(600, $preview['maximum_paid_amount_minor']);
+        $data = $this->resolutionCommand($actor, $organization, $id, 400);
+        config(['ai-assistant-credits.packs.ai-credits-1000.amount_minor' => 120000]);
+        $receipt = $service->confirm((int) $actor->id, $data);
+        self::assertSame(400, $receipt['remaining_units_minor']);
+        self::assertSame(200, $receipt['revoked_units_minor']);
+        self::assertSame(400, app(AICreditService::class)->balance($organization)['available_minor']);
+        self::assertSame(0, app(AICreditService::class)->balance($organization)['reconciliation_held_minor']);
+        self::assertSame($proof, DB::table(ReconcileLegacyEstimatorPaidBalance::TABLE)->where('id', $id)->value('proof'));
+        self::assertTrue($service->confirm((int) $actor->id, $data)['idempotent_replay']);
+        self::assertSame(1, DB::table(ResolveLegacyEstimatorRefundHold::TABLE)->where('organization_id', $organization->id)->count());
+        self::assertSame(-200, (int) DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->where('type', 'hold_resolution')->sum('amount_minor'));
+        CommercialPayment::query()->where('commercial_order_id', $order->id)->update(['refunded_amount_minor' => 200]);
+        app(AICreditCommercialService::class)->refund($order, 200);
+        self::assertSame(400, app(AICreditService::class)->balance($organization)['reconciliation_held_minor']);
+        self::assertSame(400, $service->preview((int) $actor->id, (int) $organization->id, $id)['maximum_paid_amount_minor']);
+        self::assertSame(300, $service->confirm((int) $actor->id, $this->resolutionCommand($actor, $organization, $id, 300))['remaining_units_minor']);
+    }
+
+    public function test_refund_resolution_can_release_unchanged_or_zero_balance_without_a_new_grant(): void
+    {
+        foreach ([600, 0] as $remaining) {
+            [$actor, $organization, $id] = $this->heldFixture();
+            $receipt = app(ResolveLegacyEstimatorRefundHold::class)->confirm((int) $actor->id,
+                $this->resolutionCommand($actor, $organization, $id, $remaining));
+            self::assertSame($remaining, $receipt['remaining_units_minor']);
+            self::assertSame($remaining, app(AICreditService::class)->balance($organization)['available_minor']);
+            self::assertSame(1, DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->where('type', 'grant')->count());
+        }
+    }
+
+    public function test_changed_refund_snapshot_permission_and_request_cannot_release_money(): void
+    {
+        [$actor, $organization, $id, $order] = $this->heldFixture();
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        $data = $this->resolutionCommand($actor, $organization, $id, 400);
+        CommercialPayment::query()->where('commercial_order_id', $order->id)->update(['refunded_amount_minor' => 200]);
+        app(AICreditCommercialService::class)->refund($order, 200);
+        try {
+            $service->confirm((int) $actor->id, $data);
+            self::fail('Changed refund snapshot released the balance.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_snapshot_changed', $error->getMessage());
+        }
+        $data = $this->resolutionCommand($actor, $organization, $id, 400);
+        $service->confirm((int) $actor->id, $data);
+        $changed = new LegacyEstimatorRefundResolutionData(...array_replace(get_object_vars($data), ['remainingPaidAmountMinor' => 500]));
+        try {
+            $service->confirm((int) $actor->id, $changed);
+            self::fail('Changed replay released more money.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_request_changed', $error->getMessage());
+        }
+        $actor->forceFill(['is_active' => false])->save();
+        $this->expectException(\DomainException::class);
+        $service->confirm((int) $actor->id, $data);
+    }
+
+    public function test_refund_resolution_rejects_unknown_lot_history_and_foreign_scope(): void
+    {
+        [$actor, $organization, $id] = $this->heldFixture();
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        try {
+            $service->preview((int) $actor->id, (int) Organization::factory()->create()->id, $id);
+            self::fail('A foreign reconciliation was read.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_scope_invalid', $error->getMessage());
+        }
+        DB::table('ai_credit_lots')->where('organization_id', $organization->id)->update(['remaining_minor' => 599]);
+        $this->expectExceptionMessage('legacy_estimator_refund_resolution_history_unknown');
+        $service->preview((int) $actor->id, (int) $organization->id, $id);
+    }
+
+    public function test_refund_resolution_receipt_is_immutable(): void
+    {
+        [$actor, $organization, $id] = $this->heldFixture();
+        $receipt = app(ResolveLegacyEstimatorRefundHold::class)->confirm((int) $actor->id,
+            $this->resolutionCommand($actor, $organization, $id, 400));
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table(ResolveLegacyEstimatorRefundHold::TABLE)->where('id', $receipt['resolution_id'])->update(['remaining_units_minor' => 600]);
+    }
+
+    public function test_refund_resolution_accounts_for_real_consumption_before_releasing_the_remainder(): void
+    {
+        [$actor, $organization, $id, $order] = $this->heldFixture(true);
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        CommercialPayment::query()->where('commercial_order_id', $order->id)->update(['refunded_amount_minor' => 700]);
+        app(AICreditCommercialService::class)->refund($order, 700);
+        // Payment1000 - refund700 - actual consumption50 leaves only250 money for this lot.
+        self::assertSame(250, $service->preview((int) $actor->id, (int) $organization->id, $id)['maximum_paid_amount_minor']);
+        try {
+            $service->confirm((int) $actor->id, $this->resolutionCommand($actor, $organization, $id, 251));
+            self::fail('Previously consumed money was released.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_exceeds_ceiling', $error->getMessage());
+        }
+        self::assertSame(200, $service->confirm((int) $actor->id,
+            $this->resolutionCommand($actor, $organization, $id, 200))['remaining_units_minor']);
+        self::assertSame(200, app(AICreditService::class)->balance($organization)['available_minor']);
+    }
+
+    public function test_refund_resolution_respects_the_unreturned_payment_and_requires_joint_allocation_evidence(): void
+    {
+        [$actor, $organization, $id, $order] = $this->heldFixture();
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        CommercialPayment::query()->where('commercial_order_id', $order->id)->update(['refunded_amount_minor' => 900]);
+        app(AICreditCommercialService::class)->refund($order, 900);
+        self::assertSame(100, $service->preview((int) $actor->id, (int) $organization->id, $id)['maximum_paid_amount_minor']);
+        try {
+            $service->confirm((int) $actor->id, $this->resolutionCommand($actor, $organization, $id, 101));
+            self::fail('Returned payment money was released.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_exceeds_ceiling', $error->getMessage());
+        }
+        // Ambiguous legacy data is preserved and requires a joint financial document.
+        app(AICreditService::class)->grant($organization, 50, 'conversion', null, 'fixture:second-conversion', (int) $order->id);
+        [$owner, $request] = $this->creditRequest($organization);
+        $credits = app(AICreditService::class);
+        $quote = $credits->quoteEstimator($organization, $owner, $request);
+        $reservation = $credits->beginEstimator($organization, $owner, $quote['quote_id'], $request);
+        $credits->recordProviderCost($reservation, 1, 'fixture', 'recorded', 'generation', ['usage_key' => 'fixture:other-lot'], true);
+        self::assertSame(50, $credits->finalize($reservation));
+        self::assertSame(0, (int) DB::table('ai_credit_lots')->where('organization_id', $organization->id)
+            ->where('metadata->migration_version', null)->where('source', 'conversion')->value('remaining_minor'));
+        $this->expectExceptionMessage('legacy_estimator_refund_resolution_joint_or_lot_changed');
+        $service->preview((int) $actor->id, (int) $organization->id, $id);
+    }
+
+    public function test_refund_resolution_rejects_a_pending_refund_and_tampered_previous_receipt_metadata(): void
+    {
+        [$actor, $organization, $id, $order] = $this->heldFixture();
+        $service = app(ResolveLegacyEstimatorRefundHold::class);
+        $data = $this->resolutionCommand($actor, $organization, $id, 400);
+        $payment = CommercialPayment::query()->where('commercial_order_id', $order->id)->firstOrFail();
+        $payment->forceFill(['reconciliation_required' => true])->save();
+        try {
+            $service->confirm((int) $actor->id, $data);
+            self::fail('A financially uncertain payment was resolved.');
+        } catch (\DomainException $error) {
+            self::assertSame('legacy_estimator_refund_resolution_payment_unknown', $error->getMessage());
+        }
+        $payment->forceFill(['reconciliation_required' => false])->save();
+        $service->confirm((int) $actor->id, $data);
+        $payment->forceFill(['refunded_amount_minor' => 200])->save();
+        app(AICreditCommercialService::class)->refund($order, 200);
+        $lot = \App\Models\Credits\AICreditLot::query()->where('organization_id', $organization->id)->firstOrFail();
+        $metadata = $lot->metadata;
+        $metadata['legacy_resolution_remainder_micro_rub'] = 10000;
+        $lot->forceFill(['metadata' => $metadata])->save();
+        $this->expectExceptionMessage('legacy_estimator_refund_resolution_history_unknown');
+        $service->preview((int) $actor->id, (int) $organization->id, $id);
+    }
+
+    public function test_audit_failure_rolls_back_the_receipt_correction_and_hold_release(): void
+    {
+        [$actor, $organization, $id] = $this->heldFixture();
+        $data = $this->resolutionCommand($actor, $organization, $id, 400);
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION fixture_reject_legacy_refund_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.event_type='legacy_estimator_refund_resolved' THEN RAISE EXCEPTION 'fixture.audit_failure'; END IF;
+ RETURN NEW;
+END;
+$$;
+CREATE TRIGGER fixture_reject_legacy_refund_audit_trg BEFORE INSERT ON immutable_audit_events
+FOR EACH ROW EXECUTE FUNCTION fixture_reject_legacy_refund_audit();
+SQL);
+        try {
+            try {
+                app(ResolveLegacyEstimatorRefundHold::class)->confirm((int) $actor->id, $data);
+                self::fail('Financial correction was published without its immutable audit.');
+            } catch (\Illuminate\Database\QueryException $error) {
+                self::assertStringContainsString('fixture.audit_failure', $error->getMessage());
+            }
+            self::assertSame(0, DB::table(ResolveLegacyEstimatorRefundHold::TABLE)->where('organization_id', $organization->id)->count());
+            self::assertSame(0, DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->where('type', 'hold_resolution')->count());
+            self::assertSame(600, app(AICreditService::class)->balance($organization)['reconciliation_held_minor']);
+            self::assertSame(600, app(AICreditService::class)->balance($organization)['total_minor']);
+        } finally {
+            DB::unprepared('DROP TRIGGER fixture_reject_legacy_refund_audit_trg ON immutable_audit_events; DROP FUNCTION fixture_reject_legacy_refund_audit();');
+        }
+    }
+
+    private function heldFixture(bool $consume = false): array
+    {
+        [$actor, $organization, $allocation] = $this->fixture();
+        $receipt = app(ReconcileLegacyEstimatorPaidBalance::class)->confirm((int) $actor->id, $this->command($actor, $allocation, 600));
+        if ($consume) {
+            [$owner, $request] = $this->creditRequest($organization);
+            $credits = app(AICreditService::class);
+            $quote = $credits->quoteEstimator($organization, $owner, $request);
+            $reservation = $credits->beginEstimator($organization, $owner, $quote['quote_id'], $request);
+            $credits->recordProviderCost($reservation, 1, 'fixture', 'recorded', 'generation', ['usage_key' => 'fixture:consumed'], true);
+            self::assertSame(50, $credits->finalize($reservation));
+        }
+        $order = CommercialOrder::query()->where('organization_id', $organization->id)->firstOrFail();
+        CommercialPayment::query()->where('commercial_order_id', $order->id)->update(['refunded_amount_minor' => 100]);
+        app(AICreditCommercialService::class)->refund($order, 100);
+
+        return [$actor, $organization, $receipt['reconciliation_id'], $order];
+    }
+
+    private function resolutionCommand(SystemAdmin $actor, Organization $organization, int $id, int $remaining): LegacyEstimatorRefundResolutionData
+    {
+        $preview = app(ResolveLegacyEstimatorRefundHold::class)->preview((int) $actor->id, (int) $organization->id, $id);
+
+        return new LegacyEstimatorRefundResolutionData((int) $organization->id, $id, (string) Str::uuid(),
+            $preview['snapshot_hash'], $remaining, 'RECON-REFUND-001', hash('sha256', 'fixture refund attribution document'),
+            'Finance confirms unused cash after previous consumption and external refund.');
     }
 
     private function fixture(): array
