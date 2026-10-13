@@ -20,6 +20,7 @@ final class AssistantToolEligibilityPolicy
         'get_project_payment_readiness',
         'get_document_readiness',
         'get_project_machinery_summary',
+        'get_project_handover_summary',
         'get_project_contract_roster',
         'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions', 'search_estimate_positions',
         'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',

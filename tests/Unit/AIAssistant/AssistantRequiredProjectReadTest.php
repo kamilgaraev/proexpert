@@ -11,6 +11,21 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_handover_summary_binds_selected_project_and_preserves_other_requests(): void
+    {
+        $query = 'Что у нас по приёмке и передаче нашего объекта: какие зоны уже приняты, какие ещё в работе и что должно быть следующим шагом?';
+        $plan = $this->plan($query);
+        self::assertSame(['name' => 'get_project_handover_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_handover_summary', ['project_id' => 999]));
+        self::assertSame(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectHandoverReader::class, AssistantRequiredProjectRead::decisionReader('get_project_handover_summary', $query));
+        foreach (['Какие зоны нашего объекта приняты и сколько затрат за сентябрь?', 'Покажи приёмку нашего проекта и его график.',
+            'Прими зону нашего объекта.', 'Что по приёмке и передаче нашего объекта и сколько оплатить?',
+            'Что по приёмке нашего объекта и какие действующие договоры?', 'Что по приёмке нашего объекта и какие счета не оплачены?'] as $mixed) {
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_handover_summary', $mixed));
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+        }
+    }
+
     public function test_active_contract_meeting_roster_is_scoped_and_does_not_replace_money_questions(): void
     {
         $plan = $this->plan('Какие действующие договоры и подрядчики у нашего объекта? Покажи номера и плановые сроки окончания, чтобы я мог подготовить встречу с ними.');

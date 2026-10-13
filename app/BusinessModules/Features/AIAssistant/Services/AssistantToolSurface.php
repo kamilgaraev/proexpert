@@ -51,6 +51,7 @@ final class AssistantToolSurface
             '/сч[её]т|плат[её]ж|оплат/iu' => ['get_project_payment_readiness'],
             '/документ|файл/iu' => ['get_document_readiness'],
             '/техник|машин|механизм|machinery/iu' => ['get_project_machinery_summary'],
+            '/при[её]мк|передач|зон[а-яё]*.*принят|handover/iu' => ['get_project_handover_summary'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);

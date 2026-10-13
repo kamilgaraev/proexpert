@@ -13,6 +13,14 @@ final class AssistantToolSurfaceTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_handover_question_exposes_native_read_tool_without_actions(): void
+    {
+        $names = AssistantToolSurface::names(['assistant_domain_search', 'get_project_handover_summary', 'approve_payment_request'],
+            ['request' => ['message' => 'Что по приёмке и передаче нашего объекта?', 'allow_actions' => false]]);
+        self::assertContains('get_project_handover_summary', $names);
+        self::assertNotContains('approve_payment_request', $names);
+    }
+
     private const READ_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
         'assistant_domain_discover_capabilities', 'search_projects', 'search_assistant_documents', 'get_estimate_answer',
         'search_estimate_positions', 'resolve_estimate', 'get_bim_model_elements', 'get_contract_snapshot',
