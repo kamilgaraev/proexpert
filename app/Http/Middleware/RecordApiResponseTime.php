@@ -60,7 +60,7 @@ final class RecordApiResponseTime
                 'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
             ] + $metrics->summary();
 
-            if ($request->isMethod('GET') && $request->is('api/v1/admin/design-management/packages') && $response instanceof JsonResponse) {
+            if ($request->isMethod('GET') && $request->is('api/v1/admin/design-management/packages', 'api/v1/admin/construction-journals/*') && $response instanceof JsonResponse) {
                 $context['response_bytes'] = strlen((string) $response->getContent());
             }
 
