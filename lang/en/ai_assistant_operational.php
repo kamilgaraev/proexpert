@@ -27,7 +27,7 @@ return [
     'supplier_scope' => 'Organization supplier directory as of :date.',
     'supplier_counts' => 'Total suppliers: :total; active: :active.',
     'supplier_active' => 'Active', 'supplier_inactive' => 'Inactive',
-    'supplier_navigation' => 'Open Catalogs → Suppliers (/suppliers) and search by part of the name. Use the active filter if needed. This is the organization directory; deliveries and contracts have not been checked.',
+    'supplier_navigation' => 'Open Catalogs → Suppliers (/catalogs/suppliers) and search by part of the name. Use the active filter if needed. This is the organization directory; deliveries and contracts have not been checked.',
     'activity_description' => 'Organization activity for the last seven calendar days, inclusive: current availability, complete counts and 20 latest events. If access is denied, counts are unknown. No modifications.',
     'activity_unavailable' => 'Organization activity is unavailable: the current user has no active permission or the section is not enabled. Event counts and actors are unknown; unavailable does not mean no actions occurred. Ask the organization administrator to check activity access.',
     'activity_scope' => 'Organization activity from :from to :to, inclusive.',
