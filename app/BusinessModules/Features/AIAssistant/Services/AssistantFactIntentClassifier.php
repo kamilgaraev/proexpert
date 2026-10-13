@@ -99,6 +99,28 @@ final class AssistantFactIntentClassifier
             || preg_match(self::FINANCIAL_RECORD, $query) || self::isProjectExpenseRequest($query) || preg_match('/(?:остат|колич|объ[её]м|сколько)/iu', $query));
     }
 
+    public static function organizationLegalFields(string $query): ?array
+    {
+        $facts = preg_replace('/перед\s+(?:оформлением|заключением)\s+договор[а-яё]*/iu', '', $query) ?? $query;
+        if (preg_match('/организац|компани/iu', $facts) !== 1 || preg_match('/реквизит|инн|юридическ[а-яё]*\s+(?:назван|наименован)|номер[а-яё]*\s+регистрац/iu', $facts) !== 1
+            || preg_match('/пакет|подписк|тариф|баланс|единиц|модул|оплат|сч[её]т|договор|смет|проект|сотрудник|пользовател|поставщик|контрагент|расход|бюджет|прибыл|сколько|телефон|почт|банк|адрес|огрн|кпп|создай|измени|обнови|удали/iu', $facts) === 1) {
+            return null;
+        }
+        preg_match_all('/[\pL\pN_]+/u', mb_strtolower($facts), $words);
+        foreach ($words[0] as $word) {
+            if (preg_match('/^(?:какие|какое|покажи|покажите|дай|подскажи|официальн[а-яё]*|юридическ[а-яё]*|реквизит[а-яё]*|организац[а-яё]*|компани[а-яё]*|у|нас|в|и|или|сохран[а-яё]*|назван[а-яё]*|наименован[а-яё]*|инн|номер[а-яё]*|регистрац[а-яё]*|где|руководител[а-яё]*|провери[а-яё]*|их|наши|нашей|нашу|наша|нашего|текущей|текущие|пожалуйста|сейчас|можно|мне|посмотреть)$/u', $word) !== 1) {
+                return null;
+            }
+        }
+        $groups = [];
+        $all = preg_match('/реквизит/iu', $facts) === 1;
+        if ($all || preg_match('/назван|наименован/iu', $facts) === 1) { $groups[] = ['legal_name', 'name']; }
+        if ($all || preg_match('/инн/iu', $facts) === 1) { $groups[] = ['tax_number']; }
+        if ($all || preg_match('/регистрац/iu', $facts) === 1) { $groups[] = ['registration_number']; }
+
+        return $groups !== [] ? $groups : null;
+    }
+
     public static function isMoneyOnly(string $query): bool
     {
         return ! self::isNarrative($query) && ((bool) preg_match(self::MONEY, $query) || self::isProjectExpenseRequest($query))

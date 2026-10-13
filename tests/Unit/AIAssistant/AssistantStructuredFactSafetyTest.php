@@ -269,6 +269,27 @@ final class AssistantStructuredFactSafetyTest extends TestCase
         self::assertStringContainsString('личном кабинете МОСТ', $result['server_formatted_facts']);
         self::assertStringNotContainsString('/catalogs', $result['server_formatted_facts']);
         self::assertStringContainsString('UTC', $result['server_formatted_facts']);
+        $model->setRawAttributes(['id' => 3, 'name' => 'Организация', 'legal_name' => 'ООО Организация', 'tax_number' => '1234567890', 'registration_number' => '1191234567890'], true);
+        $fields = ['name', 'legal_name', 'tax_number', 'registration_number'];
+        $ref = $this->reference(3, 'core_organization', $fields);
+        $ref['fetched_at'] = '2026-10-13T19:49:00Z';
+        $ref['navigation']['url'] = '';
+        $row = AssistantStructuredFactFormatter::row($model, 'core_organization', $fields, $ref);
+        $result = AssistantStructuredFactFormatter::payload([$row], '2026-10-13T19:49:00Z');
+        $query = 'Какие официальные реквизиты организации у нас сохранены: название, ИНН и номер регистрации? Где руководителю проверить их перед оформлением договора?';
+        $guarded = (new AssistantStructuredFactVerifier)->guard($query, 'Откройте каталоги админки. Получено 19:49 МСК.', [$result]);
+        self::assertStringContainsString('1234567890', $guarded['text']);
+        self::assertStringContainsString('1191234567890', $guarded['text']);
+        self::assertStringContainsString('личном кабинете МОСТ', $guarded['text']);
+        self::assertStringContainsString('UTC', $guarded['text']);
+        self::assertStringNotContainsString('МСК', $guarded['text']);
+        self::assertSame([$ref], $guarded['source_refs']);
+        self::assertFalse($guarded['needs_clarification']);
+        $missing = (new AssistantStructuredFactVerifier)->guard($query, 'Выдуманные реквизиты', []);
+        self::assertTrue($missing['needs_clarification']);
+        foreach (['Реквизиты организации и какие счета оплатить?', 'Реквизиты организации и действующие пакеты МОСТ', 'Реквизиты организации и сколько пользователей?', 'Реквизиты организации и кто сегодня в отпуске?', 'Реквизиты организации и просроченные заявки', 'Измени реквизиты организации'] as $mixed) {
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassifier::organizationLegalFields($mixed));
+        }
     }
 
     private function reference(int $id, string $type, array $fields): array

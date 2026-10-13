@@ -1803,12 +1803,12 @@ class AIAssistantService
         if ($pending === null || !($pending['conversation'] ?? null) instanceof Conversation) {
             return;
         }
-        if ($pending['source_refs'] !== [] && ! app(AssistantSourceReferenceGuard::class)->fresh($actor, (int) $pending['conversation']->organization_id, $pending['source_refs'])) {
-            throw new \RuntimeException('assistant_response_sources_stale');
-        }
         if (($pending['validation_status'] ?? 'verified') !== 'verified') {
             $this->pendingSummary = null;
             return;
+        }
+        if ($pending['source_refs'] !== [] && ! app(AssistantSourceReferenceGuard::class)->fresh($actor, (int) $pending['conversation']->organization_id, $pending['source_refs'])) {
+            throw new \RuntimeException('assistant_response_sources_stale');
         }
         $this->measurePhase('summary_publish', function () use ($pending, $actor): void {
             $conversation = $pending['conversation'];
