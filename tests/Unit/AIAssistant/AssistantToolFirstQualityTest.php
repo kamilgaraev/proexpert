@@ -214,7 +214,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         ]]];
         $service = $this->service(['assistant_domain_read' => $result], [
             ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
-            ['content' => json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+            ['content' => "```json\n".json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)."\n```"],
         ]);
 
         $response = $service->ask($query, 15, $this->actor(), 7);
@@ -262,6 +262,22 @@ final class AssistantToolFirstQualityTest extends TestCase
             $this->assertStringNotContainsString('Лишний результат', $response['message']['content'], $unrelatedTool);
             $this->assertSame([17], array_column($response['message']['metadata']['source_refs'], 'entity_id'), $unrelatedTool);
         }
+    }
+
+    public function test_actual_ask_never_publishes_embedded_unrendered_presentation_plan(): void
+    {
+        $raw = 'Найдено 7 проектов.'."\n```json\n".json_encode(['kind' => 'verified_rows', 'version' => 1,
+            'result_sets' => [['result_set' => 's_unknown', 'layout' => 'table', 'columns' => ['name', 'budget_amount'],
+                'order' => ['r01'], 'group_by' => null]]], JSON_THROW_ON_ERROR)."\n```\n".'Это все доступные проекты.';
+        $service = $this->service(['assistant_domain_search' => ['status' => 'success', 'results' => []]], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_search')]], ['content' => $raw],
+        ]);
+        $response = $service->ask('Покажи проекты организации', 15, $this->actor(), 7);
+        self::assertStringNotContainsString('verified_rows', $response['message']['content']);
+        self::assertStringNotContainsString('7 проектов', $response['message']['content']);
+        self::assertStringNotContainsString('s_unknown', $response['message']['content']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
     }
 
     public function test_actual_ask_allows_money_plan_only_when_financial_receipt_covers_every_selected_row(): void

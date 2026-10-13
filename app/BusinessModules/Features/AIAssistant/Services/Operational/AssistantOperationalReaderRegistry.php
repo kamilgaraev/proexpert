@@ -12,13 +12,14 @@ final class AssistantOperationalReaderRegistry
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
         '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu',
-        '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu',
+        AssistantProjectReportCatalogReader::INTENT_PATTERN,
         '/материал[а-яё]*.*(?:жд[её]м|ожида|достав)|(?:жд[её]м|ожида).*материал|поставк[а-яё]*.*просроч|просроч[а-яё]*.*(?:поставк|достав)/iu',
-        AssistantProjectActReader::INTENT_PATTERN,
+        AssistantProjectActReader::INTENT_PATTERN, AssistantProjectCameraReader::INTENT_PATTERN,
         self::STAFF_TOPIC, '/тендер/iu',
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
+        'get_project_camera_roster' => AssistantProjectCameraReader::class,
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
         'get_project_change_readiness' => AssistantProjectChangeReader::class,
@@ -37,6 +38,8 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_access_review_summary' => AssistantAccessRecertificationReader::class,
+        'get_organization_one_c_exchange_summary' => AssistantOneCExchangeSummaryReader::class,
         'get_organization_user_counts' => AssistantOrganizationUsersReader::class,
         'get_assignable_user_roles' => AssistantAssignableRolesReader::class,
         'get_own_admin_permissions' => AssistantOwnAdminPermissionsReader::class,
@@ -87,19 +90,25 @@ final class AssistantOperationalReaderRegistry
             return $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
         }
         $purchaseOrders = AssistantOrganizationPurchaseOrdersReader::matches($query);
+        $financeQuery = AssistantProjectReportCatalogReader::matches($query)
+            ? preg_replace('/для\s+проверки\s+оплат(?:,?\s+работ(?:\s+и\s+остатков)?)?/iu', '', $query) ?? $query
+            : $query;
         $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
-        if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $query) === 1)
+        if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $financeQuery) === 1)
             || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
             || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query))
             || (! $governance && preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query))) {
             return null;
         }
         $topics = 0;
+        $topicQuery = AssistantAccessRecertificationReader::matches($query)
+            ? preg_replace('/((?:провер(?:к|ок)|пересмотр|ревизи|переаттестаци)[а-яё]*\s+доступ[а-яё]*)\s+(?:сотрудник[а-яё]*|персонал[а-яё]*)/iu', '$1', $query) ?? $query
+            : $query;
         foreach (self::TOPICS as $pattern) {
             if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
                 continue;
             }
-            if (preg_match($pattern, $query) === 1) {
+            if (preg_match($pattern, $topicQuery) === 1) {
                 $topics++;
             }
         }

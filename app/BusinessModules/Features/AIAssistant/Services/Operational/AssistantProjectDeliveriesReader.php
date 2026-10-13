@@ -54,6 +54,7 @@ final readonly class AssistantProjectDeliveriesReader extends AssistantProjectOp
                 .trans_message('ai_assistant_operational.orders_date', ['date' => $row['date'] ?? trans_message('ai_assistant_operational.not_recorded')]);
         }
         $lines[] = trans_message('ai_assistant_operational.deliveries_basis');
+        $lines[] = trans_message('ai_assistant_operational.deliveries_responsibility');
         $lines[] = trans_message('ai_assistant_operational.examples_basis');
 
         return implode("\n", $lines);

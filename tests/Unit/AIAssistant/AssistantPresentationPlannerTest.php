@@ -254,6 +254,32 @@ final class AssistantPresentationPlannerTest extends TestCase
         $this->assertNull((new AssistantPresentationPlanner)->render(json_encode($plan), [$combined], 'Покажи объекты'));
     }
 
+    public function test_fenced_plans_render_only_checked_rows_and_embedded_plans_fail_closed(): void
+    {
+        $receipt = $this->payload(1, 'project', ['name' => 'Корпус', 'status' => 'active']);
+        $plan = $this->plan([$receipt], [['name', 'status']], 'list');
+        $fenced = "```json\n".$plan."\n```";
+        $planner = new AssistantPresentationPlanner;
+        self::assertTrue(AssistantPresentationPlanner::isPlanCandidate($fenced));
+        self::assertSame($planner->render($plan, [$receipt], 'Какой статус?'), $planner->render($fenced, [$receipt], 'Какой статус?'));
+        self::assertCount(1, $planner->selectedRows($fenced, [$receipt], 'Какой статус?'));
+        foreach (["Найдено 7 проектов.\n".$fenced."\nЭто все проекты.", $fenced."\n".$fenced, "```json\n".substr($plan, 0, -1)."\n```", str_repeat(' ', 17000).$plan] as $invalid) {
+            self::assertTrue(AssistantPresentationPlanner::isPlanCandidate($invalid));
+            self::assertNull($planner->render($invalid, [$receipt], 'Какой статус?'));
+            $guard = (new AssistantStructuredFactVerifier)->guard('Какой статус?', $invalid, [$receipt]);
+            self::assertTrue($guard['needs_clarification']);
+            self::assertStringNotContainsString('verified_rows', $guard['text']);
+        }
+        $unproved = (new AssistantStructuredFactVerifier)->guard('Какой статус?', $fenced, []);
+        self::assertTrue($unproved['needs_clarification']);
+        self::assertStringNotContainsString('verified_rows', $unproved['text']);
+        $money = $this->payload(2, 'project', ['name' => 'Корпус', 'budget_amount' => '100', 'currency' => 'RUB']);
+        $moneyPlan = "```json\n".$this->plan([$money], [['name', 'budget_amount', 'currency']], 'list')."\n```";
+        self::assertTrue(AssistantPresentationPlanner::hasFinancialSelection($moneyPlan));
+        self::assertFalse($planner->financialSelectionCovered($moneyPlan, [$money], []));
+        self::assertTrue($planner->financialSelectionCovered($moneyPlan, [$money], [$money['structured_fact_evidence']['rows'][0]['source_ref']]));
+    }
+
     public function test_grouped_tables_render_separate_markdown_blocks_with_extended_field_labels(): void
     {
         $receipts = [
