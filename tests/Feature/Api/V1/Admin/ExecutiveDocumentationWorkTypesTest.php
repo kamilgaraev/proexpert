@@ -15,6 +15,8 @@ use App\Models\WorkType;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -31,23 +33,116 @@ final class ExecutiveDocumentationWorkTypesTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $this->withHeaders($context->authHeaders())
+        $first = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
             ->assertOk()
             ->assertJsonCount(25, 'data.work_types');
 
-        $this->withHeaders($context->authHeaders())
+        $saved = 0;
+        $updates = 0;
+        Event::listen('eloquent.saved: '.WorkType::class, function (WorkType $workType) use ($context, &$saved): void {
+            if ($workType->organization_id === $context->organization->id) {
+                $saved++;
+            }
+        });
+        DB::listen(function ($query) use (&$updates): void {
+            if (str_starts_with(strtolower($query->sql), 'update "work_types"')) {
+                $updates++;
+            }
+        });
+        $second = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
             ->assertOk()
             ->assertJsonCount(25, 'data.work_types');
 
+        self::assertSame(0, $saved);
+        self::assertSame(0, $updates);
+        self::assertSame($first->json('data.work_types'), $second->json('data.work_types'));
         $this->assertSame(25, WorkType::query()
             ->where('organization_id', $context->organization->id)
             ->where('category', 'Исполнительная документация')
             ->count());
     }
 
-    public function test_hidden_work_act_requires_own_work_type_and_project_journal_entry(): void
+    public function test_references_preserve_enrichment_and_repair_only_changed_system_fields(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
+            ->assertOk();
+        $workType = WorkType::query()->where('organization_id', $context->organization->id)
+            ->where('category', 'Исполнительная документация')->firstOrFail();
+        $originalName = $workType->name;
+        $properties = $workType->additional_properties;
+        $workType->additional_properties = array_merge($properties, ['enrichment' => ['label' => 'preserved']]);
+        $workType->save();
+        $saved = 0;
+        Event::listen('eloquent.saved: '.WorkType::class, function (WorkType $savedType) use ($context, &$saved): void {
+            if ($savedType->organization_id === $context->organization->id) {
+                $saved++;
+            }
+        });
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
+            ->assertOk()->assertJsonCount(25, 'data.work_types');
+        self::assertSame(0, $saved);
+        self::assertSame(['label' => 'preserved'], $workType->fresh()->additional_properties['enrichment']);
+        $workType->refresh()->fill(['name' => 'definition drift', 'is_active' => false])->save();
+        $saved = 0;
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
+            ->assertOk()->assertJsonCount(25, 'data.work_types');
+        self::assertSame(1, $saved);
+        self::assertSame($originalName, $workType->fresh()->name);
+        self::assertTrue($workType->fresh()->is_active);
+        self::assertSame(['label' => 'preserved'], $workType->fresh()->additional_properties['enrichment']);
+        self::assertSame($properties['contexts'], $workType->fresh()->additional_properties['contexts']);
+        self::assertSame($properties['source'], $workType->fresh()->additional_properties['source']);
+        self::assertSame($properties['sort_order'], $workType->fresh()->additional_properties['sort_order']);
+    }
+
+    public function test_references_restore_own_system_type_without_changing_foreign_types(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
+            ->assertOk();
+        $workType = WorkType::query()->where('organization_id', $context->organization->id)
+            ->where('category', 'Исполнительная документация')->firstOrFail();
+        $foreign = WorkType::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'foreign definition',
+            'code' => $workType->code,
+            'category' => 'Исполнительная документация',
+            'additional_properties' => ['enrichment' => ['label' => 'foreign']],
+            'is_active' => false,
+        ]);
+        $foreign->delete();
+        $foreignAttributes = $foreign->refresh()->getAttributes();
+        $workType->delete();
+        $restored = 0;
+        Event::listen('eloquent.restored: '.WorkType::class, function (WorkType $restoredType) use ($workType, &$restored): void {
+            if ($restoredType->id === $workType->id) {
+                $restored++;
+            }
+        });
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/executive-documentation/references?project_id={$project->id}")
+            ->assertOk()->assertJsonCount(25, 'data.work_types');
+        self::assertSame(1, $restored);
+        self::assertNotNull(WorkType::query()->find($workType->id));
+        self::assertSame($foreignAttributes, WorkType::withTrashed()->findOrFail($foreign->id)->getAttributes());
+        self::assertNull(WorkType::query()->find($foreign->id));
+    }
+
+    public function test_hidden_work_act_keeps_optional_work_type_and_requires_own_references(): void
     {
         Storage::fake('s3');
 
@@ -146,8 +241,9 @@ final class ExecutiveDocumentationWorkTypesTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", $basePayload)
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['work_type_id']);
+            ->assertCreated()
+            ->assertJsonStructure(['data' => ['work_type_id']])
+            ->assertJsonPath('data.work_type_id', null);
 
         $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/executive-documentation/sets/{$setId}/documents", [
