@@ -42,9 +42,11 @@ final class AssistantSourceIdentityQueryBuilder
         }
         $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType)
             ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
-        if ($sourceColumns !== null) { $sources->addSelect($sourceColumns); }
+        if ($sourceColumns !== null) {
+            $sources->addSelect(array_map(static fn (string $column): string => $column.' as admitted_projection_'.substr($column, strrpos($column, '.') + 1), $sourceColumns));
+        }
         $output = $sourceColumns === null ? ['eligible_identity_source.admitted_source_id AS source_id']
-            : array_map(static fn (string $column): string => 'eligible_identity_source.'.substr($column, strrpos($column, '.') + 1), $sourceColumns);
+            : array_map(static fn (string $column): string => 'eligible_identity_source.admitted_projection_'.substr($column, strrpos($column, '.') + 1).' AS '.substr($column, strrpos($column, '.') + 1), $sourceColumns);
         $grammar = $entities->getQuery()->getGrammar();
 
         if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'design_ifc_model_element'], true)) {
