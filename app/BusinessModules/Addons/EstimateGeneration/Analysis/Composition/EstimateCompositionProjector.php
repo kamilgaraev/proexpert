@@ -134,35 +134,12 @@ final readonly class EstimateCompositionProjector
     /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
     private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts): array
     {
-        $quantities = [];
-        foreach ($derivedQuantities as $quantity) {
-            if (is_array($quantity) && is_string($quantity['id'] ?? null)) {
-                $quantities[$quantity['id']] = $quantity;
-            }
-        }
-        $factsById = [];
-        foreach ($facts as $fact) {
-            if (is_array($fact) && is_string($fact['id'] ?? null)) {
-                $factsById[$fact['id']] = $fact;
-            }
-        }
+        $quantityProvenance = new ComposedQuantityProvenance($derivedQuantities, $facts);
         $items = [];
         foreach ($supplementary as $intent) {
-            $quantity = is_string($intent['derived_quantity_id'] ?? null)
-                ? ($quantities[$intent['derived_quantity_id']] ?? null)
-                : null;
-            $sourceFact = null;
-            foreach ($intent['source_fact_ids'] as $factId) {
-                $candidate = $factsById[$factId] ?? null;
-                if (is_array($candidate)
-                    && ($candidate['status'] ?? null) === 'confirmed'
-                    && (is_int($candidate['value'] ?? null) || is_float($candidate['value'] ?? null))
-                    && (float) $candidate['value'] > 0
-                    && is_string($candidate['unit'] ?? null)) {
-                    $sourceFact = $candidate;
-                    break;
-                }
-            }
+            $binding = $quantityProvenance->binding($intent);
+            $quantity = ($binding['eligible'] ?? false) ? $binding['quantity'] : null;
+            $operandIds = $quantity === null ? [] : $binding['operand_fact_ids'];
             $technology = $this->identifier($intent['technology_package_candidate'] ?? null);
             $metadata = [];
             if ($technology !== null) {
@@ -170,22 +147,33 @@ final readonly class EstimateCompositionProjector
             }
             if (is_array($quantity)) {
                 $metadata['quantity_key'] = $intent['derived_quantity_id'];
+                $metadata['scope_entity_id'] = $binding['entity_id'];
+                $metadata['quantity_operand_fact_ids'] = $operandIds;
+            } elseif (is_string($intent['entity_id'] ?? null)) {
+                $metadata['scope_entity_id'] = $intent['entity_id'];
             }
+            if ($binding !== null && ! $binding['eligible']) {
+                $metadata['proposed_quantity_key'] = $intent['derived_quantity_id'];
+                $metadata['quantity_review_reason'] = 'work_quantity_purpose_unverified';
+            }
+            $refs = array_values(array_unique([...$intent['source_fact_ids'], ...$operandIds]));
             $items[] = [
                 'key' => $intent['work_key'],
                 'name' => $intent['name'],
                 'item_type' => 'priced_work',
                 'unit' => is_array($quantity)
                     ? $this->boundedString($quantity['unit'] ?? null, 32)
-                    : $this->boundedString($sourceFact['unit'] ?? $intent['unit'] ?? null, 32),
+                    : $this->boundedString($intent['unit'] ?? null, 32),
                 'quantity' => is_array($quantity)
                     ? $this->positiveDecimal($quantity['value'] ?? null)
-                    : $this->positiveDecimal($sourceFact['value'] ?? null),
+                    : null,
                 'quantity_formula' => is_array($quantity) ? $this->boundedString($quantity['id'] ?? null, 300) : null,
                 'source_refs' => array_map(
-                    static fn (string $factId): array => ['fact_id' => $factId],
-                    $intent['source_fact_ids'],
+                    static fn (string $factId): array => ['fact_id' => $factId,
+                        'role' => in_array($factId, $operandIds, true) ? 'quantity_operand' : 'context'],
+                    $refs,
                 ),
+                'validation_flags' => $binding !== null && ! $binding['eligible'] ? ['work_quantity_purpose_unverified'] : [],
                 'metadata' => $metadata,
                 'composition_intent' => $intent,
             ];

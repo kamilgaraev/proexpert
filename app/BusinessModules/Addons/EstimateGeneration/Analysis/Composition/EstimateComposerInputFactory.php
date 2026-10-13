@@ -112,6 +112,14 @@ final readonly class EstimateComposerInputFactory
         sort($factIds, SORT_STRING);
 
         return ['id' => $id, 'value' => (string) $value, 'unit' => $unit,
+            'quantity_key' => is_string($quantity['key'] ?? null) ? $quantity['key'] : $id,
+            'formula_key' => is_string($quantity['formula_key'] ?? null) ? $quantity['formula_key'] : null,
+            'source' => is_string($quantity['source'] ?? null) ? $quantity['source'] : 'unknown',
+            'review_blockers' => is_array($quantity['review_blockers'] ?? null) ? $quantity['review_blockers'] : [],
+            'quantity_basis' => array_intersect_key($quantity, array_flip([
+                'key', 'unit', 'amount', 'formula_key', 'formula_version', 'formula_inputs',
+                'source', 'evidence_ids', 'model_version', 'assumptions', 'review_blockers',
+            ])),
             ...(is_string($entityId) ? ['entity_id' => $entityId] : []),
             ...($factIds === [] ? [] : ['operand_fact_ids' => $factIds])];
     }

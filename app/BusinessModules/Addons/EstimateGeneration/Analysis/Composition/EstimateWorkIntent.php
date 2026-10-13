@@ -22,6 +22,7 @@ final readonly class EstimateWorkIntent
         public array $missingDocumentRecommendations,
         public ?string $unit = null,
         public ?string $workSection = null,
+        public ?string $entityId = null,
     ) {
         if (! in_array($kind, ['existing', 'supplementary'], true)
             || ! self::identifier($candidateId)
@@ -29,6 +30,9 @@ final readonly class EstimateWorkIntent
             throw new InvalidArgumentException('estimate_work_intent_value_invalid');
         }
         self::assertStringList($sourceFactIds, 256, 160, true);
+        if ($entityId !== null && ! self::identifier($entityId)) {
+            throw new InvalidArgumentException('estimate_work_intent_entity_invalid');
+        }
         self::assertStringList($assumptions, 20, 500, false);
         self::assertStringList($exclusions, 20, 500, false);
         self::assertStringList($missingDocumentRecommendations, 20, 800, false);
@@ -38,7 +42,7 @@ final readonly class EstimateWorkIntent
                 'heating', 'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment'], true))) {
             throw new InvalidArgumentException('estimate_work_intent_measure_or_section_invalid');
         }
-        if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null || $unit !== null || $workSection !== null)) {
+        if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null || $unit !== null || $workSection !== null || $entityId !== null)) {
             throw new InvalidArgumentException('estimate_work_intent_existing_shape_invalid');
         }
         if ($kind === 'supplementary' && (
@@ -78,6 +82,12 @@ final readonly class EstimateWorkIntent
                 }
             }
         }
+        if (array_key_exists('entity_id', $payload)) {
+            $expectedKeys[] = 'entity_id';
+            if ($payload['entity_id'] !== null && ! is_string($payload['entity_id'])) {
+                throw new InvalidArgumentException('estimate_work_intent_entity_invalid');
+            }
+        }
         sort($actualKeys, SORT_STRING);
         sort($expectedKeys, SORT_STRING);
         if ($actualKeys !== $expectedKeys) {
@@ -101,6 +111,7 @@ final readonly class EstimateWorkIntent
                 : [''],
             unit: $payload['unit'] ?? null,
             workSection: $payload['work_section'] ?? null,
+            entityId: $payload['entity_id'] ?? null,
         );
     }
 
@@ -119,6 +130,7 @@ final readonly class EstimateWorkIntent
             'exclusions' => $this->exclusions,
             'missing_document_recommendations' => $this->missingDocumentRecommendations,
             ...($this->unit === null ? [] : ['unit' => $this->unit, 'work_section' => $this->workSection]),
+            ...($this->entityId === null ? [] : ['entity_id' => $this->entityId]),
         ];
     }
 
