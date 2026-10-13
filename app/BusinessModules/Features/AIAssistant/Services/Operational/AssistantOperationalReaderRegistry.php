@@ -10,7 +10,7 @@ final class AssistantOperationalReaderRegistry
         '/rfi|вопрос[а-яё]*\s+проектировщик|изменен[а-яё]*.*(?:согласован|решени|влияни)/iu',
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
-        '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu'];
+        '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu'];
     public const TOOLS = [
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
@@ -19,6 +19,7 @@ final class AssistantOperationalReaderRegistry
         'get_project_proposal_readiness' => AssistantProjectProposalReader::class,
         'get_project_executive_readiness' => AssistantProjectExecutiveReader::class,
         'get_project_production_readiness' => AssistantProjectProductionReader::class,
+        'get_project_crm_readiness' => AssistantProjectCrmReader::class,
     ];
 
     public static function forReference(string $type): ?string

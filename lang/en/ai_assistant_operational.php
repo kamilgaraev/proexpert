@@ -3,6 +3,15 @@
 declare(strict_types=1);
 
 return [
+    'crm_description' => 'Selected project open CRM deals and unfinished activities. Complete counts, overdue deadlines, owners and up to 20 examples. Deal UUIDs are preserved. Amounts, contacts and correspondence bodies are not read. Read only.',
+    'crm_scope' => 'CRM for project “:project” as of :date.',
+    'crm_counts' => 'Total deals linked to the project: :total; open: :open.',
+    'crm_deal' => 'owner: :owner; stage code: :stage; expected close: :close; next activity from deal card: :next',
+    'crm_activity_counts' => 'Unfinished activities for open deals: :total; overdue stated deadlines: :overdue.',
+    'crm_activity' => 'deal: :deal; owner: :owner; due: :due',
+    'crm_activity_unavailable' => 'Deal activities are inaccessible in the current read scope; count is unknown.',
+    'crm_step' => 'Next step: open deal owners check the next activity and deadline; review overdue activities first. If no deals are found, verify that the intended deal is linked to the project.',
+    'crm_basis' => 'Only deals directly linked to the selected project are included. Organization deals without a project are excluded. Deal card dates and actual unfinished activities are shown separately; no email or call was performed.',
     'proposal_description' => 'Selected project commercial proposals: complete stage counts, internal and customer decisions, validity expiration, and up to 20 examples with next steps. Amounts and contacts are not read. Read only.',
     'proposal_scope' => 'Commercial proposals for project “:project” as of :date.',
     'proposal_counts' => 'Total proposals: :total; drafts: :draft; internal review: :internal; approved but not sent: :approved; awaiting customer result: :customer. Unfinished proposals with expired validity: :expired.',

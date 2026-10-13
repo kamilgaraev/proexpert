@@ -191,7 +191,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
     {
         foreach (['Какие коммерческие предложения по нашему объекту ещё ждут нашего решения или ответа заказчика? Что нужно сделать следующим шагом?' => 'get_project_proposal_readiness',
             'Что у нас по исполнительной документации объекта: какие комплекты ещё не переданы заказчику и что мешает их передать? Есть ли передачи, по которым ждём ответ?' => 'get_project_executive_readiness',
-            'Какие производственные наряды по нашему объекту уже представлены, но ещё не приняты? Кто отвечает за закрытие и что надо проверить перед принятием?' => 'get_project_production_readiness'] as $query => $name) {
+            'Какие производственные наряды по нашему объекту уже представлены, но ещё не приняты? Кто отвечает за закрытие и что надо проверить перед принятием?' => 'get_project_production_readiness',
+            'Есть ли по нашему объекту открытые CRM-сделки? Какие ближайшие действия и сроки по ним нужно проконтролировать?' => 'get_project_crm_readiness'] as $query => $name) {
             $plan = $this->plan($query);
             self::assertSame(['name' => $name, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
             self::assertNotNull(AssistantRequiredProjectRead::decisionReader($name, $query));
@@ -205,6 +206,12 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Что написано в исполнительной документации нашего объекта? Приведи выдержки и объясни правила.'] as $query) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_executive_readiness', $query));
+        }
+        foreach (['Какие выигранные CRM-сделки по нашему объекту?',
+            'Какие открытые CRM-сделки и просроченные задачи графика по нашему объекту?',
+            'Покажи открытую CRM-сделку a28ea99b-14ce-43b9-b662-fd41ec4a3956 нашего проекта.'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_crm_readiness', $query));
         }
     }
 
