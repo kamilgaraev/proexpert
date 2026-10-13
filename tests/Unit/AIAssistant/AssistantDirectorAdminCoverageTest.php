@@ -42,4 +42,16 @@ final class AssistantDirectorAdminCoverageTest extends TestCase
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_staff_roster', $query), $query);
         }
     }
+
+    public function test_active_projects_and_current_data_do_not_match_act_prefix(): void
+    {
+        foreach (['Какие активные проекты нашего объекта требуют решения?', 'Актуальные данные проекта требуют согласования?'] as $query) {
+            self::assertNull(AssistantOperationalReaderRegistry::intent($query));
+            self::assertFalse(AssistantOperationalReaderRegistry::hasIntent($query));
+            self::assertSame([], AssistantToolSurface::names(['get_project_act_readiness'], ['request' => ['message' => $query]]));
+        }
+        foreach (['Какие акты ждут согласования?', 'Согласование актов нашего объекта', 'Что проверить перед одобрением акта?'] as $query) {
+            self::assertSame('get_project_act_readiness', AssistantOperationalReaderRegistry::intent($query)['name'] ?? null);
+        }
+    }
 }

@@ -48,6 +48,14 @@ final class ContractOrganizationViewService
         });
     }
 
+    public function findReadOnly(User $actor, int $organizationId, int $contractId): ContractOrganizationView
+    {
+        $this->authorize($actor, $organizationId, 'contracts.view');
+        Contract::withTrashed()->whereKey($contractId)->firstOrFail(['id']);
+        return ContractOrganizationView::where('organization_id', $organizationId)->where('contract_id', $contractId)->whereNull('access_revoked_at')
+            ->firstOrFail(['id', 'organization_id', 'contract_id', 'access_revoked_at']);
+    }
+
     public function list(User $actor, int $organizationId, array $filters = []): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
         $this->authorize($actor, $organizationId, 'contracts.view');

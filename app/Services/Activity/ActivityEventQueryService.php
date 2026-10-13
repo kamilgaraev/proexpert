@@ -29,6 +29,12 @@ final class ActivityEventQueryService
             ->find($eventId);
     }
 
+    public function recentReadFacts(int $organizationId, ActivityEventFilters $filters): Collection
+    {
+        return $this->baseQuery($organizationId, $filters)->orderByDesc('occurred_at')->orderByDesc('id')->limit(20)
+            ->get(['id', 'actor_name', 'title', 'action', 'result', 'occurred_at']);
+    }
+
     public function summary(int $organizationId, ActivityEventFilters $filters): array
     {
         $query = $this->baseQuery($organizationId, $filters);
