@@ -55,6 +55,11 @@ final class BudgetEstimateController extends Controller
             $summary['estimates'] = MobileBudgetEstimateResource::collection($summary['estimates'])->resolve();
             $summary['assigned_approvals'] = MobileBudgetEstimateResource::collection($summary['assigned_approvals'])->resolve();
 
+            $visibility = app(\App\Services\ConstructionJournal\JournalFieldVisibility::class);
+            $totals = $summary['totals'];
+            $summary = $visibility->resource($summary, $user, (int) $validated['project_id']);
+            $summary['totals'] = $visibility->filter($totals, true, $summary['can_view_financials']);
+
             return MobileResponse::success($summary);
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
@@ -98,7 +103,7 @@ final class BudgetEstimateController extends Controller
                     'total' => $paginator->total(),
                     'last_page' => $paginator->lastPage(),
                 ],
-                'summary' => $result->summary,
+                'summary' => app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($result->summary, $user, (int) $validated['project_id']),
             ]);
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);

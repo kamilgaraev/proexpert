@@ -12,7 +12,7 @@ class EstimateItemResource extends JsonResource
 {
     public function toArray($request): array
     {
-        return [
+        $payload = [
             'id' => $this->id,
             'estimate_id' => $this->estimate_id,
             'estimate_section_id' => $this->estimate_section_id,
@@ -102,5 +102,7 @@ class EstimateItemResource extends JsonResource
                     ->values()
             )),
         ];
+
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($payload, $request->user(), (int) ($this->estimate?->project_id));
     }
 }

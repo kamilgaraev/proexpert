@@ -26,7 +26,7 @@ final class MobileWorkflowTaskResource extends JsonResource
         $legacyHistory = array_values(array_filter($legacyHistory, static fn (array $entry): bool => in_array($entry['action'] ?? null, $legacyActions, true)));
         $nextAction = $availableActions[0] ?? null;
 
-        return [
+        $payload = [
             'id' => $task->id,
             'organization_id' => $task->organization_id,
             'project_id' => $task->project_id,
@@ -93,6 +93,8 @@ final class MobileWorkflowTaskResource extends JsonResource
             'created_at' => $task->created_at?->toIso8601String(),
             'updated_at' => $task->updated_at?->toIso8601String(),
         ];
+
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->resource($payload, $request->user(), (int) $task->project_id);
     }
 
     private function availableActions(Request $request, CompletedWork $task): array

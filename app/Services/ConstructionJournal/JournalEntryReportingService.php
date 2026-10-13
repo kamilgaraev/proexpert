@@ -46,10 +46,10 @@ final class JournalEntryReportingService
             ->orderBy('journal_number')->orderBy('id')->get();
 
         return $journals->filter(fn (ConstructionJournal $journal): bool => Gate::forUser($actor)->allows('create', [ConstructionJournalEntry::class, $journal]))
-            ->map(static fn (ConstructionJournal $journal): array => [
+            ->map(fn (ConstructionJournal $journal): array => app(JournalFieldVisibility::class)->journal([
                 'id' => $journal->id, 'name' => $journal->name, 'journal_number' => $journal->journal_number,
                 'contract_number' => $journal->contract?->number,
-            ])->values()->all();
+            ], $actor, $journal->project))->values()->all();
     }
 
     public function include(User $actor, ConstructionJournalEntry $source, int $targetJournalId, array $data = []): ConstructionJournalEntry
@@ -80,7 +80,7 @@ final class JournalEntryReportingService
             if ($existing) {
                 return $existing;
             }
-            $payload = app(ConstructionJournalPayloadService::class)->mapEntry($source, $actor, false);
+            $payload = app(ConstructionJournalPayloadService::class)->snapshotEntry($source, $actor);
             $snapshot = array_intersect_key($payload, array_flip([
                 'work_description', 'weather_conditions', 'problems_description', 'safety_notes', 'visitors_notes', 'quality_notes',
                 'workVolumes', 'workers', 'equipment', 'materials',

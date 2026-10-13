@@ -50,7 +50,7 @@ class ConstructionJournalFormOptionsService
                 throw new AuthorizationException(trans_message('errors.unauthorized'));
             }
 
-            return $this->buildProjectContractOptions($project);
+            return app(JournalFieldVisibility::class)->journal($this->buildProjectContractOptions($project), $user, $project);
         }
 
         return $this->buildJournalFormOptions($user, $project);
@@ -63,7 +63,7 @@ class ConstructionJournalFormOptionsService
             throw new AuthorizationException(trans_message('errors.unauthorized'));
         }
 
-        return $this->buildProjectContractOptions($project);
+        return app(JournalFieldVisibility::class)->journal($this->buildProjectContractOptions($project), $user, $project);
     }
 
     private function buildProjectContractOptions(Project $project): array
@@ -120,7 +120,7 @@ class ConstructionJournalFormOptionsService
             ->orderBy('name')
             ->get();
 
-        return [
+        $payload = [
             'contracts' => $this->buildProjectContractOptions($journal->project)['contracts'],
             'estimates' => $estimates->map(function (Estimate $estimate) use ($journal): array {
                 $sections = $estimate->sections->keyBy('id');
@@ -151,6 +151,8 @@ class ConstructionJournalFormOptionsService
                 ? $this->buildAcceptedProjectMaterials($user, (int) $journal->organization_id, (int) $journal->project_id)
                 : [],
         ];
+
+        return app(JournalFieldVisibility::class)->journal($payload, $user, $journal->project);
     }
 
     public static function estimateItemRelations(): array

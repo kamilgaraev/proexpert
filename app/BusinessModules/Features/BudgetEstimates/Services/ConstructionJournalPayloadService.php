@@ -75,7 +75,7 @@ class ConstructionJournalPayloadService
 
         $payload = [
             'id' => $journal->id,
-            'entries_summary' => $includeEntries ? app(\App\Services\ConstructionJournal\JournalEntryQueryService::class)->summary($journal, []) : null,
+            'entries_summary' => $includeEntries ? app(\App\Services\ConstructionJournal\JournalEntryQueryService::class)->summary($journal, [], $user) : null,
             'organization_id' => $journal->organization_id,
             'performing_organization_id' => $journal->performing_organization_id,
             'approval_context' => app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalContext($journal),
@@ -114,10 +114,10 @@ class ConstructionJournalPayloadService
                 ->all();
         }
 
-        return $payload;
+        return app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->journal($payload, $user, $journal->project);
     }
 
-    public function mapEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true): array
+    public function mapEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true, bool $applyVisibility = true): array
     {
         $entry->loadMissing(self::ENTRY_RELATIONS);
         app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->assertReadable($user, $entry->journal);
@@ -318,7 +318,12 @@ class ConstructionJournalPayloadService
             }
         }
 
-        return $payload;
+        return $applyVisibility ? app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->journal($payload, $user, $entry->journal->project) : $payload;
+    }
+
+    public function snapshotEntry(ConstructionJournalEntry $entry, User $actor): array
+    {
+        return $this->mapEntry($entry, $actor, false, false);
     }
 
     public function buildJournalSummary(ConstructionJournal $journal): array

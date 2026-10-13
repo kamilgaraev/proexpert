@@ -119,7 +119,7 @@ class MobileConstructionJournalService
         $this->assertJournalAccess($user, $journal);
 
         $entryQueries = app(\App\Services\ConstructionJournal\JournalEntryQueryService::class);
-        $query = $entryQueries->query($journal, $filters)
+        $query = $entryQueries->query($journal, $filters, $user)
             ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS);
 
         if (! empty($filters['status'])) {
@@ -155,7 +155,7 @@ class MobileConstructionJournalService
                 ->values()
                 ->all(),
             'meta' => $this->payloadService->paginationMeta($entries),
-            'summary' => $entryQueries->summary($journal, $filters),
+            'summary' => $entryQueries->summary($journal, $filters, $user),
             'available_actions' => $this->mapActionList($this->payloadService->buildJournalActions($journal, $user)),
         ];
     }

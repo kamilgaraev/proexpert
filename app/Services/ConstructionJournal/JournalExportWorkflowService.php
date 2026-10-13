@@ -29,6 +29,7 @@ final class JournalExportWorkflowService
         ?ConstructionJournalEntry $entry = null,
     ): JournalExport {
         app(ConstructionJournalAccessService::class)->assertReadable($user, $journal, ['export']);
+        $this->assertContractExportAccess($user, $journal, $type);
         if ($entry && (int) $entry->journal_id !== (int) $journal->id) {
             throw new DomainException(trans_message('construction_journal.errors.access_denied'));
         }
@@ -86,6 +87,7 @@ final class JournalExportWorkflowService
             throw new DomainException(trans_message('construction_journal.errors.export_not_found'));
         }
         app(ConstructionJournalAccessService::class)->assertReadable($user, $journal);
+        $this->assertContractExportAccess($user, $journal, $export->type);
         if ($export->type === 'general') {
             $version = GeneralJournalDocumentVersion::query()
                 ->where('organization_id', $journal->organization_id)
@@ -123,4 +125,11 @@ final class JournalExportWorkflowService
 
         return $payload;
     }
+    private function assertContractExportAccess(User $user, ConstructionJournal $journal, string $type): void
+    {
+        if ($type === 'ks6' && ! app(JournalFieldVisibility::class)->capabilities($user, $journal->project)['can_manage_contracts']) {
+            throw new AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
+    }
+
 }

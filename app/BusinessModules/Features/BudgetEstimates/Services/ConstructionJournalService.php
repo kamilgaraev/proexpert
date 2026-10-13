@@ -48,6 +48,10 @@ class ConstructionJournalService
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
 
+        if (! app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->capabilities($user, $project)['can_manage_contracts']) {
+            unset($data['contract_id']);
+        }
+
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
             if (($data['contract_id'] ?? null) !== null) {
                 $this->assertContractScope($project, (int) $data['contract_id']);
@@ -76,6 +80,10 @@ class ConstructionJournalService
     public function updateJournal(ConstructionJournal $journal, array $data, ?User $actor = null): ConstructionJournal
     {
         $this->assertJournalWrite($journal, ['edit', '*'], $actor);
+        $actor ??= auth()->user();
+        if ($actor && ! app(\App\Services\ConstructionJournal\JournalFieldVisibility::class)->capabilities($actor, $journal->project)['can_manage_contracts']) {
+            unset($data['contract_id']);
+        }
         $data = array_intersect_key($data, array_flip(['name', 'journal_number', 'contract_id', 'start_date', 'end_date']));
         if (($data['contract_id'] ?? null) !== null) {
             $this->assertContractScope($journal->project, $data['contract_id']);
@@ -188,19 +196,19 @@ class ConstructionJournalService
             ]);
 
             if (isset($data['work_volumes']) && is_array($data['work_volumes'])) {
-                $this->attachWorkVolumes($entry, $data['work_volumes']);
+                $this->attachWorkVolumes($entry, $data['work_volumes'], $user);
             }
 
             if (isset($data['workers']) && is_array($data['workers'])) {
-                $this->attachWorkers($entry, $data['workers']);
+                $this->attachWorkers($entry, $data['workers'], false, $user);
             }
 
             if (isset($data['equipment']) && is_array($data['equipment'])) {
-                $this->attachEquipment($entry, $data['equipment']);
+                $this->attachEquipment($entry, $data['equipment'], false, $user);
             }
 
             if (isset($data['materials']) && is_array($data['materials'])) {
-                $this->attachMaterials($entry, $data['materials']);
+                $this->attachMaterials($entry, $data['materials'], false, $user);
             }
 
             $this->completedWorkFactService->syncFromJournalEntry($entry->load([
@@ -242,7 +250,7 @@ class ConstructionJournalService
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
 
-        return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
+        return DB::transaction(function () use ($entry, $data, $actor): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
             $this->assertEntryEditable($entry);
             if ($entry->isReportingEntry() && array_diff(array_keys($data), ['work_description', 'quality_notes']) !== []) {
@@ -297,19 +305,19 @@ class ConstructionJournalService
             }
 
             if (array_key_exists('work_volumes', $data)) {
-                $this->syncWorkVolumes($entry, $data['work_volumes'] ?? []);
+                $this->syncWorkVolumes($entry, $data['work_volumes'] ?? [], $actor);
             }
 
             if (array_key_exists('workers', $data)) {
-                $this->attachWorkers($entry, $data['workers'] ?? [], true);
+                $this->attachWorkers($entry, $data['workers'] ?? [], true, $actor);
             }
 
             if (array_key_exists('equipment', $data)) {
-                $this->attachEquipment($entry, $data['equipment'] ?? [], true);
+                $this->attachEquipment($entry, $data['equipment'] ?? [], true, $actor);
             }
 
             if (array_key_exists('materials', $data)) {
-                $this->attachMaterials($entry, $data['materials'] ?? [], true);
+                $this->attachMaterials($entry, $data['materials'] ?? [], true, $actor);
             }
 
             $this->completedWorkFactService->syncFromJournalEntry($entry->load([
@@ -437,7 +445,7 @@ class ConstructionJournalService
             ->get();
     }
 
-    protected function attachWorkVolumes(ConstructionJournalEntry $entry, array $volumes): void
+    protected function attachWorkVolumes(ConstructionJournalEntry $entry, array $volumes, User $actor): void
     {
         $entry->loadMissing('journal.contract');
 
@@ -449,8 +457,8 @@ class ConstructionJournalService
                     ->find($estimateItemId)
                 : null;
 
-            $entry->workVolumes()->create([
-                'contract_id' => app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume),
+            $model = $entry->workVolumes()->create([
+                'contract_id' => app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume, null, true, $actor),
                 'estimate_item_id' => $estimateItemId,
                 'work_name' => $estimateItemId ? null : trim((string) ($volume['work_name'] ?? '')),
                 'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
@@ -458,10 +466,11 @@ class ConstructionJournalService
                 'measurement_unit_id' => $this->resolveWorkVolumeMeasurementUnitId($entry, $volume, $estimateItem),
                 'notes' => $volume['notes'] ?? null,
             ]);
+            app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->record($entry, $model, $volume, $actor, true, null);
         }
     }
 
-    protected function syncWorkVolumes(ConstructionJournalEntry $entry, array $volumes): void
+    protected function syncWorkVolumes(ConstructionJournalEntry $entry, array $volumes, User $actor): void
     {
         $entry->loadMissing('journal.contract');
 
@@ -488,14 +497,16 @@ class ConstructionJournalService
             $volumeId = isset($volume['id']) ? (int) $volume['id'] : null;
             $model = $volumeId ? $existing->get($volumeId) : null;
 
+            $oldContractId = $model?->contract_id;
             if ($model) {
-                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume, $model);
+                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume, $model, true, $actor);
                 $model->update($payload);
             } else {
-                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume);
+                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume, null, true, $actor);
                 $model = $entry->workVolumes()->create($payload);
             }
 
+            app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->record($entry, $model, $volume, $actor, $model->wasRecentlyCreated, $oldContractId);
             $keptIds[] = (int) $model->id;
         }
 
@@ -549,7 +560,7 @@ class ConstructionJournalService
             ?? $entry->scheduleTask?->estimateItem?->measurement_unit_id;
     }
 
-    protected function attachWorkers(ConstructionJournalEntry $entry, array $workers, bool $replace = false): void
+    protected function attachWorkers(ConstructionJournalEntry $entry, array $workers, bool $replace = false, ?User $actor = null): void
     {
         $rows = [];
         foreach ($workers as $worker) {
@@ -560,10 +571,10 @@ class ConstructionJournalService
                 'hours_worked' => $worker['hours_worked'] ?? null,
             ]];
         }
-        $this->persistResourceRows($entry, 'workers', $rows, $replace);
+        $this->persistResourceRows($entry, 'workers', $rows, $replace, $actor);
     }
 
-    protected function attachEquipment(ConstructionJournalEntry $entry, array $equipment, bool $replace = false): void
+    protected function attachEquipment(ConstructionJournalEntry $entry, array $equipment, bool $replace = false, ?User $actor = null): void
     {
         $rows = [];
         foreach ($equipment as $item) {
@@ -575,10 +586,10 @@ class ConstructionJournalService
                 'hours_used' => $item['hours_used'] ?? null,
             ]];
         }
-        $this->persistResourceRows($entry, 'equipment', $rows, $replace);
+        $this->persistResourceRows($entry, 'equipment', $rows, $replace, $actor);
     }
 
-    protected function attachMaterials(ConstructionJournalEntry $entry, array $materials, bool $replace = false): void
+    protected function attachMaterials(ConstructionJournalEntry $entry, array $materials, bool $replace = false, ?User $actor = null): void
     {
         $rows = [];
         foreach ($materials as $material) {
@@ -594,21 +605,25 @@ class ConstructionJournalService
                 'notes' => $material['notes'] ?? null,
             ]];
         }
-        $this->persistResourceRows($entry, 'materials', $rows, $replace);
+        $this->persistResourceRows($entry, 'materials', $rows, $replace, $actor);
     }
 
-    private function persistResourceRows(ConstructionJournalEntry $entry, string $relation, array $rows, bool $replace): void
+    private function persistResourceRows(ConstructionJournalEntry $entry, string $relation, array $rows, bool $replace, ?User $actor): void
     {
         $existing = $replace ? $entry->{$relation}()->get()->keyBy('id') : collect();
         $keptIds = [];
         foreach ($rows as $row) {
             $model = isset($row['id']) ? $existing->get((int) $row['id']) : null;
+            $oldContractId = $model?->contract_id;
             $row['payload']['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)
-                ->resolveForWrite($entry, $row['input'], $model, false);
+                ->resolveForWrite($entry, $row['input'], $model, false, $actor);
             if ($model) {
                 $model->update($row['payload']);
             } else {
                 $model = $entry->{$relation}()->create($row['payload']);
+            }
+            if ($actor) {
+                app(\App\Services\ConstructionJournal\JournalAutomaticContractService::class)->record($entry, $model, $row['input'], $actor, $model->wasRecentlyCreated, $oldContractId);
             }
             $keptIds[] = (int) $model->id;
         }
