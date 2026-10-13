@@ -133,7 +133,13 @@ final class AssistantStructuredFactFormatter
                 $lines[] = '['.trans_message('ai_assistant_facts.open_record').']('.$url.')';
             }
         }
-        $lines[] = trans_message('ai_assistant_facts.fetched_at', ['time' => self::markdownText($fetchedAt)]);
+        if (in_array('core_organization', array_column($rows, 'entity_type'), true)) {
+            $lines[] = trans_message('ai_assistant_operational.organization_location');
+        }
+        $displayTime = $fetchedAt;
+        try { $displayTime = \Carbon\CarbonImmutable::parse($fetchedAt)->utc()->format('Y-m-d H:i:s').' UTC'; }
+        catch (\Throwable) {}
+        $lines[] = trans_message('ai_assistant_facts.fetched_at', ['time' => self::markdownText($displayTime)]);
 
         return ['structured_fact_evidence' => $evidence, 'server_formatted_facts' => implode("\n", $lines), 'validation_status' => 'partial'];
     }

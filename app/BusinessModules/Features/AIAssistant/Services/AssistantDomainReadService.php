@@ -298,6 +298,7 @@ final class AssistantDomainReadService
             : $this->access->resolvedEntityProjectId($actor, $organizationId, $entityType, $model);
         $projectId = is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
         $url = str_replace(['{id}', '{slug}', '{project_id}'], [(string) $model->getKey(), rawurlencode((string) $model->getAttribute('slug')), rawurlencode((string) $projectId)], $template);
+        if ($entityType === 'core_organization') { $url = ''; }
         if (in_array($entityType, ['estimate_item', 'estimate_section', 'estimate_item_resource'], true)) {
             $estimateId = $model->getAttribute('estimate_id') ?? $model->getRelationValue('item')?->estimate_id;
             $url = '/estimates/'.rawurlencode((string) $estimateId);

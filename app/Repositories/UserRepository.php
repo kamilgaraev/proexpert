@@ -381,6 +381,13 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $query->paginate($perPage);
     }
 
+    public function queryInOrganization(int $organizationId): \Illuminate\Database\Eloquent\Builder
+    {
+        return $this->model->query()->whereHas('organizations', static function ($query) use ($organizationId): void {
+            $query->where('organization_user.organization_id', $organizationId);
+        });
+    }
+
     public function paginateInOrganization(
         int $organizationId,
         int $perPage = 15,
@@ -391,10 +398,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $context = AuthorizationContext::getOrganizationContext($organizationId);
 
-        $query = $this->model->query()
-            ->whereHas('organizations', function ($q) use ($organizationId) {
-                $q->where('organization_user.organization_id', $organizationId);
-            })
+        $query = $this->queryInOrganization($organizationId)
             ->with([
                 'organizations',
                 'assignedProjects' => function ($q) {

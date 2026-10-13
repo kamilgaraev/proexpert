@@ -87,11 +87,12 @@ final class AdminUserRolePolicy
      */
     private function managerRoleSlugs(User $actor, int $organizationId): array
     {
-        $roleSlugs = $this->authorizationService->getUserRoleSlugs($actor, [
+        $authorization = $this->authorizationService->forCurrentChecks(true);
+        $roleSlugs = $authorization->getUserRoleSlugs($actor, [
             'organization_id' => $organizationId,
         ]);
 
-        if ($this->authorizationService->can($actor, 'users.roles', ['organization_id' => $organizationId])) {
+        if ($authorization->canCurrent($actor, 'users.roles', ['organization_id' => $organizationId])) {
             $roleSlugs[] = 'organization_admin';
         }
 
