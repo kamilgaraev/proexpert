@@ -14,6 +14,10 @@ Route::prefix('api/v1/admin/design-management')
         Route::get('/packages', [DesignManagementController::class, 'packages'])
             ->middleware('authorize:design-management.view')
             ->name('packages.index');
+        Route::get('/projects/{projectId}/overview', [DesignManagementController::class, 'projectOverview'])
+            ->whereNumber('projectId')
+            ->middleware('authorize:design-management.view')
+            ->name('projects.overview');
         Route::post('/packages', [DesignManagementController::class, 'storePackage'])
             ->middleware('authorize:design-management.create')
             ->name('packages.store');
