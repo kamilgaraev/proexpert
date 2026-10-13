@@ -106,6 +106,32 @@ class EstimateCalculationClassificationTest extends TestCase
         $this->assertEquals(0, $item->fresh()->equipment_cost);
     }
 
+    public function test_imported_negative_and_zero_totals_survive_root_and_child_recalculation(): void
+    {
+        $estimate = $this->createEstimate();
+        $parent = $this->createItem($estimate);
+
+        foreach ([null, $parent->id] as $parentId) {
+            foreach ([-400, 0] as $sourceTotal) {
+                $item = $this->createItem($estimate, [
+                    'parent_work_id' => $parentId,
+                    'item_type' => 'material',
+                    'quantity' => -0.014,
+                    'unit_price' => 28557.38,
+                    'is_manual' => true,
+                    'current_total_amount' => $sourceTotal,
+                    'metadata' => ['raw_data' => ['quantity' => -0.014]],
+                ]);
+
+                $result = app(EstimateCalculationService::class)->calculateItemTotal($item, $estimate);
+
+                $this->assertEquals($sourceTotal, $result);
+                $this->assertEquals($sourceTotal, $item->fresh()->total_amount);
+                $this->assertEquals($sourceTotal, $item->fresh()->direct_costs);
+            }
+        }
+    }
+
     public function test_child_equipment_is_added_once_outside_overhead_base(): void
     {
         $estimate = $this->createEstimate();

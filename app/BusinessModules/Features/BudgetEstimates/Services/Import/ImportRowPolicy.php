@@ -39,7 +39,7 @@ final class ImportRowPolicy
         $overhead ??= $row->overheadAmount ?? 0;
         $profit ??= $row->profitAmount ?? 0;
 
-        return ! $this->isInformative($row) && ! $row->isSubItem && $amount > 0 && ($overhead > 0 || $profit > 0)
+        return ! $this->isInformative($row) && ! $row->isSubItem && $row->currentTotalAmount !== null && ($overhead != 0 || $profit != 0)
             ? $amount
             : $amount + $overhead + $profit;
     }
