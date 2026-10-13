@@ -1201,6 +1201,10 @@ class OfficialFormsExportService
                 $work = $line->completedWork;
                 $workType = $work?->workType;
                 $snapshotItem = $line->basis_snapshot['estimate_item'] ?? [];
+                $code = $snapshotItem['normative_rate_code'] ?? $snapshotItem['justification'] ?? $snapshotItem['code'] ?? null;
+                if ($code === null && ($line->basis_snapshot['basis_type'] ?? null) !== 'contract_conditions') {
+                    $code = $line->estimateItem?->code ?? $workType?->code;
+                }
 
                 return [
                     'key' => $line->estimateItem?->id
@@ -1212,7 +1216,7 @@ class OfficialFormsExportService
                     'unit_price' => $line->unit_price === null ? null : (float) $line->unit_price,
                     'amount' => (float) $line->amount,
                     'estimate_position' => $snapshotItem['position_number'] ?? '',
-                    'code' => $snapshotItem['normative_rate_code'] ?? $snapshotItem['justification'] ?? $snapshotItem['code'] ?? $line->estimateItem?->code ?? $workType?->code ?? '',
+                    'code' => $code ?? '',
                     'notes' => $line->manual_reason,
                 ];
             })->values();
