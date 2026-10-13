@@ -37,7 +37,7 @@ final class AssistantToolSurface
         foreach ([
             '/смет|estimat|расцен|бетон/iu' => ['get_estimate_answer', 'search_estimate_positions', 'resolve_estimate',
                 'get_estimate_positions', 'get_estimate_financial_snapshot'],
-            '/договор|contract/iu' => ['get_contract_snapshot', 'search_contractors'],
+            '/договор|contract/iu' => ['get_contract_snapshot', 'search_contractors', 'get_project_contract_roster'],
             '/склад|warehouse|остат|материал|material/iu' => ['get_material_stock', 'search_warehouse', 'search_materials'],
             '/(?:склад|остат)[\s\S]*(?:объект|проект)|(?:объект|проект)[\s\S]*(?:склад|остат)/iu' => ['get_project_material_stock'],
             '/bim|ifc|бим|модел|design|кондицион|вентил|перекрыти|Ifc/iu' => ['get_bim_model_elements'],
@@ -49,6 +49,8 @@ final class AssistantToolSurface
             '/сотрудник|персонал|people|workforce/iu' => ['search_users'],
             '/табел|кто\s+работал|сколько\s+часов|уч[её]т.*врем/iu' => ['get_project_workforce_summary'],
             '/сч[её]т|плат[её]ж|оплат/iu' => ['get_project_payment_readiness'],
+            '/документ|файл/iu' => ['get_document_readiness'],
+            '/техник|машин|механизм|machinery/iu' => ['get_project_machinery_summary'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);

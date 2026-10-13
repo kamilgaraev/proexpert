@@ -18,6 +18,7 @@ final readonly class AssistantDocumentRequestIntent
 
     public static function metadataOnly(string $query): bool
     {
+        if (AssistantDocumentReadinessReader::matches($query)) { return true; }
         if (preg_match('/документ|файл/iu', $query) !== 1 || preg_match('/список|названи|имена|идентификатор|готов[а-яё]*\s+текст/iu', $query) !== 1) { return false; }
         $remaining = preg_replace('/без\s+(?:пересказ[а-яё]*(?:\s+содержим[а-яё]*)?|содержим[а-яё]*|текст[а-яё]*)/iu', '', $query);
         $remaining = preg_replace('/(?:с\s+)?готов[а-яё]*\s+текст[а-яё]*/iu', '', $remaining ?? $query);

@@ -9,6 +9,25 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantDocumentRequestIntentTest extends TestCase
 {
+    public function test_natural_readiness_inventory_is_metadata_only_and_cannot_bypass_content_verification(): void
+    {
+        $query = 'Какие загруженные документы у нас готовы к поиску, какие пока не готовы и что с ними делать?';
+        self::assertTrue(AssistantDocumentRequestIntent::metadataOnly($query));
+        self::assertSame(['name' => 'get_document_readiness', 'arguments' => ['project_id' => null]],
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query]]));
+        foreach (['Какие документы готовы к поиску и перескажи их содержание?', 'Какие документы готовы к поиску и какой бюджет проекта?',
+            'Какие документы по Севгу готовы к поиску?', 'Прочитай условия документов, которые пока не готовы.',
+            'Какие файлы готовы к поиску и что в них написано?', 'Какие файлы готовы к поиску? Изложи их текст.'] as $mixed) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($mixed));
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::decisionReader('get_document_readiness', $mixed));
+        }
+        foreach (['Какие документы проекта Севгу готовы к поиску?', 'Какие документы проекта 52 готовы к поиску?',
+            'Какие документы готовы к поиску? Перечисли правила из них.'] as $mixed) {
+            self::assertFalse(AssistantDocumentRequestIntent::metadataOnly($mixed));
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $mixed]]));
+        }
+    }
+
     public function test_file_metadata_is_distinct_from_document_content_and_compound_questions(): void
     {
         foreach (['Покажи список файлов по Севгу: названия и разделы, без пересказа содержимого.',

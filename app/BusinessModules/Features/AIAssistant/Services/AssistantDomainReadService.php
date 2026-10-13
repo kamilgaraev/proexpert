@@ -121,16 +121,20 @@ final class AssistantDomainReadService
                         throw new AccessDeniedHttpException();
                     }
                     $query->whereIn($table.'.schedule_id', $schedules->where('project_schedules.project_id', $projectId)->select('project_schedules.id'));
+                } elseif ($entityType === 'machinery_asset') {
+                    app(AssistantMachineryProjectScope::class)->apply($query, $actor, $organizationId, $projectId);
                 } elseif ($entityType === 'project') {
                     if (! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)) {
                         throw new AccessDeniedHttpException();
                     }
                     $query->where($query->getModel()->getQualifiedKeyName(), $projectId);
                 } else {
-                    if (! \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id')) {
+                    $projectColumn = \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id') ? 'project_id'
+                        : (\Illuminate\Support\Facades\Schema::hasColumn($table, 'current_project_id') ? 'current_project_id' : null);
+                    if ($projectColumn === null) {
                         throw ValidationException::withMessages(['project_id' => ['unsupported_project_filter']]);
                     }
-                    $query->where($table.'.project_id', $projectId);
+                    $query->where($table.'.'.$projectColumn, $projectId);
                 }
             }
             AssistantDomainPredicate::apply($query, $arguments['predicate'] ?? null);
@@ -202,6 +206,10 @@ final class AssistantDomainReadService
         foreach ($models as $model) {
             $returnedFields = $operation === 'navigation' ? ['id'] : array_keys(array_intersect_key($model->attributesToArray(), array_flip($fields)));
             $reference = $this->reference($actor, $model, $definition, $entityType, $organizationId, $returnedFields, $fetchedAt, $scheduleProjects);
+            if ($entityType === 'machinery_asset' && $operation === 'search' && is_numeric($arguments['project_id'] ?? null)) {
+                $reference['project_id'] = (int) $arguments['project_id'];
+                $reference['machinery_project_scope'] = (int) $arguments['project_id'];
+            }
             $references[] = $reference;
             $results[] = $operation === 'navigation'
                 ? $reference
@@ -285,7 +293,7 @@ final class AssistantDomainReadService
         $requested = $operation === 'navigation' ? [] : array_intersect($fields, $safeColumns);
         $availableVersionColumns = array_intersect(['slug', 'updated_at', ...$versionColumns], $safeColumns);
         $relatedParent = AssistantDomainRelatedFields::parentColumn($entityType);
-        return array_values(array_intersect(array_unique([$key, 'project_id', ...($relatedParent === null ? [] : [$relatedParent]), ...($entityType === 'schedule_task' ? ['schedule_id'] : []), ...$availableVersionColumns, ...$requested]), $columns));
+        return array_values(array_intersect(array_unique([$key, 'project_id', 'current_project_id', ...($relatedParent === null ? [] : [$relatedParent]), ...($entityType === 'schedule_task' ? ['schedule_id'] : []), ...$availableVersionColumns, ...$requested]), $columns));
     }
 
     private function reference(User $actor, Model $model, AssistantDomainDefinition $definition, string $entityType, int $organizationId, array $fields, string $fetchedAt, array $scheduleProjects = []): array

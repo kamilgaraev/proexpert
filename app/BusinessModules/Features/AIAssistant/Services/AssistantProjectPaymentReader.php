@@ -18,7 +18,7 @@ final readonly class AssistantProjectPaymentReader
     public static function matches(string $query): bool
     {
         return preg_match('/сч[её]т[а-яё]*/iu', $query) === 1 && preg_match('/не\s+оплачен|неоплачен|перед\s+оплатой|жд[её]т.*оплат/iu', $query) === 1
-            && preg_match('/создай|оплати|одобри|утверди|удали|бюджет|потрач|расход|затрат|прибыл|выручк|график|задач|табел|смет|поставк|замечан|сотрудник|бим|bim|ifc/iu', $query) !== 1;
+            && preg_match('/создай|оплати|одобри|утверди|удали|бюджет|потрач|расход|затрат|прибыл|выручк|график|задач|табел|смет|поставк|замечан|сотрудник|техник|машин|механизм|бим|bim|ifc/iu', $query) !== 1;
     }
 
     public function read(User $actor, int $organizationId, array $arguments): array
