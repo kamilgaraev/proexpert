@@ -17,6 +17,9 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         if (! $scope->requested || $scope->projectId === null) { return null; }
+        if (AssistantProjectAttentionIntent::matches($query)) {
+            return ['name' => 'get_project_attention', 'arguments' => ['project_id' => $scope->projectId, 'focus' => AssistantProjectAttentionIntent::focus($query), 'limit' => 3]];
+        }
         if (self::simpleProjectBudget($query)) {
             return ['name' => 'assistant_domain_read', 'arguments' => ['domain' => 'projects', 'entity_type' => 'project',
                 'id' => $scope->projectId, 'fields' => ['name', 'budget_amount'],

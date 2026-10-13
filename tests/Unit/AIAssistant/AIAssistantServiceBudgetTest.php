@@ -348,6 +348,25 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_manager_attention_uses_verified_ui_project_and_closed_read_arguments(): void
+    {
+        $schema = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectAttentionTool::class))->newInstanceWithoutConstructor()->getParametersSchema();
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_project_attention');
+        $tool->method('getParametersSchema')->willReturn($schema);
+        $tool->expects($this->once())->method('execute')->with(['project_id' => 52, 'focus' => 'all', 'limit' => 3], $this->anything(), $this->anything())
+            ->willReturn(['status' => 'success', 'source_refs' => [], 'attention_evidence' => ['version' => str_repeat('a', 64)]]);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $query = 'Что на нашем объекте сейчас требует моего внимания в первую очередь? Назови три главных проблемы.';
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'get_project_attention',
+            'arguments' => json_encode(['project_id' => 999, 'focus' => 'quality', 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertSame([], $failures);
+    }
+
     public function test_current_object_read_rejects_foreign_contract_before_provider_and_active_evidence(): void
     {
         $tool = $this->createMock(AIToolInterface::class);

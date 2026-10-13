@@ -78,6 +78,10 @@ class AssistantSourceReferenceGuard
                 if (! app(AssistantProjectMaterialStockReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if ($type === AssistantProjectAttentionReader::TYPE) {
+                if (! app(AssistantProjectAttentionReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if ($type === 'published_report_financial_projection') {
                 if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
