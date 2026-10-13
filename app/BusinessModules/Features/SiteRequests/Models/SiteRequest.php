@@ -56,6 +56,9 @@ class SiteRequest extends Model
         'assigned_to',
         'title',
         'description',
+        'location',
+        'estimated_cost',
+        'requester_comment',
         'status',
         'priority',
         'request_type',
@@ -103,6 +106,7 @@ class SiteRequest extends Model
     ];
 
     protected $casts = [
+        'estimated_cost' => 'decimal:2',
         'status' => SiteRequestStatusEnum::class,
         'priority' => SiteRequestPriorityEnum::class,
         'personnel_type' => PersonnelTypeEnum::class,

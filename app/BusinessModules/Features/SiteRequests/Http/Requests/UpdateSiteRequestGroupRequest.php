@@ -21,6 +21,9 @@ class UpdateSiteRequestGroupRequest extends FormRequest
         return [
             'title' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
+            'location' => ['nullable', 'string', 'max:2000'],
+            'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
+            'requester_comment' => ['nullable', 'string', 'max:10000'],
             'notes' => ['nullable', 'string'],
             
             // Массив материалов для синхронизации
@@ -69,6 +72,9 @@ class UpdateSiteRequestGroupRequest extends FormRequest
     {
         return [
             'title' => 'название',
+            'location' => trans_message('site_requests.form_fields.location'),
+            'estimated_cost' => trans_message('site_requests.form_fields.estimated_cost'),
+            'requester_comment' => trans_message('site_requests.form_fields.requester_comment'),
             'materials.*.name' => 'название материала',
             'materials.*.quantity' => 'количество',
             'materials.*.unit' => 'единица измерения',

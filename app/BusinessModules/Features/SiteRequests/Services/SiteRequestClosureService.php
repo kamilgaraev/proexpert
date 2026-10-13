@@ -33,10 +33,10 @@ final class SiteRequestClosureService
             return false;
         }
 
-        $request->loadMissing(['purchaseRequests', 'paymentDocuments', 'materialDeliveries']);
+        $request->loadMissing(['purchaseRequests', 'materialDeliveries']);
 
         return $request->purchaseRequests->isEmpty()
-            && $request->paymentDocuments->isEmpty()
+            && ! $request->hasPaymentDocument()
             && $request->materialDeliveries->isEmpty();
     }
 

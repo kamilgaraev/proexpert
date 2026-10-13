@@ -34,6 +34,7 @@ use DomainException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\QueryException;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -380,6 +381,9 @@ class SiteRequestService
                 'user_id' => $userId,
                 'title' => $data['title'] ?? 'Новая заявка',
                 'description' => $data['description'] ?? null,
+                'location' => $data['location'] ?? null,
+                'estimated_cost' => $data['estimated_cost'] ?? null,
+                'requester_comment' => $data['requester_comment'] ?? null,
                 'status' => SiteRequestStatusEnum::DRAFT->value,
                 'idempotency_key' => $idempotencyKey ?: null,
                 'idempotency_hash' => $idempotencyFingerprint,
@@ -389,7 +393,7 @@ class SiteRequestService
             foreach ($items as $itemData) {
                 // Подготовка данных для конкретной заявки
                 // Важно: некоторые поля берутся из общих данных ($data), если они не переопределены в $itemData
-                $requestData = array_merge($data, $itemData);
+                $requestData = array_merge(Arr::except($data, ['estimated_cost']), $itemData);
 
                 // Если у элемента есть специфичное примечание, добавляем его
                 if (! empty($itemData['note'])) {
@@ -417,13 +421,17 @@ class SiteRequestService
 
         return DB::transaction(function () use ($group, $userId, $data) {
             // 1. Обновляем основные поля группы
-            $groupData = array_filter([
-                'title' => $data['title'] ?? null,
-                'description' => $data['description'] ?? null,
-            ]);
+            $groupData = Arr::only($data, ['title', 'description', 'location', 'estimated_cost', 'requester_comment']);
 
             if (! empty($groupData)) {
                 $group->update($groupData);
+            }
+
+            $commonContext = Arr::only($data, ['location', 'requester_comment']);
+            if ($commonContext !== []) {
+                foreach ($group->requests as $request) {
+                    $this->update($request, $userId, $commonContext);
+                }
             }
 
             // 2. Обработка материалов (если переданы)
@@ -475,6 +483,8 @@ class SiteRequestService
                             'material_id' => $itemData['material_id'] ?? null,
                             'estimate_item_id' => $itemData['estimate_item_id'] ?? null,
                             'notes' => $itemData['note'] ?? null,
+                            'location' => $group->location,
+                            'requester_comment' => $group->requester_comment,
                         ];
 
                         // Копируем общие поля из данных или из базового запроса

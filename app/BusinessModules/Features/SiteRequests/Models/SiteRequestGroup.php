@@ -29,11 +29,15 @@ class SiteRequestGroup extends Model
         'title',
         'status',
         'description',
+        'location',
+        'estimated_cost',
+        'requester_comment',
         'idempotency_key',
         'idempotency_hash',
     ];
 
     protected $casts = [
+        'estimated_cost' => 'decimal:2',
         'status' => SiteRequestStatusEnum::class,
     ];
 
