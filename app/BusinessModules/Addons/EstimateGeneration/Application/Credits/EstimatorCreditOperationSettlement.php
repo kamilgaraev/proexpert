@@ -22,6 +22,10 @@ final readonly class EstimatorCreditOperationSettlement
     {
         $contentHash = hash('sha256', CanonicalPipelineJson::encode(array_intersect_key($draft,
             array_flip(['generation_contract', 'source_input_version', 'evaluation_result', 'local_estimates']))));
+        if (($draft['source_info_only'] ?? false) === true) {
+            $contentHash = hash('sha256', CanonicalPipelineJson::encode([$contentHash,
+                'request_info' => $draft['estimate_composition']['request_info'] ?? []]));
+        }
         $result = $draft['evaluation_result'] ?? null;
         $useful = false;
         if (is_array($result)) {

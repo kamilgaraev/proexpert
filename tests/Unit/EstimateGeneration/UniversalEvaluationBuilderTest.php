@@ -12,6 +12,21 @@ use PHPUnit\Framework\TestCase;
 
 final class UniversalEvaluationBuilderTest extends TestCase
 {
+    public function test_unconfirmed_source_does_not_disappear_from_scope_checks_or_become_a_priced_position(): void
+    {
+        $draft = ['evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['finishing']],
+            'local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [['key' => 'floor', 'name' => 'Пол', 'quantity' => '20', 'unit' => 'm2']]]]]],
+            'estimate_composition' => ['request_info' => [['reason' => 'estimate_composer_work_context_unconfirmed', 'work_name' => 'Окраска стен']]]];
+        $result = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        self::assertContains('work_source_review', array_column($result['missing_requirements'], 'requirement'));
+        self::assertFalse($result['can_confirm_for_apply']);
+        self::assertCount(1, $result['scenarios'][0]['positions']);
+        self::assertContains('confirm_work_source', array_column($result['priority_questions'], 'next_action'));
+        $draft['estimate_composition']['request_info'][0]['reason'] = 'estimate_composer_work_section_not_selected';
+        $outsideScope = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        self::assertNotContains('work_source_review', array_column($outsideScope['missing_requirements'], 'requirement'));
+    }
+
     public function test_quantity_source_keeps_exact_document_reference_page_region_and_native_cell(): void
     {
         $version = 'sha256:'.str_repeat('a', 64);

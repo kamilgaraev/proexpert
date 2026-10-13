@@ -145,6 +145,63 @@ final class EvaluationRevisionsPostgresTest extends EstimateGenerationCanonicalP
         self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
     }
 
+    public function test_information_only_publication_preserves_history_and_is_atomic_without_a_new_revision(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $session->update(['input_payload' => [...$session->input_payload, 'evaluation_mode' => 'universal',
+            'price_policy' => 'catalog', 'profile_id' => 'renovation', 'selected_sections' => ['finishing']]]);
+        $hash = app(EvaluationInputFingerprint::class)->fromSession($session);
+        app(SaveEvaluationRevision::class)->save($actor, (int) $session->organization_id, (int) $session->project_id,
+            (int) $session->id, 0, (string) Str::uuid(), $hash, $this->evaluationResultFixture());
+        $operation = (string) Str::uuid();
+        $session->update(['status' => 'generating', 'input_payload' => [...$session->input_payload,
+            'generation_actor_type' => 'user', 'generation_actor_id' => $actor->id,
+            'generation_attempt_id' => $operation, 'generation_evaluation_input_hash' => $hash]]);
+        $claim = CheckpointClaim::acquired(new PipelineContext((int) $session->id, (int) $session->organization_id,
+            (int) $session->project_id, 0, 'sha256:'.$hash, 'generating', generationAttemptId: $operation,
+            baseInputVersion: 'sha256:'.$hash), ProcessingStage::ValidateDraft, (string) Str::uuid());
+        $requests = [['index' => 0, 'reason' => 'estimate_composer_work_source_unrelated',
+            'work_name' => 'Монтаж отопления', 'next_action' => 'confirm_work_source', 'source_fact_ids' => []]];
+        $draft = (new BuildMostEstimateDraft)->seal(
+            (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project([
+                'source_input_version' => 'sha256:'.$hash,
+                'generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+                'source_info_only' => true, 'evaluation_result' => null, 'local_estimates' => [],
+                'estimate_composition' => ['request_info' => $requests], 'is_complete' => false]));
+        try {
+            DB::transaction(function () use ($claim, $draft): void {
+                app(PublishUniversalEvaluation::class)->publish($claim, $draft);
+                throw new \RuntimeException('rollback_information_only');
+            });
+            self::fail('The publication rollback did not occur.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('rollback_information_only', $exception->getMessage());
+        }
+        self::assertSame('generating', $session->fresh()->status->value);
+        self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $originalInput = $session->fresh()->input_payload;
+        $session->update(['input_payload' => [...$originalInput, 'description' => 'Изменённый состав работ']]);
+        try {
+            DB::transaction(fn () => app(PublishUniversalEvaluation::class)->publish($claim, $draft));
+            self::fail('Changed input accepted a stale source request.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('evaluation_input_changed', $exception->getMessage());
+        }
+        self::assertSame('generating', $session->fresh()->status->value);
+        $session->update(['input_payload' => $originalInput]);
+        DB::transaction(fn () => app(PublishUniversalEvaluation::class)->publish($claim, $draft));
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $current = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertTrue($current['source_info_required']);
+        self::assertSame($requests, $current['request_info']);
+        self::assertNull($current['result']);
+        self::assertNull($current['revision']);
+        self::assertNull($current['confirmed_scenario']);
+        self::assertNull($session->fresh()->applied_estimate_id);
+        self::assertTrue((new BuildMostEstimateDraft)->verifyArtifact($session->fresh()->draft_payload));
+    }
+
     private function evaluationResultFixture(): array
     {
         return [...(new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScenarioEstimateCalculator)->calculate([

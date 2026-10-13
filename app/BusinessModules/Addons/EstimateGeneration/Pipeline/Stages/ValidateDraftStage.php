@@ -68,6 +68,27 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
 
     private function validateUniversal(PipelineContext $context, array $draft): PipelineStageResult
     {
+        $hasWork = false;
+        foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            foreach ($estimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    if (! in_array($item['item_type'] ?? 'priced_work', ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
+                        $hasWork = true;
+                    }
+                }
+            }
+        }
+        if (! $hasWork && ($draft['estimate_composition']['request_info'] ?? []) !== []) {
+            // No audit/model call and no fabricated zero estimate for unanswered source questions.
+            $draft['local_estimates'] = [];
+            $draft['source_info_only'] = true;
+            $draft['evaluation_result'] = null;
+            $draft['is_complete'] = false;
+            $draft['stage6_status'] = 'source_info_required';
+            $draft = $this->artifacts->seal($this->universalReviews->project($draft));
+
+            return $this->results->make($context, $this->stage(), ['draft' => $draft, 'requires_review' => true]);
+        }
         if ($this->models === null) {
             throw new \DomainException('universal_project_snapshot_unavailable');
         }

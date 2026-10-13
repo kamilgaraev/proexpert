@@ -201,6 +201,21 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame(['retry', 'cancel', 'archive'], array_column($snapshot->availableActions, 'action'));
     }
 
+    public function test_input_review_exposes_document_upload_only_with_current_upload_permission(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.upload_documents'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+        self::assertContains('upload_documents', array_column($snapshot->availableActions, 'action'));
+        $withoutPermission = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: [], readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+        self::assertNotContains('upload_documents', array_column($withoutPermission->availableActions, 'action'));
+    }
+
     #[Test]
     public function resumable_document_system_failure_recommends_documents_with_zero_ready_pages(): void
     {

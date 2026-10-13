@@ -225,6 +225,12 @@ final class AdvanceEstimateGeneration
     }
 
     /** @param array<string, mixed> $attributes */
+    public function generationNeedsInput(EstimateGenerationSession $session, array $attributes): EstimateGenerationSession
+    {
+        return $this->workflow->transition($session, EstimateGenerationEvent::GenerationNeedsInput, $attributes);
+    }
+
+    /** @param array<string, mixed> $attributes */
     public function reviewUpdated(EstimateGenerationSession $session, bool $requiresReview, array $attributes): EstimateGenerationSession
     {
         $event = match (true) {
