@@ -11,6 +11,31 @@ use PHPUnit\Framework\TestCase;
 
 final class NativeNumericFactFactoryTest extends TestCase
 {
+    public function test_specification_text_is_published_with_cell_evidence_but_never_as_a_numeric_measurement(): void
+    {
+        $native = ['sheet' => 'Спецификация', 'header_cells' => [
+            ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+            ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.']], 'cells' => []];
+        $text = 'Спецификация насоса P1: модель, комплектация и требования монтажа.';
+        foreach ([['equipment.p1', 'Спецификация оборудования', $text, ''],
+            ['roof.1', 'heating_test_program', 'Программа испытаний другой системы.', '']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $factory = new NativeNumericFactFactory;
+        $publication = $factory->spreadsheet($this->context(), $native);
+        self::assertCount(1, $publication->claims);
+        self::assertSame(['type' => 'string', 'data' => $text], $publication->claims[0]->value);
+        self::assertNull($publication->claims[0]->unit);
+        self::assertSame('xlsx:sheet:Спецификация!C2', $publication->claims[0]->locator['native_reference']);
+        self::assertSame('accepted', $publication->decisions[0]->status);
+        self::assertSame('native_document_context_invalid', $publication->quarantinedItems[0]['reason_code']);
+        self::assertFalse($publication->numericSources->certifies($publication->claims[0]));
+        $native['cells'][2] = [...$native['cells'][2], 'formula' => '=OTHER()', 'cached_value' => $text];
+        self::assertSame('candidate', $factory->spreadsheet($this->context(), $native)->decisions[0]->status);
+    }
+
     public function test_sheet_literals_have_exact_cell_refs_and_cached_formula_is_only_a_candidate(): void
     {
         $native = $this->sheet();

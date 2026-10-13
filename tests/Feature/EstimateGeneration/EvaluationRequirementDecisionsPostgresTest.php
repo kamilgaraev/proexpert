@@ -33,6 +33,88 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationRequirementDecisionsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_native_specification_reaches_canonical_facts_and_requires_a_scoped_human_document_decision(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $scope[0],
+            'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'equipment.xlsx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'storage_path' => 'org-'.$scope[0].'/fixture-equipment.xlsx', 'file_size_bytes' => 100,
+            'checksum_sha256' => str_repeat('d', 64), 'status' => 'ready', 'page_count' => 1]);
+        $version = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+            1, ...[...$scope, (int) $document->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                1, $version, [], $document->storage_path, $document->mime_type, $document->filename, 'fixture-claim', 1, 0, 'draft']);
+        $text = 'Спецификация оборудования P1: насос, модель и монтажные требования.';
+        $native = ['sheet' => 'Спецификация', 'header_cells' => [
+            ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+            ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.']],
+            'cells' => [['address' => 'A2', 'value' => 'equipment.p1'], ['address' => 'B2', 'value' => 'equipment_specification'],
+                ['address' => 'C2', 'value' => $text, 'raw_value' => $text, 'formula' => null], ['address' => 'D2', 'value' => '']]];
+        foreach ([['roof_facet.f1', 'Промышленная спецификация', 'Документальные требования для маркированного ската F1.', ''],
+            ['room.r1', 'Технологические требования', 'Документальные требования для маркированного помещения R1.', '']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 3), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshot(...$scope);
+        self::assertContains('industrial_specification', array_column($snapshot->facts, 'type'));
+        self::assertContains('technology_requirements', array_column($snapshot->facts, 'type'));
+        $fact = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_specification'))[0];
+        self::assertSame($text, $fact->value);
+        self::assertNull($fact->unit);
+        self::assertSame('confirmed', $fact->status);
+        self::assertFalse((new DocumentRequirementAcceptance)->accepted($snapshot, [], $fact, 'unspecified'));
+        $proof = array_column($snapshot->evidence, null, 'id')[$fact->evidenceIds[0]];
+        self::assertSame('xlsx:sheet:Спецификация!C2', $proof->nativeReference);
+        $session->update(['input_payload' => [...$session->input_payload, 'selected_sections' => ['equipment']],
+            'draft_payload' => ['evaluation_result' => ['coverage' => ['selected_scope' => ['equipment' => [$fact->entityId]]]]]]);
+        $target = ['entity_id' => $fact->entityId, 'section' => 'equipment', 'requirement' => 'equipment_specification', 'state_version' => 0];
+        $sources = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class)
+            ->handle($actor, $scope[1], $scope[2], $target);
+        self::assertSame('0', $sources['cost_units']);
+        self::assertSame(0, $sources['state_version']);
+        self::assertCount(1, $sources['sources']);
+        self::assertSame($fact->id, $sources['sources'][0]['fact_id']);
+        self::assertSame($text, $sources['sources'][0]['excerpt']);
+        self::assertSame((int) $document->id, $sources['sources'][0]['locators'][0]['document_id']);
+        foreach ([['entity_id' => 'entity:foreign'], ['section' => 'heating'], ['requirement' => 'heating_test_program']] as $change) {
+            try {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class)
+                    ->handle($actor, $scope[1], $scope[2], [...$target, ...$change]);
+                self::fail('An unrelated document requirement was exposed.');
+            } catch (ValidationException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class)
+                ->handle($actor, $scope[1], $scope[2], [...$target, 'state_version' => 1]);
+            self::fail('A source response ignored the current version.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
+            self::addToAssertionCount(1);
+        }
+        $receipt = app(SaveEvaluationRequirementDecision::class)->handle($actor, $scope[1], $scope[2], [...$target,
+            'request_id' => (string) Str::uuid(), 'document_fact_id' => $fact->id, 'disposition' => 'document_verified',
+            'reason' => 'Проверена спецификация указанного оборудования P1']);
+        $snapshot = $models->snapshot(...$scope);
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, [$receipt['fact_id']]]);
+        self::assertTrue((new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, 'unspecified'));
+        $document->update(['checksum_sha256' => str_repeat('e', 64)]);
+        self::assertSame([], app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class)
+            ->handle($actor, $scope[1], $scope[2], [...$target, 'state_version' => 1])['sources']);
+        $document->update(['checksum_sha256' => str_repeat('d', 64)]);
+        $document->update(['status' => 'ignored']);
+        self::assertSame([], app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class)
+            ->handle($actor, $scope[1], $scope[2], [...$target, 'state_version' => 1])['sources']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_document_confirmation_is_bound_to_the_exact_entity_requirement_and_current_document_version(): void
     {
         [$actor, $session, $entityId, $input] = $this->fixture();

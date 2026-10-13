@@ -23,28 +23,6 @@ final class WorkIntentSourceClassifier
         'heating.unit' => 'heating', 'heating.pipe' => 'heating', 'heating.radiators' => 'heating',
     ];
 
-    private const SYSTEM_FACTS = [
-        'heating_system' => 'heating', 'heating_specification' => 'heating', 'radiator_specification' => 'heating',
-        'water_supply_system' => 'water_supply', 'water_supply_specification' => 'water_supply',
-        'sewerage_system' => 'sewerage', 'sewerage_specification' => 'sewerage',
-        'ventilation_system' => 'ventilation', 'ventilation_specification' => 'ventilation',
-        'electricity_system' => 'electricity', 'electrical_specification' => 'electricity',
-        'automation_system' => 'automation', 'automation_specification' => 'automation',
-        'technological_pipeline_specification' => 'technological_pipelines',
-        'equipment_specification' => 'equipment',
-    ];
-
-    private const SYSTEM_ENTITIES = [
-        'heating' => ['heating_system', 'radiator', 'heater', 'equipment'],
-        'water_supply' => ['water_supply_system', 'water_pipe', 'equipment'],
-        'sewerage' => ['sewerage_system', 'sewer_pipe', 'equipment'],
-        'ventilation' => ['ventilation_system', 'ventilation_duct', 'equipment'],
-        'electricity' => ['electrical_system', 'electrical_circuit', 'equipment'],
-        'automation' => ['automation_system', 'control_system', 'equipment'],
-        'technological_pipelines' => ['technological_pipeline', 'process_system', 'equipment'],
-        'equipment' => ['equipment'],
-    ];
-
     /** @return array{entity_id:string,work_section:string,basis_fact_ids:list<string>} */
     public function binding(array $intent, array $facts): array
     {
@@ -107,10 +85,8 @@ final class WorkIntentSourceClassifier
 
     private function domains(string $type, string $entityType): array
     {
-        if (isset(self::SYSTEM_FACTS[$type])) {
-            $domain = self::SYSTEM_FACTS[$type];
-
-            return in_array($entityType, self::SYSTEM_ENTITIES[$domain], true) ? [$domain] : [];
+        if (($domain = FactVocabulary::documentDomain($type)) !== null) {
+            return $domain !== 'industrial' && FactVocabulary::documentSupportsEntity($type, $entityType) ? [$domain] : [];
         }
         if (in_array($type, ['roof_type', 'roof_slope_degrees', 'roof_geometry', 'roof_fastener_specification'], true)) {
             return in_array($entityType, ['roof', 'roof_facet', 'roof_opening'], true) ? ['roofing'] : [];

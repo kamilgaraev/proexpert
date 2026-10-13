@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContractException;
 
@@ -46,7 +47,10 @@ final class ProjectSheetAnalysisValidator
     /** @return list<string> */
     public static function factTypes(string $role): array
     {
-        return self::ROLE_FACT_TYPES[$role] ?? [];
+        $types = self::ROLE_FACT_TYPES[$role] ?? [];
+
+        return in_array($role, ['plan', 'section', 'specification', 'unknown'], true)
+            ? [...$types, ...FactVocabulary::documentTypes()] : $types;
     }
 
     /**
@@ -102,11 +106,15 @@ final class ProjectSheetAnalysisValidator
             throw new VisionContractException('invalid_project_sheet_fact');
         }
 
-        if (! in_array($fact['factType'], self::ROLE_FACT_TYPES[$role], true)) {
+        if (! in_array($fact['factType'], self::factTypes($role), true)) {
             throw new VisionContractException('unregistered_project_sheet_fact_type');
         }
         if ($fact['factType'] === 'room_name' && RoomIdentityObservation::label($fact['entityKey'], $fact['value'], $fact['unit']) === null) {
             throw new VisionContractException('invalid_room_identity_observation');
+        }
+        if (FactVocabulary::documentDomain($fact['factType']) !== null
+            && FactVocabulary::documentObservation($fact['factType'], $fact['entityKey'], $fact['value'], $fact['unit']) === null) {
+            throw new VisionContractException('invalid_document_requirement_observation');
         }
 
         self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);

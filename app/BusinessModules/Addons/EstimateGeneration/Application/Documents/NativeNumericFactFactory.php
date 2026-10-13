@@ -72,9 +72,17 @@ final class NativeNumericFactFactory
             }
             $key = ($kind ?? 'quantity').':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity !== '' ? $entity : 'row:'.$row, $location], JSON_THROW_ON_ERROR)), 0, 32);
             $formula = $cell['formula'] ?? null;
-            $records[] = ['entity' => $key, 'parameter' => $parameter,
-                'value' => $formula === null ? ($cell['raw_value'] ?? $cell['value'] ?? null) : ($cell['cached_value'] ?? null),
-                'unit' => (string) ($cellsByColumn[$columns['unit']]['value'] ?? ''),
+            $value = $formula === null ? ($cell['raw_value'] ?? $cell['value'] ?? null) : ($cell['cached_value'] ?? null);
+            $rawUnit = (string) ($cellsByColumn[$columns['unit']]['value'] ?? '');
+            $document = FactVocabulary::documentObservation($parameter, $entity,
+                ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit);
+            if ($document !== null) {
+                $key = $document['semantic_type'].':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity, $location], JSON_THROW_ON_ERROR)), 0, 32);
+                $location['source_entity_key'] = $entity;
+            }
+            $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
+                'unit' => $document !== null ? null : $rawUnit, 'literal_type' => $document !== null ? 'string'
+                    : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number'),
                 'reference' => 'xlsx:sheet:'.(string) ($native['sheet'] ?? '').'!'.$cell['address'],
                 'confirmed' => $formula === null, 'reason' => $formula === null ? null : 'native_formula_requires_confirmation', 'location' => $location];
         }
@@ -111,6 +119,25 @@ final class NativeNumericFactFactory
         $quarantined = [];
         $verifiedFingerprints = [];
         foreach ($records as $index => $record) {
+            if (($record['literal_type'] ?? null) === 'invalid_document_context') {
+                $quarantined[] = ['role' => 'native', 'index' => $index, 'reason_code' => 'native_document_context_invalid'];
+
+                continue;
+            }
+            if (($record['literal_type'] ?? null) === 'string') {
+                $claims[] = new ObservationClaim('literal:native:'.($index + 1), 'observer_literal', $record['entity'], $record['parameter'],
+                    ['type' => 'string', 'data' => $record['value']], null, 'literal:source:'.($index + 1), $record['confirmed'],
+                    $context->organizationId, $context->projectId, $context->sessionId, $context->sourceVersion,
+                    ['document_id' => $context->documentId, 'page' => $context->index,
+                        'unit_type' => $context->type->value, 'unit_index' => $context->index,
+                        'native_reference' => $record['reference'], ...($record['location'] ?? [])], 0.0);
+                $claim = $claims[array_key_last($claims)];
+                $decisions[] = new ArbitrationDecision($claim->id, $record['confirmed'] ? 'accepted' : 'candidate', [$claim->id], [$claim->evidenceRef],
+                    $record['reason'] ?? 'native_literal_document_context',
+                    ['entity_key' => $claim->entityKey, 'fact_type' => $claim->factType, 'value' => $claim->value, 'unit' => null, 'source_claim_id' => $claim->id]);
+
+                continue;
+            }
             $value = $record['value'];
             $unit = $record['unit'];
             $reason = null;
