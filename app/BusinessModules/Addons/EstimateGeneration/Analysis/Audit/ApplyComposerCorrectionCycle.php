@@ -132,7 +132,7 @@ final readonly class ApplyComposerCorrectionCycle
             ));
             if ($remaining !== []) {
                 $corrections = $this->corrector->run(new EstimateComposerCorrectionInput($input, $remaining));
-                [$corrected, $composerApplied] = $this->applyComposerCorrections($corrected, $corrections, $input->derivedQuantities);
+                [$corrected, $composerApplied] = $this->applyComposerCorrections($corrected, $corrections, $input->derivedQuantities, $input->facts);
                 $applied = $applied || $composerApplied;
             }
             if (! $applied) {
@@ -173,8 +173,9 @@ final readonly class ApplyComposerCorrectionCycle
     }
 
     /** @param list<array<string,mixed>> $corrections @param list<array<string,mixed>> $derivedQuantities @return array{array<string,mixed>,bool} */
-    private function applyComposerCorrections(array $draft, array $corrections, array $derivedQuantities): array
+    private function applyComposerCorrections(array $draft, array $corrections, array $derivedQuantities, array $facts): array
     {
+        $provenance = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\ComposedQuantityProvenance($derivedQuantities, $facts);
         $quantities = [];
         foreach ($derivedQuantities as $quantity) {
             if (is_array($quantity) && is_string($quantity['id'] ?? null)
@@ -192,12 +193,18 @@ final readonly class ApplyComposerCorrectionCycle
                 if ($this->findItem($draft, $correction['work_key']) !== null) {
                     continue;
                 }
+                $binding = $provenance->correction($correction);
+                $basis = $provenance->basis($binding);
+                $operandIds = $binding['operand_fact_ids'];
+                $sourceRefs = array_map(static fn (string $id): array => ['fact_id' => $id,
+                    'role' => in_array($id, $operandIds, true) ? 'quantity_operand' : 'context'],
+                    array_values(array_unique([...$correction['source_fact_ids'], ...$operandIds])));
                 $estimateIndex = count($draft['local_estimates'] ?? []);
                 $draft['local_estimates'][$estimateIndex] = [
                     'key' => 'ai-audit-corrections',
                     'title' => $correction['name'],
                     'scope_type' => 'supplementary',
-                    'source_refs' => array_map(static fn (string $factId): array => ['fact_id' => $factId], $correction['source_fact_ids']),
+                    'source_refs' => $sourceRefs,
                     'sections' => [[
                         'key' => 'ai-audit-corrections',
                         'title' => $correction['name'],
@@ -208,8 +215,15 @@ final readonly class ApplyComposerCorrectionCycle
                             'unit' => $quantity['unit'],
                             'quantity' => $quantity['value'],
                             'quantity_formula' => $quantity['id'],
-                            'source_refs' => array_map(static fn (string $factId): array => ['fact_id' => $factId], $correction['source_fact_ids']),
-                            'metadata' => ['audit_correction' => ['finding_id' => $correction['finding_id']]],
+                            'quantity_evidence' => $basis,
+                            'quantity_basis_details' => $basis,
+                            'quantity_status' => ($basis['assumptions'] ?? []) === [] ? 'supported' : 'assumed',
+                            'source_refs' => $sourceRefs,
+                            'unit_price' => null, 'total_cost' => null,
+                            'pricing_status' => 'not_calculated', 'pricing_blocker' => 'price_unknown',
+                            'metadata' => ['audit_correction' => ['finding_id' => $correction['finding_id']],
+                                'scope_entity_id' => $binding['entity_id'], 'quantity_key' => $quantity['id'],
+                                'quantity_operand_fact_ids' => $binding['operand_fact_ids']],
                         ]],
                     ]],
                 ];
@@ -228,13 +242,31 @@ final readonly class ApplyComposerCorrectionCycle
 
                 continue;
             }
-            if ($correction['operation'] === 'replace_quantity') {
-                $item['quantity'] = $quantity['value'];
-                $item['quantity_formula'] = $quantity['id'];
-            } else {
-                $item['unit'] = $quantity['unit'];
-            }
+            $binding = $provenance->correction($correction, $item);
+            $basis = $provenance->basis($binding);
+            // A unit change must use the same proven physical amount, rather than retain an old scaled number.
+            $item['quantity'] = $quantity['value'];
+            $item['unit'] = $quantity['unit'];
+            $item['quantity_formula'] = $quantity['id'];
+            $item['quantity_evidence'] = $basis;
+            $item['quantity_basis_details'] = $basis;
+            $item['quantity_status'] = ($basis['assumptions'] ?? []) === [] ? 'supported' : 'assumed';
+            $item['source_refs'] = array_map(static fn (string $id): array => ['fact_id' => $id, 'role' => 'quantity_operand'], $binding['operand_fact_ids']);
+            $item['metadata']['quantity_operand_fact_ids'] = $binding['operand_fact_ids'];
+            $item['metadata']['quantity_source_id'] = $quantity['id'];
+            $item['metadata']['scope_entity_id'] = $binding['entity_id'];
             $item['metadata']['audit_correction'] = ['finding_id' => $correction['finding_id']];
+            // Pricing ran before audit. No old rate, resources or accepted measurement may survive a repair.
+            foreach (['price_snapshot', 'commercial_price_snapshot', 'evaluation_price_basis_quantity', 'price_source',
+                'pricing_finalized_at', 'pricing_blocker_message', 'quantity_evidence_id', 'quantity_evidence_fingerprint',
+                'quantity_evidence_source_version', 'materials', 'labor', 'machinery', 'other_resources'] as $field) {
+                unset($item[$field]);
+            }
+            foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'machinery_cost', 'labor_cost', 'other_cost'] as $field) {
+                $item[$field] = null;
+            }
+            $item['pricing_status'] = 'not_calculated';
+            $item['pricing_blocker'] = 'price_unknown';
             unset($item);
             $applied = true;
         }

@@ -11,6 +11,38 @@ final class WorkItemQuantityMapper
 {
     public const FORMULA_VERSION = '1.5.0';
 
+    public function isKnownWorkKey(string $workKey): bool
+    {
+        return $this->rule($workKey) !== null;
+    }
+
+    /** Whether the existing rule accepts this purpose without an estimated multiplier. */
+    public function acceptsExactSource(string $workKey, string $sourcePurpose, string $sourceUnit): bool
+    {
+        $rule = $this->rule($workKey);
+        if ($rule === null) {
+            return false;
+        }
+        $source = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit::parse($sourceUnit);
+        $target = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit::parse($rule['unit']);
+        if ($source === null || $target === null || $source['unit'] !== $target['unit']) {
+            return false;
+        }
+        if ($sourcePurpose === $workKey) {
+            return true;
+        }
+        if (DirectTakeoffRequiredWorkItems::contains($workKey) && ! in_array($workKey, ['roof.area', 'roof.flat_area'], true)) {
+            return false;
+        }
+        foreach ($rule['sources'] as $candidate) {
+            if ($candidate['key'] === $sourcePurpose && BigDecimal::of($candidate['factor'])->isEqualTo(1)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);

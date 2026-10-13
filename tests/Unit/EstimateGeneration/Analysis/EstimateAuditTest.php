@@ -273,16 +273,29 @@ final class EstimateAuditTest extends TestCase
     {
         foreach (['add_work', 'replace_quantity', 'replace_unit'] as $operation) {
             $item = $this->item('work:a');
+            $item['metadata'] = ['scope_entity_id' => 'entity:room', 'quantity_key' => 'finish.floor'];
+            $item['quantity_basis_details'] = ['formula_key' => 'old_formula', 'formula_inputs' => ['entity_id' => 'entity:old']];
+            $item['quantity_evidence'] = $item['quantity_basis_details'];
+            $item['quantity_evidence_id'] = 41;
+            $item['commercial_price_snapshot'] = ['source_type' => 'catalog', 'unit' => 'm3', 'unit_price' => '100'];
+            $item['price_snapshot'] = ['source_type' => 'regional_resource_aggregate', 'final_amount' => '1000'];
+            $item['evaluation_price_basis_quantity'] = '10';
+            $item['materials'] = [['quantity' => '10', 'total_cost' => '1000']];
+            $item['work_cost'] = '1000';
+            $basis = ['key' => 'floor_area', 'amount' => '12.7500', 'unit' => 'м2', 'formula_key' => 'direct_floor_area',
+                'formula_version' => 'v1', 'source' => 'evidenced', 'model_version' => 'test:v1', 'evidence_ids' => [],
+                'assumptions' => [], 'review_blockers' => [], 'formula_inputs' => ['entity_id' => 'entity:room',
+                    'operands' => [['fact_id' => 'fact:floor-area', 'value' => '12.7500', 'unit' => 'm2']]]];
             $findingType = $operation === 'add_work' ? 'omission' : ($operation === 'replace_unit' ? 'invalid_unit' : 'quantity_mismatch');
             $finding = $this->finding('finding:'.$operation, $findingType);
             $correction = $operation === 'add_work'
                 ? [
                     'operation' => 'add_work',
                     'finding_id' => $finding['finding_id'],
-                    'work_key' => 'work:roof-safety',
-                    'name' => 'Монтаж временного ограждения кровли',
+                    'work_key' => 'finish.floor',
+                    'name' => 'Устройство покрытия пола',
                     'derived_quantity_id' => 'quantity:corrected',
-                    'source_fact_ids' => ['fact:foundation'],
+                    'source_fact_ids' => ['fact:floor-area'],
                 ]
                 : [
                     'operation' => $operation,
@@ -302,7 +315,11 @@ final class EstimateAuditTest extends TestCase
 
             $result = $cycles->apply($this->input(
                 $this->draft([$item]),
-                derivedQuantities: [['id' => 'quantity:corrected', 'value' => '12.7500', 'unit' => 'м2']],
+                derivedQuantities: [['id' => 'quantity:corrected', 'value' => '12.7500', 'unit' => 'м2', 'entity_id' => 'entity:room',
+                    'operand_fact_ids' => ['fact:floor-area'], 'formula_key' => 'direct_floor_area', 'source' => 'evidenced',
+                    'quantity_basis' => $basis]],
+                facts: [['id' => 'fact:foundation', 'status' => 'confirmed'], ['id' => 'fact:floor-area', 'entity_id' => 'entity:room',
+                    'value' => '12.7500', 'unit' => 'm2', 'status' => 'confirmed']],
             ));
 
             self::assertSame('accepted', $result['audit']['status'], $operation);
@@ -315,13 +332,53 @@ final class EstimateAuditTest extends TestCase
                 $result['draft']['local_estimates'],
             ));
             if ($operation === 'add_work') {
-                self::assertContains('work:roof-safety', array_column($items, 'key'));
+                self::assertContains('finish.floor', array_column($items, 'key'));
             } elseif ($operation === 'replace_quantity') {
                 self::assertSame('12.7500', $items[0]['quantity']);
             } else {
                 self::assertSame('м2', $items[0]['unit']);
             }
+            $changed = $operation === 'add_work' ? $items[1] : $items[0];
+            self::assertSame('12.7500', $changed['quantity']);
+            self::assertSame('м2', $changed['unit']);
+            self::assertSame($basis, $changed['quantity_basis_details']);
+            self::assertSame($basis, $changed['quantity_evidence']);
+            self::assertSame('supported', $changed['quantity_status']);
+            self::assertSame([['fact_id' => 'fact:floor-area', 'role' => 'quantity_operand']], $changed['source_refs']);
+            self::assertArrayNotHasKey('commercial_price_snapshot', $changed);
+            self::assertArrayNotHasKey('price_snapshot', $changed);
+            self::assertArrayNotHasKey('evaluation_price_basis_quantity', $changed);
+            self::assertArrayNotHasKey('quantity_evidence_id', $changed);
+            self::assertArrayNotHasKey('materials', $changed);
+            self::assertNull($changed['total_cost']);
+            self::assertNull($changed['unit_price']);
+            self::assertSame('price_unknown', $changed['pricing_blocker']);
+            $evaluationDraft = $result['draft'];
+            $evaluationDraft['evaluation_policy']['selected_sections'] = [];
+            $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)
+                ->build($evaluationDraft, new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+            $position = array_values(array_filter($evaluation['scenarios'][0]['positions'],
+                static fn (array $position): bool => $position['key'] === $changed['key']))[0];
+            self::assertNull($position['price_snapshot']);
+            self::assertNull($position['total_cost']);
+            self::assertSame('direct_floor_area', $position['quantity_formula']);
         }
+    }
+
+    public function test_replayed_correction_is_checked_again_before_mutating_the_draft(): void
+    {
+        $item = $this->item('finish.paint');
+        $item['metadata'] = ['scope_entity_id' => 'room:1'];
+        $draft = $this->draft([$item]);
+        $correction = ['operation' => 'replace_quantity', 'finding_id' => 'finding:wall', 'target_item_key' => 'finish.paint',
+            'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item), 'derived_quantity_id' => 'quantity:floor'];
+        $cycle = new ApplyComposerCorrectionCycle(new RunEstimateAudit(new InMemoryAiRoleRunRepository,
+            new RecordedEstimateAuditModel([]), 'openai/gpt-5-mini'), $this->corrector());
+        $method = new \ReflectionMethod(ApplyComposerCorrectionCycle::class, 'applyComposerCorrections');
+        $this->expectExceptionMessage('estimate_composer_correction_quantity_purpose_unverified');
+        $method->invoke($cycle, $draft, [$correction], [['id' => 'quantity:floor', 'entity_id' => 'room:1',
+            'value' => '40', 'unit' => 'm2', 'source' => 'evidenced', 'formula_key' => 'direct_floor_area',
+            'operand_fact_ids' => ['fact:area']]], [['id' => 'fact:area', 'entity_id' => 'room:1', 'value' => '40']]);
     }
 
     public function test_factory_captures_exact_project_snapshot_and_source_navigation(): void
@@ -563,7 +620,7 @@ final class EstimateAuditTest extends TestCase
         self::assertCount(1, $usage->records);
     }
 
-    private function input(array $draft, int $cycle = 0, ?array $derivedQuantities = null): EstimateAuditInput
+    private function input(array $draft, int $cycle = 0, ?array $derivedQuantities = null, ?array $facts = null): EstimateAuditInput
     {
         return new EstimateAuditInput(
             organizationId: 10,
@@ -571,7 +628,7 @@ final class EstimateAuditTest extends TestCase
             sessionId: 30,
             snapshotToken: str_repeat('a', 64),
             cycle: $cycle,
-            facts: [['id' => 'fact:foundation', 'status' => 'confirmed']],
+            facts: $facts ?? [['id' => 'fact:foundation', 'status' => 'confirmed']],
             derivedQuantities: $derivedQuantities ?? [['id' => 'quantity:foundation', 'value' => '10.2500', 'unit' => 'м3']],
             draft: $draft,
             evidence: [['fact_id' => 'fact:foundation', 'locator' => ['document_id' => 7, 'page' => 2]]],

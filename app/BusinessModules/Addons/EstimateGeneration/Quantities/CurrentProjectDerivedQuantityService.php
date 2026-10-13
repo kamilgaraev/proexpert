@@ -14,6 +14,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 
 final readonly class CurrentProjectDerivedQuantityService
 {
+    public const FORMULA_PURPOSES = [
+        'floor_area' => 'floor_area',
+        'direct_floor_area' => 'floor_area',
+        'wall_net_area' => 'net_wall_area',
+        'sloped_roof_area' => 'roof_area',
+        'earthwork_volume' => 'earthwork_volume',
+    ];
+
     private const MAX_FACTS = 10000;
 
     private const MAX_FORMULAS = 2000;
@@ -735,13 +743,7 @@ final readonly class CurrentProjectDerivedQuantityService
                 $byFormula[$quantity->formulaIdentity ?? $quantity->formula][] = $quantity;
             }
         }
-        $aliases = [
-            'floor_area' => 'floor_area',
-            'direct_floor_area' => 'floor_area',
-            'wall_net_area' => 'net_wall_area',
-            'sloped_roof_area' => 'roof_area',
-            'earthwork_volume' => 'earthwork_volume',
-        ];
+        $aliases = self::FORMULA_PURPOSES;
         $result = [];
         foreach ($byFormula as $formula => $items) {
             if (isset($aliases[$formula]) && count($items) === 1 && ! isset($unresolvedFormulas[$formula])) {

@@ -19,7 +19,7 @@ use Throwable;
 
 final readonly class RunEstimateComposer
 {
-    public const PROMPT_CONTRACT = 'estimate-composer:v2';
+    public const PROMPT_CONTRACT = 'estimate-composer:v3';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -182,6 +182,7 @@ final readonly class RunEstimateComposer
         $supplementaryWorkKeys = [];
         $seenCandidateIds = [];
         $quarantined = [];
+        $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
         foreach ($payload as $index => $record) {
             try {
                 if (! is_array($record) || array_is_list($record)) {
@@ -219,6 +220,9 @@ final readonly class RunEstimateComposer
                     $projected['unit'] = $record['unit'] ?? null;
                     $projected['work_section'] = $record['work_section'] ?? null;
                 }
+                if ($kind === 'supplementary' && array_key_exists('entity_id', $record)) {
+                    $projected['entity_id'] = $record['entity_id'];
+                }
                 $intent = EstimateWorkIntent::fromArray($projected);
                 if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
                     throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
@@ -240,6 +244,7 @@ final readonly class RunEstimateComposer
                     if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
                         throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
                     }
+                    $quantityProvenance->binding($intent->toArray());
                     if ($intent->technologyPackageCandidate !== null
                         && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
                         throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');

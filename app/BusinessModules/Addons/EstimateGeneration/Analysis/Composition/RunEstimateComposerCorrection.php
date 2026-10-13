@@ -17,7 +17,7 @@ use Throwable;
 
 final readonly class RunEstimateComposerCorrection
 {
-    public const PROMPT_CONTRACT = 'estimate-composer-correction:v1';
+    public const PROMPT_CONTRACT = 'estimate-composer-correction:v2';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -87,11 +87,14 @@ final readonly class RunEstimateComposerCorrection
         $factIds = array_fill_keys(array_column($input->audit->facts, 'id'), true);
         $quantityIds = array_fill_keys(array_column($input->audit->derivedQuantities, 'id'), true);
         $items = [];
+        $itemDetails = [];
+        $provenance = new ComposedQuantityProvenance($input->audit->derivedQuantities, $input->audit->facts);
         foreach ($input->audit->draft['local_estimates'] ?? [] as $estimate) {
             foreach (is_array($estimate) ? ($estimate['sections'] ?? []) : [] as $section) {
                 foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $item) {
                     if (is_array($item) && is_string($item['key'] ?? null)) {
                         $items[$item['key']] = self::itemFingerprint($item);
+                        $itemDetails[$item['key']] = $item;
                     }
                 }
             }
@@ -109,6 +112,8 @@ final readonly class RunEstimateComposerCorrection
             } else {
                 throw new InvalidArgumentException('estimate_composer_correction_operation_invalid');
             }
+            $binding = $provenance->correction($correction, $operation === 'add_work' ? null : $itemDetails[$correction['target_item_key']]);
+            $provenance->basis($binding);
             $validated[] = $correction;
         }
 

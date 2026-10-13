@@ -57,8 +57,8 @@ final class EstimateComposerTest extends TestCase
         $result['work_intents'][] = [
             'kind' => 'supplementary',
             'candidate_id' => 'supplementary:roof-safety',
-            'work_key' => 'roof_safety_barrier',
-            'name' => 'Монтаж временного ограждения кровли',
+            'work_key' => 'roof_underlay',
+            'name' => 'Устройство подкладочного слоя кровли',
             'derived_quantity_id' => 'quantity:roof',
             'source_fact_ids' => ['fact:roof'],
             'technology_package_candidate' => null,
@@ -76,7 +76,7 @@ final class EstimateComposerTest extends TestCase
         self::assertSame('supplementary', $intent['kind']);
         self::assertStringStartsWith('supplementary:', $intent['candidate_id']);
         self::assertNotSame('supplementary:roof-safety', $intent['candidate_id']);
-        self::assertSame('roof_safety_barrier', $intent['work_key']);
+        self::assertSame('roof_underlay', $intent['work_key']);
         self::assertSame('quantity:roof', $intent['derived_quantity_id']);
         self::assertArrayNotHasKey('unit_price', $intent);
         self::assertSame(['fact:roof'], $intent['source_fact_ids']);
@@ -355,8 +355,9 @@ final class EstimateComposerTest extends TestCase
             20,
             30,
             str_repeat('a', 64),
-            [['id' => 'fact:room-area', 'type' => 'area', 'value' => 80.0, 'unit' => 'm2', 'status' => 'confirmed']],
-            [['id' => 'quantity:room-area', 'value' => '80.000000', 'unit' => 'm2']],
+            [['id' => 'fact:room-area', 'entity_id' => 'entity:room', 'type' => 'area', 'value' => 80.0, 'unit' => 'm2', 'status' => 'confirmed']],
+            [['id' => 'quantity:room-area', 'entity_id' => 'entity:room', 'value' => '80.000000', 'unit' => 'm2', 'operand_fact_ids' => ['fact:room-area'],
+                'formula_key' => 'direct_floor_area', 'source' => 'evidenced']],
             [],
             [],
             [],
@@ -371,7 +372,7 @@ final class EstimateComposerTest extends TestCase
             new RecordedEstimateComposerModel(['work_intents' => [[
                 'kind' => 'supplementary',
                 'candidate_id' => null,
-                'work_key' => 'floor-screed-from-documented-area',
+                'work_key' => 'finish.floor',
                 'name' => 'Устройство цементной стяжки пола',
                 'derived_quantity_id' => 'quantity:room-area',
                 'source_fact_ids' => ['fact:room-area'],
@@ -577,10 +578,11 @@ final class EstimateComposerTest extends TestCase
             snapshotToken: $snapshotToken ?? str_repeat('a', 64),
             facts: [
                 ['id' => 'fact:foundation', 'status' => 'confirmed'],
-                ['id' => 'fact:roof', 'status' => 'confirmed'],
+                ['id' => 'fact:roof', 'entity_id' => 'entity:roof', 'value' => '120.1250', 'unit' => 'm2', 'status' => 'confirmed'],
                 ['id' => 'fact:facade', 'status' => 'unresolved'],
             ],
-            derivedQuantities: $derivedQuantities ?? [['id' => 'quantity:roof', 'value' => '120.1250', 'unit' => 'm2']],
+            derivedQuantities: $derivedQuantities ?? [['id' => 'quantity:roof', 'entity_id' => 'entity:roof', 'value' => '120.1250', 'unit' => 'm2',
+                'operand_fact_ids' => ['fact:roof']]],
             decisions: $decisions ?? [['id' => 'decision:roof', 'version' => 1]],
             candidates: $candidates,
             missingDocuments: $missingDocuments ?? [['code' => 'foundation_detail', 'source_fact_ids' => ['fact:foundation']]],
