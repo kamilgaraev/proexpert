@@ -6,6 +6,8 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -23,6 +25,38 @@ use Tests\TestCase;
 class EstimateItemControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_regenerated_snapshot_excludes_soft_deleted_root_section_and_child_items(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $section = $this->createSection($estimate);
+        $root = $this->createItem($estimate, $unit);
+        $deletedRoot = $this->createItem($estimate, $unit);
+        $sectionItem = $this->createItem($estimate, $unit, ['estimate_section_id' => $section->id]);
+        $deletedSectionItem = $this->createItem($estimate, $unit, ['estimate_section_id' => $section->id]);
+        $child = $this->createItem($estimate, $unit, ['parent_work_id' => $root->id]);
+        $deletedChild = $this->createItem($estimate, $unit, ['parent_work_id' => $root->id]);
+        foreach ([$deletedRoot, $deletedSectionItem, $deletedChild] as $item) {
+            $item->delete();
+        }
+        $snapshot = null;
+        $storage = $this->mock(EstimateStructureSnapshotStorage::class, function (MockInterface $mock) use (&$snapshot): void {
+            $mock->shouldReceive('putJson')->once()->andReturnUsing(function (string $path, array $payload) use (&$snapshot): void {
+                $snapshot = $payload;
+            });
+        });
+
+        (new GenerateEstimateSnapshotJob($estimate->id))->handle($storage);
+
+        self::assertSame([$root->id], array_column($snapshot['items'], 'id'));
+        self::assertSame([$sectionItem->id], array_column($snapshot['sections'][0]['items'], 'id'));
+        self::assertSame([$child->id], array_column($snapshot['items'][0]['children'], 'id'));
+        self::assertSame($snapshot['items'], $snapshot['itemsWithoutSection']);
+        self::assertSame($snapshot['items'], $snapshot['items_without_section']);
+    }
 
     public function test_index_is_estimate_scoped_and_tolerates_admin_pagination(): void
     {
@@ -53,6 +87,10 @@ class EstimateItemControllerWorkflowTest extends TestCase
 
     public function test_item_detail_mutations_and_delete_are_scoped_to_project_estimate(): void
     {
+        $this->mock(EstimateStructureSnapshotStorage::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('putJson')->andReturnNull();
+            $mock->shouldReceive('delete')->andReturnNull();
+        });
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);

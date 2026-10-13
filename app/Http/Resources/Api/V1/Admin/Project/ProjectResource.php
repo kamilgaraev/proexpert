@@ -19,7 +19,7 @@ class ProjectResource extends JsonResource
         }
 
         $resolver = app(ProjectCustomerResolverService::class);
-        $resolvedCustomer = $resolver->resolveLegalCustomer($this->resource);
+        $resolvedCustomer = $resolver->resolveCustomerForDisplay($this->resource);
         $resolvedGeneralContractor = $resolver->resolveGeneralContractor($this->resource);
         $resolvedDesigner = $resolver->resolveDesigner($this->resource);
         $resolvedSupervision = $resolver->resolveConstructionSupervision($this->resource);

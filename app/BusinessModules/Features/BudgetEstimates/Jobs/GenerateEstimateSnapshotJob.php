@@ -53,6 +53,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $items = EstimatePositionOrder::apply(
                 DB::table('estimate_items')
                     ->where('estimate_id', $this->estimateId)
+                    ->whereNull('deleted_at')
             )
                 ->orderBy('id', 'asc')
                 ->get()

@@ -115,6 +115,13 @@ class ProjectCustomerResolverService
         return $this->fromResolvedOrganization($resolved);
     }
 
+    public function resolveCustomerForDisplay(Project $project): ?array
+    {
+        $customer = $this->resolveLegalCustomer($project);
+
+        return $customer['is_fallback_owner'] ? null : $customer;
+    }
+
     private function fromResolvedOrganization(array $resolved): array
     {
         $organization = $resolved['organization'];

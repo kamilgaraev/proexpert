@@ -17,6 +17,23 @@ use Tests\TestCase;
 
 final class ProjectParticipantContractSourceTest extends TestCase
 {
+    public function test_project_does_not_display_its_contractor_owner_as_customer(): void
+    {
+        $owner = Organization::factory()->create(['name' => 'Подрядчик']);
+        $project = Project::factory()->create([
+            'organization_id' => $owner->id,
+            'customer' => null,
+            'customer_counterparty_id' => null,
+        ]);
+        app(ProjectParticipantService::class)->attach($project, $owner->id, ProjectOrganizationRole::CONTRACTOR);
+
+        $data = (new \App\Http\Resources\Api\V1\Admin\Project\ProjectResource($project))->resolve();
+
+        self::assertNull($data['customer']);
+        self::assertNull($data['resolved_customer']);
+        self::assertSame($owner->id, app(ProjectCustomerResolverService::class)->resolveOrganizationId($project));
+    }
+
     public function test_project_labels_use_registered_participants_before_legacy_text(): void
     {
         $owner = Organization::factory()->create();
@@ -132,7 +149,7 @@ final class ProjectParticipantContractSourceTest extends TestCase
         $customer = Organization::factory()->create();
         $project = Project::factory()->create(['organization_id' => $owner->id, 'customer' => null]);
         app(ProjectParticipantService::class)->attach($project, $customer->id, ProjectOrganizationRole::CUSTOMER);
-        $customer->delete();
+        Organization::withoutEvents(static fn () => $customer->delete());
 
         $resolved = app(ProjectCustomerResolverService::class)->resolveLegalCustomer($project);
 
