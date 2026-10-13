@@ -111,6 +111,9 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/design-management/packages', true],
             ['POST', '/api/v1/admin/design-management/packages', false],
             ['GET', '/api/v1/admin/design-management/packages/1', false],
+            ['GET', '/api/v1/admin/executive-documentation/references', true],
+            ['POST', '/api/v1/admin/executive-documentation/references', false],
+            ['GET', '/api/v1/admin/executive-documentation/references/1', false],
             ['GET', '/api/v1/admin/ai-assistant/conversations/1', false], ['GET', '/api/v1/mobile/ai-assistant/conversations', false]] as [$method, $path, $expected]) {
             Facade::clearResolvedInstances();
             $captured = null;
