@@ -12,16 +12,26 @@ final class AssistantPresentationPlanner
 
     public static function isPlanCandidate(string $text): bool
     {
+        $value = self::decode($text);
+
+        return is_array($value) && ($value['kind'] ?? null) === 'verified_rows'
+            || preg_match('/"kind"\s*:\s*"verified_rows"/u', $text) === 1;
+    }
+
+    private static function decode(string $text): ?array
+    {
         if (strlen($text) > self::MAX_PLAN_BYTES) {
-            return false;
+            return null;
         }
+        $text = trim($text);
+        if (preg_match('/\A```(?:json)?\s*\R([\s\S]*?)\R```\z/iu', $text, $match) === 1) { $text = $match[1]; }
         try {
             $value = json_decode($text, true, 8, JSON_THROW_ON_ERROR);
         } catch (\JsonException) {
-            return false;
+            return null;
         }
 
-        return is_array($value) && ($value['kind'] ?? null) === 'verified_rows';
+        return is_array($value) ? $value : null;
     }
 
     public static function hasFinancialSelection(string $text): bool
@@ -29,7 +39,7 @@ final class AssistantPresentationPlanner
         if (! self::isPlanCandidate($text)) {
             return false;
         }
-        $plan = json_decode($text, true);
+        $plan = self::decode($text);
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
         foreach (is_array($plan['result_sets'] ?? null) ? $plan['result_sets'] : [] as $set) {
             $columns = is_array($set) && is_array($set['columns'] ?? null) ? array_filter($set['columns'], is_string(...)) : [];
@@ -46,7 +56,8 @@ final class AssistantPresentationPlanner
         if (! self::hasFinancialSelection($text)) {
             return true;
         }
-        $plan = json_decode($text, true);
+        $plan = self::decode($text);
+        if ($plan === null) { return false; }
         $sets = $this->trustedSets($toolResults);
         if ($sets === []) {
             return false;
@@ -131,11 +142,7 @@ final class AssistantPresentationPlanner
         if ($text === '' || strlen($text) > self::MAX_PLAN_BYTES) {
             return null;
         }
-        try {
-            $plan = json_decode($text, true, 8, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return null;
-        }
+        $plan = self::decode($text);
         if (! is_array($plan) || ! $this->hasExactKeys($plan, ['kind', 'version', 'result_sets'])
             || ($plan['kind'] ?? null) !== 'verified_rows' || ($plan['version'] ?? null) !== 1
             || ! is_array($plan['result_sets'] ?? null) || ! array_is_list($plan['result_sets']) || $plan['result_sets'] === []) {
@@ -202,7 +209,8 @@ final class AssistantPresentationPlanner
         if ($this->render($text, $toolResults, $query) === null) {
             return null;
         }
-        $plan = json_decode($text, true);
+        $plan = self::decode($text);
+        if ($plan === null) { return null; }
         $sets = $this->trustedSets($toolResults);
         $rows = [];
         foreach ($plan['result_sets'] as $setPlan) {

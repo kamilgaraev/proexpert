@@ -64,6 +64,7 @@ final class AssistantToolSurface
             '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu' => ['get_project_production_readiness'],
             '/crm|сделк/iu' => ['get_project_crm_readiness'],
             '/отч[её]т|report/iu' => ['get_project_report_catalog'],
+            '/камер|видеонаблюден/iu' => ['get_project_camera_roster'],
             '/тендер/iu' => ['get_project_tender_decisions'],
             '/заявк/iu' => ['get_project_site_request_queue'],
             \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectActReader::INTENT_PATTERN => ['get_project_act_readiness'],

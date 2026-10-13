@@ -37,9 +37,13 @@ final class AssistantOrganizationNativeCoverageTest extends TestCase
         $projects = app(AssistantOrganizationProjectsReader::class);
         $result = $projects->read($actor, $org, $args);
         self::assertSame(2, $result['data']['total']); self::assertSame(1, $result['data']['active']); self::assertSame(1, $result['data']['archived']);
+        self::assertSame('all_projects', $result['data']['scope']);
+        self::assertStringContainsString('](/projects/'.$active->id.')', $result['server_formatted_answer']);
         self::assertStringNotContainsString('FOREIGN_PRIVATE', json_encode($result));
         $limited = $projects->read($member, $org, $args);
         self::assertSame(1, $limited['data']['total']); self::assertSame(0, $limited['data']['active']); self::assertSame(1, $limited['data']['archived']);
+        self::assertSame('assigned_projects', $limited['data']['scope']);
+        self::assertStringNotContainsString('](/projects/'.$active->id.')', $limited['server_formatted_answer']);
         self::assertTrue($projects->matchesReference($actor, $org, $result['source_refs'][0]));
         $active->updateQuietly(['is_archived' => true]);
         self::assertFalse($projects->matchesReference($actor, $org, $result['source_refs'][0]));

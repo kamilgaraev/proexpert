@@ -17,6 +17,7 @@ final readonly class AssistantProjectContractRosterReader
     public function __construct(private AssistantDataAccessPolicy $access, private ContractOrganizationListScope $nativeScope) {}
     public static function matches(string $query): bool
     {
+        $query = preg_replace('/(?<!\pL)документ[а-яё]*\s+без\s+(?:указанн[а-яё]*\s+)?дат[а-яё]*\s+окончания(?!\pL)/iu', 'договоры без даты окончания', $query) ?? $query;
         return preg_match('/(?:действующ|активн)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*действу(?:ют|ет)|договор[а-яё]*[\s\S]*активн/iu', $query) === 1
             && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }

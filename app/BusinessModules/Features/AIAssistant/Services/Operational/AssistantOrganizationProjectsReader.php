@@ -23,8 +23,9 @@ final readonly class AssistantOrganizationProjectsReader extends AssistantOrgani
 
     public static function hasIntent(string $query): bool
     {
-        return preg_match('/проект|объект/iu', $query) === 1 && preg_match('/активн|архивн|действующ/iu', $query) === 1
-            && \App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide($query);
+        return preg_match('/проект|объект/iu', $query) === 1 && preg_match('/активн|архивн|действующ|действу(?:ют|ет)/iu', $query) === 1
+            && (\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide($query)
+                || preg_match('/(?:проекты|объекты)\s+(?:(?:нашей|моей)\s+)?организации/iu', $query) === 1);
     }
 
     protected function collect(User $actor, int $organizationId): array
@@ -48,9 +49,10 @@ final readonly class AssistantOrganizationProjectsReader extends AssistantOrgani
         $lines = [trans_message('ai_assistant_operational.portfolio_scope', ['date' => $data['as_of_date']]),
             trans_message('ai_assistant_operational.portfolio_counts', ['total' => $data['total'], 'active' => $data['active'], 'archived' => $data['archived']])];
         foreach ($data['examples'] as $row) {
-            $lines[] = '- #'.$row['id'].' '.self::text($row['name']).'; '.trans_message('ai_assistant_operational.portfolio_date', [
+            $lines[] = '- [#'.$row['id'].' '.self::text($row['name']).'](/projects/'.$row['id'].'); '.trans_message('ai_assistant_operational.portfolio_date', [
                 'date' => $row['end_date'] ?? trans_message('ai_assistant_operational.not_recorded')]);
         }
+        $lines[] = trans_message('ai_assistant_operational.portfolio_access_'.$data['scope']);
         $lines[] = trans_message('ai_assistant_operational.portfolio_basis');
         $lines[] = trans_message('ai_assistant_operational.examples_basis');
         return implode("\n", $lines);

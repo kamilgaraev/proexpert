@@ -14,6 +14,7 @@ use App\Models\User;
 final readonly class AssistantProjectReportCatalogReader extends AssistantProjectOperationalReader
 {
     public const TYPE = 'live_project_report_catalog_projection';
+    public const INTENT_PATTERN = '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*[^?.!]*(?:доступн|подойдут|помогут|подходит)/iu';
 
     public function __construct(AssistantDataAccessPolicy $access, private ReportHttpAuthorizationTargetResolver $targets,
         private CurrentReportScopeAuthorizer $authorization, private GetReportCatalogAction $catalog)
@@ -23,7 +24,7 @@ final readonly class AssistantProjectReportCatalogReader extends AssistantProjec
 
     public static function matches(string $query): bool
     {
-        return preg_match('/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu', $query) === 1
+        return preg_match(self::INTENT_PATTERN, $query) === 1
             && preg_match('/создай|сформируй|выгрузи|скачай|отправь|запусти|сколько|потрач|прибыли|данн|цифр|значени|фактическ|результат|показател|итоги|сформирован|сумм[а-яё]*\s+(?:расход|затрат)/iu', $query) !== 1;
     }
 
