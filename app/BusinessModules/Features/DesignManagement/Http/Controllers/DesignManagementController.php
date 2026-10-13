@@ -14,6 +14,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDeri
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignProjectOverviewQuery;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignWorkflowService;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
@@ -36,6 +37,7 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
+        private readonly DesignProjectOverviewQuery $projectOverview,
         private readonly DesignWorkflowService $workflowService,
         private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
@@ -73,6 +75,17 @@ final class DesignManagementController extends Controller
             return $this->validationFailed($e);
         } catch (\Throwable $e) {
             return $this->failed('index', null, $e);
+        }
+    }
+
+    public function projectOverview(Request $request, int $projectId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->projectOverview->overview($this->organizationId($request), $projectId, $request->user()));
+        } catch (DomainException) {
+            return AdminResponse::error(trans_message('design_management.errors.project_not_found'), 404);
+        } catch (\Throwable $e) {
+            return $this->failed('index', $projectId, $e);
         }
     }
 
