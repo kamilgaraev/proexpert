@@ -402,6 +402,8 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             $this->assertCount(8, $rowCountQueries);
             $this->assertCount(4, $snapshotQueries);
             $this->assertLessThanOrEqual(4, $entryQueries->diff($entryCountQueries)->diff($rowCountQueries)->diff($snapshotQueries)->count(), $entryQueries->implode("\n"));
+            $entryDataQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "construction_journal_entries"') && str_contains($sql, 'as "completed_works_count"'));
+            $this->assertCount(1, $entryDataQueries);
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "schedule_tasks"')));
         }
     }
