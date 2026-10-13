@@ -61,7 +61,7 @@ class ConstructionJournalController extends Controller
                 ]
             );
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -94,7 +94,7 @@ class ConstructionJournalController extends Controller
                 201
             );
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -134,7 +134,7 @@ class ConstructionJournalController extends Controller
 
             return AdminResponse::success($this->payloadService->mapJournal($journal, $request->user(), true));
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -163,7 +163,7 @@ class ConstructionJournalController extends Controller
                 trans_message('construction_journal.messages.updated')
             );
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('project.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -190,7 +190,7 @@ class ConstructionJournalController extends Controller
 
             return AdminResponse::success(null, trans_message('construction_journal.messages.deleted'));
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -291,7 +291,7 @@ class ConstructionJournalController extends Controller
                 )
             );
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -323,7 +323,7 @@ class ConstructionJournalController extends Controller
                 trans_message($successMessage)
             );
         } catch (AuthorizationException $exception) {
-            return AdminResponse::error($exception->getMessage() ?: trans_message('errors.unauthorized'), 403);
+            throw $exception;
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

@@ -211,6 +211,20 @@ $app = Application::configure(basePath: dirname(__DIR__))
             );
         });
 
+        $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception, Request $request) use ($responseClassForRequest) {
+            if ($exception->getStatusCode() !== 403 || (! $request->expectsJson() && ! $request->is('api/*'))) {
+                return null;
+            }
+
+            $message = $exception->getMessage();
+            if ($message === '' || $message === 'This action is unauthorized.' || $message === 'Forbidden') {
+                $message = trans_message('errors.unauthorized');
+            }
+            $responseClass = $responseClassForRequest($request);
+
+            return $responseClass::error($message, 403)->withHeaders($exception->getHeaders());
+        });
+
         // Ошибки авторизации -> logs/auth/auth.log
         $exceptions->render(function (\Illuminate\Auth\AuthenticationException $e, Request $request) {
             if (str_starts_with($request->path(), 'api/v1/admin/')) {
@@ -267,11 +281,6 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // Трекинг исключений для мониторинга
         // ============================================================
 
-        // ============================================================
-        // ПРИМЕЧАНИЕ:
-        // Вся логика рендеринга исключений (renderable) находится в
-        // app/Exceptions/Handler.php для централизованного управления
-        // ============================================================
     })
     ->create();
 

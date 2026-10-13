@@ -32,6 +32,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Route;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -39,6 +40,46 @@ use Tests\TestCase;
 class ConstructionJournalCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_foreign_project_denials_are_localized_and_own_project_remains_accessible(): void
+    {
+        $context = AdminApiTestContext::create();
+        $ownProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignJournal = $this->createJournal($foreignOrganization, $foreignProject, $context->user, ['name' => 'Foreign journal']);
+        $this->allowAdminAccess();
+
+        foreach ([
+            ["/api/v1/admin/projects/{$foreignProject->id}/construction-journals?page=1&per_page=10", trans_message('errors.unauthorized')],
+            ["/api/v1/admin/construction-journals/{$foreignJournal->id}", trans_message('construction_journal.errors.access_denied')],
+        ] as [$url, $expected]) {
+            $this->withHeaders($context->authHeaders())->getJson($url)
+                ->assertForbidden()->assertJsonPath('success', false)->assertJsonPath('data', null)
+                ->assertJsonPath('message', $expected)
+                ->assertJsonPath('error', $expected)
+                ->assertJsonPath('code', 'http_403');
+        }
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$ownProject->id}/construction-journals?page=1&per_page=10")
+            ->assertOk()->assertJsonPath('success', true);
+    }
+
+    public function test_api_forbidden_renderer_localizes_defaults_and_preserves_custom_reasons_and_headers(): void
+    {
+        foreach ([
+            ['api/v1/admin/test-forbidden-default', '', trans_message('errors.unauthorized')],
+            ['api/v1/mobile/test-forbidden-default', 'This action is unauthorized.', trans_message('errors.unauthorized')],
+            ['api/v1/lk/test-forbidden-default', 'Forbidden', trans_message('errors.unauthorized')],
+            ['api/v1/admin/test-forbidden-custom', 'Доступ ограничен проверкой проекта.', 'Доступ ограничен проверкой проекта.'],
+        ] as [$path, $message, $expected]) {
+            Route::get($path, static function () use ($message): void {
+                throw new \Symfony\Component\HttpKernel\Exception\HttpException(403, $message, null, ['X-Denial-Reason' => 'preserved']);
+            });
+            $this->getJson('/'.$path)->assertForbidden()->assertJsonPath('message', $expected)
+                ->assertHeader('X-Denial-Reason', 'preserved');
+        }
+    }
 
     public function test_owner_can_manage_journal_entries_through_submission_and_rejection(): void
     {
@@ -259,6 +300,7 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             JournalWorkVolume::query()->create([
                 'journal_entry_id' => $entry->id,
                 'estimate_item_id' => $entryItem->id,
+                'contract_id' => $contract->id,
                 'quantity' => 1,
             ]);
             JournalMaterial::query()->create([
@@ -337,7 +379,10 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             }
 
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "journal_entry_approval_events"')));
-            $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "completed_works"')));
+            $completedWorkQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "completed_works"'));
+            $this->assertCount(1, $completedWorkQueries->filter(fn (string $sql): bool => str_contains($sql, 'as "completed_works_count"')));
+            $this->assertCount(1, $completedWorkQueries->filter(fn (string $sql): bool => str_contains($sql, 'as reserved_quantity')));
+            $this->assertCount(2, $completedWorkQueries, $completedWorkQueries->implode("\n"));
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "contract_estimate_items"')));
             $estimateQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "estimate_items"'));
             $childQueries = $queryLog->filter(fn (array $query): bool => str_contains($query['query'], 'from "estimate_items"') && str_contains($query['query'], '"parent_work_id" in'));
@@ -349,7 +394,14 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             $this->assertContains((string) $item->id, array_map('strval', $batchIds));
             $this->assertContains((string) $otherItem->id, array_map('strval', $batchIds));
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "journal_entry_attachments"')));
-            $this->assertLessThanOrEqual(4, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "construction_journal_entries"'))->count());
+            $entryQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "construction_journal_entries"'));
+            $entryCountQueries = $entryQueries->filter(fn (string $sql): bool => str_starts_with($sql, 'select count(*) as aggregate from "construction_journal_entries"'));
+            $rowCountQueries = $entryQueries->filter(fn (string $sql): bool => str_starts_with($sql, 'select count(*) as aggregate from "journal_'));
+            $snapshotQueries = $entryQueries->filter(fn (string $sql): bool => str_contains($sql, 'AS matching_rows'));
+            $this->assertCount($suffix === '' ? 4 : 5, $entryCountQueries);
+            $this->assertCount(8, $rowCountQueries);
+            $this->assertCount(4, $snapshotQueries);
+            $this->assertLessThanOrEqual(4, $entryQueries->diff($entryCountQueries)->diff($rowCountQueries)->diff($snapshotQueries)->count(), $entryQueries->implode("\n"));
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "schedule_tasks"')));
         }
     }
