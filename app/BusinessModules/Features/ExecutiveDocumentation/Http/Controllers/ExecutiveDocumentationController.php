@@ -280,9 +280,11 @@ final class ExecutiveDocumentationController extends Controller
                 'materials' => Material::query()
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true)
+                    ->with('photos')
                     ->orderBy('name')
                     ->limit(200)
                     ->get(['id', 'name', 'code'])
+                    ->each->makeHidden('photos')
                     ->values(),
                 'suppliers' => Supplier::query()
                     ->where('organization_id', $organizationId)

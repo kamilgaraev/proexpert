@@ -10,6 +10,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\File;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
@@ -17,7 +18,9 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -25,6 +28,74 @@ use Tests\TestCase;
 final class ExecutiveDocumentationProfileContractTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_material_reference_galleries_use_one_query_and_preserve_payload(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->mock(FileService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('temporaryUrl')->with(\Mockery::type('string'), 60)
+                ->andReturnUsing(static fn (string $path, int $minutes): string => 'https://gallery.test/'.$path.'?minutes='.$minutes);
+        });
+        $materials = collect(['A-gallery', 'B-gallery', 'C-empty'])->map(fn (string $name) => Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => $name,
+            'code' => $name,
+            'is_active' => true,
+        ]));
+        $inactive = Material::query()->create(['organization_id' => $context->organization->id, 'name' => 'inactive', 'code' => 'inactive', 'is_active' => false]);
+        $foreign = Material::query()->create(['organization_id' => $foreignContext->organization->id, 'name' => 'foreign', 'code' => 'foreign', 'is_active' => true]);
+        $photos = collect();
+        foreach ([[$materials[0], 'older', 'photo', 2], [$materials[0], 'newer', 'photo', 1], [$materials[1], 'second', 'photo', 1], [$materials[0], 'document', 'document', 1], [$materials[0], 'deleted', 'photo', 0]] as [$material, $name, $type, $hours]) {
+            $file = File::query()->create([
+                'organization_id' => $context->organization->id,
+                'user_id' => $context->user->id,
+                'fileable_id' => $material->id,
+                'fileable_type' => $material->getMorphClass(),
+                'name' => $name,
+                'original_name' => $name.'.png',
+                'path' => 'org-'.$context->organization->id.'/materials/'.$material->id.'/'.$name.'.png',
+                'disk' => 's3',
+                'mime_type' => 'image/png',
+                'size' => 123,
+                'type' => $type,
+                'category' => 'gallery',
+            ]);
+            $file->forceFill(['created_at' => now()->subHours($hours)])->save();
+            if ($name === 'deleted') {
+                $file->delete();
+            }
+            $photos->put($name, $file);
+        }
+        $expected = Material::query()->where('organization_id', $context->organization->id)->where('is_active', true)
+            ->orderBy('name')->limit(200)->get(['id', 'name', 'code'])->toArray();
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/executive-documentation/references?project_id='.$project->id);
+            $queries = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "files"')
+                && in_array('photo', $query['bindings'], true) && in_array((new Material)->getMorphClass(), $query['bindings'], true));
+        } finally {
+            DB::disableQueryLog();
+        }
+        self::assertCount(1, $queries);
+        $response->assertOk();
+        self::assertSame($expected, $response->json('data.materials'));
+        $response->assertJsonPath('data.materials.0.photo_gallery.0.id', $photos['newer']->id)
+            ->assertJsonPath('data.materials.0.photo_gallery.1.id', $photos['older']->id)
+            ->assertJsonPath('data.materials.1.photo_gallery.0.id', $photos['second']->id)
+            ->assertJsonPath('data.materials.2.photo_gallery', []);
+        foreach ($response->json('data.materials') as $payload) {
+            self::assertArrayNotHasKey('photos', $payload);
+            self::assertArrayNotHasKey('documents', $payload);
+            self::assertNotSame($inactive->id, $payload['id']);
+            self::assertNotSame($foreign->id, $payload['id']);
+        }
+    }
 
     public function test_references_expose_regulated_document_profiles_and_project_dictionaries(): void
     {
