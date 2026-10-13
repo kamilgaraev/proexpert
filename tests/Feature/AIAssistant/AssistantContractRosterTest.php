@@ -42,6 +42,9 @@ final class AssistantContractRosterTest extends TestCase
         $reader = app(AssistantProjectContractRosterReader::class);
         $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame(2, $read['data']['total']);
+        self::assertSame(1, $read['data']['overdue_count']);
+        self::assertSame(0, $read['data']['ending_soon_count']);
+        self::assertSame(1, $read['data']['missing_end_date_count']);
         $rows = array_column($read['data']['items'], null, 'id');
         self::assertSame('Подрядчик проекта', $rows[$own->id]['counterparty']);
         self::assertNull($rows[$shared->id]['counterparty']);
@@ -54,5 +57,10 @@ final class AssistantContractRosterTest extends TestCase
         $full = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame(22, $full['data']['total']);
         self::assertCount(20, $full['data']['items']);
+        self::assertSame(22, $full['data']['overdue_count'] + $full['data']['ending_soon_count'] + $full['data']['missing_end_date_count']);
+        foreach ([0, 7, 10] as $days) { Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'DEADLINE-'.$days, 'end_date' => today()->addDays($days)->toDateString()] + $base)); }
+        $deadlines = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(25, $deadlines['data']['total']); self::assertSame(22, $deadlines['data']['overdue_count']);
+        self::assertSame(2, $deadlines['data']['ending_soon_count']); self::assertSame(0, $deadlines['data']['missing_end_date_count']);
     }
 }

@@ -70,6 +70,7 @@ final readonly class AssistantProjectMaterialStockReader
             if ($rows === []) { $lines[] = trans_message('ai_assistant.project_material_stock_empty'); }
             $more = $offset + count($page) < count($rows);
             if ($more) { $lines[] = trans_message('ai_assistant.project_material_stock_more', ['shown' => count($page), 'total' => count($rows)]); }
+            $lines[] = trans_message('ai_assistant_operational.stock_open');
             return ['status' => $rows === [] ? 'empty' : 'success', 'stock' => $page, 'total' => count($rows), 'has_more' => $more,
                 'next_offset' => $more ? $offset + count($page) : null, 'source_refs' => [$ref], 'validation_status' => 'verified',
                 'stock_evidence' => ['scope' => 'native_project_delivery_stock', 'filters' => $filters, 'version' => $version],

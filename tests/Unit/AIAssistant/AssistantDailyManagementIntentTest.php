@@ -20,6 +20,7 @@ final class AssistantDailyManagementIntentTest extends TestCase
             ['Какие заказы поставщикам у нашей организации сейчас открыты? Сколько ещё не получили полностью и где ближайшие сроки поставки?', 'get_organization_purchase_orders', ['scope' => 'organization']],
             ['Найди в нашем справочнике цемент и виды работ по бетонированию. Как они называются и в каких единицах учитываются?', 'get_catalog_lookup', ['material_query' => 'цемент', 'work_type_query' => 'бетонированию']],
             ['Какие материалы сейчас ждём на нашем объекте? Что уже просрочено по плановой дате доставки и с чего мне начать разбор со снабжением?', 'get_project_deliveries', ['project_id' => 52]],
+            ['Какие договоры на нашем объекте действуют сейчас, у каких скоро заканчивается срок и что проверить перед продлением?', 'get_project_contract_roster', ['project_id' => 52]],
         ] as [$query, $tool, $arguments]) {
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertSame(['name' => $tool, 'arguments' => $arguments], AssistantRequiredProjectRead::fromPlan($plan), $query);
@@ -32,6 +33,15 @@ final class AssistantDailyManagementIntentTest extends TestCase
     {
         self::assertSame(['material_query' => 'арматуру А500', 'work_type_query' => 'монтажу каркаса'], AssistantCatalogLookupReader::arguments('Найди в справочнике арматуру А500 и виды работ по монтажу каркаса.'));
         self::assertSame(['material_query' => 'Кабель ВВГ 3x2.5', 'work_type_query' => 'прокладке кабеля'], AssistantCatalogLookupReader::arguments('Покажи в каталоге материал «Кабель ВВГ 3x2.5» и виды работ по прокладке кабеля.'));
+    }
+
+    public function test_project_stock_question_preserves_native_project_scope(): void
+    {
+        $query = 'Какие материалы лежат на складах нашего объекта? Дай текущие остатки и где их посмотреть.';
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        self::assertSame(['name' => 'get_project_material_stock', 'arguments' => ['project_id' => 52, 'offset' => 0, 'limit' => 20]], AssistantRequiredProjectRead::fromPlan($plan));
+        $plan['request']['message'] = $query.' И какие счета оплатить?';
+        self::assertNull(AssistantRequiredProjectRead::fromPlan($plan));
     }
 
     public function test_mixed_and_write_questions_are_not_replaced_by_one_reader(): void

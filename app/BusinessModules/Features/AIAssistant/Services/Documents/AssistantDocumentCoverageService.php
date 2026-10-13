@@ -12,7 +12,6 @@ use Illuminate\Database\Query\JoinClause;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\Builder;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -61,7 +60,7 @@ final class AssistantDocumentCoverageService
             && $scan['expected_file_count'] === $scan['scanned_file_count'];
     }
 
-    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, array $scope = []): array
+    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, array $scope = [], bool $countersOnly = false): array
     {
         $guard = $checkDeadline ?? $checkpoint;
         if (! $this->policy->belongsToOrganization($actor, $organizationId)) throw new AccessDeniedHttpException;
@@ -140,7 +139,7 @@ final class AssistantDocumentCoverageService
             if ($type === 'tender_file' && ! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
-            $this->scopeEntityToProject($native, $projectId);
+            $this->scopeEntityToProject($native, $projectId, $actor, $organizationId, $type);
             if ($checkpoint !== null) { $checkpoint(); }
             $count = $native->count();
             if ($count === 0) { continue; }
@@ -168,7 +167,7 @@ final class AssistantDocumentCoverageService
             if ($projectId !== null) {
                 $readable = $this->policy->entityContentQuery($actor, $organizationId, $type);
                 if ($readable === null) { continue; }
-                $this->scopeEntityToProject($readable, $projectId);
+                $this->scopeEntityToProject($readable, $projectId, $actor, $organizationId, $type);
                 $expected->whereIn('native_source.id', $readable->select($readable->getModel()->getQualifiedKeyName()));
             }
             if ($checkpoint !== null) { $checkpoint(); }
@@ -232,7 +231,7 @@ final class AssistantDocumentCoverageService
             if (! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityContentQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
-            $this->scopeEntityToProject($native, $projectId);
+            $this->scopeEntityToProject($native, $projectId, $actor, $organizationId, $type);
             $model = $native->getModel();
             $table = $model->getTable();
             $native = $model->newQuery()->whereIn($model->getQualifiedKeyName(), $native->select($model->getQualifiedKeyName()));
@@ -254,6 +253,7 @@ final class AssistantDocumentCoverageService
             $nativeCoverage[$type] = ['expected_file_count' => $expectedNative, 'unmapped_file_count' => $missing,
                 'status' => $missing > 0 ? 'needs_access_review' : 'mapped', 'manual_ingestion_available' => $missing > 0];
         }
+        if ($countersOnly) { return ['document_coverage' => $coverage]; }
         if ($checkpoint !== null) { $checkpoint(); }
         $settings = AssistantDocumentSettings::query()->where('organization_id', $organizationId)->first();
         $scanFiles = (clone $files)->where('files.disk', 's3');
@@ -280,15 +280,10 @@ final class AssistantDocumentCoverageService
                 'processing' => ! $completed || $unmappedNativeCount > 0]];
     }
 
-    private function scopeEntityToProject(Builder $query, ?int $projectId): void
+    private function scopeEntityToProject(Builder $query, ?int $projectId, User $actor, int $organizationId, string $type): void
     {
         if ($projectId === null) { return; }
-        $model = $query->getModel();
-        if ($model instanceof \App\Models\Project) { $query->whereKey($projectId); return; }
-        if (Schema::hasColumn($model->getTable(), 'project_id')) {
-            $column = $model->qualifyColumn('project_id');
-            $query->where(static fn (Builder $scope) => $scope->where($column, $projectId)->orWhereNull($column));
-        }
+        if (! $this->policy->applyEntityProjectScope($actor, $organizationId, $type, $query, $projectId)) { $query->whereRaw('1 = 0'); }
     }
 
     private function scopeFilesToProject(Builder $files, User $actor, int $organizationId, int $projectId): void
@@ -300,7 +295,7 @@ final class AssistantDocumentCoverageService
                 $entityType = $this->policy->entityTypeForModel((string) $fileType);
                 $parents = $entityType === null ? null : $this->policy->entityContentQuery($actor, $organizationId, $entityType);
                 if ($parents === null) { continue; }
-                $this->scopeEntityToProject($parents, $projectId);
+                $this->scopeEntityToProject($parents, $projectId, $actor, $organizationId, $entityType);
                 $scope->orWhere(static fn (Builder $branch) => $branch->where('files.fileable_type', $fileType)
                     ->whereIn(DB::raw('CAST(files.fileable_id AS TEXT)'), $parents->select([])->selectRaw('CAST('.$parents->getModel()->getQualifiedKeyName().' AS TEXT)')));
             }

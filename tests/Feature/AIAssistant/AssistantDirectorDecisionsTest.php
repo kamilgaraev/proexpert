@@ -156,7 +156,7 @@ final class AssistantDirectorDecisionsTest extends TestCase
     {
         $base = ['organization_id' => $this->fixture->organization->id, 'project_id' => $this->project->id,
             'document_type' => 'invoice', 'document_date' => '2026-09-01', 'direction' => 'outgoing', 'invoice_type' => 'other',
-            'amount' => '100.10', 'paid_amount' => '0.00', 'remaining_amount' => '100.10', 'currency' => 'RUB', 'status' => 'approved'];
+            'amount' => '100.10', 'paid_amount' => '0.00', 'remaining_amount' => '100.10', 'currency' => 'RUB', 'status' => 'approved', 'due_date' => '2026-09-01'];
         Model::withoutEvents(function () use ($base): void {
             for ($i = 0; $i < 21; $i++) { PaymentDocument::query()->create(['document_number' => 'Счёт '.$i] + $base); }
             PaymentDocument::query()->create(['document_number' => 'Неизвестный остаток', 'remaining_amount' => null] + $base);
@@ -167,14 +167,34 @@ final class AssistantDirectorDecisionsTest extends TestCase
             PaymentDocument::query()->create(['document_number' => 'Другой проект', 'project_id' => $other->id] + $base);
         });
         $reader = app(AssistantProjectPaymentReader::class);
+        $approvalDocument = PaymentDocument::query()->where('document_number', 'Счёт 0')->firstOrFail();
+        $this->fixture->foreignOwner->updateQuietly(['name' => 'FOREIGN_PRIVATE_APPROVER']);
+        Model::withoutEvents(function () use ($approvalDocument): void {
+            foreach ([$this->fixture->owner->id, null, $this->fixture->foreignOwner->id] as $index => $approver) {
+                \App\BusinessModules\Core\Payments\Models\PaymentApproval::query()->create(['organization_id' => $this->fixture->organization->id,
+                    'payment_document_id' => $approvalDocument->id, 'approver_user_id' => $approver, 'approval_role' => 'finance_approver', 'approval_order' => $index + 1, 'status' => 'pending']);
+            }
+            \App\BusinessModules\Core\Payments\Models\PaymentApproval::query()->create(['organization_id' => $this->fixture->foreignOrganization->id,
+                'payment_document_id' => $approvalDocument->id, 'approver_user_id' => $this->fixture->foreignOwner->id, 'approval_role' => 'finance_approver', 'approval_order' => 4, 'status' => 'pending']);
+        });
         $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, ['project_id' => $this->project->id]);
         self::assertSame(21, $read['data']['total']);
         self::assertCount(20, $read['data']['items']);
         self::assertSame(2, $read['data']['unknown_balance_count']);
+        self::assertSame(21, $read['data']['overdue_outgoing']); self::assertSame(0, $read['data']['overdue_incoming']);
+        self::assertTrue($read['data']['approval_read_available']);
+        self::assertSame(3, $read['data']['items'][0]['approvals']['total']); self::assertSame(2, $read['data']['items'][0]['approvals']['unnamed']);
+        self::assertSame($this->fixture->owner->name, $read['data']['items'][0]['approvals']['examples'][0]['name']);
+        self::assertStringNotContainsString('FOREIGN_PRIVATE_APPROVER', json_encode($read));
         self::assertSame('100.10', $read['data']['items'][0]['remaining_amount']);
         self::assertStringContainsString('не подтверждены', $read['server_formatted_answer']);
         foreach (['Другой проект', 'Оплаченный', 'Отменённый', 'Несогласованный остаток'] as $excluded) { self::assertStringNotContainsString($excluded, json_encode($read, JSON_UNESCAPED_UNICODE)); }
         self::assertNotNull($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id));
+        self::assertSame(4, \App\BusinessModules\Core\Payments\Models\PaymentApproval::query()->count());
+        $approverName = $this->fixture->owner->name;
+        $this->fixture->owner->updateQuietly(['name' => 'Новое имя согласующего']);
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+        $this->fixture->owner->updateQuietly(['name' => $approverName]);
         PaymentDocument::query()->whereKey($read['data']['items'][0]['id'])->update(['paid_amount' => '100.10', 'remaining_amount' => '0.00', 'status' => 'paid']);
         self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
         $actor = $this->fixture->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']], ['payments.invoice.view_all']);
@@ -182,7 +202,36 @@ final class AssistantDirectorDecisionsTest extends TestCase
         self::assertTrue(app(\App\Domain\Authorization\Services\AuthorizationService::class)->canCurrent($actor, 'payments.invoice.view_all', ['organization_id' => $this->fixture->organization->id]));
         self::assertFalse(app(\App\Domain\Authorization\Services\AuthorizationService::class)->canCurrent($actor, 'payments.invoice.view', ['organization_id' => $this->fixture->organization->id]));
         self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExposeTool($actor, 'get_project_payment_readiness'));
-        self::assertSame(20, $reader->read($actor, $this->fixture->organization->id, ['project_id' => $this->project->id])['data']['total']);
+        $withoutApprovalAccess = $reader->read($actor, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+        self::assertSame(20, $withoutApprovalAccess['data']['total']);
+        self::assertFalse($withoutApprovalAccess['data']['approval_read_available']);
+        self::assertNull($withoutApprovalAccess['data']['items'][0]['approvals']['total']);
+    }
+
+    public function test_payment_deadline_directions_and_bounded_approval_unknown_preserve_invoice_totals(): void
+    {
+        $base = ['organization_id' => $this->fixture->organization->id, 'project_id' => $this->project->id, 'document_type' => 'invoice',
+            'document_date' => today(), 'invoice_type' => 'other', 'amount' => '100.00', 'paid_amount' => '0.00', 'remaining_amount' => '100.00', 'currency' => 'RUB', 'status' => 'approved'];
+        $first = null;
+        Model::withoutEvents(function () use ($base, &$first): void {
+            $first = PaymentDocument::query()->create(['document_number' => 'OUTGOING-OVERDUE', 'direction' => 'outgoing', 'due_date' => today()->subDay()] + $base);
+            PaymentDocument::query()->create(['document_number' => 'INCOMING-FLAGGED', 'direction' => 'incoming', 'due_date' => today()->addWeek(), 'overdue_since' => now()->subDay()] + $base);
+            PaymentDocument::query()->create(['document_number' => 'INCOMING-FUTURE', 'direction' => 'incoming', 'due_date' => today()->addWeek()] + $base);
+            PaymentDocument::query()->create(['document_number' => 'INCOMING-NO-DATE', 'direction' => 'incoming', 'due_date' => null] + $base);
+        });
+        $reader = app(AssistantProjectPaymentReader::class); $args = ['project_id' => (int) $this->project->id];
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $args);
+        self::assertSame(4, $read['data']['total']); self::assertSame(1, $read['data']['overdue_outgoing']); self::assertSame(1, $read['data']['overdue_incoming']);
+        $approvals = [];
+        for ($i = 0; $i < 2001; $i++) { $approvals[] = ['organization_id' => $this->fixture->organization->id, 'payment_document_id' => $first->id,
+            'approval_role' => 'finance_approver', 'approval_order' => $i + 1, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]; }
+        \App\BusinessModules\Core\Payments\Models\PaymentApproval::query()->insert($approvals);
+        $bounded = $reader->read($this->fixture->owner, $this->fixture->organization->id, $args);
+        self::assertSame(4, $bounded['data']['total']); self::assertFalse($bounded['data']['approval_read_available']);
+        self::assertNull($bounded['data']['items'][0]['approvals']['total']); self::assertNull($bounded['data']['items'][0]['approvals']['unnamed']);
+        self::assertStringContainsString('ответственный за устранение препятствий не подтверждён', $bounded['server_formatted_answer']);
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+        self::assertSame(2001, \App\BusinessModules\Core\Payments\Models\PaymentApproval::query()->count());
     }
 
     public function test_workforce_reads_complete_period_hours_separately_and_rechecks_new_entries(): void
