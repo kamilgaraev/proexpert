@@ -170,4 +170,3 @@ return [
     'design_unavailable' => 'The package registry is unavailable in the current read scope.',
     'design_basis' => 'Zero blocking issues does not establish release readiness. The next stage follows workflow state, not confirmed action permission. No new completeness check or package release was performed.',
 ];
-
