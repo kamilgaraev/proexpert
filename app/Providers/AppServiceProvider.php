@@ -198,7 +198,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Регистрируем UserService с AuthorizationService
-        $this->app->singleton(\App\Services\User\UserService::class, function ($app) {
+        $this->app->scoped(\App\Services\User\UserService::class, function ($app) {
             return new \App\Services\User\UserService(
                 $app->make(\App\Repositories\Interfaces\UserRepositoryInterface::class),
                 $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),

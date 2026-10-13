@@ -13,13 +13,6 @@ use Illuminate\Support\Str;
  */
 class DatabaseCacheLogger
 {
-    protected LoggingService $logging;
-
-    public function __construct(LoggingService $logging)
-    {
-        $this->logging = $logging;
-    }
-
     /**
      * Регистрация слушателей для DB и Cache событий
      */
@@ -41,7 +34,7 @@ class DatabaseCacheLogger
         // Логируем только медленные запросы (>1 секунды)
         if ($durationMs > 1000) {
             // TECHNICAL: Медленный SQL запрос
-            $this->logging->technical('database.slow_query', [
+            app(LoggingService::class)->technical('database.slow_query', [
                 'sql' => $query->sql,
                 'bindings' => $this->sanitizeBindings($query->bindings),
                 'duration_ms' => $durationMs,
@@ -55,7 +48,7 @@ class DatabaseCacheLogger
         // Логируем критически медленные запросы (>5 секунд)
         if ($durationMs > 5000) {
             // TECHNICAL: Критически медленный запрос
-            $this->logging->technical('database.critical_slow_query', [
+            app(LoggingService::class)->technical('database.critical_slow_query', [
                 'sql' => $query->sql,
                 'bindings' => $this->sanitizeBindings($query->bindings),
                 'duration_ms' => $durationMs,
@@ -83,13 +76,13 @@ class DatabaseCacheLogger
             case 'get':
             case 'remember':
                 // TECHNICAL: Операции чтения кэша
-                $this->logging->technical('cache.read', $context);
+                app(LoggingService::class)->technical('cache.read', $context);
                 break;
                 
             case 'put':
             case 'forever':
                 // TECHNICAL: Операции записи в кэш
-                $this->logging->technical('cache.write', array_merge($context, [
+                app(LoggingService::class)->technical('cache.write', array_merge($context, [
                     'ttl_seconds' => $this->extractTtlFromKey($key)
                 ]));
                 break;
@@ -97,17 +90,17 @@ class DatabaseCacheLogger
             case 'forget':
             case 'flush':
                 // TECHNICAL: Операции очистки кэша
-                $this->logging->technical('cache.clear', $context);
+                app(LoggingService::class)->technical('cache.clear', $context);
                 break;
                 
             case 'hit':
                 // TECHNICAL: Попадание в кэш
-                $this->logging->technical('cache.hit', $context);
+                app(LoggingService::class)->technical('cache.hit', $context);
                 break;
                 
             case 'miss':
                 // TECHNICAL: Промах кэша
-                $this->logging->technical('cache.miss', $context, 'info');
+                app(LoggingService::class)->technical('cache.miss', $context, 'info');
                 break;
         }
     }
@@ -118,7 +111,7 @@ class DatabaseCacheLogger
     public function logCacheBulkClear(string $pattern, int $keysCleared): void
     {
         // TECHNICAL: Массовая очистка кэша - важно для производительности
-        $this->logging->technical('cache.bulk_clear', [
+        app(LoggingService::class)->technical('cache.bulk_clear', [
             'pattern' => $pattern,
             'keys_cleared' => $keysCleared,
             'cache_type' => $this->detectCacheType($pattern)
@@ -145,19 +138,19 @@ class DatabaseCacheLogger
 
         switch ($event) {
             case 'connected':
-                $this->logging->technical('database.connection.established', $context);
+                app(LoggingService::class)->technical('database.connection.established', $context);
                 break;
                 
             case 'disconnected':
-                $this->logging->technical('database.connection.closed', $context);
+                app(LoggingService::class)->technical('database.connection.closed', $context);
                 break;
                 
             case 'failed':
-                $this->logging->technical('database.connection.failed', $context, 'error');
+                app(LoggingService::class)->technical('database.connection.failed', $context, 'error');
                 break;
                 
             case 'reconnected':
-                $this->logging->technical('database.connection.restored', $context, 'warning');
+                app(LoggingService::class)->technical('database.connection.restored', $context, 'warning');
                 break;
         }
     }
@@ -181,12 +174,12 @@ class DatabaseCacheLogger
             ]);
             
             // TECHNICAL: Ошибка Redis
-            $this->logging->technical('redis.command.failed', $context, 'error');
+            app(LoggingService::class)->technical('redis.command.failed', $context, 'error');
         } else {
             // Логируем только медленные операции Redis
             if ($durationMs && $durationMs > 500) {
                 // TECHNICAL: Медленная Redis операция
-                $this->logging->technical('redis.command.slow', $context, 'warning');
+                app(LoggingService::class)->technical('redis.command.slow', $context, 'warning');
             }
         }
     }
