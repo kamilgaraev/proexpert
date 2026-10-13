@@ -7,8 +7,8 @@ namespace Tests\Unit\EstimateGeneration\Analysis;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationIntentIngestor;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RunDocumentArbitration;
@@ -32,6 +32,30 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class DocumentArbitrationTest extends TestCase
 {
+    #[Test]
+    public function document_injection_corpus_cannot_replace_arbiter_rules_or_publish_facts(): void
+    {
+        $corpus = json_decode((string) file_get_contents(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/document-injection-corpus.json'), true, flags: JSON_THROW_ON_ERROR);
+        foreach ($corpus as $attack) {
+            $models = new InMemoryProjectModelRepository;
+            $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+            $claim = $this->claim('literal:1', 'scale', '1:100', 'scale-note');
+            try {
+                $decisions = (new ArbitrationIntentIngestor)->ingest([[
+                    'claim_id' => 'literal:1', 'status' => 'accepted', 'supporting_claim_ids' => ['literal:1'],
+                    'evidence_refs' => ['scale-note'], 'reason' => $attack['instruction'],
+                    $attack['arbiter_key'] => $attack['arbiter_value'],
+                ]], [$claim]);
+                $writer->writeArbitration([$claim], $decisions->accepted, 13, 4);
+                self::fail('Untrusted document overrode server policy: '.$attack['id']);
+            } catch (VisionContractException $error) {
+                self::assertSame('arbitration_scope_override_attempted', $error->getMessage(), $attack['id']);
+            }
+            self::assertSame([], $models->facts, $attack['id']);
+            self::assertSame([], $models->evidence, $attack['id']);
+        }
+    }
+
     #[Test]
     public function validated_source_polygon_is_explicit_document_evidence_for_arbiter_consensus(): void
     {
