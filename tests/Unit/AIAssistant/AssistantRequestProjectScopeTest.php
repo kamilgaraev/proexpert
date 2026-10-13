@@ -87,6 +87,19 @@ final class AssistantRequestProjectScopeTest extends TestCase
         self::assertFalse($scope->allowsReferences([$party], [$contract]));
     }
 
+    public function test_organization_search_clears_model_project_filter_and_keeps_other_arguments(): void
+    {
+        foreach (['По всей нашей организации', 'По всем нашим проектам', 'Во всех наших объектах', 'В целом по нашей организации'] as $question) {
+            $arguments = ['domain' => 'tenders', 'project_id' => 52, 'limit' => 20, 'query' => ''];
+            self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->projectId);
+            self::assertSame(array_replace($arguments, ['project_id' => null]),
+                AssistantRequestProjectScope::bindSearchScope($question, $arguments, 52, true));
+        }
+        self::assertSame(['project_id' => 100], AssistantRequestProjectScope::bindSearchScope('Проект СевГУ', ['project_id' => 100], 52, true));
+        self::assertSame(['project_id' => 52], AssistantRequestProjectScope::bindSearchScope('Наш объект', [], 52, true));
+        self::assertSame([], AssistantRequestProjectScope::bindSearchScope('Сотрудники', [], 52, false));
+    }
+
     private function plan(string $question): array
     {
         return ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];

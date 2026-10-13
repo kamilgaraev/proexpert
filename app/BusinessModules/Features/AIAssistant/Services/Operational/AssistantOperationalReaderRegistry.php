@@ -11,7 +11,10 @@ final class AssistantOperationalReaderRegistry
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
         '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu',
-        '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu'];
+        '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu',
+        '/(?<!\pL)акт[а-яё]*.*(?:согласован|решени|одобрен)|(?:согласован|одобрен).*\bакт/iu',
+        '/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', '/тендер/iu',
+        '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
     public const TOOLS = [
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
@@ -22,6 +25,10 @@ final class AssistantOperationalReaderRegistry
         'get_project_production_readiness' => AssistantProjectProductionReader::class,
         'get_project_crm_readiness' => AssistantProjectCrmReader::class,
         'get_project_report_catalog' => AssistantProjectReportCatalogReader::class,
+        'get_project_site_request_queue' => AssistantProjectSiteRequestReader::class,
+        'get_project_tender_decisions' => AssistantTenderReader::class,
+        'get_project_staff_roster' => AssistantProjectStaffReader::class,
+        'get_project_act_readiness' => AssistantProjectActReader::class,
     ];
 
     public static function forReference(string $type): ?string
@@ -33,7 +40,8 @@ final class AssistantOperationalReaderRegistry
     public static function intent(string $query): ?array
     {
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) { return null; }
-        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|договор|поставщик|поставк|закуп|снабжен|склад|табел|техник|при[её]мк/iu', $query) === 1) { return null; }
+        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|поставщик|поставк|закуп|снабжен|склад|табел|техник|при[её]мк/iu', $query) === 1
+            || preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query)) { return null; }
         $topics = 0;
         foreach (self::TOPICS as $pattern) {
             if (preg_match($pattern, $query) === 1) { $topics++; }
