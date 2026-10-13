@@ -181,10 +181,6 @@ class ImportPipelineService
                     // Update estimate with footer values
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
-                    if ($this->shouldPreserveImportedTotals($session) && isset($footerData['vat_rate'])) {
-                        $estimate->vat_rate = max(0, min(100, (float) $footerData['vat_rate']));
-                    }
-
                     // ⭐ КАЛИБРОВКА СТАВОК (CALIBRATION)
                     // Если в подвале удалось найти ФОТ и НР/СП - доверяем им,
                     // так как это единственный способ попасть в математику Гранд-Сметы.

@@ -157,6 +157,33 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertSame(125.0, (new ImportRowPolicy)->totalAmount(new EstimateImportRowDTO(quantity: 1, unitPrice: 100, overheadAmount: 20, profitAmount: 5)));
     }
 
+    public function test_pre_table_document_captions_do_not_become_sections(): void
+    {
+        $handler = new class(new SpreadsheetTableReader, new SpreadsheetHeaderDetector) extends CustomExcelHandler
+        {
+            public function parseDocument(): array
+            {
+                return iterator_to_array($this->rowsToDtos([
+                    1 => ['Arbitrary document caption'],
+                    2 => ['Another document subtitle'],
+                    3 => ['Раздел 1. Реальные работы'],
+                    4 => ['No', 'Code', 'Name', 'Unit', 'Qty', 'Price', 'Total'],
+                    5 => ['1', 'RATE-1', 'Работа', 'шт', 1, 100, 100],
+                ], new ImportStructureResult(
+                    formatSlug: 'custom_excel',
+                    headerRow: 4,
+                    columnMapping: ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'unit' => 'D', 'quantity' => 'E', 'unit_price' => 'F', 'total_price' => 'G'],
+                )), false);
+            }
+        };
+
+        $rows = $handler->parseDocument();
+        $sections = array_values(array_filter($rows, static fn ($row): bool => $row->isSection));
+        self::assertCount(1, $sections);
+        self::assertSame('Реальные работы', $sections[0]->itemName);
+        self::assertSame('1', $sections[0]->sectionNumber);
+    }
+
     private function analyze(array $rows): array
     {
         return (new SpreadsheetCostBlockParser)->analyze($rows, ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'quantity' => 'F', 'unit_price' => 'G', 'total_price' => 'I'], 0);
