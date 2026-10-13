@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportFinancialSettingsResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportDetectionResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
@@ -13,6 +14,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\Runtime
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetTableReader;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetCostBlockParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetNumberParser;
 use App\Models\ImportSession;
 use Generator;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
@@ -20,6 +23,10 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 {
     protected SpreadsheetAiColumnMapper $aiColumnMapper;
+
+    private array $footerData = [];
+
+    private bool $sourceTotalMismatch = false;
 
     public function __construct(
         protected SpreadsheetTableReader $reader,
@@ -109,16 +116,18 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $totalAmount += (float) ($row->currentTotalAmount ?? (($row->quantity ?? 0) * ($row->unitPrice ?? 0)));
         }
 
+        $importedTotals = (new EstimateImportFinancialSettingsResolver)->resolveImportedTotals($this->footerData);
+
         return new ImportPreviewResult(
             formatSlug: $this->slug(),
             sections: $sections,
             items: $items,
             totals: [
-                'total_amount' => $totalAmount,
+                'total_amount' => $importedTotals['total_amount'] ?? round($totalAmount, 2),
                 'items_count' => count($items),
                 'sections_count' => count($sections),
             ],
-            validation: $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items))->toArray(),
+            validation: $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items, metadata: ['source_total_mismatch' => $this->sourceTotalMismatch]))->toArray(),
             summary: [
                 'rows_count' => count($sections) + count($items),
             ],
@@ -128,6 +137,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 'worksheet_index' => $structure->metadata['worksheet_index'] ?? null,
                 'worksheet_name' => $structure->metadata['worksheet_name'] ?? null,
                 'worksheet_title' => $structure->metadata['worksheet_title'] ?? null,
+                'source_total_mismatch' => $this->sourceTotalMismatch,
             ],
         );
     }
@@ -139,6 +149,10 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
         if ($preview->items === []) {
             $errors[] = trans_message('estimate.import_empty_preview');
+        }
+
+        if (($preview->metadata['source_total_mismatch'] ?? false) === true) {
+            $errors[] = trans_message('estimate.import_source_total_mismatch');
         }
 
         if ($preview->sections === []) {
@@ -157,6 +171,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
     public function streamRows(ImportSession $session, string $filePath, ImportStructureResult $structure): Generator
     {
+        $this->footerData = [];
+        $this->sourceTotalMismatch = false;
         foreach ($this->worksheetDescriptorsFromStructure($structure) as $worksheet) {
             yield from $this->rowsToDtos(
                 $this->reader->readRows($filePath, null, $worksheet['worksheet_index']),
@@ -167,6 +183,11 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         yield from $this->additionalCostRowsToDtos($structure);
     }
 
+    public function getFooterData(): array
+    {
+        return $this->footerData;
+    }
+
     /**
      * @param array<int, array<int, mixed>> $rows
      * @return Generator<int, EstimateImportRowDTO>
@@ -175,6 +196,13 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     {
         $headerRow = $structure->headerRow ?? 0;
         $mapping = $this->mappingForStructure($structure);
+        $costBlocks = (new SpreadsheetCostBlockParser)->analyze($rows, $mapping, $headerRow);
+        $this->sourceTotalMismatch = $this->sourceTotalMismatch || $costBlocks['total_mismatch'];
+        if ($costBlocks['footer'] !== []) {
+            foreach ($costBlocks['footer'] as $field => $amount) {
+                $this->footerData[$field] = $field === 'vat_rate' ? $amount : ($this->footerData[$field] ?? 0) + $amount;
+            }
+        }
         $currentSectionPath = null;
         $currentRootSectionPath = null;
         $generatedSectionNumber = 0;
@@ -223,12 +251,12 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $name = $this->value($row, $mapping['name'] ?? null);
             $code = $this->value($row, $mapping['code'] ?? null);
             $positionNumber = $this->value($row, $mapping['position_number'] ?? ($mapping['section_number'] ?? null));
-            $quantity = $this->number($this->value($row, $mapping['quantity'] ?? null));
-            $unitPrice = $this->number($this->value($row, $mapping['unit_price'] ?? null));
-            $total = $this->number($this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)));
+            $quantity = $this->number($this->rawValue($row, $mapping['quantity'] ?? null));
+            $unitPrice = $this->number($this->rawValue($row, $mapping['unit_price'] ?? null));
+            $total = $this->number($this->rawValue($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)));
             $section = $this->detectSectionRow($row, $name, $positionNumber, $code, $mapping, $quantity, $unitPrice, $total);
 
-            if ($this->isFooterRow($name !== '' ? $name : $positionNumber)) {
+            if ($this->isFooterRow($name !== '' ? $name : ($code !== '' ? $code : $positionNumber))) {
                 continue;
             }
 
@@ -255,19 +283,30 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 continue;
             }
 
+            $costs = $costBlocks['positions'][$rowNumber] ?? [];
+            $unit = $this->nullable($this->value($row, $mapping['unit'] ?? null));
+            if ($unit === null && preg_match('/\R\s*\(((?:\d+(?:[.,]\d+)?\s+)?(?:шт|м[23²³]?|км|кг|т|компл|чел|маш)[^()]*)\)\s*$/u', (string) $this->rawValue($row, $mapping['name'] ?? null), $unitMatch) === 1) {
+                $unit = trim($unitMatch[1]);
+            }
+
             yield new EstimateImportRowDTO(
                 rowNumber: (int) $rowNumber,
                 sectionNumber: $positionNumber !== '' ? $positionNumber : null,
                 itemName: $name !== '' ? $name : $code,
-                unit: $this->nullable($this->value($row, $mapping['unit'] ?? null)),
+                unit: $unit,
                 quantity: $quantity,
-                unitPrice: $unitPrice,
+                unitPrice: $costs['current_price'] ?? $unitPrice,
                 code: $this->nullable($code),
                 isSection: false,
                 itemType: 'work',
                 sectionPath: $currentSectionPath,
                 rawData: $row,
-                currentTotalAmount: $total,
+                currentTotalAmount: $costs['total'] ?? $total,
+                baseUnitPrice: $costs['base_price'] ?? null,
+                priceIndex: $costs['index'] ?? null,
+                currentUnitPrice: $costs['current_price'] ?? $unitPrice,
+                overheadAmount: $costs['overhead'] ?? null,
+                profitAmount: $costs['profit'] ?? null,
             );
         }
     }
@@ -716,6 +755,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         if (
             str_starts_with($normalized, 'итого')
             || str_starts_with($normalized, 'всего')
+            || str_starts_with($normalized, 'на единицу в базисных ценах')
+            || str_starts_with($normalized, 'ндс')
             || str_starts_with($normalized, 'total')
             || str_contains($normalized, 'в том числе')
         ) {
@@ -1107,6 +1148,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
         return str_starts_with($normalized, 'итого')
             || str_starts_with($normalized, 'всего')
+            || str_starts_with($normalized, 'на единицу в базисных ценах')
+            || str_starts_with($normalized, 'ндс')
             || str_contains($normalized, 'накладные расходы')
             || str_contains($normalized, 'сметная прибыль');
     }
@@ -1118,6 +1161,12 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     protected function isRepeatedHeader(array $row, array $mapping): bool
     {
         $name = mb_strtolower($this->value($row, $mapping['name'] ?? null));
+        $numbering = array_values(array_filter($row, static fn (mixed $value): bool => $value !== null && trim((string) $value) !== ''));
+        if (count($numbering) >= 5
+            && array_filter($numbering, static fn (mixed $value): bool => ! ctype_digit((string) $value)) === []
+            && array_map('intval', $numbering) === range(1, count($numbering))) {
+            return true;
+        }
 
         return $name !== '' && str_contains($name, 'наименование');
     }
@@ -1149,40 +1198,14 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         return trim(str_replace(["\r", "\n", "\xc2\xa0"], ' ', (string) $value));
     }
 
-    protected function number(string $value): ?float
+    protected function rawValue(array $row, ?string $column): mixed
     {
-        $value = trim($value);
-        if ($value === '') {
-            return null;
-        }
+        return $column !== null && $column !== '' ? ($row[Coordinate::columnIndexFromString($column) - 1] ?? null) : null;
+    }
 
-        $normalized = str_replace([" ", "\xc2\xa0"], '', $value);
-        $normalized = preg_replace('/[^\d,.\-]/u', '', $normalized) ?? '';
-        if ($normalized === '' || preg_match('/\d/u', $normalized) !== 1) {
-            return null;
-        }
-
-        $lastComma = strrpos($normalized, ',');
-        $lastDot = strrpos($normalized, '.');
-
-        if ($lastComma !== false && $lastDot !== false) {
-            $decimalSeparator = $lastComma > $lastDot ? ',' : '.';
-            $thousandsSeparator = $decimalSeparator === ',' ? '.' : ',';
-            $normalized = str_replace($thousandsSeparator, '', $normalized);
-            $normalized = str_replace($decimalSeparator, '.', $normalized);
-        } elseif ($lastComma !== false || $lastDot !== false) {
-            $separator = $lastComma !== false ? ',' : '.';
-            $parts = explode($separator, $normalized);
-            $fraction = end($parts);
-
-            if (count($parts) === 2 && strlen((string) $fraction) === 3) {
-                $normalized = implode('', $parts);
-            } else {
-                $normalized = str_replace($separator, '.', $normalized);
-            }
-        }
-
-        return is_numeric($normalized) ? (float) $normalized : null;
+    protected function number(mixed $value): ?float
+    {
+        return (new SpreadsheetNumberParser)->parse($value);
     }
 
     protected function nullable(string $value): ?string

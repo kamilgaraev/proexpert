@@ -24,13 +24,15 @@ class EstimateCalculationService
         if (($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
             return (new GeneratedEstimateDecimalCalculation)->calculate($item, $estimate);
         }
+        $hasImportedTotal = $item->is_manual && $item->current_total_amount !== null
+            && array_key_exists('raw_data', $item->metadata ?? []);
         // 0. Для дочерних ресурсов (винтики, труд и т.д.) просто считаем Q * P
         if ($item->parent_work_id !== null) {
             $totalAmount = round($item->quantity * $item->unit_price, 2);
 
             // ⭐ Если это импортированный ресурс и расчет Q*P дал 0 (например, для заголовков ЭМ, М),
             // но в файле был указан Итог — доверяем Итогу из файла.
-            if ($item->current_total_amount > 0 && ($totalAmount <= 0 || $item->is_manual)) {
+            if ($hasImportedTotal || ($item->current_total_amount > 0 && ($totalAmount <= 0 || $item->is_manual))) {
                 $totalAmount = (float) $item->current_total_amount;
             }
 
@@ -136,8 +138,8 @@ class EstimateCalculationService
         // 2. Логика распределения маржи (Reverse Engineering)
         if ($item->is_manual) {
             // ⭐ Приоритет: current_total_amount или total_amount из БД
-            $totalAmount = (float) ($item->current_total_amount ?: $item->total_amount);
-            if ($totalAmount <= 0) {
+            $totalAmount = (float) ($hasImportedTotal ? $item->current_total_amount : ($item->current_total_amount ?: $item->total_amount));
+            if ($totalAmount <= 0 && ! $hasImportedTotal) {
                 $totalAmount = round($item->quantity * $item->unit_price, 2);
             }
 
@@ -200,7 +202,8 @@ class EstimateCalculationService
 
                 // КРИТИЧНО: ПЗ — это то, что осталось от общего итога после налогов.
                 // Это гарантирует равенство: ПЗ + НР + СП = Итого (рубль в рубль)
-                $directCosts = max(0, $totalAmount - $overheadAmount - $profitAmount);
+                $directCosts = $hasImportedTotal ? $totalAmount - $overheadAmount - $profitAmount
+                    : max(0, $totalAmount - $overheadAmount - $profitAmount);
             }
         } else {
             // АВТОМАТИЧЕСКАЯ КАЛЬКУЛЯЦИЯ (Снизу вверх, если позиция не пришла из Excel или изменена вручную)

@@ -181,6 +181,9 @@ class ImportPipelineService
                     // Update estimate with footer values
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
+                    if ($this->shouldPreserveImportedTotals($session) && isset($footerData['vat_rate'])) {
+                        $estimate->vat_rate = max(0, min(100, (float) $footerData['vat_rate']));
+                    }
 
                     // ⭐ КАЛИБРОВКА СТАВОК (CALIBRATION)
                     // Если в подвале удалось найти ФОТ и НР/СП - доверяем им,
@@ -334,6 +337,7 @@ class ImportPipelineService
             'project_id' => $settings['project_id'] ?? null,
             'name' => $settings['name'] ?? $session->file_name,
             'type' => $settings['type'] ?? 'local',
+            'calculation_method' => $settings['calculation_method'] ?? 'resource',
             'estimate_date' => $settings['estimate_date'] ?? now()->format('Y-m-d'),
             'contract_id' => $settings['contract_id'] ?? null,
             'vat_rate' => $financialSettings['vat_rate'],
@@ -647,8 +651,8 @@ class ImportPipelineService
         }
 
         // 3. В Гранд-Смете сумма позиции из колонки "Всего" - это Прямые Затраты!
-        $directCosts = (! $isInformative && ! $isSubItem && $totalAmount > 0 && ($overheadAmount > 0 || $profitAmount > 0))
-            ? max(0, $totalAmount - $overheadAmount - $profitAmount)
+        $directCosts = (! $isInformative && ! $isSubItem && $dto->currentTotalAmount !== null && ($overheadAmount != 0 || $profitAmount != 0))
+            ? $totalAmount - $overheadAmount - $profitAmount
             : $totalAmount;
 
         // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
