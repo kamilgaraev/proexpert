@@ -132,7 +132,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             }
 
             return new ReportCatalogAuthorization($context, $authorizations);
-        });
+        }, readOnly: true);
     }
 
     public function authorizeExact(
@@ -541,15 +541,16 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
      * @param  callable(): T  $callback
      * @return T
      */
-    private function transaction(callable $callback): mixed
+    private function transaction(callable $callback, bool $readOnly = false): mixed
     {
         try {
             if (DB::connection()->transactionLevel() > 0) {
                 return $callback();
             }
 
-            return DB::transaction(function () use ($callback): mixed {
-                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            return DB::transaction(function () use ($callback, $readOnly): mixed {
+                DB::statement($readOnly ? 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+                    : 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
 
                 return $callback();
             }, 1);

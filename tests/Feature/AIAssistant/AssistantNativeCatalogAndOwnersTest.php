@@ -20,6 +20,39 @@ use Tests\TestCase;
 
 final class AssistantNativeCatalogAndOwnersTest extends TestCase
 {
+    public function test_public_catalog_reader_uses_standalone_readonly_fence_with_active_assistant_guard(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $defaultName = \Illuminate\Support\Facades\DB::getDefaultConnection();
+        $readerName = 'assistant_catalog_guard_reader';
+        config(['database.connections.'.$readerName => config('database.connections.'.$defaultName)]);
+        \Illuminate\Support\Facades\DB::setDefaultConnection($readerName);
+        $context = null;
+        try {
+            $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+            $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+            self::assertSame(0, \Illuminate\Support\Facades\DB::transactionLevel());
+            $lifecycle = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle::class))->newInstanceWithoutConstructor();
+            $context = new \App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext($lifecycle,
+                new \App\BusinessModules\Features\AIAssistant\Models\AssistantRequest, $fixture->owner, 30000);
+            app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext::class, $context);
+            $context->activate();
+            $catalog = app(AssistantProjectReportCatalogReader::class);
+            $result = $catalog->read($fixture->owner, (int) $fixture->organization->id, ['project_id' => (int) $project->id]);
+            self::assertGreaterThan(0, $result['data']['total']);
+            self::assertTrue($catalog->matchesReference($fixture->owner, (int) $fixture->organization->id, $result['source_refs'][0]));
+            self::assertSame(0, \Illuminate\Support\Facades\DB::transactionLevel());
+            self::assertSame(0, \Illuminate\Support\Facades\DB::table('report_runs')->count());
+        } finally {
+            $context?->restoreDatabaseStatementTimeouts();
+            app()->forgetInstance(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext::class);
+            while (\Illuminate\Support\Facades\DB::connection($readerName)->transactionLevel() > 0) { \Illuminate\Support\Facades\DB::connection($readerName)->rollBack(); }
+            \Illuminate\Support\Facades\DB::setDefaultConnection($defaultName);
+            \Illuminate\Support\Facades\DB::purge($readerName);
+            config(['database.connections.'.$readerName => null]);
+        }
+    }
+
     public function test_permission_cache_keeps_snapshot_and_reloads_in_next_transaction_with_identical_facts(): void
     {
         Queue::fake(); config(['cache.default' => 'array']);
