@@ -95,13 +95,13 @@
         }
 
         .header-area {
-            min-height: 65mm;
+            min-height: 57mm;
             position: relative;
         }
 
         .party-block {
             margin-right: 98mm;
-            padding-top: 10mm;
+            padding-top: 4mm;
         }
 
         .code-area {
@@ -113,31 +113,32 @@
 
         .party-table td {
             border: 0;
-            padding: 1.5mm 0 0;
+            padding: 0.6mm 0 0;
             vertical-align: bottom;
         }
 
         .party-label {
-            font-size: 10.2pt;
+            font-size: 9pt;
             white-space: nowrap;
             width: 43mm;
         }
 
         .party-line {
             border-bottom: 0.7pt solid #000;
-            min-height: 4.3mm;
+            font-size: 8.6pt;
+            min-height: 3.4mm;
             padding: 0 1mm 0.3mm;
         }
 
         .party-hint {
-            font-size: 6.9pt;
+            font-size: 6.4pt;
             line-height: 1;
-            padding-top: 0.5mm;
+            padding-top: 0.3mm;
             text-align: center;
         }
 
         .code-table td {
-            font-size: 9pt;
+            font-size: 8pt;
             padding: 0;
         }
 
@@ -152,7 +153,7 @@
 
         .code-box {
             border: 0.7pt solid #000;
-            height: 6mm;
+            height: 4.2mm;
             text-align: center;
             vertical-align: middle;
             width: 34mm;
@@ -163,7 +164,7 @@
         }
 
         .code-tall {
-            height: 6mm;
+            height: 4.2mm;
         }
 
         .document-block {
@@ -202,8 +203,8 @@
             border: 0.7pt solid #000;
             font-size: 9pt;
             font-weight: normal;
-            height: 6.8mm;
-            padding: 0.5mm 1mm;
+            height: 5.2mm;
+            padding: 0.3mm 1mm;
             text-align: center;
             vertical-align: middle;
         }
@@ -211,14 +212,14 @@
         .main-title {
             font-size: 13pt;
             font-weight: bold;
-            margin: 1mm 0 3mm;
+            margin: 1mm 0 2mm;
             text-align: center;
             text-transform: uppercase;
         }
 
         .contract-amount {
             font-size: 9.7pt;
-            margin: 0 0 4mm;
+            margin: 0 0 2mm;
             white-space: nowrap;
         }
 
@@ -240,8 +241,9 @@
             border: 0.7pt solid #000;
             font-size: 8.4pt;
             font-weight: normal;
-            padding: 1mm 1.2mm;
+            padding: 0.8mm 1.2mm;
             vertical-align: top;
+            word-wrap: break-word;
         }
 
         .official-table th {

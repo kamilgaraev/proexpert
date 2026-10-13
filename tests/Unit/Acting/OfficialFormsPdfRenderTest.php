@@ -113,6 +113,60 @@ final class OfficialFormsPdfRenderTest extends TestCase
     }
 
     #[WithoutErrorHandler]
+    public function test_pto_three_line_draft_forms_keep_totals_and_signatures_on_one_page(): void
+    {
+        $data = $this->baseData();
+        $data['customer_org']->address = '620000, СВЕРДЛОВСКАЯ ОБЛАСТЬ, Г. ЕКАТЕРИНБУРГ, УЛ. ПРИМЕРНАЯ, СТР. 20А, ОФИС 206';
+        $data['contractor']->name = 'Учебный подрядчик ПТО — ремонт офиса';
+        $data['contractor']->inn = null;
+        $data['contractor']->legal_address = null;
+        $data['project']->name = 'Учебный ПТО — ремонт офиса 100 м² — 13.10.2026';
+        $data['contract']->number = 'УЧ-ПТО-102/2026';
+        $data['act']->act_document_number = 'АВР-УЧ-102-01';
+        $data['is_draft'] = true;
+        $data['contract_amount'] = 100000;
+        $data['total_amount'] = 100000;
+        $data['vat_amount'] = 0;
+        $data['works'] = collect([
+            ['title' => 'Подготовка поверхности стен под штукатурку (учебная)', 'amount' => 20000, 'unit_price' => 200],
+            ['title' => 'Штукатурка стен гипсовой смесью (учебная)', 'amount' => 50000, 'unit_price' => 500],
+            ['title' => 'Окраска стен водно-дисперсионной краской в два слоя (учебная)', 'amount' => 30000, 'unit_price' => 300],
+        ])->map(static fn (array $line): array => $line + ['quantity' => 100, 'unit' => 'м²', 'code' => 'ФЕР15-04-007-01']);
+
+        foreach (['ks2', 'ks3'] as $form) {
+            [$text, $pages] = $this->render('estimates.exports.'.$form, $data, 'pto-'.$form);
+            self::assertSame(1, $pages, $form);
+            self::assertStringContainsString('ЧЕРНОВИК', $text);
+            self::assertStringContainsString('Окраска стен', $text);
+            self::assertStringContainsString('100 000,00', $text);
+            self::assertStringContainsString('В том числе НДС', $text);
+            self::assertStringContainsString('Должность, подпись', $text);
+        }
+    }
+
+    public function test_pto_contract_condition_lines_export_only_captured_rate_codes(): void
+    {
+        $work = new \App\Models\CompletedWork;
+        $work->setRelation('workType', new \App\Models\WorkType(['code' => 'preparatory_works']));
+        $line = new \App\Models\PerformanceActLine(['title' => 'Подготовка', 'unit' => 'м²', 'basis_snapshot' => ['basis_type' => 'contract_conditions', 'estimate_item' => []]]);
+        $line->setRelation('completedWork', $work);
+        $line->setRelation('estimateItem', new \App\Models\EstimateItem(['code' => 'mutable-code']));
+        $act = new class extends \App\Models\ContractPerformanceAct
+        {
+            public function loadMissing($relations)
+            {
+                return $this;
+            }
+        };
+        $act->setRelation('lines', new \Illuminate\Database\Eloquent\Collection([$line]));
+        $reflection = new \ReflectionClass(\App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService::class);
+        $service = $reflection->newInstanceWithoutConstructor();
+        self::assertSame('', $reflection->getMethod('actLinesForExport')->invoke($service, $act)->first()['code']);
+        $line->basis_snapshot = ['basis_type' => 'contract_conditions', 'estimate_item' => ['normative_rate_code' => 'ФЕР15-04-007-01', 'code' => 'manual-code']];
+        self::assertSame('ФЕР15-04-007-01', $reflection->getMethod('actLinesForExport')->invoke($service, $act)->first()['code']);
+    }
+
+    #[WithoutErrorHandler]
     public function test_ks6a_pdf_renders_three_months_and_continuation_pages(): void
     {
         $months = [
@@ -157,7 +211,7 @@ final class OfficialFormsPdfRenderTest extends TestCase
         self::assertStringContainsString('декабрь 2025', $text);
         self::assertStringContainsString('январь 2026', $text);
         self::assertStringContainsString('февраль 2026', $text);
-        self::assertStringContainsString('Работа 12', $text);
+        self::assertMatchesRegularExpression('/Работа\s+12/u', $text);
         self::assertStringContainsString('Факт', $text);
         self::assertStringContainsString('Актировано', $text);
     }
