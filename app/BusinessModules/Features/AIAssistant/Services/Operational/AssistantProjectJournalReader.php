@@ -40,17 +40,19 @@ final readonly class AssistantProjectJournalReader extends AssistantProjectOpera
         $entries = ConstructionJournalEntry::query()->whereIn('journal_id', (clone $journals)->select('construction_journals.id'));
         $entryCounts = self::statusCounts($entries);
         $examples = [];
+        $names = [];
         foreach (['draft', 'submitted', 'rejected'] as $status) {
             $examples[$status] = (clone $entries)->where('status', $status)->orderBy('entry_date')->orderBy('id')->limit(3)
-                ->select(['id', 'journal_id', 'entry_number', 'entry_date', 'work_description', 'status', 'created_by_user_id', 'rejection_reason'])->get()
-                ->map(static function ($row): array {
+                ->select(['id', 'journal_id', 'entry_number', 'entry_date', 'work_description', 'status', 'created_by_user_id', 'rejection_reason'])
+                ->with('createdBy:id,name')->get()
+                ->map(static function ($row) use (&$names): array {
                     $data = $row->getAttributes();
+                    if ($row->createdBy instanceof User) { $names[(int) $row->createdBy->id] = (string) $row->createdBy->name; }
                     $data['work_description'] = mb_substr((string) ($data['work_description'] ?? ''), 0, 255);
                     $data['rejection_reason'] = mb_substr((string) ($data['rejection_reason'] ?? ''), 0, 255);
                     return $data;
                 })->all();
         }
-        $names = $this->names($actor, $organizationId, array_column(array_merge(...array_values($examples)), 'created_by_user_id'));
         return ['journal_counts' => $journalCounts, 'journal_total' => array_sum($journalCounts), 'entry_counts' => $entryCounts,
             'entry_total' => array_sum($entryCounts), 'examples' => $examples, 'creator_names' => $names];
     }

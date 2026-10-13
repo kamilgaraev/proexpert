@@ -39,7 +39,8 @@ final class AssistantDomainCatalog
     {
         $make = static function (string $domain, string $module, string $entity, array $fields, array $permissions, string $navigation, string $source, array $entities = [], array $fieldPermissions = []): AssistantDomainDefinition {
             $entities = array_values(array_unique([$entity, ...$entities]));
-            $id = ['type' => 'integer', 'minimum' => 1];
+            $id = $domain === 'crm' ? ['type' => ['integer', 'string'], 'minimum' => 1, 'minLength' => 36, 'maxLength' => 36]
+                : ['type' => 'integer', 'minimum' => 1];
             $fieldList = ['type' => ['array', 'null'], 'items' => ['type' => 'string', 'enum' => $fields]];
             $type = ['type' => 'string', 'enum' => $entities];
             $schema = static fn (array $properties): array => ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];

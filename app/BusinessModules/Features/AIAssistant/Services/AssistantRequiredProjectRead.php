@@ -33,7 +33,8 @@ final readonly class AssistantRequiredProjectRead
         $query = (string) ($plan['request']['message'] ?? '');
         if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::hasIntent($query)
             && \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query) === null) { return null; }
-        if (AssistantProjectHandoverReader::hasIntent($query) && ! AssistantProjectHandoverReader::matches($query)) { return null; }
+        if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query) === null
+            && AssistantProjectHandoverReader::hasIntent($query) && ! AssistantProjectHandoverReader::matches($query)) { return null; }
         if (($arguments = \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::readyListArguments($query)) !== null) {
             return ['name' => 'search_assistant_documents', 'arguments' => $arguments];
         }
