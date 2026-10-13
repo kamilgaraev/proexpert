@@ -47,7 +47,8 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         $request->setUserResolver(fn () => $user);
         $service = Mockery::mock(AuthorizationService::class);
         $service->shouldReceive('canAccessInterface')->once()->with($user, 'admin', null)->andReturnTrue();
-        $middleware = new class($service) extends InterfaceMiddleware {
+        $middleware = new class($service) extends InterfaceMiddleware
+        {
             protected function resolveContext(Request $request, ?string $contextType, ?string $contextParam): ?AuthorizationContext
             {
                 return null;
@@ -101,6 +102,8 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         self::assertSame('no-cache', $response->headers->get('Pragma'));
         self::assertSame('0', $response->headers->get('Expires'));
         self::assertSame(1, $this->phases($request)['response_normalize']['count']);
+        self::assertSame(0, $this->phases($request)['response_normalize']['sql_count']);
+        self::assertSame(0.0, $this->phases($request)['response_normalize']['sql_total_ms']);
     }
 
     public function test_normalization_failure_is_timed_and_the_exception_is_preserved(): void
@@ -115,7 +118,25 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         } catch (RuntimeException $exception) {
             self::assertSame('fixture failure', $exception->getMessage());
             self::assertSame(1, $this->phases($request)['response_normalize']['count']);
+            self::assertFalse($request->attributes->has(AdminResponse::NORMALIZATION_ATTRIBUTE));
         }
+    }
+
+    public function test_pir_encoding_and_normalization_phases_do_not_overlap(): void
+    {
+        $request = Request::create('/api/v1/admin/design-management/packages', 'GET');
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, new ApiQueryMetrics(true));
+        $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, false);
+        $this->app->instance('request', $request);
+
+        $original = AdminResponse::paginated([['id' => 1]], ['total' => 1]);
+        $expected = $original->getContent();
+        $response = (new NormalizeAdminResponse)->handle($request, fn () => $original);
+
+        self::assertSame($expected, $response->getContent());
+        self::assertSame(1, $this->phases($request)['list_encode']['count']);
+        self::assertSame(1, $this->phases($request)['response_normalize']['count']);
+        self::assertFalse($request->attributes->get(AdminResponse::NORMALIZATION_ATTRIBUTE));
     }
 
     private function request(): Request

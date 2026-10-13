@@ -5,14 +5,18 @@ declare(strict_types=1);
 namespace App\Http\Responses;
 
 use App\Http\Responses\Concerns\NormalizesPayloadResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 
 class AdminResponse
 {
     use NormalizesPayloadResponse;
+
+    public const NORMALIZATION_ATTRIBUTE = '_admin_response_normalizing';
 
     public static function success(
         mixed $data = null,
@@ -87,7 +91,7 @@ class AdminResponse
             $response['links'] = $links;
         }
 
-        return response()->json($response, $code);
+        return self::measurePIRPhase('list_encode', static fn () => response()->json($response, $code));
     }
 
     protected static function transformData(mixed $data): mixed
@@ -97,7 +101,11 @@ class AdminResponse
         }
 
         if ($data instanceof ResourceCollection) {
-            $resolved = $data->response()->getData(true);
+            [$resourceResponse, $resolved] = self::measurePIRPhase('request_render', static function () use ($data): array {
+                $response = $data->response();
+
+                return [$response, $response->getData(true)];
+            });
 
             if (
                 is_array($resolved)
@@ -107,10 +115,16 @@ class AdminResponse
                     || array_key_exists('summary', $resolved)
                 )
             ) {
-                return self::transformData($resolved);
+                return $resourceResponse instanceof JsonResponse && get_class($resourceResponse) === JsonResponse::class
+                    ? $resolved
+                    : self::transformData($resolved);
             }
 
-            return self::transformData($resolved['data'] ?? $resolved);
+            $resolved = $resolved['data'] ?? $resolved;
+
+            return $resourceResponse instanceof JsonResponse && get_class($resourceResponse) === JsonResponse::class
+                ? $resolved
+                : self::transformData($resolved);
         }
 
         if ($data instanceof JsonResource) {
@@ -127,5 +141,16 @@ class AdminResponse
     protected static function normalizeStatusCode(int $code, int $fallback = 400): int
     {
         return ($code >= 100 && $code < 600) ? $code : $fallback;
+    }
+
+    private static function measurePIRPhase(string $phase, callable $operation): mixed
+    {
+        $request = app()->bound('request') ? app('request') : null;
+        if (! $request instanceof Request || ! $request->isMethod('GET') || ! $request->is('api/v1/admin/design-management/packages')
+            || $request->attributes->get(self::NORMALIZATION_ATTRIBUTE) === true) {
+            return $operation();
+        }
+
+        return ApiQueryMetrics::measureProcessingPhase($phase, $operation);
     }
 }

@@ -30,6 +30,7 @@ final class RecordApiResponseTime
             'api/v1/admin/projects/*/contracts',
             'api/v1/admin/project-command-center',
             'api/v1/admin/procurement/purchase-requests',
+            'api/v1/admin/design-management/packages',
         ));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;
@@ -55,6 +56,10 @@ final class RecordApiResponseTime
                 'status_code' => $statusCode,
                 'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
             ] + $metrics->summary();
+
+            if ($request->isMethod('GET') && $request->is('api/v1/admin/design-management/packages') && $response instanceof JsonResponse) {
+                $context['response_bytes'] = strlen((string) $response->getContent());
+            }
 
             if ($previousMetrics === null) {
                 $request->attributes->remove(ApiQueryMetrics::REQUEST_ATTRIBUTE);
