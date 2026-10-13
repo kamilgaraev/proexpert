@@ -61,6 +61,18 @@ final class ScopeCompletenessEvaluator
                 $facts[$fact->entityId][$fact->type][] = $fact;
             }
         }
+        $byId = array_column($snapshot->facts, null, 'id');
+        $linkedDocuments = [];
+        foreach ($snapshot->facts as $approval) {
+            if ($approval->origin !== 'user_input' || $approval->status !== 'confirmed' || ! is_array($approval->value)
+                || ($approval->value['document_applicability_confirmed'] ?? false) !== true) {
+                continue;
+            }
+            $document = $byId[$approval->value['document_fact_id'] ?? ''] ?? null;
+            if ($document instanceof Fact && $approval->type === 'evaluation_requirement.'.$document->type) {
+                $linkedDocuments[$approval->entityId][$document->type][$document->id] = $document;
+            }
+        }
         $coveredWorks = [];
         foreach ($positions as $position) {
             if (($position['included'] ?? true) !== true || ($position['selected'] ?? true) !== true) {
@@ -100,8 +112,9 @@ final class ScopeCompletenessEvaluator
                         continue;
                     }
                     $documentRequirement = str_contains($requirement, 'test_program') || str_contains($requirement, 'specification');
-                    $proof = array_values(array_filter($facts[$entityId][$requirement] ?? [], static fn (Fact $fact): bool => ! $documentRequirement
-                        || (new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, (string) ($technologies[$section][$entityId] ?? 'unspecified'))));
+                    $candidates = [...($facts[$entityId][$requirement] ?? []), ...array_values($linkedDocuments[$entityId][$requirement] ?? [])];
+                    $proof = array_values(array_column(array_filter($candidates, static fn (Fact $fact): bool => ! $documentRequirement
+                        || (new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, (string) ($technologies[$section][$entityId] ?? 'unspecified'), $entityId, $section)), null, 'id'));
                     $work = $coveredWorks[$section][$entityId][$requirement] ?? null;
                     $satisfied = $documentRequirement ? $proof !== [] : is_string($work);
                     $row = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement,
@@ -114,7 +127,9 @@ final class ScopeCompletenessEvaluator
                 }
                 if ($profile === 'industrial') {
                     foreach (['industrial_specification', 'technology_requirements', 'industry_work_checklist'] as $requirement) {
-                        $proof = array_values(array_filter($facts[$entityId][$requirement] ?? [], static fn (Fact $fact): bool => (new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, (string) ($technologies[$section][$entityId] ?? 'unspecified'))));
+                        $candidates = [...($facts[$entityId][$requirement] ?? []), ...array_values($linkedDocuments[$entityId][$requirement] ?? [])];
+                        $proof = array_values(array_column(array_filter($candidates, static fn (Fact $fact): bool => (new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact,
+                            (string) ($technologies[$section][$entityId] ?? 'unspecified'), $entityId, $section)), null, 'id'));
                         if ($proof === []) {
                             $requirements[] = ['section' => $section, 'entity_id' => $entityId, 'requirement' => $requirement, 'reason' => 'industrial_requirements_unverified'];
                         }

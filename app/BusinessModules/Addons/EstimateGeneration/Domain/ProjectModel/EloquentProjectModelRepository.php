@@ -2029,7 +2029,62 @@ SQL, [
 
     public function snapshotForPlanning(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
     {
-        return $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+        $capture = $this->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $factLimit);
+        $snapshot = $capture['snapshot'];
+        $evidence = array_column($snapshot->evidence, null, 'id');
+        $documentIds = [];
+        foreach ($snapshot->facts as $fact) {
+            if ($fact->origin !== 'document') {
+                continue;
+            }
+            foreach ($fact->evidenceIds as $id) {
+                $proof = $evidence[$id] ?? null;
+                $reference = $proof?->sourceReference ?? $proof?->sourceArtifactId;
+                if (is_string($reference) && preg_match('/\Adocument:([1-9][0-9]*)\z/', $reference, $match) === 1) {
+                    $documentIds[(int) $match[1]] = (int) $match[1];
+                }
+            }
+        }
+        $documents = [];
+        foreach (array_chunk(array_values($documentIds), 500) as $chunk) {
+            foreach (\App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()
+                ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)->whereIn('id', $chunk)->get() as $document) {
+                $documents[(int) $document->id] = $document;
+            }
+        }
+        $facts = array_values(array_filter($snapshot->facts, static function (Fact $fact) use ($evidence, $documents): bool {
+            if ($fact->origin !== 'document') {
+                return true;
+            }
+            if ($fact->evidenceIds === []) {
+                return false;
+            }
+            foreach ($fact->evidenceIds as $id) {
+                $proof = $evidence[$id] ?? null;
+                $reference = $proof?->sourceReference ?? $proof?->sourceArtifactId;
+                if ($proof === null || $proof->sourceType !== 'document' || ! is_string($reference)
+                    || preg_match('/\Adocument:([1-9][0-9]*)\z/', $reference, $match) !== 1) {
+                    return false;
+                }
+                $document = $documents[(int) $match[1]] ?? null;
+                if ($document === null || $document->status === 'ignored'
+                    || ! hash_equals(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document), $fact->sourceVersion)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
+        if (count($facts) !== count($snapshot->facts)) {
+            if (count($snapshot->facts) >= $factLimit) {
+                // Filtering a limited prefix must not disguise uninspected facts beyond it.
+                throw new InvalidArgumentException('planning_source_filter_budget_exceeded');
+            }
+            $capture['snapshot'] = new ProjectModelSnapshot($snapshot->entities, $facts, $snapshot->evidence, $snapshot->conflicts);
+            $capture['token'] = hash('sha256', $this->json(['base' => $capture['token'], 'planning_facts' => array_column($facts, 'id')]));
+        }
+
+        return $capture;
     }
 
     public function replaceTechnologyRecommendations(

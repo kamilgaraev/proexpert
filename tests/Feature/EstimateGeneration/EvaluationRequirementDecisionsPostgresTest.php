@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationRequirementDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequirementAcceptance;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationChoiceProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\RequirementApplicability;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
@@ -33,6 +35,82 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationRequirementDecisionsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_document_of_another_source_entity_requires_explicit_versioned_application_to_one_asset(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $saved = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)
+            ->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+                ['key' => 'pump-p1', 'type' => 'equipment', 'name' => 'Насос P1',
+                    'parameters' => ['equipment_count' => ['value' => '3', 'unit' => 'count', 'basis' => 'input']]],
+            ]]);
+        $target = $saved['quantities']['equipment.count']['formula_inputs']['entity_id'];
+        $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $scope[0],
+            'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'specification-p1.xlsx',
+            'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'storage_path' => 'fixture/spec-p1.xlsx',
+            'file_size_bytes' => 100, 'checksum_sha256' => str_repeat('d', 64), 'status' => 'ready', 'page_count' => 1]);
+        $version = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+            1, ...[...$scope, (int) $document->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                1, $version, [], $document->storage_path, $document->mime_type, $document->filename, 'fixture-source', 1, 1, 'draft']);
+        $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context,
+            ['sheet' => 'Spec', 'header_cells' => [['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+                ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.']],
+                'cells' => [['address' => 'A2', 'value' => 'equipment.p1'], ['address' => 'B2', 'value' => 'equipment_specification'],
+                    ['address' => 'C2', 'value' => 'Спецификация насоса P1: модель и требования монтажа', 'formula' => null], ['address' => 'D2', 'value' => '']]]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
+        $fact = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_specification'))[0];
+        self::assertNotSame($target, $fact->entityId);
+        $payload = [...$session->fresh()->input_payload, 'profile_id' => 'construction', 'construction_type' => 'new_construction', 'selected_sections' => ['equipment']];
+        $session->update(['input_payload' => $payload]);
+        $draft = ['evaluation_result' => ['coverage' => ['selected_scope' => ['equipment' => [$target]]]],
+            'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh())];
+        $session->update(['draft_payload' => app(UniversalReviewSummaryProjector::class)->project($draft)]);
+        $query = ['entity_id' => $target, 'section' => 'equipment', 'requirement' => 'equipment_specification', 'state_version' => 1];
+        $reader = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources::class);
+        self::assertSame([], $reader->handle($actor, $scope[1], $scope[2], $query)['sources']);
+        $other = $reader->handle($actor, $scope[1], $scope[2], [...$query, 'source_scope' => 'other_entities']);
+        self::assertCount(1, $other['sources']);
+        self::assertTrue($other['sources'][0]['requires_applicability_confirmation']);
+        $input = [...$query, 'request_id' => (string) Str::uuid(), 'disposition' => 'document_verified', 'document_fact_id' => $fact->id,
+            'reason' => 'Проверена применимость спецификации P1 к выбранному насосу'];
+        $save = app(SaveEvaluationRequirementDecision::class);
+        foreach ([[], ['document_applicability_confirmed' => true, 'document_fact_version' => 2, 'document_value_hash' => $other['sources'][0]['value_hash']],
+            ['document_applicability_confirmed' => true, 'document_fact_version' => 1, 'document_value_hash' => str_repeat('0', 64)]] as $invalid) {
+            try {
+                $save->handle($actor, $scope[1], $scope[2], [...$input, ...$invalid]);
+                self::fail('An unconfirmed or changed source was applied to another entity.');
+            } catch (ValidationException) {
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        $input += ['document_applicability_confirmed' => true, 'document_fact_version' => $fact->version,
+            'document_value_hash' => $other['sources'][0]['value_hash']];
+        $receipt = $save->handle($actor, $scope[1], $scope[2], $input);
+        self::assertSame('0', $receipt['cost_units']);
+        self::assertSame(CanonicalPipelineJson::encode($receipt), CanonicalPipelineJson::encode($save->handle($actor, $scope[1], $scope[2], $input)));
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, [$receipt['fact_id']]]);
+        self::assertTrue((new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, 'unspecified', $target, 'equipment'));
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
+        $targetQuantities = array_values(array_filter($quantities, static fn ($quantity): bool => ($quantity->formulaInputs['entity_id'] ?? null) === $target && $quantity->formulaKey === 'equipment_count'));
+        self::assertCount(1, $targetQuantities);
+        self::assertSame('3', $targetQuantities[0]->amount);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        $document->update(['status' => 'ignored']);
+        $fresh = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
+        self::assertNotContains($fact->id, array_column($fresh->facts, 'id'));
+        self::assertFalse((new DocumentRequirementAcceptance)->accepted($fresh, $decisions, $fact, 'unspecified', $target, 'equipment'));
+        self::assertContains($fact->id, array_column($models->snapshot(...$scope)->facts, 'id'));
+        $document->update(['status' => 'ready', 'checksum_sha256' => str_repeat('e', 64)]);
+        $changed = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
+        self::assertNotContains($fact->id, array_column($changed->facts, 'id'));
+        self::assertFalse((new DocumentRequirementAcceptance)->accepted($changed, $decisions, $fact, 'unspecified', $target, 'equipment'));
+    }
+
     public function test_native_specification_reaches_canonical_facts_and_requires_a_scoped_human_document_decision(): void
     {
         [$actor, $session] = $this->fixture();

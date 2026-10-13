@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequirementAcceptance;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -32,8 +34,9 @@ final readonly class GetEvaluationRequirementSources
             $requirement = $input['requirement'] ?? null;
             $version = $input['state_version'] ?? null;
             $page = $input['page'] ?? 1;
+            $sourceScope = $input['source_scope'] ?? 'current_entity';
             if (! is_string($entityId) || ! is_string($section) || ! is_string($requirement) || ! is_int($version)
-                || ! is_int($page) || $page < 1 || $page > 100000) {
+                || ! is_int($page) || $page < 1 || $page > 100000 || ! in_array($sourceScope, ['current_entity', 'other_entities'], true)) {
                 throw ValidationException::withMessages(['requirement' => trans_message('estimate_generation.requirement_sources.target_invalid')]);
             }
             if ($version !== (int) $session->state_version) {
@@ -64,9 +67,19 @@ final readonly class GetEvaluationRequirementSources
             $proofs = array_column($snapshot->evidence, null, 'id');
             $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $projectId)->get()->keyBy('id');
             $rows = [];
+            $target = $entities[$entityId];
+            $targetKind = $target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type;
             foreach ($snapshot->facts as $fact) {
-                if ($fact->entityId !== $entityId || $fact->type !== $requirement || $fact->origin !== 'document'
+                $sourceEntity = $entities[$fact->entityId] ?? null;
+                $sourceKind = $sourceEntity?->attributes['semantic_type'] ?? $sourceEntity?->attributes['properties']['semantic_type'] ?? $sourceEntity?->type;
+                $crossEntity = $fact->entityId !== $entityId;
+                if (($sourceScope === 'current_entity' ? $crossEntity : ! $crossEntity) || $fact->type !== $requirement || $fact->origin !== 'document'
                     || $fact->evidenceIds === [] || ! in_array($fact->status, ['confirmed', 'candidate', 'unresolved'], true)) {
+                    continue;
+                }
+                if ($crossEntity && ($sourceEntity === null || $sourceEntity->sourceVersion !== $fact->sourceVersion
+                    || ! is_string($targetKind) || ! is_string($sourceKind)
+                    || ! FactVocabulary::documentSupportsEntity($requirement, $targetKind) || ! FactVocabulary::documentSupportsEntity($requirement, $sourceKind))) {
                     continue;
                 }
                 $locators = [];
@@ -96,6 +109,12 @@ final readonly class GetEvaluationRequirementSources
                     continue;
                 }
                 $rows[] = ['fact_id' => $fact->id, 'source_version' => $fact->sourceVersion, 'verification_status' => $fact->status,
+                    'fact_version' => $fact->version, 'value_hash' => DocumentRequirementAcceptance::valueHash($fact),
+                    'source_entity_id' => $fact->entityId, 'source_entity_type' => $sourceKind,
+                    'source_entity_name' => $sourceEntity?->attributes['name'] ?? $sourceEntity?->attributes['identity']['label'] ?? 'Объект источника',
+                    'source_floor' => $sourceEntity?->attributes['floor_id'] ?? $sourceEntity?->attributes['properties']['floor_id'] ?? null,
+                    'source_zone' => $sourceEntity?->attributes['zone_id'] ?? $sourceEntity?->attributes['properties']['zone_id'] ?? null,
+                    'requires_applicability_confirmation' => $crossEntity,
                     'excerpt' => is_string($fact->value) ? mb_substr($fact->value, 0, 500) : null,
                     'document_name' => $documentName, 'locators' => $locators,
                     'can_confirm' => $fact->status === 'confirmed'];
@@ -105,6 +124,7 @@ final readonly class GetEvaluationRequirementSources
             $page = min($page, $lastPage);
 
             return ['entity_id' => $entityId, 'section' => $section, 'requirement' => $requirement,
+                'source_scope' => $sourceScope,
                 'state_version' => (int) $session->state_version, 'cost_units' => '0',
                 'allowed_dispositions' => $dispositions,
                 'sources' => array_slice($rows, ($page - 1) * 25, 25),

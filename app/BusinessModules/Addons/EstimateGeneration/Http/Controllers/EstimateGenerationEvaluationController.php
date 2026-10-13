@@ -26,7 +26,8 @@ final class EstimateGenerationEvaluationController extends Controller
     {
         $input = $request->validate(['entity_id' => ['required', 'string', 'max:191'], 'section' => ['required', 'string', 'max:64'],
             'requirement' => ['required', 'string', 'max:40'], 'state_version' => ['required', 'integer', 'min:0'],
-            'page' => ['sometimes', 'integer', 'min:1', 'max:100000']]);
+            'page' => ['sometimes', 'integer', 'min:1', 'max:100000'],
+            'source_scope' => ['sometimes', 'in:current_entity,other_entities']]);
         $input['state_version'] = (int) $input['state_version'];
         if (isset($input['page'])) {
             $input['page'] = (int) $input['page'];

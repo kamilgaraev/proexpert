@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DocumentRequirementAcceptance;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
@@ -80,9 +82,22 @@ final readonly class SaveEvaluationRequirementDecision
             if ($value['disposition'] === 'document_verified') {
                 $documentFact = array_column($snapshot->facts, null, 'id')[$input['document_fact_id'] ?? ''] ?? null;
                 $proofs = array_column($snapshot->evidence, null, 'id');
-                if ($documentFact === null || $documentFact->entityId !== $entity->id || $documentFact->type !== $requirement
+                $crossEntity = $documentFact !== null && $documentFact->entityId !== $entity->id;
+                $sourceEntity = $documentFact === null ? null : ($entities[$documentFact->entityId] ?? null);
+                $targetKind = $entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type;
+                $sourceKind = $sourceEntity?->attributes['semantic_type'] ?? $sourceEntity?->attributes['properties']['semantic_type'] ?? $sourceEntity?->type;
+                if ($documentFact === null || $documentFact->type !== $requirement
                     || $documentFact->origin !== 'document' || $documentFact->status !== 'confirmed' || $documentFact->evidenceIds === []) {
                     throw ValidationException::withMessages(['document_fact_id' => 'Выберите актуальное основание именно этого требования.']);
+                }
+                if ($crossEntity && (($input['document_applicability_confirmed'] ?? false) !== true
+                    || ($input['document_fact_version'] ?? null) !== $documentFact->version
+                    || ! is_string($input['document_value_hash'] ?? null)
+                    || ! hash_equals(DocumentRequirementAcceptance::valueHash($documentFact), $input['document_value_hash'])
+                    || $sourceEntity === null || $sourceEntity->sourceVersion !== $documentFact->sourceVersion
+                    || ! is_string($targetKind) || ! is_string($sourceKind)
+                    || ! FactVocabulary::documentSupportsEntity($requirement, $targetKind) || ! FactVocabulary::documentSupportsEntity($requirement, $sourceKind))) {
+                    throw ValidationException::withMessages(['document_fact_id' => 'Подтвердите применимость текущей версии документа именно к выбранному объекту.']);
                 }
                 $documentRef = null;
                 foreach ($documentFact->evidenceIds as $id) {
@@ -100,6 +115,11 @@ final readonly class SaveEvaluationRequirementDecision
                     $documentRef = $reference;
                 }
                 $value += ['document_fact_id' => $documentFact->id, 'document_source_version' => $documentFact->sourceVersion, 'document_source_ref' => $documentRef];
+                if ($crossEntity) {
+                    $value += ['document_binding_version' => DocumentRequirementAcceptance::BINDING_VERSION,
+                        'document_entity_id' => $documentFact->entityId, 'document_fact_version' => $documentFact->version,
+                        'document_value_hash' => DocumentRequirementAcceptance::valueHash($documentFact), 'document_applicability_confirmed' => true];
+                }
             } elseif ($value['disposition'] !== 'not_applicable' || ! in_array($requirement, ['demolition', 'waste_removal', 'existing_structures_protection'], true)) {
                 throw ValidationException::withMessages(['disposition' => 'Для этого требования нельзя подтвердить неприменимость.']);
             }
