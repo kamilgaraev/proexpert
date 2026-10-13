@@ -74,6 +74,31 @@ final class AICreditCommercialService
             $wallet = AICreditWallet::query()->where('organization_id', $order->organization_id)->lockForUpdate()->firstOrFail();
             $lots = AICreditLot::query()->where('organization_id', $order->organization_id)->where('commercial_order_id', $order->getKey())->lockForUpdate()->get();
             foreach ($lots as $lot) {
+                if ($lot->source === 'conversion' && ($lot->metadata['migration_version'] ?? null) === 'estimator-paid:v1' && $cumulativeAmountMinor > 0) {
+                    $holdKey = 'legacy-estimator-refund-hold:'.$order->getKey().':'.$lot->getKey().':'.$cumulativeAmountMinor;
+                    if (AICreditLedgerEntry::query()->where('organization_id', $order->organization_id)->where('idempotency_key', $holdKey)->exists()) {
+                        continue;
+                    }
+                    $reservations = AICreditReservation::query()->where('organization_id', $order->organization_id)->where('status', 'reserved')
+                        ->whereHas('allocations', fn ($query) => $query->where('ai_credit_lot_id', $lot->getKey()))->lockForUpdate()->get();
+                    foreach ($reservations as $reservation) {
+                        $this->credits->cancel($reservation);
+                    }
+                    $lot->refresh();
+                    $metadata = (array) $lot->metadata;
+                    $metadata[AICreditLot::LEGACY_REFUND_HOLD] = true;
+                    $metadata['legacy_estimator_refund_amount_minor'] = max((int) ($metadata['legacy_estimator_refund_amount_minor'] ?? 0), $cumulativeAmountMinor);
+                    $lot->forceFill(['metadata' => $metadata])->save();
+                    $wallet->refresh();
+                    // Refund attribution to the attested remainder is unknown. Preserve its money and require financial reconciliation.
+                    AICreditLedgerEntry::query()->create(['organization_id' => $order->organization_id, 'type' => 'reconciliation_hold',
+                        'amount_minor' => 0, 'balance_after_minor' => $wallet->balance_minor, 'reference_type' => 'lot', 'reference_id' => $lot->getKey(),
+                        'idempotency_key' => $holdKey, 'metadata' => ['commercial_order_id' => (int) $order->getKey(),
+                            'cumulative_refund_amount_minor' => $cumulativeAmountMinor, 'held_units_minor' => (int) $lot->remaining_minor,
+                            'reconciliation_id' => $metadata['reconciliation_id'] ?? null, 'remaining_money_proof_hash' => $metadata['remaining_money_proof_hash'] ?? null]]);
+
+                    continue;
+                }
                 $key = 'refund:'.$order->public_id.':'.$lot->getKey().':'.$cumulativeAmountMinor;
                 if (AICreditLedgerEntry::query()->where('organization_id', $order->organization_id)->where('idempotency_key', $key)->exists()) {
                     continue;

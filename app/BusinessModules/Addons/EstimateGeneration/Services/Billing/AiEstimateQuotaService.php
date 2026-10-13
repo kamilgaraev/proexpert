@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Billing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -255,6 +256,11 @@ final readonly class AiEstimateQuotaService
             ->where('session_id', $sessionId)
             ->lockForUpdate()
             ->first();
+
+        if (($existing === null || ! in_array($existing->status, [self::RESERVED, self::CONFIRMED], true))
+            && EstimatorCreditPolicy::enabledForOrganization($organizationId)) {
+            throw new \DomainException('estimator_credit_quote_required');
+        }
 
         if ($existing !== null) {
             if (in_array($existing->status, [self::RESERVED, self::CONFIRMED], true)) {

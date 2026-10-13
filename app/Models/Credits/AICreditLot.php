@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Model;
 
 final class AICreditLot extends Model
 {
+    public const LEGACY_REFUND_HOLD = 'legacy_estimator_refund_reconciliation_required';
+
     protected $table = 'ai_credit_lots';
 
     protected $fillable = ['organization_id', 'source', 'original_minor', 'remaining_minor', 'expires_at', 'commercial_order_id', 'metadata'];

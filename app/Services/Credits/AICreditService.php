@@ -185,6 +185,9 @@ final class AICreditService
         $lots = AICreditLot::query()
             ->where('organization_id', $organization->getKey())
             ->where('remaining_minor', '>', 0)
+            ->where(fn ($query) => $query->where('source', '<>', 'conversion')
+                ->orWhereNull('metadata->'.AICreditLot::LEGACY_REFUND_HOLD)
+                ->orWhere('metadata->'.AICreditLot::LEGACY_REFUND_HOLD, false))
             ->where(fn ($query) => $query->whereNull('expires_at')->orWhere('expires_at', '>', now()))
             ->orderByRaw('expires_at nulls last')->orderBy('id')->lockForUpdate()->get();
         $reservation = AICreditReservation::query()->create([
@@ -356,7 +359,67 @@ final class AICreditService
 
     public function grant(Organization $organization, int $unitsMinor, string $source, ?\DateTimeInterface $expiresAt, string $idempotencyKey, ?int $commercialOrderId = null, array $metadata = []): void
     {
-        if ($unitsMinor <= 0 || ! in_array($source, ['subscription', 'purchase', 'refund', 'conversion'], true) || ($source === 'purchase' && $expiresAt !== null)) {
+        $this->grantInternal($organization, $unitsMinor, $source, $expiresAt, $idempotencyKey, $commercialOrderId, $metadata, false);
+    }
+
+    /** Records a reconciled zero remainder in the existing wallet journal without inventing a paid credit. */
+    public function grantZeroConversion(Organization $organization, string $idempotencyKey, int $commercialOrderId, array $metadata): void
+    {
+        if (($metadata['remaining_paid_amount_minor'] ?? null) !== 0 || ($metadata['converted_units_minor'] ?? null) !== 0
+            || ! is_string($metadata['remaining_money_proof_hash'] ?? null)
+            || preg_match('/\A[a-f0-9]{64}\z/', $metadata['remaining_money_proof_hash']) !== 1) {
+            throw new DomainException('Invalid zero AI credit conversion.');
+        }
+        $this->grantInternal($organization, 0, 'conversion', null, $idempotencyKey, $commercialOrderId, $metadata, true);
+    }
+
+    /** The caller authorizes the financial correction; only an entirely unused, unreserved conversion lot can be restored. */
+    public function reverseUnusedConversion(Organization $organization, int $grantId, string $idempotencyKey, array $metadata): void
+    {
+        DB::transaction(function () use ($organization, $grantId, $idempotencyKey, $metadata): void {
+            $wallet = $this->walletForUpdate((int) $organization->id);
+            $grant = AICreditLedgerEntry::query()->whereKey($grantId)->where('organization_id', $organization->id)->lockForUpdate()->firstOrFail();
+            if ($grant->type !== 'grant' || $grant->reference_type !== 'lot' || ($grant->metadata['migration_version'] ?? null) !== 'estimator-paid:v1'
+                || ($metadata['original_grant_id'] ?? null) !== (int) $grant->id
+                || ($metadata['remaining_money_proof_hash'] ?? null) !== ($grant->metadata['remaining_money_proof_hash'] ?? null)) {
+                throw new DomainException('AI credit conversion reversal source mismatch.');
+            }
+            $existing = AICreditLedgerEntry::query()->where('organization_id', $organization->id)->where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
+            if ($existing !== null) {
+                $previousMetadata = $existing->metadata;
+                $expectedMetadata = $metadata;
+                ksort($previousMetadata, SORT_STRING);
+                ksort($expectedMetadata, SORT_STRING);
+                if ($existing->type !== 'conversion_reversal' || (int) $existing->amount_minor !== -(int) $grant->amount_minor
+                    || $existing->reference_id !== $grant->reference_id || $previousMetadata !== $expectedMetadata) {
+                    throw new DomainException('AI credit conversion reversal idempotency conflict.');
+                }
+
+                return;
+            }
+            $lot = AICreditLot::query()->whereKey($grant->reference_id)->where('organization_id', $organization->id)->lockForUpdate()->firstOrFail();
+            $reserved = AICreditReservationAllocation::query()->where('ai_credit_lot_id', $lot->id)
+                ->whereIn('ai_credit_reservation_id', AICreditReservation::query()->where('organization_id', $organization->id)
+                    ->where('status', 'reserved')->select('id'))->sum('reserved_minor');
+            if ($lot->source !== 'conversion' || ($lot->metadata[AICreditLot::LEGACY_REFUND_HOLD] ?? false) === true
+                || (int) $lot->original_minor !== (int) $grant->amount_minor
+                || (int) $lot->remaining_minor !== (int) $lot->original_minor || (int) $reserved > 0
+                || $wallet->availableMinor() < (int) $lot->remaining_minor) {
+                throw new DomainException('AI credit conversion is already used or reserved.');
+            }
+            $amount = (int) $lot->remaining_minor;
+            $lot->forceFill(['remaining_minor' => 0])->save();
+            $wallet->decrement('balance_minor', $amount);
+            $wallet->refresh();
+            $this->appendJournal($wallet, 'conversion_reversal', -$amount, 'lot', $grant->reference_id, $idempotencyKey, $metadata);
+        }, 1);
+    }
+
+    private function grantInternal(Organization $organization, int $unitsMinor, string $source, ?\DateTimeInterface $expiresAt,
+        string $idempotencyKey, ?int $commercialOrderId, array $metadata, bool $allowZeroConversion): void
+    {
+        if ($unitsMinor < 0 || ($unitsMinor === 0 && (! $allowZeroConversion || $source !== 'conversion'))
+            || ! in_array($source, ['subscription', 'purchase', 'refund', 'conversion'], true) || ($source === 'purchase' && $expiresAt !== null)) {
             throw new DomainException('Invalid AI credit grant.');
         }
         DB::transaction(function () use ($organization, $unitsMinor, $source, $expiresAt, $idempotencyKey, $commercialOrderId, $metadata): void {
@@ -400,6 +463,7 @@ final class AICreditService
                 'pack_purchase_enabled' => $purchasesEnabled, 'billing_mode' => $enabled ? 'paid' : 'shadow',
                 'included_minor' => $included, 'purchased_minor' => $purchased, 'reserved_minor' => (int) $wallet->reserved_minor,
                 'available_minor' => $wallet->availableMinor(), 'total_minor' => (int) $wallet->balance_minor,
+                'reconciliation_held_minor' => $wallet->reconciliationHeldMinor(),
                 'base_period_expires_at' => $baseExpiry?->toAtomString(), 'packs' => $packs, 'charging_enabled' => $enabled];
         }, 3);
     }

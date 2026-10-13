@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\LegacyPaidEstimateConversionEvidence;
 use App\Exceptions\Billing\CommercialQuotaExceededException;
 use App\Models\Contractor;
 use App\Models\Organization;
@@ -90,7 +91,9 @@ class CommercialQuotaService
             ->whereIn('source', ['paid_addon', 'manual_grant', 'corporate_override'])
             ->active()
             ->orderByDesc('id')
-            ->get(['id', 'organization_id', 'quantity', 'source']);
+            ->get();
+
+        $allocations = LegacyPaidEstimateConversionEvidence::unconverted($allocations);
 
         foreach ($allocations as $allocation) {
             $organizationId = (int) $allocation->organization_id;
@@ -260,7 +263,7 @@ class CommercialQuotaService
         $free = config('commercial_limits.free', []);
         $metadata = config('commercial_limits.limits', []);
         $packageLimits = $this->packageLimits($organizationId);
-        $paidAddons = $this->allocationTotals($organizationId, 'paid_addon');
+        $paidAddons = $this->allocationTotals($organizationId, 'paid_addon', effectiveQuota: true);
         $manualGrants = $this->allocationTotals($organizationId, 'manual_grant');
         $corporateOverrides = $this->corporateOverrides($organizationId);
         $limits = [];
@@ -491,17 +494,22 @@ class CommercialQuotaService
         return array_values(array_unique($modules));
     }
 
-    private function allocationTotals(int $organizationId, string $source): array
+    private function allocationTotals(int $organizationId, string $source, bool $effectiveQuota = false): array
     {
         if (! Schema::hasTable('organization_resource_allocations')) {
             return [];
         }
 
-        return OrganizationResourceAllocation::query()
+        $query = OrganizationResourceAllocation::query()
             ->where('organization_id', $organizationId)
             ->where('source', $source)
-            ->active()
-            ->select('limit_key', DB::raw('SUM(quantity) as quantity'))
+            ->active();
+        if ($effectiveQuota && $source === 'paid_addon') {
+            return LegacyPaidEstimateConversionEvidence::unconverted($query->get())->groupBy('limit_key')
+                ->map(static fn ($allocations): float => (float) $allocations->sum('quantity'))->all();
+        }
+
+        return $query->select('limit_key', DB::raw('SUM(quantity) as quantity'))
             ->groupBy('limit_key')
             ->pluck('quantity', 'limit_key')
             ->map(static fn (mixed $quantity): float => (float) $quantity)

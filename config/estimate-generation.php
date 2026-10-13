@@ -41,6 +41,7 @@ $lunaPrice = [[
 return [
     'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
     'credits' => ['enabled' => (bool) env('ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED', false),
+        'legacy_reconciliation_enabled' => (bool) env('ESTIMATE_GENERATION_LEGACY_RECONCILIATION_ENABLED', false),
         'service_daily_expense_limit_rub' => '250.00', 'service_monthly_expense_limit_rub' => '4000.00'],
     'live_qa' => ['enabled' => (bool) env('ESTIMATE_GENERATION_LIVE_QA_ENABLED', false),
         'run_id' => env('ESTIMATE_GENERATION_LIVE_QA_RUN_ID')],
