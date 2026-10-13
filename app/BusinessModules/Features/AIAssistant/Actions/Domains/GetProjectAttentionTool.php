@@ -1,0 +1,32 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Actions\Domains;
+
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectAttentionReader;
+use App\Models\Organization;
+use App\Models\User;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+
+final readonly class GetProjectAttentionTool implements AIToolInterface
+{
+    public function __construct(private AssistantProjectAttentionReader $reader, private AIPermissionChecker $permissions) {}
+    public function getName(): string { return 'get_project_attention'; }
+    public function getDescription(): string { return trans_message('ai_assistant_attention.description'); }
+    public function getParametersSchema(): array
+    {
+        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1],
+            'focus' => ['type' => 'string', 'enum' => ['all', 'schedule', 'quality', 'procurement']],
+            'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20]],
+            'required' => ['project_id', 'focus', 'limit'], 'additionalProperties' => false];
+    }
+    public function execute(array $arguments, ?User $user, Organization $organization): array|string
+    {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! $this->permissions->canExecuteTool($user, $this->getName(), $arguments)) { throw new AccessDeniedHttpException; }
+        return $this->reader->read($user, (int) $organization->id, $arguments);
+    }
+}

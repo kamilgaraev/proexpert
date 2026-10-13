@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 final class AssistantToolSurface
 {
     private const LINKED_READS = [
+        'get_project_snapshot' => ['get_project_attention'],
         'get_procurement_snapshot' => ['get_project_snapshot'],
         'get_contract_snapshot' => ['get_project_snapshot', 'get_schedule_snapshot', 'get_estimate_answer'],
         'get_schedule_snapshot' => ['get_project_snapshot'],
@@ -44,6 +45,7 @@ final class AssistantToolSurface
             '/график|schedule|срок/iu' => ['get_schedule_snapshot'],
             '/снабжен|закуп|procurement/iu' => ['get_procurement_snapshot'],
             '/проект|project/iu' => ['get_project_snapshot'],
+            '/внимани|приоритет|главн[а-яё]*\s+проблем|план[её]рк|риски\s+(?:проекта|объекта)/iu' => ['get_project_attention'],
             '/сотрудник|персонал|people|workforce/iu' => ['search_users'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {

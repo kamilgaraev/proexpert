@@ -11,6 +11,36 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_manager_priorities_use_a_single_current_project_attention_read(): void
+    {
+        $query = 'Я руководитель проекта. Что на нашем объекте сейчас требует моего внимания в первую очередь? Назови три главных проблемы, приведи факты и скажи, что делать дальше.';
+        self::assertSame(['name' => 'get_project_attention', 'arguments' => ['project_id' => 52, 'focus' => 'all', 'limit' => 3]],
+            AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+    }
+
+    public function test_manager_attention_preserves_specific_focus_and_does_not_capture_compound_money_requests(): void
+    {
+        self::assertSame('all', AssistantRequiredProjectRead::fromPlan($this->plan('Что в нашем объекте требует моего внимания? Дай три приоритета, ответственных и сроки следующего действия.'))['arguments']['focus']);
+        foreach (['Что в графике нашего проекта требует внимания?' => 'schedule',
+            'Какие главные проблемы снабжения нашего объекта?' => 'procurement',
+            'Какие главные проблемы качества нашего проекта?' => 'quality'] as $query => $focus) {
+            self::assertSame($focus, AssistantRequiredProjectRead::fromPlan($this->plan($query))['arguments']['focus']);
+        }
+        foreach (['Что требует внимания в нашем проекте и сколько потрачено за сентябрь 2026?',
+            'Назови главные проблемы нашего объекта и его расходы.',
+            'Какие главные проблемы качества и графика нашего проекта?'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+    }
+
+    public function test_attention_remains_executable_in_the_terminal_read_only_phase(): void
+    {
+        $service = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod($service, 'isTerminalReadOnlyTool');
+        self::assertTrue($method->invoke($service, 'get_project_attention'));
+        self::assertFalse($method->invoke($service, 'approve_payment_request'));
+    }
+
     public function test_unavailable_tool_missing_scope_and_compound_or_filtered_requests_are_not_forced(): void
     {
         $query = 'Есть на нашем объекте просроченные задачи? Сколько их?';

@@ -240,6 +240,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'search_assistant_documents' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
                 'get_material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
                 'get_project_material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectMaterialStockTool::class,
+                'get_project_attention' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectAttentionTool::class,
                 'get_bim_model_elements' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool::class,
                 'get_published_report_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
                 'get_live_project_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
