@@ -1016,6 +1016,12 @@ class AIAssistantService
             }
 
             foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($verificationToolResults) as $toolResult) {
+                $reader = AssistantRequiredProjectRead::decisionReader((string) ($toolResult['_tool_name'] ?? ''), $query);
+                if ($reader !== null && $proposedActions === []) {
+                    $verifiedDecision = $this->readPhase(fn (): ?array => app($reader)->verifiedAnswer($toolResult, $user, $organizationId), $user, $organizationId);
+                    if ($verifiedDecision !== null) { $assistantContent = $verifiedDecision['text']; $structuredCheck = $verifiedDecision; }
+                    break;
+                }
                 if (($toolResult['_tool_name'] ?? null) === 'get_project_attention' && $proposedActions === [] && AssistantProjectAttentionIntent::matches($query)) {
                     $verifiedAttention = $this->readPhase(fn (): ?array => app(AssistantProjectAttentionReader::class)->verifiedAnswer($toolResult, $user, $organizationId), $user, $organizationId);
                     if ($verifiedAttention !== null) {
@@ -2033,7 +2039,7 @@ class AIAssistantService
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
-            'get_project_material_stock', 'get_project_attention',
+            'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness',
         ], true);
     }
 
@@ -2293,7 +2299,7 @@ class AIAssistantService
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
-                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_bim_model_elements',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool

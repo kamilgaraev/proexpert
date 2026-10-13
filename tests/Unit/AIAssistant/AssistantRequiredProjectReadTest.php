@@ -11,11 +11,55 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_director_compound_finance_and_schedule_impact_bind_verified_scope(): void
+    {
+        $finance = $this->plan('Теперь по деньгам: какой бюджет у нашего объекта, сколько уже потрачено за сентябрь 2026 года и можем ли мы говорить о перерасходе?');
+        self::assertSame(['name' => 'get_project_finance_overview', 'arguments' => ['project_id' => 52, 'period_start' => '2026-09-01',
+            'period_end' => '2026-09-30', 'currency' => null]], AssistantRequiredProjectRead::fromPlan($finance));
+        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($finance, 'get_project_finance_overview', ['project_id' => 999])['project_id']);
+        $impact = $this->plan('Какая из просроченных задач сильнее всего влияет на общий срок проекта? Покажи почему так и что надо разблокировать.');
+        self::assertSame(['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => 52, 'focus' => 'overdue_impact']], AssistantRequiredProjectRead::fromPlan($impact));
+        self::assertSame(['project_id' => 52, 'focus' => 'overdue_impact'], AssistantRequiredProjectRead::bindArguments($impact, 'analyze_project_schedule_impact', ['project_id' => 999, 'focus' => 'dependencies']));
+        self::assertSame('critical_path', AssistantRequiredProjectRead::fromPlan($this->plan('Какой критический путь нашего проекта?'))['arguments']['focus']);
+        self::assertSame('dependencies', AssistantRequiredProjectRead::fromPlan($this->plan('Покажи зависимости задач нашего проекта.'))['arguments']['focus']);
+        $people = $this->plan('Кто работал на нашем объекте за сентябрь 2026 года и сколько часов учтено? Есть ли табели, которые ещё нужно согласовать?');
+        self::assertSame(['name' => 'get_project_workforce_summary', 'arguments' => ['project_id' => 52, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30']],
+            AssistantRequiredProjectRead::fromPlan($people));
+        self::assertSame(52, AssistantRequiredProjectRead::bindArguments($people, 'get_project_workforce_summary', ['project_id' => 999])['project_id']);
+        $payment = $this->plan('Какие счета по нашему объекту ещё не оплачены, сколько по каждому и что мне проверить перед оплатой?');
+        self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($payment));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999]));
+        self::assertSame('procurement', AssistantRequiredProjectRead::fromPlan($this->plan('Что со снабжением нашего объекта: какие поставки и заявки требуют решения сегодня, что может помешать ближайшим работам?'))['arguments']['focus']);
+        self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Измени зависимости задач нашего проекта.')));
+        foreach (['Какие задачи влияют на сроки нашего проекта и сколько потрачено за сентябрь 2026?',
+            'Какой бюджет нашего проекта, сколько потрачено за сентябрь 2026 и какие задачи влияют на сроки?'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectFinanceOverview::matches($query));
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
+        }
+    }
+
     public function test_manager_priorities_use_a_single_current_project_attention_read(): void
     {
         $query = 'Я руководитель проекта. Что на нашем объекте сейчас требует моего внимания в первую очередь? Назови три главных проблемы, приведи факты и скажи, что делать дальше.';
         self::assertSame(['name' => 'get_project_attention', 'arguments' => ['project_id' => 52, 'focus' => 'all', 'limit' => 3]],
             AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+    }
+
+    public function test_final_decision_reader_cannot_replace_a_compound_answer_with_one_section(): void
+    {
+        foreach (['Какие задачи влияют на сроки нашего проекта и сколько потрачено за сентябрь 2026?',
+            'Какой бюджет нашего проекта, сколько потрачено за сентябрь 2026 и какие задачи влияют на сроки?',
+            'Кто работал в нашем проекте за сентябрь 2026 и сколько потрачено?',
+            'Какие счета нашего проекта не оплачены и сколько расходов за сентябрь 2026?',
+            'Кто работал в нашем проекте за сентябрь 2026 и какие документы готовы?'] as $query) {
+            foreach (['get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness'] as $tool) {
+                self::assertNull(AssistantRequiredProjectRead::decisionReader($tool, $query));
+            }
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        self::assertSame(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectWorkforceReader::class,
+            AssistantRequiredProjectRead::decisionReader('get_project_workforce_summary', 'Кто работал на нашем объекте за сентябрь 2026 и сколько часов учтено?'));
     }
 
     public function test_manager_attention_preserves_specific_focus_and_does_not_capture_compound_money_requests(): void
@@ -38,6 +82,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $service = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class))->newInstanceWithoutConstructor();
         $method = new \ReflectionMethod($service, 'isTerminalReadOnlyTool');
         self::assertTrue($method->invoke($service, 'get_project_attention'));
+        self::assertTrue($method->invoke($service, 'get_project_finance_overview'));
+        self::assertTrue($method->invoke($service, 'analyze_project_schedule_impact'));
+        self::assertTrue($method->invoke($service, 'get_project_workforce_summary'));
+        self::assertTrue($method->invoke($service, 'get_project_payment_readiness'));
         self::assertFalse($method->invoke($service, 'approve_payment_request'));
     }
 
