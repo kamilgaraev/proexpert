@@ -75,11 +75,34 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
             self::assertTrue(true);
         }
         $choice = $sources['sources'][0];
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)
+            ->handle($actor, $context->projectId, $context->sessionId, 0, (string) \Illuminate\Support\Str::uuid(),
+                ['entities' => [['key' => 'room-a', 'type' => 'room', 'name' => 'Помещение A']]]);
+        $current = app(ProjectModelRepository::class)->snapshotForPlanning($context->organizationId, $context->projectId, $context->sessionId, 100)['snapshot'];
+        $room = array_values(array_filter($current->entities, static fn ($entity): bool => $entity->type === 'room'))[0];
+        $scoped = $draft;
+        $scoped['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['scope_entity_id'] = $room->id;
+        $scoped['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $scoped = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($scoped);
+        $session->fresh()->update(['draft_payload' => $scoped]);
+        self::assertSame([], $reader->handle($actor, $context->projectId, $context->sessionId, 'work:concrete')['sources']);
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)
+                ->handle($actor, $context->projectId, $context->sessionId, ['request_id' => (string) \Illuminate\Support\Str::uuid(),
+                    'state_version' => 1, 'work_item_key' => 'work:concrete', 'source_fact_id' => $choice['source_fact_id'],
+                    'source_fact_version' => $choice['source_fact_version'], 'source_value_hash' => $choice['source_value_hash'], 'reason' => 'Объём другого объекта не применяется']);
+            self::fail('A native volume of another entity was selected.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(1, $session->fresh()->state_version);
+        }
+        $draft['source_input_version'] = $scoped['source_input_version'];
+        $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($draft);
+        $session->fresh()->update(['draft_payload' => $draft]);
         $receipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)
             ->handle($actor, $context->projectId, $context->sessionId, ['request_id' => (string) \Illuminate\Support\Str::uuid(),
-                'state_version' => 0, 'work_item_key' => 'work:concrete', 'source_fact_id' => $choice['source_fact_id'],
+                'state_version' => 1, 'work_item_key' => 'work:concrete', 'source_fact_id' => $choice['source_fact_id'],
                 'source_fact_version' => $choice['source_fact_version'], 'source_value_hash' => $choice['source_value_hash'], 'reason' => 'Подтверждённая ведомость объёмов']);
-        self::assertSame(1, $receipt['state_version']);
+        self::assertSame(2, $receipt['state_version']);
         self::assertTrue($receipt['recalculation_required']);
         $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = 'm2';
         $draft['source_input_version'] = 'sha256:'.(new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session->fresh());

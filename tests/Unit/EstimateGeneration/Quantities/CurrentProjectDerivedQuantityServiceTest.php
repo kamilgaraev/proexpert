@@ -22,6 +22,39 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
+    public function engineering_measurements_are_exact_per_entity_and_never_use_floor_area(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $entities = [];
+        $facts = [];
+        $evidence = [];
+        foreach ([
+            ['equipment', 'equipment_count', '3', 'count'],
+            ['water_pipe', 'pipe_length', '12500', 'mm'],
+            ['electrical_circuit', 'cable_length', '90', 'm'],
+        ] as [$kind, $parameter, $value, $unit]) {
+            $id = $kind.':zone-a';
+            $entities[] = new Entity($id, 10, 20, 30, self::SOURCE, 'equipment', $id, ['properties' => ['semantic_type' => $kind]]);
+            $proof = $this->nativeEvidence('evidence:'.$kind, 10, 20, 30, self::SOURCE, 'artifact:spec', 'document', 1, null, 'xlsx:sheet:Spec!C2');
+            $evidence[] = $proof;
+            $facts[] = $this->nativeFact('fact:'.$kind, 10, 20, 30, self::SOURCE, $id, $parameter, $value, $unit, 0.0, 'document', 'confirmed', [$proof->id]);
+        }
+        $repository->saveSourceModel($entities, $facts, $evidence);
+        $this->makeStageFiveCurrent($repository);
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+        $result = $service->derive(10, 20, 30);
+        self::assertSame('3', $result['quantities']['equipment.count']->amount);
+        self::assertSame('12.5', $result['quantities']['plumbing.pipe']->amount);
+        self::assertSame('90', $result['quantities']['electrical.main_cable']->amount);
+        $mapper = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
+        self::assertSame('3', $mapper->mapForEntity('equipment.install', $result['quantities'], 'equipment:zone-a')?->amount);
+        self::assertNull($mapper->mapForEntity('equipment.install', $result['quantities'], 'equipment:zone-b'));
+        self::assertNull($mapper->mapForEntity('electrical.trays', $result['quantities'], 'electrical_circuit:zone-a'));
+        self::assertNull($mapper->mapForEntity('electrical.grounding', $result['quantities'], 'electrical_circuit:zone-a'));
+        self::assertSame([], $result['warnings']);
+    }
+
+    #[Test]
     public function accepted_whole_building_area_is_a_direct_floor_quantity_without_a_synthetic_takeoff(): void
     {
         $repository = new InMemoryProjectModelRepository;

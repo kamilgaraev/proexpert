@@ -10,6 +10,57 @@ final class FactVocabulary
 {
     public const VERSION = 'project-facts:v1';
 
+    /** Direct measurements only; a circuit length never supplies tray or grounding lengths. */
+    private const ENGINEERING_MEASUREMENTS = [
+        'equipment_count' => ['entities' => ['equipment'], 'parameter' => 'equipment_count', 'group' => 'count', 'unit' => 'count', 'purpose' => 'equipment.count'],
+        'radiator_count' => ['entities' => ['radiator'], 'parameter' => 'equipment_count', 'group' => 'count', 'unit' => 'count', 'purpose' => 'heating.radiators'],
+        'water_pipe_length' => ['entities' => ['water_pipe'], 'parameter' => 'pipe_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'plumbing.pipe'],
+        'sewer_pipe_length' => ['entities' => ['sewer_pipe'], 'parameter' => 'pipe_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'sewerage.pipe'],
+        'process_pipe_length' => ['entities' => ['technological_pipeline'], 'parameter' => 'pipe_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'pipelines.install'],
+        'cable_length' => ['entities' => ['electrical_circuit'], 'parameter' => 'cable_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'electrical.main_cable'],
+        'duct_length' => ['entities' => ['ventilation_duct'], 'parameter' => 'duct_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'ventilation.duct'],
+    ];
+
+    public static function engineeringFormulas(): array
+    {
+        return self::ENGINEERING_MEASUREMENTS;
+    }
+
+    public static function engineeringTypes(): array
+    {
+        return array_values(array_unique(array_merge(...array_column(self::ENGINEERING_MEASUREMENTS, 'entities'))));
+    }
+
+    public static function engineeringParameters(): array
+    {
+        return array_values(array_unique(array_column(self::ENGINEERING_MEASUREMENTS, 'parameter')));
+    }
+
+    /** Validates the stated measurement, without deriving quantities from a photograph or context. */
+    public static function engineeringObservation(string $entityKey, string $parameter, mixed $value, ?string $unit): ?array
+    {
+        if ((! is_string($value) && ! is_int($value)) || preg_match('/\A[0-9]{1,15}(?:\.[0-9]{1,8})?\z/', (string) $value) !== 1) {
+            return null;
+        }
+        $parameter = self::parameter($parameter);
+        foreach (self::ENGINEERING_MEASUREMENTS as $formula => $definition) {
+            foreach ($definition['entities'] as $kind) {
+                if (preg_match('/^'.preg_quote($kind, '/').'[:._-][a-z0-9][a-z0-9._:-]{0,119}$/iD', $entityKey) !== 1
+                    || $parameter !== $definition['parameter'] || self::factor($definition['group'], $unit) === null) {
+                    continue;
+                }
+                $number = BigDecimal::of((string) $value);
+                if (! $number->isGreaterThan(0) || ($definition['group'] === 'count' && $number->strippedOfTrailingZeros()->getScale() > 0)) {
+                    return null;
+                }
+
+                return [...$definition, 'formula' => $formula, 'semantic_type' => $kind];
+            }
+        }
+
+        return null;
+    }
+
     private const DOCUMENT_DOMAINS = [
         'heating_system' => 'heating', 'heating_specification' => 'heating', 'radiator_specification' => 'heating', 'heating_test_program' => 'heating',
         'water_supply_system' => 'water_supply', 'water_supply_specification' => 'water_supply', 'water_supply_test_program' => 'water_supply',
@@ -91,6 +142,10 @@ final class FactVocabulary
         'plan_area' => ['plan_area', 'roof_plan_area', 'площадь кровли в плане'],
         'slope_rise' => ['slope_rise', 'roof_slope_rise', 'подъём ската', 'подъем ската'],
         'slope_run' => ['slope_run', 'roof_slope_run', 'заложение ската'],
+        'equipment_count' => ['equipment_count', 'количество оборудования', 'число единиц оборудования'],
+        'pipe_length' => ['pipe_length', 'длина трубопровода', 'длина трубы'],
+        'cable_length' => ['cable_length', 'длина кабеля'],
+        'duct_length' => ['duct_length', 'длина воздуховода'],
         'equipment_specification' => ['equipment_specification', 'спецификация оборудования'],
         'heating_specification' => ['heating_specification', 'спецификация отопления'],
         'water_supply_specification' => ['water_supply_specification', 'спецификация водоснабжения'],
@@ -122,6 +177,11 @@ final class FactVocabulary
                 return $type;
             }
         }
+        foreach (self::engineeringTypes() as $type) {
+            if (preg_match('/^'.preg_quote($type, '/').'[:._-][a-z0-9][a-z0-9._:-]{0,119}$/iD', trim($entityKey)) === 1) {
+                return $type;
+            }
+        }
 
         return null;
     }
@@ -129,6 +189,9 @@ final class FactVocabulary
     public static function parameter(string $type): string
     {
         $type = mb_strtolower(trim(preg_replace('/([a-z])([A-Z])/', '$1_$2', $type) ?? $type));
+        if (preg_match('/\Awork_quantity_[a-f0-9]{48}\z/', $type) === 1) {
+            return 'quantity';
+        }
         foreach (self::ALIASES as $canonical => $aliases) {
             if (in_array($type, $aliases, true)) {
                 return $canonical;
@@ -145,6 +208,12 @@ final class FactVocabulary
 
     public static function supports(string $entityType, string $parameter): bool
     {
+        foreach (self::ENGINEERING_MEASUREMENTS as $definition) {
+            if (in_array($entityType, $definition['entities'], true) && self::parameter($parameter) === $definition['parameter']) {
+                return true;
+            }
+        }
+
         return in_array(self::parameter($parameter), self::PARAMETERS[$entityType] ?? [], true);
     }
 

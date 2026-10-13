@@ -30,6 +30,64 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationArithmeticRecalculationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_equipment_count_updates_exact_catalog_money_without_a_paid_role(): void
+    {
+        config(['estimate-generation.universal_enabled' => true]);
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $wire = $this->createMock(RerankWireClient::class);
+        $wire->expects(self::never())->method('call');
+        $this->app->instance(RerankWireClient::class, $wire);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+            'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => ['evaluation_mode' => 'universal',
+                'price_policy' => 'catalog', 'profile_id' => 'construction', 'construction_type' => 'new_construction', 'selected_sections' => ['equipment']]]);
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+        $manual = app(SaveManualProjectFacts::class);
+        $saved = $manual->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            ['key' => 'pump-1', 'type' => 'equipment', 'name' => 'Насос P1',
+                'parameters' => ['equipment_count' => ['value' => '3', 'unit' => 'count', 'basis' => 'input']]],
+        ]]);
+        $quantity = $saved['quantities']['equipment.count'];
+        $entityId = $quantity['formula_inputs']['entity_id'];
+        $unit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Штука', 'short_name' => 'шт', 'type' => 'piece']);
+        $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $organization->id, 'created_by_user_id' => $actor->id,
+            'name' => 'Насос P1', 'code' => 'PUMP-'.Str::random(8), 'item_type' => 'equipment', 'measurement_unit_id' => $unit->id,
+            'unit_price' => '12.34', 'is_active' => true, 'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01',
+                'price_region' => 'Москва', 'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
+        $price = app(ConvertEvaluationPriceUnit::class)->convert(app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$catalog->id), 'pcs');
+        $draft = ['generation_contract' => UniversalDraftProjector::CONTRACT,
+            'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh()),
+            'evaluation_policy' => ['selected_sections' => ['equipment'], 'profile_id' => 'construction', 'construction_type' => 'new_construction'],
+            'local_estimates' => [['key' => 'equipment', 'sections' => [['key' => 'purchase', 'work_items' => [
+                ['key' => 'pump-buy', 'work_key' => 'equipment.purchase', 'name' => 'Покупка насоса P1', 'unit' => 'pcs', 'quantity' => '3',
+                    'quantity_status' => 'supported', 'quantity_basis_details' => $quantity, 'quantity_evidence' => $quantity,
+                    'metadata' => ['quantity_key' => 'equipment.count', 'scope_entity_id' => $entityId, 'requirement_key' => 'equipment_purchase'],
+                    'commercial_price_snapshot' => $price],
+            ]]]]]];
+        $draft['evaluation_result'] = app(UniversalEvaluationBuilder::class)->build($draft, app(ProjectModelRepository::class)->snapshot(...$scope));
+        self::assertSame('37.02', $draft['evaluation_result']['scenarios'][0]['known_subtotals']['RUB']);
+        $session->refresh()->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft)),
+            'status' => 'estimate_review_required']);
+        $manual->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [
+            ['key' => 'answer', 'type' => 'equipment', 'existing_entity_id' => $entityId,
+                'parameters' => ['equipment_count' => ['value' => '4', 'unit' => 'count', 'basis' => 'measurement']]],
+        ]]);
+        $request = (string) Str::uuid();
+        $recalculate = app(RecalculateUniversalEvaluation::class);
+        $result = $recalculate->handle($actor, $scope[1], $scope[2], 2, $request);
+        self::assertSame('49.36', $result['result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame('4', $result['result']['scenarios'][0]['positions'][0]['quantity']);
+        self::assertSame($entityId, $result['result']['scenarios'][0]['positions'][0]['entity_id']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode($recalculate->handle($actor, $scope[1], $scope[2], 2, $request)));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_one_existing_wall_height_answer_updates_both_work_volumes_with_a_free_revision(): void
     {
         config(['estimate-generation.universal_enabled' => true]);

@@ -12,6 +12,21 @@ use PHPUnit\Framework\TestCase;
 final class WorkItemQuantityResolverTest extends TestCase
 {
     #[Test]
+    public function canonical_engineering_alias_cannot_supply_another_entity_or_an_unscoped_work(): void
+    {
+        $source = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData(
+            key: 'electrical.main_cable', unit: 'm', amount: '40', formulaKey: 'cable_length', formulaVersion: '1',
+            formulaInputs: ['entity_id' => 'entity:b'], source: QuantitySource::Evidenced, evidenceIds: ['evidence:1'], modelVersion: 'current');
+        $resolver = new WorkItemQuantityResolver;
+        $item = ['unit' => 'm', 'metadata' => ['quantity_key' => 'electrical.main_cable', 'scope_entity_id' => 'entity:a']];
+        self::assertNull($resolver->resolve($item, [$source->key => $source]));
+        unset($item['metadata']['scope_entity_id']);
+        self::assertNull($resolver->resolve($item, [$source->key => $source]));
+        $item['metadata']['scope_entity_id'] = 'entity:b';
+        self::assertSame($source, $resolver->resolve($item, [$source->key => $source]));
+    }
+
+    #[Test]
     public function confirmed_document_takeoff_has_priority_and_is_canonicalized(): void
     {
         $quantity = (new WorkItemQuantityResolver)->resolve([

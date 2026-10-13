@@ -40,7 +40,11 @@ final readonly class GetEvaluationQuantitySources
                 $labels[$entity->id] = is_string($name) && trim($name) !== '' ? $name : 'Объект из документа';
             }
             $rows = [];
+            $targetEntity = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
             foreach ($snapshot->facts as $fact) {
+                if ($targetEntity !== null && $fact->entityId !== $targetEntity) {
+                    continue;
+                }
                 $proof = $this->eligibility->evidence($fact, $evidence, (string) ($item['unit'] ?? ''));
                 $entityLabel = $labels[$fact->entityId] ?? 'Объект из документа';
                 if ($proof === null || ($search !== '' && mb_stripos($entityLabel.' '.$fact->type.' '.($proof->nativeReference ?? ''), $search) === false)) {

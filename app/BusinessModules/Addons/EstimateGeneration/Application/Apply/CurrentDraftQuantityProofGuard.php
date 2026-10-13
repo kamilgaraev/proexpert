@@ -35,8 +35,12 @@ final readonly class CurrentDraftQuantityProofGuard
                     $key = $item['metadata']['quantity_key'] ?? $basis['key'] ?? null;
                     $fresh = is_string($key) ? $this->mapper->map($key, $quantities) : null;
                     $entity = $basis['formula_inputs']['entity_id'] ?? null;
+                    $targetEntity = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
                     if ($fresh === null || $fresh->reviewBlockers !== [] || $fresh->evidenceIds === [] || ! is_string($entity)
-                        || ($fresh->formulaInputs['entity_id'] ?? null) !== $entity) {
+                        || ($fresh->formulaInputs['entity_id'] ?? null) !== $entity
+                        || ($targetEntity !== null && (! is_string($targetEntity) || $targetEntity === '' || $targetEntity !== $entity))
+                        || (isset(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::engineeringFormulas()[$fresh->formulaKey])
+                            && (! is_string($targetEntity) || $targetEntity === ''))) {
                         $this->reject();
                     }
                     if ($fresh->formulaKey === 'direct_quantity') {

@@ -50,7 +50,7 @@ final class ProjectSheetAnalysisValidator
         $types = self::ROLE_FACT_TYPES[$role] ?? [];
 
         return in_array($role, ['plan', 'section', 'specification', 'unknown'], true)
-            ? [...$types, ...FactVocabulary::documentTypes()] : $types;
+            ? [...$types, ...FactVocabulary::documentTypes(), ...FactVocabulary::engineeringParameters()] : $types;
     }
 
     /**
@@ -115,6 +115,11 @@ final class ProjectSheetAnalysisValidator
         if (FactVocabulary::documentDomain($fact['factType']) !== null
             && FactVocabulary::documentObservation($fact['factType'], $fact['entityKey'], $fact['value'], $fact['unit']) === null) {
             throw new VisionContractException('invalid_document_requirement_observation');
+        }
+        if (in_array($fact['factType'], FactVocabulary::engineeringParameters(), true)
+            && (($fact['value']['type'] ?? null) !== 'number'
+                || FactVocabulary::engineeringObservation($fact['entityKey'], $fact['factType'], $fact['value']['data'] ?? null, $fact['unit']) === null)) {
+            throw new VisionContractException('invalid_engineering_measurement_observation');
         }
 
         self::assertSourceReference($fact['sourcePolygonOrNativeRef'] ?? null, $nativeReferences);

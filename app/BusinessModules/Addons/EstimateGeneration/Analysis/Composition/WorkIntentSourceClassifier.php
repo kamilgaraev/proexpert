@@ -21,6 +21,8 @@ final class WorkIntentSourceClassifier
         'facade.area' => 'structures', 'slabs.concrete' => 'structures', 'slabs.formwork' => 'structures', 'slabs.rebar' => 'structures',
         'earth.plan' => 'earthworks', 'earth.trench' => 'earthworks', 'earth.backfill' => 'earthworks', 'earth.export' => 'earthworks',
         'heating.unit' => 'heating', 'heating.pipe' => 'heating', 'heating.radiators' => 'heating',
+        'equipment.purchase' => 'equipment', 'equipment.install' => 'equipment', 'pipelines.install' => 'technological_pipelines',
+        'plumbing.pipe' => 'water_supply', 'sewerage.pipe' => 'sewerage', 'electrical.main_cable' => 'electricity', 'ventilation.duct' => 'ventilation',
     ];
 
     /** @return array{entity_id:string,work_section:string,basis_fact_ids:list<string>} */
@@ -88,6 +90,10 @@ final class WorkIntentSourceClassifier
         if (($domain = FactVocabulary::documentDomain($type)) !== null) {
             return $domain !== 'industrial' && FactVocabulary::documentSupportsEntity($type, $entityType) ? [$domain] : [];
         }
+        // A measured asset or route is a quantity basis, not a request to purchase or install it.
+        if (in_array($type, FactVocabulary::engineeringParameters(), true)) {
+            return [];
+        }
         if (in_array($type, ['roof_type', 'roof_slope_degrees', 'roof_geometry', 'roof_fastener_specification'], true)) {
             return in_array($entityType, ['roof', 'roof_facet', 'roof_opening'], true) ? ['roofing'] : [];
         }
@@ -100,6 +106,8 @@ final class WorkIntentSourceClassifier
             'roof', 'roof_facet', 'roof_opening' => ['roofing'],
             'room', 'wall', 'opening' => ['finishing', 'structures'],
             'site' => ['earthworks'],
+            'equipment' => ['equipment'], 'radiator' => ['heating'], 'water_pipe' => ['water_supply'], 'sewer_pipe' => ['sewerage'],
+            'technological_pipeline' => ['technological_pipelines'], 'electrical_circuit' => ['electricity'], 'ventilation_duct' => ['ventilation'],
             default => [],
         };
     }

@@ -58,6 +58,9 @@ final class EvaluationRequirementDecisionsPostgresTest extends EstimateGeneratio
                 $native['cells'][] = ['address' => chr(65 + $column).($index + 3), 'value' => $value, 'raw_value' => $value, 'formula' => null];
             }
         }
+        foreach (['equipment.p1', 'equipment_count', '3', 'шт'] as $column => $value) {
+            $native['cells'][] = ['address' => chr(65 + $column).'5', 'value' => $value, 'raw_value' => $value, 'formula' => null];
+        }
         $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
         app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
             ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
@@ -66,6 +69,14 @@ final class EvaluationRequirementDecisionsPostgresTest extends EstimateGeneratio
         self::assertContains('industrial_specification', array_column($snapshot->facts, 'type'));
         self::assertContains('technology_requirements', array_column($snapshot->facts, 'type'));
         $fact = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_specification'))[0];
+        $count = array_values(array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->type === 'equipment_count'))[0];
+        self::assertSame($fact->entityId, $count->entityId);
+        self::assertSame('document', $count->origin);
+        self::assertSame('confirmed', $count->status);
+        $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope);
+        self::assertSame('3', $quantities['quantities']['equipment.count']->amount);
+        self::assertSame($count->entityId, $quantities['quantities']['equipment.count']->formulaInputs['entity_id']);
+        self::assertSame($count->id, $quantities['quantities']['equipment.count']->formulaInputs['operands'][0]['fact_id']);
         self::assertSame($text, $fact->value);
         self::assertNull($fact->unit);
         self::assertSame('confirmed', $fact->status);

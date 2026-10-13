@@ -16,6 +16,24 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function engineering_formula_cannot_take_a_different_entity_wrong_parameter_or_unproved_number(): void
+    {
+        $entity = $this->entity('electrical_circuit:e1', 'equipment', ['properties' => ['semantic_type' => 'electrical_circuit']]);
+        $evidence = $this->evidence('evidence:cable', 'xlsx:sheet:Spec!C2');
+        $factory = new DerivedQuantityFactory;
+        foreach ([['electrical_circuit:e2', 'cable_length', 'document', 'confirmed', 'engineering_measurement_incompatible'],
+            [$entity->id, 'area', 'document', 'confirmed', 'engineering_measurement_incompatible'],
+            [$entity->id, 'cable_length', 'ai_inference', 'confirmed', 'operand_origin_requires_confirmation'],
+            [$entity->id, 'cable_length', 'document', 'candidate', 'operand_not_confirmed']] as [$target, $parameter, $origin, $status, $expected]) {
+            $source = $this->fact('fact:cable', $target, $parameter, '20', 'm', [$evidence->id], $origin, $status);
+            $request = [...$this->request('cable_length', $entity->id, ['measurement' => $source->id]), 'output_unit' => 'm'];
+            $result = $factory->derive($this->snapshot([$entity], [$source], [$evidence]), [], $request);
+            self::assertFalse($result->isReady());
+            self::assertContains($expected, array_column($result->unresolvedInputs, 'code'));
+        }
+    }
+
+    #[Test]
     public function agreement_or_confirmed_status_does_not_make_a_model_number_a_physical_measurement(): void
     {
         $fact = $this->fact('area', 'room:1', 'area', '25.97', 'm2', ['evidence:area'], origin: 'ai_inference');

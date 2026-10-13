@@ -20,6 +20,43 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_manual_work_quantity_preserves_the_existing_asset_and_does_not_replace_another_works_fact(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $manual = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)
+            ->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+                ['key' => 'pump-1', 'type' => 'equipment', 'parameters' => ['equipment_count' => ['value' => '3', 'unit' => 'count', 'basis' => 'input']]],
+            ]]);
+        $target = $manual['quantities']['equipment.count']['formula_inputs']['entity_id'];
+        $draft = $session->fresh()->draft_payload;
+        $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $item['metadata'] = ['scope_entity_id' => $target];
+        $other = [...$item, 'key' => 'equipment:install'];
+        unset($item);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][] = $other;
+        $draft['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($draft);
+        $session->update(['draft_payload' => $draft]);
+        $input = [...$this->input(), 'state_version' => 1, 'value' => '4'];
+        $service = app(SaveEvaluationWorkQuantity::class);
+        $result = $service->handle($actor, $scope[1], $scope[2], $input);
+        $quantity = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'][$result['quantity_key']];
+        self::assertSame($target, $quantity->formulaInputs['entity_id']);
+        self::assertSame('4', $quantity->amount);
+        $item = ['key' => 'equipment:purchase', 'quantity' => '4', 'unit' => 'шт',
+            'metadata' => ['quantity_key' => $result['quantity_key'], 'scope_entity_id' => $target], 'quantity_evidence' => $quantity->toArray()];
+        DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope,
+            ['local_estimates' => [['sections' => [['work_items' => [$item]]]]]]]));
+        self::addToAssertionCount(1);
+        $service->handle($actor, $scope[1], $scope[2], [...$this->input(), 'state_version' => 2,
+            'work_item_key' => 'equipment:install', 'value' => '2']);
+        $fresh = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'][$result['quantity_key']];
+        self::assertSame('4', $fresh->amount);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_manual_equipment_count_is_a_real_bound_fact_and_replay_does_not_duplicate_it(): void
     {
         [$actor, $session] = $this->fixture();

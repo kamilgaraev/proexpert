@@ -244,7 +244,7 @@ final readonly class UniversalEvaluationBuilder
                     continue;
                 }
                 $documentId = $proof->sourceType === 'document' && preg_match('/\Adocument:([1-9][0-9]*)\z/', $proof->sourceReference ?? $proof->sourceArtifactId, $matches) === 1 ? (int) $matches[1] : null;
-                $details[$fact->id.':'.$id] = ['fact_id' => $fact->id, 'entity_id' => $fact->entityId, 'parameter' => $fact->type,
+                $details[$fact->id.':'.$id] = ['fact_id' => $fact->id, 'entity_id' => $fact->entityId, 'parameter' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::parameter($fact->type),
                     'value' => $fact->value, 'unit' => $fact->unit, 'basis' => $fact->origin, 'verification_status' => $fact->status,
                     'evidence_id' => $id, 'source_type' => $proof->sourceType, 'source_version' => $proof->sourceVersion,
                     'document_id' => $documentId, 'page' => $proof->page, 'region' => $proof->region, 'native_reference' => $proof->nativeReference];

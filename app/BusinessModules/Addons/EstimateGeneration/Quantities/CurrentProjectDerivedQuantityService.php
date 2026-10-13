@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
@@ -21,6 +22,11 @@ final readonly class CurrentProjectDerivedQuantityService
         'sloped_roof_area' => 'roof_area',
         'earthwork_volume' => 'earthwork_volume',
     ];
+
+    public static function formulaPurpose(string $formula): ?string
+    {
+        return self::FORMULA_PURPOSES[$formula] ?? FactVocabulary::engineeringFormulas()[$formula]['purpose'] ?? null;
+    }
 
     private const MAX_FACTS = 10000;
 
@@ -206,7 +212,7 @@ final readonly class CurrentProjectDerivedQuantityService
         $openingsByWall = [];
         $roofChildrenByRoof = [];
         foreach ($snapshot->entities as $entity) {
-            $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->type);
+            $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             $wallId = $entity->attributes['wall_id'] ?? null;
             if ($semanticType === 'opening' && is_string($wallId)) {
                 $openingsByWall[$wallId][] = $entity;
@@ -226,7 +232,15 @@ final readonly class CurrentProjectDerivedQuantityService
 
         $requests = [];
         foreach ($snapshot->entities as $entity) {
-            $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->type);
+            $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
+            foreach (FactVocabulary::engineeringFormulas() as $formula => $definition) {
+                if (! in_array($semanticType, $definition['entities'], true)) {
+                    continue;
+                }
+                $measurement = $this->oneFact($facts, $entity->id, $definition['parameter']);
+                $requests[] = $this->request($formula, $entity->id, ['measurement' => $measurement?->id], $token,
+                    $technology, $completeness, $definition['unit'], $definition['group'] === 'count' ? 0 : 8);
+            }
             if ($semanticType === 'room') {
                 $area = $this->oneFact($facts, $entity->id, 'area');
                 $request = $area instanceof Fact
@@ -743,7 +757,7 @@ final readonly class CurrentProjectDerivedQuantityService
                 $byFormula[$quantity->formulaIdentity ?? $quantity->formula][] = $quantity;
             }
         }
-        $aliases = self::FORMULA_PURPOSES;
+        $aliases = [...self::FORMULA_PURPOSES, ...array_map(static fn (array $definition): string => $definition['purpose'], FactVocabulary::engineeringFormulas())];
         $result = [];
         foreach ($byFormula as $formula => $items) {
             if (isset($aliases[$formula]) && count($items) === 1 && ! isset($unresolvedFormulas[$formula])) {

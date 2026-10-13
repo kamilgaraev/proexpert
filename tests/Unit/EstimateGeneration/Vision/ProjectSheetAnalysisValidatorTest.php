@@ -17,6 +17,21 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
+    public function test_engineering_values_require_the_correct_entity_parameter_and_unit(): void
+    {
+        $payload = $this->payload('specification', 'cable_length');
+        $payload['facts'][0] = [...$payload['facts'][0], 'entityKey' => 'electrical_circuit.e1',
+            'value' => ['type' => 'number', 'data' => '40'], 'unit' => 'm'];
+        self::assertCount(1, ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1'])->facts);
+        foreach ([['unit' => 'm2'], ['entityKey' => 'equipment.p1'], ['value' => ['type' => 'string', 'data' => '40']]] as $change) {
+            $invalid = $payload;
+            $invalid['facts'][0] = [...$invalid['facts'][0], ...$change];
+            $result = ProjectSheetAnalysisData::fromProviderArray($invalid, ['page-1']);
+            self::assertSame([], $result->facts);
+            self::assertSame('invalid_engineering_measurement_observation', $result->quarantinedItems[0]['reason']);
+        }
+    }
+
     public function test_document_context_has_a_typed_entity_and_cited_text_without_confirming_numeric_data(): void
     {
         $payload = $this->payload('specification', 'heating_specification');
