@@ -281,6 +281,7 @@ final class EstimateAuditTest extends TestCase
             $item['price_snapshot'] = ['source_type' => 'regional_resource_aggregate', 'final_amount' => '1000'];
             $item['evaluation_price_basis_quantity'] = '10';
             $item['materials'] = [['quantity' => '10', 'total_cost' => '1000']];
+            $item['equipment'] = [['quantity' => '10', 'total_cost' => '1000']];
             $item['work_cost'] = '1000';
             $basis = ['key' => 'floor_area', 'amount' => '12.7500', 'unit' => 'м2', 'formula_key' => 'direct_floor_area',
                 'formula_version' => 'v1', 'source' => 'evidenced', 'model_version' => 'test:v1', 'evidence_ids' => [],
@@ -350,6 +351,7 @@ final class EstimateAuditTest extends TestCase
             self::assertArrayNotHasKey('evaluation_price_basis_quantity', $changed);
             self::assertArrayNotHasKey('quantity_evidence_id', $changed);
             self::assertArrayNotHasKey('materials', $changed);
+            self::assertArrayNotHasKey('equipment', $changed);
             self::assertNull($changed['total_cost']);
             self::assertNull($changed['unit_price']);
             self::assertSame('price_unknown', $changed['pricing_blocker']);

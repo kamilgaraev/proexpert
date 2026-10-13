@@ -152,6 +152,63 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertArrayNotHasKey('floor_area', $result['quantities']);
     }
 
+    public function test_existing_entity_parameter_answer_preserves_identity_updates_only_that_parameter_and_replays_free(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $save = app(SaveManualProjectFacts::class);
+        $save->handle($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(), ['entities' => [
+            [...$this->entity('room', 'room-1', ['length' => '5', 'width' => '4']), 'name' => 'Кухня', 'floor' => '2'],
+        ]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $entity = $before->entities[0];
+        $length = array_values(array_filter($before->facts, static fn ($fact): bool => $fact->type === 'length'))[0];
+        $input = ['entities' => [['key' => 'answer', 'type' => 'room', 'existing_entity_id' => $entity->id,
+            'parameters' => ['length' => ['value' => '6', 'unit' => 'm', 'basis' => 'measurement']]]]];
+        $request = (string) Str::uuid();
+        $result = $save->handle($actor, $scope[1], $scope[2], 1, $request, $input);
+        self::assertSame('24', $result['quantities']['floor_area']['amount']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(
+                $save->handle($actor, $scope[1], $scope[2], 1, $request, $input)));
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertCount(1, $after->entities);
+        self::assertEquals($entity, $after->entities[0]);
+        $updated = array_values(array_filter($after->facts, static fn ($fact): bool => $fact->type === 'length'))[0];
+        self::assertSame($length->id, $updated->supersedesFactId);
+        self::assertSame($length->version + 1, $updated->version);
+        self::assertSame($entity->sourceVersion, $updated->sourceVersion);
+        self::assertSame('6', $updated->value);
+        self::assertSame('4', array_values(array_filter($after->facts, static fn ($fact): bool => $fact->type === 'width'))[0]->value);
+        self::assertSame('Кухня', array_values(array_filter($after->facts, static fn ($fact): bool => $fact->type === 'entity_identity'))[0]->value['name']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_existing_entity_answer_rejects_other_scope_identity_changes_and_duplicate_targets_atomically(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $save = app(SaveManualProjectFacts::class);
+        $save->handle($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(),
+            ['entities' => [$this->entity('room', 'room-1', ['length' => '5', 'width' => '4'])]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $entity = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot']->entities[0];
+        $row = ['key' => 'answer', 'type' => 'room', 'existing_entity_id' => $entity->id,
+            'parameters' => ['length' => ['value' => '6', 'unit' => 'm', 'basis' => 'measurement']]];
+        $assertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        foreach ([[[...$row, 'existing_entity_id' => 'entity:foreign']], [[...$row, 'type' => 'wall']],
+            [[...$row, 'name' => 'Подмена имени']], [$row, [...$row, 'key' => 'again']]] as $rows) {
+            try {
+                $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => $rows]);
+                self::fail('An invalid existing-entity answer was accepted.');
+            } catch (ValidationException) {
+                self::assertSame(1, $session->fresh()->state_version);
+                self::assertSame($assertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+            }
+        }
+    }
+
     private function fixture(): array
     {
         $organization = Organization::factory()->create();

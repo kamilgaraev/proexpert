@@ -35,6 +35,42 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_numeric_answer_on_a_document_room_keeps_its_identity_and_source_version_in_a_mixed_batch(): void
+    {
+        [$actor, $session, $document] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $source = app(GetRoomIdentitySources::class)->handle($actor, $scope[1], $scope[2])['sources'][0];
+        app(ConfirmRoomIdentity::class)->handle($actor, $scope[1], $scope[2], $this->input($source));
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $room = array_values(array_filter($before->entities, static fn ($entity): bool => $entity->id === $source['entity_id']))[0];
+        $input = ['entities' => [
+            ['key' => 'parameter-answer', 'type' => 'room', 'existing_entity_id' => $room->id,
+                'parameters' => ['area' => ['value' => '20', 'unit' => 'm2', 'basis' => 'measurement']]],
+            ['key' => 'new-room', 'type' => 'room', 'parameters' => [
+                'length' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement'],
+                'width' => ['value' => '3', 'unit' => 'm', 'basis' => 'measurement'],
+            ]],
+        ]];
+        $save = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class);
+        $request = (string) Str::uuid();
+        $stateVersion = (int) $session->fresh()->state_version;
+        $result = $save->handle($actor, $scope[1], $scope[2], $stateVersion, $request, $input);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode(
+            $save->handle($actor, $scope[1], $scope[2], $stateVersion, $request, $input)));
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $sameRoom = array_values(array_filter($after->entities, static fn ($entity): bool => $entity->id === $room->id))[0];
+        self::assertEquals($room, $sameRoom);
+        $area = array_values(array_filter($after->facts, static fn ($fact): bool => $fact->entityId === $room->id && $fact->type === 'area'))[0];
+        self::assertSame($document->source_version, $area->sourceVersion);
+        self::assertSame('20', $area->value);
+        $amounts = array_column($result['quantities'], 'amount');
+        self::assertContains('20', $amounts);
+        self::assertContains('6', $amounts);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_work_binding_revokes_only_the_old_quantity_assignment_and_preserves_its_source_and_history(): void
     {
         [$actor, $session] = $this->fixture(['local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [
