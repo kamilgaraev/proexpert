@@ -13,6 +13,44 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 final class DesignModelDerivativeResource extends JsonResource
 {
+    private const REQUEST_PROJECTIONS = '_pir_derivative_resource_projections';
+
+    public function resolve($request = null): array
+    {
+        $request ??= app('request');
+        $derivative = $this->resource;
+        if (! $request instanceof Request || ! $derivative instanceof DesignModelDerivative
+            || ! $request->isMethod('GET') || ! $request->is('api/v1/admin/design-management/packages')) {
+            return parent::resolve($request);
+        }
+
+        $projections = $request->attributes->get(self::REQUEST_PROJECTIONS, []);
+        $projections = is_array($projections) ? $projections : [];
+        $key = spl_object_id($derivative);
+        $attributes = $derivative->getAttributes();
+        $converterVersion = DesignViewerConverter::version();
+        $locale = app()->getLocale();
+        $cached = $projections[$key] ?? null;
+        if (is_array($cached) && ($cached['model'] ?? null) === $derivative
+            && ($cached['attributes'] ?? null) === $attributes
+            && ($cached['converter_version'] ?? null) === $converterVersion
+            && ($cached['locale'] ?? null) === $locale && is_array($cached['payload'] ?? null)) {
+            return $cached['payload'];
+        }
+
+        $payload = parent::resolve($request);
+        $projections[$key] = [
+            'model' => $derivative,
+            'attributes' => $attributes,
+            'converter_version' => $converterVersion,
+            'locale' => $locale,
+            'payload' => $payload,
+        ];
+        $request->attributes->set(self::REQUEST_PROJECTIONS, $projections);
+
+        return $payload;
+    }
+
     public function toArray(Request $request): array
     {
         /** @var DesignModelDerivative $derivative */
