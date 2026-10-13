@@ -49,9 +49,12 @@ class StoreBulkSupplierRequestsRequest extends FormRequest
             return false;
         }
 
-        return app(AuthorizationService::class)->can($user, 'procurement.supplier_requests.create', [
-            'organization_id' => $organizationId,
-        ]);
+        $authorizationService = app(AuthorizationService::class);
+        $context = ['organization_id' => $organizationId];
+
+        return $authorizationService->can($user, 'procurement.supplier_requests.create', $context)
+            && (!$this->boolean('send_immediately', true)
+                || $authorizationService->can($user, 'procurement.supplier_requests.send', $context));
     }
 
     public function rules(): array

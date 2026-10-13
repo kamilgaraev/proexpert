@@ -14,8 +14,11 @@ use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequestVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -31,6 +34,7 @@ class SupplierRequestService
         private readonly ProcurementLifecycleService $lifecycleService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
+        private readonly AuthorizationService $authorizationService,
     ) {
     }
 
@@ -122,11 +126,22 @@ class SupplierRequestService
     /**
      * @return array<int, SupplierRequest>
      */
-    public function createMany(int $organizationId, array $data, ?int $actorId = null): array
+    public function createMany(int $organizationId, array $data, User $actor): array
     {
-        return DB::transaction(function () use ($organizationId, $data, $actorId): array {
+        $sendImmediately = (bool) ($data['send_immediately'] ?? true);
+        $context = ['organization_id' => $organizationId];
+
+        if (
+            !$this->authorizationService->can($actor, 'procurement.supplier_requests.create', $context)
+            || ($sendImmediately && !$this->authorizationService->can($actor, 'procurement.supplier_requests.send', $context))
+        ) {
+            throw new AuthorizationException();
+        }
+
+        $actorId = $actor->id;
+
+        return DB::transaction(function () use ($organizationId, $data, $actorId, $sendImmediately): array {
             $supplierRequests = [];
-            $sendImmediately = (bool) ($data['send_immediately'] ?? true);
 
             foreach ($data['suppliers'] as $supplierData) {
                 $supplierRequest = $this->create($organizationId, [
