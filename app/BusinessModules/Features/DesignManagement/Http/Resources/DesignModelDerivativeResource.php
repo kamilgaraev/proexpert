@@ -55,8 +55,7 @@ final class DesignModelDerivativeResource extends JsonResource
     {
         /** @var DesignModelDerivative $derivative */
         $derivative = $this->resource;
-        $metadata = $derivative->metadata;
-        $metadata = is_array($metadata) ? $metadata : [];
+        $metadata = DesignViewerConverter::metadata($derivative, $request);
         $isStale = DesignViewerConverter::isStale($derivative, $metadata);
         $status = $isStale ? DesignDerivativeStatusEnum::MISSING->value : $this->enumValue($derivative->status);
         $metadata = DesignViewerConverter::publicMetadata($metadata);

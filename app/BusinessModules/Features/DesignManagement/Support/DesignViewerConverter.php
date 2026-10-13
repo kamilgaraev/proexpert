@@ -7,12 +7,15 @@ namespace App\BusinessModules\Features\DesignManagement\Support;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDerivativeStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use BackedEnum;
+use Illuminate\Http\Request;
 
 final class DesignViewerConverter
 {
     private const DEFAULT_VERSION = 4;
 
     public const IFC_INDEX_SCHEMA_VERSION = 2;
+
+    private const REQUEST_METADATA = '_pir_derivative_decoded_metadata';
 
     public static function version(): int
     {
@@ -29,17 +32,44 @@ final class DesignViewerConverter
 
     public static function isCurrent(DesignModelDerivative $derivative, ?array $metadata = null): bool
     {
-        $metadata ??= $derivative->metadata;
-        $metadata = is_array($metadata) ? $metadata : [];
+        $metadata ??= self::metadata($derivative);
 
         return (int) ($metadata['converter_version'] ?? 0) >= self::version();
     }
 
     public static function isIndexCurrent(DesignModelDerivative $derivative): bool
     {
-        $metadata = is_array($derivative->metadata) ? $derivative->metadata : [];
+        $metadata = self::metadata($derivative);
 
         return (int) ($metadata['ifc_index_schema_version'] ?? 0) >= self::IFC_INDEX_SCHEMA_VERSION;
+    }
+
+    public static function metadata(DesignModelDerivative $derivative, ?Request $request = null): array
+    {
+        $request ??= app()->bound('request') ? app('request') : null;
+        if (! $request instanceof Request || ! $request->isMethod('GET')
+            || ! $request->is('api/v1/admin/design-management/packages')) {
+            $metadata = $derivative->metadata;
+
+            return is_array($metadata) ? $metadata : [];
+        }
+
+        $entries = $request->attributes->get(self::REQUEST_METADATA, []);
+        $entries = is_array($entries) ? $entries : [];
+        $key = spl_object_id($derivative);
+        $raw = $derivative->getAttributes()['metadata'] ?? null;
+        $cached = $entries[$key] ?? null;
+        if (is_array($cached) && ($cached['model'] ?? null) === $derivative
+            && ($cached['raw'] ?? null) === $raw && is_array($cached['metadata'] ?? null)) {
+            return $cached['metadata'];
+        }
+
+        $metadata = $derivative->metadata;
+        $metadata = is_array($metadata) ? $metadata : [];
+        $entries[$key] = ['model' => $derivative, 'raw' => $raw, 'metadata' => $metadata];
+        $request->attributes->set(self::REQUEST_METADATA, $entries);
+
+        return $metadata;
     }
 
     public static function publicMetadata(array $metadata): array
