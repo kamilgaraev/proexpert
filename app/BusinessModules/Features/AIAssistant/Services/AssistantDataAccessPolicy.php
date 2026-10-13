@@ -222,7 +222,7 @@ final class AssistantDataAccessPolicy
         if (! is_string($type) || (! is_string($id) && ! is_int($id))) { return false; }
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
         if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
-            || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection', AssistantProjectMaterialStockReader::TYPE, AssistantProjectAttentionReader::TYPE], true))) {
+            || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection', AssistantProjectMaterialStockReader::TYPE, AssistantProjectAttentionReader::TYPE, AssistantProjectScheduleImpactReader::TYPE, AssistantProjectWorkforceReader::TYPE], true))) {
             return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup, $financialCheck));
         }
         if ($type === 'live_project_financial_projection') {
@@ -234,6 +234,15 @@ final class AssistantDataAccessPolicy
         }
         if ($type === AssistantProjectAttentionReader::TYPE) {
             return app(AssistantProjectAttentionReader::class)->matchesReference($user, $organizationId, $reference);
+        }
+        if ($type === AssistantProjectScheduleImpactReader::TYPE) {
+            return app(AssistantProjectScheduleImpactReader::class)->matchesReference($user, $organizationId, $reference);
+        }
+        if ($type === AssistantProjectWorkforceReader::TYPE) {
+            return app(AssistantProjectWorkforceReader::class)->matchesReference($user, $organizationId, $reference);
+        }
+        if ($type === AssistantProjectPaymentReader::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectPaymentReader::class)->matchesReference($user, $organizationId, $reference));
         }
         if ($type === 'published_report_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)

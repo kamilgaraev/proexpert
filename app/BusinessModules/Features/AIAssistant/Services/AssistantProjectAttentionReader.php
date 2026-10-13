@@ -31,7 +31,7 @@ final readonly class AssistantProjectAttentionReader
             $groups = [];
             $coverage = [];
             foreach (self::definitions() as $kind => $definition) {
-                if ($focus !== 'all' && $definition['domain'] !== $focus) { continue; }
+                if ($focus !== 'all' && $definition['domain'] !== $focus && ! ($focus === 'procurement' && in_array($kind, ['open_deliveries', 'pending_site_requests'], true))) { continue; }
                 $query = $this->query($actor, $organizationId, $projectId, $kind, $definition);
                 $coverage[$kind] = ['available' => $query !== null, 'label' => trans_message('ai_assistant_attention.'.$kind)];
                 if ($query === null) { continue; }
@@ -39,10 +39,11 @@ final readonly class AssistantProjectAttentionReader
                 $count = (clone $query)->reorder()->count();
                 $coverage[$kind]['total'] = $count;
                 if ($count === 0) { continue; }
-                $columns = array_values(array_unique(['id', $definition['title'], 'status', $definition['owner'], 'updated_at', ...$definition['extra']]));
+                $columns = array_values(array_unique(['id', ...($kind === 'open_deliveries' ? [] : [$definition['title']]), 'status', $definition['owner'], 'updated_at', ...$definition['extra']]));
                 $query->reorder();
                 if ($definition['deadline'] !== null) { $query->orderByRaw($table.'.'.$definition['deadline'].' ASC NULLS LAST'); }
                 $models = $query->orderBy($table.'.id')->limit($limit)->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns))->get();
+                if ($kind === 'open_deliveries') { AssistantDomainRelatedFields::hydrate($models, 'project_material_delivery', $organizationId); }
                 $ownerIds = $models->pluck($definition['owner'])->filter()->unique()->all();
                 $owners = User::query()->whereKey($ownerIds)->whereHas('organizations', static fn (Builder $query): Builder => $query->whereKey($organizationId)->where('organization_user.is_active', true))->get(['id', 'name', 'is_active'])->keyBy('id');
                 $items = [];
@@ -50,7 +51,7 @@ final readonly class AssistantProjectAttentionReader
                     $assigned = $model->getRawOriginal($definition['owner']);
                     $owner = $assigned === null ? null : $owners->get($assigned);
                     $items[] = ['entity_type' => $definition['type'], 'id' => (int) $model->id,
-                        'title' => (string) $model->getRawOriginal($definition['title']), 'status' => (string) $model->getRawOriginal('status'),
+                        'title' => (string) ($kind === 'open_deliveries' ? $model->getAttribute('name') : $model->getRawOriginal($definition['title'])), 'status' => (string) $model->getRawOriginal('status'),
                         'deadline' => $definition['deadline'] === null ? null : $model->getRawOriginal($definition['deadline']),
                         'owner_name' => $owner?->name, 'owner_state' => $assigned === null ? 'unassigned' : ($owner === null ? 'unavailable' : ($owner->is_active ? 'active' : 'inactive')),
                         'source_version' => (string) $model->getRawOriginal('updated_at')];
@@ -77,6 +78,8 @@ final readonly class AssistantProjectAttentionReader
             'critical_quality' => ['domain' => 'quality', 'type' => 'quality_defect', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'due_date', 'extra' => ['severity', 'due_date']],
             'overdue_schedule' => ['domain' => 'schedule', 'type' => 'schedule_task', 'title' => 'name', 'owner' => 'assigned_user_id', 'deadline' => 'planned_end_date', 'extra' => ['planned_end_date', 'progress_percent']],
             'overdue_quality' => ['domain' => 'quality', 'type' => 'quality_defect', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'due_date', 'extra' => ['severity', 'due_date']],
+            'open_deliveries' => ['domain' => 'warehouse', 'type' => 'project_material_delivery', 'title' => 'name', 'owner' => 'responsible_user_id', 'deadline' => 'planned_delivery_date', 'extra' => ['material_id', 'planned_delivery_date']],
+            'pending_site_requests' => ['domain' => 'site_requests', 'type' => 'site_request', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'required_date', 'extra' => ['required_date']],
             'pending_procurement' => ['domain' => 'procurement', 'type' => 'purchase_request', 'title' => 'request_number', 'owner' => 'assigned_to', 'deadline' => null, 'extra' => ['site_request_id']],
         ];
     }
@@ -92,6 +95,11 @@ final readonly class AssistantProjectAttentionReader
             if ($parents === null) { return null; }
             $query->whereIn($table.'.schedule_id', $parents->where('project_id', $projectId)->select('project_schedules.id'));
             AssistantDomainPredicate::apply($query, 'overdue');
+        } elseif ($kind === 'open_deliveries') {
+            $query->where($table.'.project_id', $projectId);
+            AssistantDomainPredicate::apply($query, 'supplier_waiting');
+        } elseif ($kind === 'pending_site_requests') {
+            $query->where($table.'.project_id', $projectId)->whereIn($table.'.status', ['pending', 'in_review']);
         } elseif ($kind === 'pending_procurement') {
             $parents = $this->access->entityQuery($actor, $organizationId, 'site_request');
             if ($parents === null) { return null; }
@@ -144,6 +152,7 @@ final readonly class AssistantProjectAttentionReader
             if ($group['has_more']) { $lines[] = trans_message('ai_assistant_attention.window', ['shown' => count($group['items']), 'total' => $group['total']]); }
             $lines[] = trans_message('ai_assistant_attention.action', ['action' => $group['next_action']]);
         }
+        if ($focus === 'procurement') { $lines[] = trans_message('ai_assistant_attention.supply_basis'); }
         if ($groups === []) {
             $available = array_filter($payload['coverage'], static fn (array $entry): bool => $entry['available']);
             $lines[] = trans_message($available === [] ? 'ai_assistant_attention.insufficient' : 'ai_assistant_attention.empty');

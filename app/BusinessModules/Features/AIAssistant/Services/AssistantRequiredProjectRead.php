@@ -8,6 +8,17 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResol
 
 final readonly class AssistantRequiredProjectRead
 {
+    public static function decisionReader(string $toolName, string $query): ?string
+    {
+        return match ($toolName) {
+            'get_project_finance_overview' => AssistantProjectFinanceOverview::matches($query) ? AssistantProjectFinanceOverview::class : null,
+            'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::matches($query) ? AssistantProjectScheduleImpactReader::class : null,
+            'get_project_workforce_summary' => AssistantProjectWorkforceReader::matches($query) ? AssistantProjectWorkforceReader::class : null,
+            'get_project_payment_readiness' => AssistantProjectPaymentReader::matches($query) ? AssistantProjectPaymentReader::class : null,
+            default => null,
+        };
+    }
+
     public static function fromPlan(array $plan): ?array
     {
         $query = (string) ($plan['request']['message'] ?? '');
@@ -16,7 +27,28 @@ final readonly class AssistantRequiredProjectRead
         }
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
+        if ($scope->projectId !== null && AssistantProjectScheduleImpactReader::matches($query)
+            && ($scope->requested || preg_match('/общий\s+срок\s+проекта\s*[?.!]|из\s+(?:перечисленных|просроченных)\s+задач/iu', $query) === 1)) {
+            return ['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => $scope->projectId, 'focus' => AssistantProjectScheduleImpactReader::focus($query)]];
+        }
         if (! $scope->requested || $scope->projectId === null) { return null; }
+        if (AssistantProjectPaymentReader::matches($query)) {
+            return ['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => $scope->projectId]];
+        }
+        if (AssistantProjectWorkforceReader::matches($query)) {
+            $period = (new AssistantPeriodResolver)->resolve($query);
+            if ($period?->dateFrom !== null && $period->dateTo !== null) {
+                return ['name' => 'get_project_workforce_summary', 'arguments' => ['project_id' => $scope->projectId,
+                    'period_start' => $period->dateFrom, 'period_end' => $period->dateTo]];
+            }
+        }
+        if (AssistantProjectFinanceOverview::matches($query)) {
+            $period = (new AssistantPeriodResolver)->resolve($query);
+            if ($period?->dateFrom !== null && $period->dateTo !== null) {
+                return ['name' => 'get_project_finance_overview', 'arguments' => ['project_id' => $scope->projectId,
+                    'period_start' => $period->dateFrom, 'period_end' => $period->dateTo, 'currency' => null]];
+            }
+        }
         if (AssistantProjectAttentionIntent::matches($query)) {
             return ['name' => 'get_project_attention', 'arguments' => ['project_id' => $scope->projectId, 'focus' => AssistantProjectAttentionIntent::focus($query), 'limit' => 3]];
         }

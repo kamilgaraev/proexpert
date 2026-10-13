@@ -82,6 +82,18 @@ class AssistantSourceReferenceGuard
                 if (! app(AssistantProjectAttentionReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if ($type === AssistantProjectScheduleImpactReader::TYPE) {
+                if (! app(AssistantProjectScheduleImpactReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
+            if ($type === AssistantProjectWorkforceReader::TYPE) {
+                if (! app(AssistantProjectWorkforceReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
+            if ($type === AssistantProjectPaymentReader::TYPE) {
+                if (! app(AssistantProjectPaymentReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if ($type === 'published_report_financial_projection') {
                 if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }

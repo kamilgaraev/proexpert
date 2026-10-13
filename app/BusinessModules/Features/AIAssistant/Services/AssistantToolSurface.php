@@ -7,10 +7,10 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 final class AssistantToolSurface
 {
     private const LINKED_READS = [
-        'get_project_snapshot' => ['get_project_attention'],
+        'get_project_snapshot' => ['get_project_attention', 'get_project_finance_overview', 'get_project_workforce_summary'],
         'get_procurement_snapshot' => ['get_project_snapshot'],
         'get_contract_snapshot' => ['get_project_snapshot', 'get_schedule_snapshot', 'get_estimate_answer'],
-        'get_schedule_snapshot' => ['get_project_snapshot'],
+        'get_schedule_snapshot' => ['get_project_snapshot', 'analyze_project_schedule_impact'],
         'get_material_stock' => ['get_project_snapshot', 'search_materials', 'search_warehouse'],
         'get_estimate_answer' => ['get_project_snapshot', 'resolve_estimate', 'search_estimate_positions',
             'get_estimate_positions', 'get_estimate_financial_snapshot'],
@@ -41,12 +41,14 @@ final class AssistantToolSurface
             '/склад|warehouse|остат|материал|material/iu' => ['get_material_stock', 'search_warehouse', 'search_materials'],
             '/(?:склад|остат)[\s\S]*(?:объект|проект)|(?:объект|проект)[\s\S]*(?:склад|остат)/iu' => ['get_project_material_stock'],
             '/bim|ifc|бим|модел|design|кондицион|вентил|перекрыти|Ifc/iu' => ['get_bim_model_elements'],
-            '/плат[её]ж|финанс|finance|payment|прибыл|бюджет|расход|затрат/iu' => ['get_live_project_financial_evidence', 'get_published_report_financial_evidence'],
-            '/график|schedule|срок/iu' => ['get_schedule_snapshot'],
+            '/плат[её]ж|финанс|finance|payment|прибыл|бюджет|расход|затрат/iu' => ['get_live_project_financial_evidence', 'get_published_report_financial_evidence', 'get_project_finance_overview'],
+            '/график|schedule|срок|разблокир|зависимост/iu' => ['get_schedule_snapshot', 'analyze_project_schedule_impact'],
             '/снабжен|закуп|procurement/iu' => ['get_procurement_snapshot'],
             '/проект|project/iu' => ['get_project_snapshot'],
             '/внимани|приоритет|главн[а-яё]*\s+проблем|план[её]рк|риски\s+(?:проекта|объекта)/iu' => ['get_project_attention'],
             '/сотрудник|персонал|people|workforce/iu' => ['search_users'],
+            '/табел|кто\s+работал|сколько\s+часов|уч[её]т.*врем/iu' => ['get_project_workforce_summary'],
+            '/сч[её]т|плат[её]ж|оплат/iu' => ['get_project_payment_readiness'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);
