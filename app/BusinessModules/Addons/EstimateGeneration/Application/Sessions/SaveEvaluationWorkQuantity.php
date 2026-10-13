@@ -70,25 +70,34 @@ final readonly class SaveEvaluationWorkQuantity
             if (count($snapshot->facts) > 10000) {
                 throw ValidationException::withMessages(['quantity' => 'Разделите проект: предел фактов превышен.']);
             }
+            $targetId = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
+            $target = null;
+            if ($targetId !== null) {
+                $target = is_string($targetId) ? (array_column($snapshot->entities, null, 'id')[$targetId] ?? null) : null;
+                if ($target === null) {
+                    throw ValidationException::withMessages(['quantity' => 'Объект работы изменился. Обновите оценку перед подтверждением объёма.']);
+                }
+            }
             $source = null;
             if ($native) {
                 $proofs = array_column($snapshot->evidence, null, 'id');
                 foreach ($snapshot->facts as $fact) {
                     if ($fact->id === $input['source_fact_id'] && $fact->version === $input['source_fact_version']
+                        && ($target === null || $fact->entityId === $target->id)
                         && hash_equals($input['source_value_hash'], DirectQuantityBinding::valueHash($fact->value))
                         && (new NativeQuantityFactEligibility)->evidence($fact, $proofs, (string) ($item['unit'] ?? '')) !== null) {
                         $source = $fact;
                     }
                 }
                 if (! $source instanceof Fact) {
-                    throw ValidationException::withMessages(['source_fact_id' => 'Числовой факт изменился, не проверен парсером или больше не относится к текущему проекту.']);
+                    throw ValidationException::withMessages(['source_fact_id' => 'Числовой факт изменился, не проверен парсером или относится к другому объекту.']);
                 }
             } else {
                 $normalized = WorkQuantityInputUnit::normalize($input['value'], $input['unit']);
                 if ($normalized === null || ! OrdinaryEstimateDecimal::fitsQuantity($normalized['value'])) {
                     throw ValidationException::withMessages(['quantity' => 'Объём после перевода единицы превышает допустимый предел.']);
                 }
-                $source = $this->numbers->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $input['reason'], $input['request_id']);
+                $source = $this->numbers->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $input['reason'], $input['request_id'], target: $target);
             }
             $canonicalUnit = DirectQuantityBinding::canonicalUnit($source->unit);
             if ($canonicalUnit === null || NormativeUnitNormalizer::safeQuantityFactorDecimal($canonicalUnit, (string) ($item['unit'] ?? '')) === null) {

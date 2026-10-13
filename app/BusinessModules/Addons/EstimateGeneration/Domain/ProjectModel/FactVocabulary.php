@@ -189,6 +189,9 @@ final class FactVocabulary
     public static function parameter(string $type): string
     {
         $type = mb_strtolower(trim(preg_replace('/([a-z])([A-Z])/', '$1_$2', $type) ?? $type));
+        if (preg_match('/\Awork_quantity_[a-f0-9]{48}\z/', $type) === 1) {
+            return 'quantity';
+        }
         foreach (self::ALIASES as $canonical => $aliases) {
             if (in_array($type, $aliases, true)) {
                 return $canonical;

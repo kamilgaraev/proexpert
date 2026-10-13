@@ -22,7 +22,7 @@ final readonly class UserWorkQuantityFactWriter
 {
     public function __construct(private ProjectModelRepository $models, private EvidenceRepository $evidence, private EstimateGenerationActionAuthorization $authorization) {}
 
-    public function write(User $actor, EstimateGenerationSession $session, string $workKey, string $amount, string $unit, string $reason, string $requestId, bool $assumed = false): Fact
+    public function write(User $actor, EstimateGenerationSession $session, string $workKey, string $amount, string $unit, string $reason, string $requestId, bool $assumed = false, ?Entity $target = null): Fact
     {
         $this->authorization->authorize($actor, $session, 'estimate_generation.review');
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
@@ -30,9 +30,20 @@ final readonly class UserWorkQuantityFactWriter
         $entityId = 'entity:'.hash('sha256', $version.'|'.$workKey);
         $entity = new Entity($entityId, ...[...$scope, $version, 'quantity', $entityId,
             ['semantic_type' => 'quantity', 'identity' => ['work_item_key' => $workKey]]]);
+        $type = 'quantity';
+        if ($target !== null) {
+            if ([$target->organizationId, $target->projectId, $target->sessionId] !== $scope) {
+                throw new \InvalidArgumentException('work_quantity_entity_scope_invalid');
+            }
+            $entity = $target;
+            $entityId = $target->id;
+            $version = $target->sourceVersion;
+            // Different works of one asset can have different quantities and units.
+            $type = 'work_quantity_'.substr(hash('sha256', $workKey), 0, 48);
+        }
         $previous = null;
         foreach ($this->models->currentFacts(...[...$scope, $entityId]) as $fact) {
-            if ($fact->type === 'quantity' && $fact->sourceVersion === $version) {
+            if ($fact->type === $type && $fact->sourceVersion === $version) {
                 $previous = $fact;
             }
         }
@@ -40,14 +51,14 @@ final readonly class UserWorkQuantityFactWriter
         if (! \App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal::isPositive($value)) {
             throw new \InvalidArgumentException('work_quantity_source_decimal_invalid');
         }
-        $factId = 'fact:'.hash('sha256', $requestId.'|'.$entityId.'|quantity');
+        $factId = 'fact:'.hash('sha256', $requestId.'|'.$entityId.'|'.$type);
         $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
             'input:'.$scope[2], $version, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.work_quantities'],
             ['fact_key' => 'quantity', 'fact_value' => $value], 0.0, EvidenceProducer::UserInputNormalizer->value, 'sha256:'.hash('sha256', 'work-quantity:v1')]));
         $proofId = 'evidence:'.$node->id;
         $proof = new Evidence($proofId, ...[...$scope, $version, 'input:'.$scope[2], 'user_input', null, null, 'input_payload.work_quantities',
             EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2]]);
-        $fact = new Fact($factId, ...[...$scope, $version, $entityId, 'quantity', $value, $unit, 0.0, $assumed ? 'user_assumption' : 'user_input', 'confirmed', [$proofId],
+        $fact = new Fact($factId, ...[...$scope, $version, $entityId, $type, $value, $unit, 0.0, $assumed ? 'user_assumption' : 'user_input', 'confirmed', [$proofId],
             ($previous?->version ?? 0) + 1, $previous?->id]);
         $decision = new Decision('decision:'.hash('sha256', $requestId.'|'.$factId), ...[...$scope, $version, 'fact', $previous?->id ?? $factId,
             $factId, 'user', (string) $actor->id, $reason, $fact->version, [$proofId]]);
