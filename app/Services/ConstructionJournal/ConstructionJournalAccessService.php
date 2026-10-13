@@ -75,9 +75,14 @@ final class ConstructionJournalAccessService
 
     public function canRead(User $user, ConstructionJournal $journal): bool
     {
-        return $journal->project !== null
-            && in_array((int) $journal->performing_organization_id, $this->visiblePerformerIds($user, $journal->project), true)
+        return $this->canSeePerformer($user, $journal)
             && $this->hasPermission($user, $journal->project, ['view', '*']);
+    }
+
+    private function canSeePerformer(User $user, ConstructionJournal $journal): bool
+    {
+        return $journal->project !== null
+            && in_array((int) $journal->performing_organization_id, $this->visiblePerformerIds($user, $journal->project), true);
     }
 
     public function canWrite(User $user, ConstructionJournal $journal, array $permissions = ['edit']): bool
@@ -90,7 +95,11 @@ final class ConstructionJournalAccessService
 
     public function assertReadable(User $user, ConstructionJournal $journal, array $permissions = ['view']): void
     {
-        if (! $this->canRead($user, $journal)
+        $readable = $permissions === ['view']
+            ? $this->canSeePerformer($user, $journal)
+            : $this->canRead($user, $journal);
+
+        if (! $readable
             || ! $this->hasPermission($user, $journal->project, $permissions)) {
             throw new AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
