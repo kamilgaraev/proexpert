@@ -151,6 +151,7 @@ final class BuildSessionSnapshot
 
         return ['enabled' => true, 'quote_required' => true, 'wallet' => 'most_shared',
             'available_units_minor' => $balance['available_minor'], 'reserved_units_minor' => $balance['reserved_minor'],
+            'reconciliation_held_units_minor' => $balance['reconciliation_held_minor'],
             'minimum_units_minor' => (int) config('ai-assistant-credits.minimum_units_minor', 50),
             'charge_step_minor' => (int) config('ai-assistant-credits.charge_step_minor', 50),
             'current_operation_id' => $operationId,

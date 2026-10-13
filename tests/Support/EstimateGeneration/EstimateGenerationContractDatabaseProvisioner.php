@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '4df8a21a6ed7a00ee7419ba063fe6badf20d7827cfe43f78f4163874a546fc0a',
-        'training' => '115ddc5c3d69a5a538be41da013ffc3c683e8ec06e90db33a36f85c048527a59',
-        'pricing' => '115ddc5c3d69a5a538be41da013ffc3c683e8ec06e90db33a36f85c048527a59',
+        'geometry' => '97d9d6387adb9db9892b976cf2455c9fa70081e8315353cc154c267d21284a2e',
+        'training' => 'a9ba0cf3b8d591bc8a3862ee37354580285d79cf99b15380ec37cbfd839a9401',
+        'pricing' => 'a9ba0cf3b8d591bc8a3862ee37354580285d79cf99b15380ec37cbfd839a9401',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'a627d8305f442d7c77de86a25fb49665076564ac5dba4ecc6e686a4969d837b6';
+    private const FRESH_INVENTORY_DIGEST = 'aa6b87a8d8f42626fda1fe8fb932738d37f576f7cb32a8598c62ba0bb2844033';
 
     private const SUBJECT = [
         'geometry' => [
@@ -272,6 +272,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_12_001500_allow_room_identity_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_12_001600_create_unpublished_document_cleanup_debts.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_13_001700_create_document_admission_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_13_001800_create_legacy_estimator_reconciliations.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void
@@ -408,7 +409,18 @@ final class EstimateGenerationContractDatabaseProvisioner
         }
         array_splice($entries, $insertAt, 0, [
             'database/migrations/2026_02_16_074305_create_system_admins_table.php',
+            'database/migrations/2026_03_29_120000_add_role_and_is_active_to_system_admins_table.php',
+            'database/migrations/2026_06_22_000001_create_immutable_audit_tables.php',
             'database/migrations/2026_06_28_000004_create_estimate_generation_training_dataset_tables.php',
+        ]);
+
+        $commercialInsertAt = array_search('database/migrations/2026_07_24_000001_create_organization_resource_allocations_table.php', $entries, true);
+        if ($commercialInsertAt === false) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        array_splice($entries, $commercialInsertAt, 0, [
+            'database/migrations/2026_07_14_000003_create_commercial_webhook_tables.php',
+            'database/migrations/2026_07_14_000006_add_commercial_provider_operations.php',
         ]);
 
         $trainingInsertAt = array_search(

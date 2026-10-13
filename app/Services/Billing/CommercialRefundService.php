@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\LegacyEstimatorRefundGuard;
 use App\DataTransferObjects\Billing\CreateRefundData;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
+use App\Models\Organization;
 use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -57,6 +59,7 @@ final class CommercialRefundService
         }
 
         [$refund, $payment] = $this->prepare(
+            $organizationId,
             $orderPublicId,
             $amountMinor,
             $currency,
@@ -116,6 +119,7 @@ final class CommercialRefundService
     }
 
     private function prepare(
+        int $organizationId,
         string $orderPublicId,
         ?int $amountMinor,
         string $currency,
@@ -125,17 +129,22 @@ final class CommercialRefundService
         $fingerprint = hash('sha256', implode('|', [$orderPublicId, $amountMinor ?? 'full', $currency, $reason]));
 
         try {
-            return DB::transaction(function () use ($orderPublicId, $amountMinor, $currency, $idempotenceKey, $fingerprint): array {
+            return DB::transaction(function () use ($organizationId, $orderPublicId, $amountMinor, $currency, $idempotenceKey, $fingerprint): array {
+                Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
+                $order = CommercialOrder::query()->where('organization_id', $organizationId)->where('public_id', $orderPublicId)->lockForUpdate()->firstOrFail();
                 $existing = CommercialRefund::query()->where('provider_idempotency_key', $idempotenceKey)->lockForUpdate()->first();
                 if ($existing !== null) {
-                    if (! hash_equals((string) $existing->request_fingerprint, $fingerprint)) {
+                    if ((int) $existing->commercial_order_id !== (int) $order->id || ! hash_equals((string) $existing->request_fingerprint, $fingerprint)) {
                         throw new DomainException(trans_message('billing.refund.conflict'));
+                    }
+                    if ($existing->provider_refund_id === null) {
+                        LegacyEstimatorRefundGuard::assertAllowed($organizationId, (int) $order->id);
                     }
 
                     return [$existing->load('order'), $existing->payment];
                 }
 
-                $order = CommercialOrder::query()->where('public_id', $orderPublicId)->lockForUpdate()->firstOrFail();
+                LegacyEstimatorRefundGuard::assertAllowed($organizationId, (int) $order->id);
                 if ($order->status->value !== 'paid' || $order->currency !== $currency) {
                     throw new DomainException(trans_message('billing.refund.invalid'));
                 }
@@ -181,12 +190,21 @@ final class CommercialRefundService
             if (! in_array((string) $exception->getCode(), ['23000', '23505'], true)) {
                 throw $exception;
             }
-            $existing = CommercialRefund::query()->where('provider_idempotency_key', $idempotenceKey)->first();
-            if ($existing === null || ! hash_equals((string) $existing->request_fingerprint, $fingerprint)) {
-                throw new DomainException(trans_message('billing.refund.conflict'), previous: $exception);
-            }
 
-            return [$existing->load('order'), $existing->payment];
+            return DB::transaction(function () use ($organizationId, $orderPublicId, $idempotenceKey, $fingerprint, $exception): array {
+                Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
+                $order = CommercialOrder::query()->where('organization_id', $organizationId)->where('public_id', $orderPublicId)->lockForUpdate()->firstOrFail();
+                $existing = CommercialRefund::query()->where('provider_idempotency_key', $idempotenceKey)->lockForUpdate()->first();
+                if ($existing === null || (int) $existing->commercial_order_id !== (int) $order->id
+                    || ! hash_equals((string) $existing->request_fingerprint, $fingerprint)) {
+                    throw new DomainException(trans_message('billing.refund.conflict'), previous: $exception);
+                }
+                if ($existing->provider_refund_id === null) {
+                    LegacyEstimatorRefundGuard::assertAllowed($organizationId, (int) $order->id);
+                }
+
+                return [$existing->load('order'), $existing->payment];
+            }, 3);
         }
     }
 }

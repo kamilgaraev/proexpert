@@ -82,9 +82,12 @@ final readonly class EstimatorCreditOperations
                 ]);
             }
 
+            $balance = $this->credits->balance($organization);
+
             return [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
                 'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
-                'available_units_minor' => $this->credits->balance($organization)['available_minor']];
+                'available_units_minor' => $balance['available_minor'],
+                'reconciliation_held_units_minor' => $balance['reconciliation_held_minor']];
         }, 3);
     }
 

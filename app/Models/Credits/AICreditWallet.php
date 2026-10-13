@@ -16,7 +16,23 @@ final class AICreditWallet extends Model
 
     protected $casts = ['balance_minor' => 'integer', 'reserved_minor' => 'integer'];
 
-    public function organization(): BelongsTo { return $this->belongsTo(Organization::class); }
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class);
+    }
 
-    public function availableMinor(): int { return max(0, (int) $this->balance_minor - (int) $this->reserved_minor); }
+    public function reconciliationHeldMinor(): int
+    {
+        if (! $this->exists) {
+            return 0;
+        }
+
+        return (int) AICreditLot::query()->where('organization_id', $this->organization_id)
+            ->where('source', 'conversion')->where('metadata->'.AICreditLot::LEGACY_REFUND_HOLD, true)->sum('remaining_minor');
+    }
+
+    public function availableMinor(): int
+    {
+        return max(0, (int) $this->balance_minor - (int) $this->reserved_minor - $this->reconciliationHeldMinor());
+    }
 }

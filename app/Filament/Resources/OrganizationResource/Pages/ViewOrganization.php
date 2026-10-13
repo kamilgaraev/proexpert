@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\OrganizationResource\Pages;
 
+use App\Filament\Actions\LegacyEstimatorReconciliationAction;
+use App\Filament\Actions\LegacyEstimatorRestoreAction;
 use App\Filament\Resources\OrganizationResource;
+use App\Models\Organization;
 use Filament\Actions\EditAction;
 use Filament\Resources\Pages\ViewRecord;
 
@@ -14,8 +17,15 @@ class ViewOrganization extends ViewRecord
 
     protected function getHeaderActions(): array
     {
-        return [
+        $actions = [
             EditAction::make(),
         ];
+        $organization = $this->getRecord();
+        if ($organization instanceof Organization) {
+            $actions[] = LegacyEstimatorReconciliationAction::make($organization);
+            $actions[] = LegacyEstimatorRestoreAction::make($organization);
+        }
+
+        return $actions;
     }
 }
