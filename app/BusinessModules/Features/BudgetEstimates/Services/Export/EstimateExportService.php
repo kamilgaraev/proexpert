@@ -8,16 +8,11 @@ use App\Models\Estimate;
 use App\Models\File;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class EstimateExportService
 {
-    private const CACHE_TTL = 600; // 10 minutes
-
-    private const CACHE_PREFIX = 'estimate_export:';
-
     public function __construct(
         protected ExcelEstimateBuilder $excelBuilder,
         protected PDFEstimateBuilder $pdfBuilder,
@@ -121,14 +116,6 @@ class EstimateExportService
      */
     public function prepareExportData(Estimate $estimate, array $options = []): array
     {
-        // Check cache
-        $cacheKey = $this->getCacheKey($estimate->id, $options);
-        if ($cached = Cache::get($cacheKey)) {
-            Log::debug('estimate_export.cache_hit', ['estimate_id' => $estimate->id]);
-
-            return $cached;
-        }
-
         Log::debug('estimate_export.preparing_data', [
             'estimate_id' => $estimate->id,
             'options' => $options,
@@ -166,9 +153,6 @@ class EstimateExportService
             'metadata' => $this->prepareMetadata($estimate, $options),
             'options' => $options,
         ];
-
-        // Cache for 10 minutes
-        Cache::put($cacheKey, $data, self::CACHE_TTL);
 
         return $data;
     }
@@ -265,7 +249,9 @@ class EstimateExportService
             'work_type' => $item->workType?->name,
             'measurement_unit' => $item->measurementUnit?->symbol ?? $item->measurementUnit?->name,
             'quantity' => (float) $item->quantity,
-            'quantity_total' => (float) $item->quantity_total,
+            'quantity_total' => (float) $item->quantity_total !== 0.0
+                ? (float) $item->quantity_total
+                : (float) $item->quantity,
             'is_manual' => $item->is_manual,
             'is_not_accounted' => $item->is_not_accounted,
         ];
@@ -411,22 +397,10 @@ class EstimateExportService
     }
 
     /**
-     * Получить ключ кэша
-     */
-    protected function getCacheKey(int $estimateId, array $options): string
-    {
-        $optionsHash = md5(json_encode($options));
-
-        return self::CACHE_PREFIX."{$estimateId}:{$optionsHash}";
-    }
-
-    /**
      * Очистить кэш для сметы
      */
     public function clearCache(int $estimateId): void
     {
-        // Cache::forget не работает с wildcard, поэтому используем tags если доступно
-        // Иначе просто логируем
         Log::info('estimate_export.cache_cleared', ['estimate_id' => $estimateId]);
     }
 

@@ -30,7 +30,14 @@ class PDFEstimateBuilder
         $pdf = Pdf::loadView('estimates.exports.estimate', $viewData);
 
         // Configure PDF settings
-        $pdf->setPaper('a4', 'portrait');
+        $landscape = false;
+        array_walk_recursive($data['sections'], static function ($value, $key) use (&$landscape): void {
+            if (in_array($key, ['quantity_total', 'unit_price', 'total_amount'], true)) {
+                $formatted = number_format((float) $value, $key === 'quantity_total' ? 4 : 2, '.', $key === 'quantity_total' ? '' : ' ');
+                $landscape = $landscape || strlen($formatted) > 11;
+            }
+        });
+        $pdf->setPaper('a4', $landscape ? 'landscape' : 'portrait');
         $pdf->setOption('margin-top', '12mm');
         $pdf->setOption('margin-bottom', '12mm');
         $pdf->setOption('margin-left', '15mm');
