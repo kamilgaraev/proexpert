@@ -989,11 +989,16 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->name('estimate-generation:recover-unpublished-document-objects')
                     ->everyTenMinutes()->withoutOverlapping(10)->onOneServer();
                 $this->app->make(Schedule::class)
+                    ->call(fn (): int => $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\PruneArchivedAiPhysicalResponses::class)->handle())
+                    ->name('estimate-generation:prune-archived-ai-responses')
+                    ->hourly()->withoutOverlapping(30)->onOneServer();
+                $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()
                     ->withoutOverlapping();
             });
             $this->commands([
+                \App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RetryDocumentCleanupCommand::class,
                 BootstrapEstimateGenerationLearningCommand::class,
                 InspectEstimateGenerationProductionCommand::class,
                 InspectCadRuntimeReadinessCommand::class,

@@ -39,6 +39,10 @@ $lunaPrice = [[
 ]];
 
 return [
+    'retention' => [
+        // Starts after irreversible archival and durable publication; recoverable sessions are excluded.
+        'archived_response_days' => max(7, (int) $envValue('ESTIMATE_GENERATION_ARCHIVED_RESPONSE_DAYS', 7)),
+    ],
     'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
     'credits' => ['enabled' => (bool) env('ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED', false),
         'legacy_reconciliation_enabled' => (bool) env('ESTIMATE_GENERATION_LEGACY_RECONCILIATION_ENABLED', false),

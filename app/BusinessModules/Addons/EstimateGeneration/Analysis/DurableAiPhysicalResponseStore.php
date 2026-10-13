@@ -26,6 +26,7 @@ final readonly class DurableAiPhysicalResponseStore
             return null;
         }
         $payload = json_decode($row->response_payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertRetained($payload);
         if (! is_array($payload['wire_response'] ?? null)) {
             return null;
         }
@@ -70,6 +71,7 @@ final readonly class DurableAiPhysicalResponseStore
             return null;
         }
         $payload = json_decode($row->response_payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertRetained($payload);
         if (is_array($payload['wire_response'] ?? null) && ! isset($payload['parsed_response'])) {
             return null;
         }
@@ -115,6 +117,7 @@ final readonly class DurableAiPhysicalResponseStore
             }
             $wirePayload = is_string($existing->response_payload) && $existing->response_payload !== ''
                 ? json_decode($existing->response_payload, true, 512, JSON_THROW_ON_ERROR) : [];
+            $this->assertRetained($wirePayload);
             if (is_array($wirePayload['parsed_response'] ?? null)) {
                 if ($this->fingerprint($wirePayload['parsed_response']) !== $this->fingerprint($parsedResponse)
                     || $this->fingerprint($this->providerEnvelope($wirePayload['provider_response'] ?? [])) !== $this->fingerprint($this->providerEnvelope($providerResponse))) {
@@ -184,6 +187,13 @@ final readonly class DurableAiPhysicalResponseStore
             ->first(['state', 'usage_recorded']);
         if ($row === null || (string) $row->state !== 'completed' || ! (bool) $row->usage_recorded) {
             throw new UsageInvariantViolation('AI physical usage state collision.');
+        }
+    }
+
+    private function assertRetained(mixed $payload): void
+    {
+        if (is_array($payload) && array_key_exists(PruneArchivedAiPhysicalResponses::MARKER, $payload)) {
+            throw new AiWireNotStarted('text_ai_response_retention_expired');
         }
     }
 
