@@ -13,6 +13,7 @@ enum EstimateGenerationEvent: string
     case InputConfirmed = 'input_confirmed';
     case GenerationStarted = 'generation_started';
     case GenerationNeedsReview = 'generation_needs_review';
+    case GenerationNeedsInput = 'generation_needs_input';
     case GenerationReady = 'generation_ready';
     case ReviewUpdated = 'review_updated';
     case ReviewReopened = 'review_reopened';

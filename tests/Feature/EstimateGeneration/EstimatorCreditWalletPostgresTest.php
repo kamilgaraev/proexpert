@@ -259,7 +259,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('textOnlyCompositionCases')]
-    public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(bool $supplementary): void
+    public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(bool $supplementary, bool $infoOnly = false): void
     {
         (new \Tests\Support\EstimateGeneration\InMemoryS3HttpStorage)->install();
         $this->seedGlobalSettings();
@@ -273,9 +273,10 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         \Illuminate\Support\Facades\Queue::fake();
         $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession::class)->handle([
             'organization_id' => $organization->id, 'project_id' => $scope->projectId,
-            'input_payload' => ['description' => 'Отделка комнаты: штукатурка и окраска стен, площадь около 12 м² требует проверки.',
+            'input_payload' => ['description' => $infoOnly ? 'Нужно уточнить состав выбранных работ для объекта.'
+                : 'Отделка комнаты: штукатурка и окраска стен, площадь около 12 м² требует проверки.',
                 'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'renovation',
-                'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']],
+                'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => [$infoOnly ? 'automation' : 'finishing']],
         ], $actor);
         $history = [];
         $composerResponse = ['work_intents' => []];
@@ -311,6 +312,26 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
         }
         $session->refresh();
+        if ($infoOnly) {
+            self::assertSame('input_review_required', $session->status->value);
+            self::assertTrue($session->draft_payload['source_info_only']);
+            self::assertNull($session->draft_payload['evaluation_result']);
+            self::assertSame([], $session->draft_payload['local_estimates']);
+            self::assertSame('estimate_composer_work_section_not_selected', $session->draft_payload['estimate_composition']['request_info'][0]['reason']);
+            self::assertCount(1, $history);
+            self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+            $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->sole();
+            self::assertSame('settled', $operation->status);
+            self::assertSame(0, (int) $operation->consumed_units_minor);
+            self::assertGreaterThan(0, json_decode($operation->receipt, true, 64, JSON_THROW_ON_ERROR)['measured_supplier_cost_micro_rub']);
+            self::assertSame(1000000, app(AICreditService::class)->balance($organization)['available_minor']);
+            $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+            self::assertCount(1, $history);
+            self::assertSame('input_review_required', $session->fresh()->status->value);
+
+            return;
+        }
         self::assertSame('estimate_review_required', $session->status->value);
         $evaluation = $session->draft_payload['evaluation_result'];
         if ($supplementary) {
@@ -339,7 +360,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
 
     public static function textOnlyCompositionCases(): array
     {
-        return [[false], [true]];
+        return [[false], [true], [true, true]];
     }
 
     public function test_fresh_text_without_files_queues_only_with_an_approved_quote_and_replays_once(): void
@@ -1279,6 +1300,65 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
     public static function documentCompletionDenials(): array
     {
         return array_map(static fn (string $change): array => [$change], ['actor', 'membership', 'product', 'rollout', 'cancel']);
+    }
+
+    public function test_information_only_publication_returns_the_reserve_atomically_without_charging_or_a_revision(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog',
+            'profile_id' => 'renovation', 'selected_sections' => ['finishing']]]);
+        $credits = app(AICreditService::class);
+        $credits->grant($organization, 1000000, 'purchase', null, 'test:information-only-publication');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+        $hash = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
+        $session->update(['status' => 'generating', 'input_payload' => [...$session->input_payload,
+            'generation_actor_type' => 'user', 'generation_actor_id' => $actor->id,
+            'generation_attempt_id' => $id, 'generation_evaluation_input_hash' => $hash]]);
+        $claim = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim::acquired(
+            new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext((int) $session->id,
+                (int) $organization->id, (int) $session->project_id, 0, 'sha256:'.$hash, 'generating',
+                generationAttemptId: $id, baseInputVersion: 'sha256:'.$hash, creditOperationId: $id),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::ValidateDraft, (string) Str::uuid());
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal(
+            (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project([
+                'generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+                'source_input_version' => 'sha256:'.$hash, 'source_info_only' => true, 'evaluation_result' => null,
+                'local_estimates' => [], 'estimate_composition' => ['request_info' => [['index' => -1,
+                    'reason' => 'estimate_composer_work_scope_unresolved', 'work_name' => null,
+                    'next_action' => 'provide_work_scope', 'source_fact_ids' => []]]]]));
+        $before = $credits->balance($organization)['available_minor'];
+        self::assertLessThan(1000000, $before);
+        try {
+            DB::transaction(function () use ($claim, $draft): void {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class)->publish($claim, $draft);
+                throw new \RuntimeException('rollback_information_receipt');
+            });
+            self::fail('The publication rollback did not occur.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('rollback_information_receipt', $exception->getMessage());
+        }
+        self::assertSame($before, $credits->balance($organization)['available_minor']);
+        self::assertSame('reserved', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+        self::assertSame('generating', $session->fresh()->status->value);
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class)->publish($claim, $draft));
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        self::assertSame('settled', $operation->status);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertNull($operation->result_revision_id);
+        self::assertFalse(json_decode($operation->receipt, true, 64, JSON_THROW_ON_ERROR)['useful_result']);
+        self::assertSame(1000000, $credits->balance($organization)['available_minor']);
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $receipt = DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->publish($session->fresh(), $id, $draft));
+        self::assertSame(0, $receipt['consumed_units_minor']);
+        self::assertSame(1000000, $credits->balance($organization)['available_minor']);
     }
 
     private function fixture(): array

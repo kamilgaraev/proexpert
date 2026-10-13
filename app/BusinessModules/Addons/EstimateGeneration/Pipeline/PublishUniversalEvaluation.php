@@ -29,14 +29,36 @@ final readonly class PublishUniversalEvaluation
         }
         $actor = EstimateGenerationExecutionActor::resolve($session->input_payload ?? [], (int) $session->user_id);
         $inputHash = $session->input_payload['generation_evaluation_input_hash'] ?? null;
+        $sourceInfoOnly = ($draft['source_info_only'] ?? false) === true && ($draft['evaluation_result'] ?? null) === null
+            && ($draft['local_estimates'] ?? null) === [] && is_array($draft['estimate_composition']['request_info'] ?? null)
+            && $draft['estimate_composition']['request_info'] !== [];
         if ($actor === null || ! is_string($inputHash) || ! $this->artifacts->verifyArtifact($draft)
             || ($session->input_payload['evaluation_mode'] ?? null) !== 'universal'
             || ($draft['generation_contract'] ?? null) !== \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT
-            || ! is_array($draft['evaluation_result'] ?? null)
+            || (! $sourceInfoOnly && ! is_array($draft['evaluation_result'] ?? null))
             || $context->baseInputVersion === null || ! is_string($draft['source_input_version'] ?? null)
             || ! hash_equals($context->baseInputVersion, $draft['source_input_version'])
             || ! \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::isFresh($draft, $draft['quality_summary']['review_items'] ?? [])) {
             throw new \DomainException('universal_evaluation_publication_incomplete');
+        }
+        if ($sourceInfoOnly) {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class)
+                ->authorize($actor, $session, 'estimate_generation.generate');
+            $currentInputHash = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
+            if (! hash_equals($inputHash, $currentInputHash)) {
+                throw new \InvalidArgumentException('evaluation_input_changed');
+            }
+            $creditReceipt = $context->creditOperationId === null ? null
+                : app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                    ->publish($session, $context->creditOperationId, $draft, null);
+            $input = $session->input_payload ?? [];
+            unset($input['confirmed_evaluation']);
+            $this->advance->generationNeedsInput($session, ['draft_payload' => $draft, 'input_payload' => $input,
+                'analysis_payload' => [...($session->analysis_payload ?? []), 'evaluation_revision' => null,
+                    ...($creditReceipt === null ? [] : ['credit_operation_receipt' => $creditReceipt])],
+                'processing_stage' => 'input_review_required', 'processing_progress' => 100, 'last_error' => null]);
+
+            return;
         }
         $receipt = $this->revisions->save($actor, $context->organizationId, $context->projectId, $context->sessionId,
             $context->stateVersion, $context->generationAttemptId, $inputHash, $draft['evaluation_result']);

@@ -43,6 +43,8 @@ final readonly class EstimateComposerInputFactory
             $this->maxFacts + 1,
         );
         $snapshot = $capture['snapshot'];
+        $entities = array_column($snapshot->entities, null, 'id');
+        $evidence = array_column($snapshot->evidence, null, 'id');
         if (count($snapshot->facts) > $this->maxFacts) {
             throw new InvalidArgumentException('estimate_composer_fact_limit_exceeded');
         }
@@ -76,7 +78,33 @@ final readonly class EstimateComposerInputFactory
             projectId: $projectId,
             sessionId: $sessionId,
             snapshotToken: (string) $capture['token'],
-            facts: array_map($this->fact(...), $snapshot->facts),
+            facts: array_map(function (Fact $fact) use ($entities, $evidence, $allowedWorkSections): array {
+                $entity = $entities[$fact->entityId] ?? null;
+                $related = [];
+                foreach (['room_id', 'wall_id', 'roof_id'] as $relation) {
+                    $id = $entity?->attributes[$relation] ?? null;
+                    if (is_string($id) && isset($entities[$id])) {
+                        $related[] = $id;
+                    }
+                }
+
+                $context = [];
+                if ($fact->type === 'evaluation_answer' && $fact->origin === 'user_input' && $fact->status === 'confirmed'
+                    && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
+                    && ($fact->value['numeric_parameters_confirmed'] ?? null) === false) {
+                    foreach ($fact->evidenceIds as $id) {
+                        $proof = $evidence[$id] ?? null;
+                        if ($proof?->sourceType === 'user_input' && $proof->nativeReference === 'input_payload.description'
+                            && $proof->producerName === 'user_input_normalizer') {
+                            $context = ['context_kind' => 'initial_description', 'declared_work_sections' => $allowedWorkSections];
+                            break;
+                        }
+                    }
+                }
+
+                return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->type,
+                    'related_entity_ids' => array_values(array_unique($related)), ...$context];
+            }, $snapshot->facts),
             derivedQuantities: array_map($this->derivedQuantity(...), $derivedQuantities),
             decisions: array_map($this->decision(...), $decisions),
             candidates: $candidates,

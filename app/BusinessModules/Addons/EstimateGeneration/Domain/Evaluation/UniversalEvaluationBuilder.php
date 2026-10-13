@@ -113,6 +113,18 @@ final readonly class UniversalEvaluationBuilder
             $requirements[] = ['requirement' => 'audit_finding', 'reason' => $finding['reason'] ?? 'audit_review_required',
                 'position_keys' => isset($finding['item_key']) ? [$finding['item_key']] : []];
         }
+        foreach ($draft['estimate_composition']['request_info'] ?? [] as $index => $request) {
+            if (($request['reason'] ?? null) === 'estimate_composer_work_section_not_selected') {
+                continue;
+            }
+            $requirements[] = ['section' => $scope[0], 'entity_id' => null, 'requirement' => 'work_source_review',
+                'reason' => 'work_source_unconfirmed'];
+            $questionCandidates[] = ['key' => 'work-source:'.$index,
+                'question' => 'Уточните состав и основание работы'.(is_string($request['work_name'] ?? null) ? ' «'.$request['work_name'].'»' : '').'.',
+                'affected_position_keys' => array_column($positions, 'key'), 'correctness_blocker' => true, 'cost_blocker' => true,
+                'easy_to_answer' => false, 'next_action' => 'confirm_work_source',
+                'effect' => 'Предложенная работа остаётся за пределами оценки до проверки основания и обновления состава.'];
+        }
         $contingency = null;
         $contingencySelection = $policy['contingency_selection'] ?? null;
         if (is_array($contingencySelection)) {

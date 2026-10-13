@@ -116,6 +116,10 @@ final readonly class PipelineStagePayload
             ? array_keys($data['estimate_composition'])
             : [];
         $expectedCompositionKeys = ['schema_version', 'snapshot_token', 'input_fingerprint', 'intents_count', 'derived_quantities'];
+        if (is_array($data['estimate_composition']) && array_key_exists('request_info', $data['estimate_composition'])) {
+            $expectedCompositionKeys[] = 'request_info';
+            self::assertWorkSourceRequests($data['estimate_composition']['request_info']);
+        }
         sort($compositionKeys);
         sort($expectedCompositionKeys);
         if (! is_array($data['estimate_composition'])
@@ -124,13 +128,37 @@ final readonly class PipelineStagePayload
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['snapshot_token']) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['estimate_composition']['input_fingerprint']) !== 1
             || ! is_int($data['estimate_composition']['intents_count'])
-            || $data['estimate_composition']['intents_count'] < 1
+            || $data['estimate_composition']['intents_count'] < 0
+            || ($data['estimate_composition']['intents_count'] === 0 && ($data['estimate_composition']['request_info'] ?? []) === [])
             || ! is_array($data['estimate_composition']['derived_quantities'])
             || ! array_is_list($data['estimate_composition']['derived_quantities'])
             || count($data['estimate_composition']['derived_quantities']) > 2000) {
             throw new InvalidArgumentException('Pipeline estimate composition is invalid.');
         }
         self::assertCanonicalQuantityEvidence($data['local_estimates']);
+    }
+
+    private static function assertWorkSourceRequests(mixed $requests): void
+    {
+        if (! is_array($requests) || ! array_is_list($requests) || count($requests) > 10000) {
+            throw new InvalidArgumentException('Pipeline work source requests are invalid.');
+        }
+        foreach ($requests as $request) {
+            if (! is_array($request) || ! is_int($request['index'] ?? null) || $request['index'] < -1
+                || ! is_string($request['reason'] ?? null) || $request['reason'] === '' || strlen($request['reason']) > 200
+                || ! array_key_exists('work_name', $request) || ($request['work_name'] !== null && ! is_string($request['work_name']))
+                || (is_string($request['work_name']) && mb_strlen($request['work_name']) > 300)
+                || ! in_array($request['next_action'] ?? null, ['confirm_work_source', 'provide_work_scope'], true)
+                || ! is_array($request['source_fact_ids'] ?? null) || ! array_is_list($request['source_fact_ids'])
+                || count($request['source_fact_ids']) > 10000) {
+                throw new InvalidArgumentException('Pipeline work source requests are invalid.');
+            }
+            foreach ($request['source_fact_ids'] as $id) {
+                if (! is_string($id) || $id === '' || strlen($id) > 160) {
+                    throw new InvalidArgumentException('Pipeline work source requests are invalid.');
+                }
+            }
+        }
     }
 
     private static function assertExtractedQuantities(array $data): void

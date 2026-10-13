@@ -38,6 +38,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'generating' => [
+            'generation_needs_input' => 'input_review_required',
             'generation_needs_review' => 'estimate_review_required',
             'generation_ready' => 'ready_to_apply',
             'documents_changed' => 'processing_documents',

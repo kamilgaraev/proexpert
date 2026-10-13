@@ -31,6 +31,24 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    public function test_irrelevant_roof_fact_becomes_request_info_and_replays_without_another_model_call(): void
+    {
+        $input = $this->input();
+        $payload = $this->validResult($input);
+        $payload['work_intents'][] = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'heating.pipe',
+            'name' => 'Монтаж труб отопления', 'derived_quantity_id' => null, 'source_fact_ids' => ['fact:roof'],
+            'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+        $model = new RecordedEstimateComposerModel($payload);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertNotContains('heating.pipe', array_column($outcome['intents'], 'work_key'));
+        self::assertSame('estimate_composer_work_source_unrelated', $outcome['quarantined'][0]['reason']);
+        self::assertSame('Монтаж труб отопления', $outcome['quarantined'][0]['work_name']);
+        self::assertSame(['fact:roof'], $outcome['quarantined'][0]['source_fact_ids']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
     public function test_composer_covers_each_deterministic_work_once_and_replays_without_second_model_call(): void
     {
         $input = $this->input();
@@ -355,7 +373,8 @@ final class EstimateComposerTest extends TestCase
             20,
             30,
             str_repeat('a', 64),
-            [['id' => 'fact:room-area', 'entity_id' => 'entity:room', 'type' => 'area', 'value' => 80.0, 'unit' => 'm2', 'status' => 'confirmed']],
+            [['id' => 'fact:room-area', 'entity_id' => 'entity:room', 'entity_type' => 'room', 'type' => 'area', 'value' => 80.0,
+                'unit' => 'm2', 'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['evidence:room-area']]],
             [['id' => 'quantity:room-area', 'entity_id' => 'entity:room', 'value' => '80.000000', 'unit' => 'm2', 'operand_fact_ids' => ['fact:room-area'],
                 'formula_key' => 'direct_floor_area', 'source' => 'evidenced']],
             [],
@@ -402,7 +421,9 @@ final class EstimateComposerTest extends TestCase
     public function test_text_grounded_supplementary_work_keeps_its_selected_section_and_unit_without_inventing_a_volume(): void
     {
         $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64),
-            [['id' => 'fact:description', 'type' => 'evaluation_answer', 'value' => ['description' => 'Нужно окрасить стены.'], 'unit' => null, 'status' => 'confirmed']],
+            [['id' => 'fact:description', 'entity_id' => 'entity:room', 'entity_type' => 'room', 'type' => 'evaluation_answer',
+                'value' => ['description' => 'Нужно окрасить стены.'], 'unit' => null, 'status' => 'confirmed',
+                'origin' => 'user_input', 'evidence_ids' => ['evidence:description']]],
             [], [], [], [], RunEstimateComposer::PROMPT_CONTRACT, allowedWorkSections: ['finishing']);
         $intent = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'paint-walls', 'name' => 'Окраска стен',
             'derived_quantity_id' => null, 'source_fact_ids' => ['fact:description'], 'technology_package_candidate' => null,
@@ -578,7 +599,8 @@ final class EstimateComposerTest extends TestCase
             snapshotToken: $snapshotToken ?? str_repeat('a', 64),
             facts: [
                 ['id' => 'fact:foundation', 'status' => 'confirmed'],
-                ['id' => 'fact:roof', 'entity_id' => 'entity:roof', 'value' => '120.1250', 'unit' => 'm2', 'status' => 'confirmed'],
+                ['id' => 'fact:roof', 'entity_id' => 'entity:roof', 'entity_type' => 'roof', 'type' => 'plan_area', 'value' => '120.1250',
+                    'unit' => 'm2', 'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['evidence:roof']],
                 ['id' => 'fact:facade', 'status' => 'unresolved'],
             ],
             derivedQuantities: $derivedQuantities ?? [['id' => 'quantity:roof', 'entity_id' => 'entity:roof', 'value' => '120.1250', 'unit' => 'm2',

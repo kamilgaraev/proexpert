@@ -77,6 +77,13 @@ final class PipelineStagePayloadTest extends TestCase
         ];
 
         self::assertSame($data, PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data)->data);
+        $data['estimate_composition']['intents_count'] = 0;
+        $data['estimate_composition']['request_info'] = [['index' => -1, 'reason' => 'estimate_composer_work_scope_unresolved',
+            'work_name' => null, 'next_action' => 'provide_work_scope', 'source_fact_ids' => []]];
+        self::assertSame($data, PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data)->data);
+        $data['estimate_composition']['request_info'][0]['next_action'] = 'send_without_quote';
+        $this->expectExceptionMessage('Pipeline work source requests are invalid.');
+        PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data);
     }
 
     #[Test]

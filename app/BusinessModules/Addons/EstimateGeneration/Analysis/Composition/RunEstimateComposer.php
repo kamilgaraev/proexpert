@@ -19,7 +19,7 @@ use Throwable;
 
 final readonly class RunEstimateComposer
 {
-    public const PROMPT_CONTRACT = 'estimate-composer:v3';
+    public const PROMPT_CONTRACT = 'estimate-composer:v4';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -31,6 +31,12 @@ final readonly class RunEstimateComposer
 
     /** @return list<array<string, mixed>> */
     public function run(EstimateComposerInput $input): array
+    {
+        return $this->runDetailed($input)['intents'];
+    }
+
+    /** @return array{intents:list<array<string,mixed>>,quarantined:list<array<string,mixed>>} */
+    public function runDetailed(EstimateComposerInput $input): array
     {
         $limit = $this->allowance?->partLimit($input);
         if ($input->wireScope?->creditOperationId !== null && $this->allowance === null) {
@@ -50,9 +56,14 @@ final readonly class RunEstimateComposer
         }
         $existing = [];
         $supplementary = [];
+        $quarantined = [];
         $workKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
         foreach ($plan as $batch) {
-            foreach ($this->runBatch($batch) as $intent) {
+            $outcome = $this->runBatch($batch);
+            foreach ($outcome['quarantined'] as $rejected) {
+                $quarantined[] = [...$rejected, 'batch_key' => $batch->batchKey];
+            }
+            foreach ($outcome['intents'] as $intent) {
                 if ($intent['kind'] === 'existing') {
                     $existing[$intent['candidate_id']] = $intent;
                 } elseif (! isset($workKeys[$intent['work_key']])) {
@@ -65,11 +76,11 @@ final readonly class RunEstimateComposer
             }
         }
 
-        return [...array_map(static fn (array $candidate): array => $existing[$candidate['candidate_id']], $input->candidates),
-            ...array_column(array_values($supplementary), 'intent')];
+        return ['intents' => [...array_map(static fn (array $candidate): array => $existing[$candidate['candidate_id']], $input->candidates),
+            ...array_column(array_values($supplementary), 'intent')], 'quarantined' => $quarantined];
     }
 
-    /** @return list<array<string, mixed>> */
+    /** @return array{intents:list<array<string,mixed>>,quarantined:list<array<string,mixed>>} */
     private function runBatch(EstimateComposerInput $input): array
     {
         $runInput = new AiRoleRunInput(
@@ -102,7 +113,12 @@ final readonly class RunEstimateComposer
                 $replayed[] = EstimateWorkIntent::fromArray($intent)->toArray();
             }
 
-            return $replayed;
+            $quarantined = $claim->result->payload['quarantined_intents'] ?? [];
+            if (! is_array($quarantined) || ! array_is_list($quarantined)) {
+                throw new RuntimeException('estimate_composer_replay_invalid');
+            }
+
+            return ['intents' => $replayed, 'quarantined' => $quarantined];
         }
         if ($claim->disposition !== 'owned' || $claim->ownerUuid === null) {
             throw new RuntimeException('estimate_composer_role_run_'.$claim->disposition);
@@ -132,7 +148,7 @@ final readonly class RunEstimateComposer
                 'result_state' => $projection['quarantined'] === [] ? 'ready' : 'partial',
             ], $physicalAttemptId));
 
-            return $projection['intents'];
+            return $projection;
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
                 code: 'estimate_composer_failed',
@@ -244,7 +260,12 @@ final readonly class RunEstimateComposer
                     if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
                         throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
                     }
-                    $quantityProvenance->binding($intent->toArray());
+                    $quantityBinding = $quantityProvenance->binding($intent->toArray());
+                    $target = $intent->entityId ?? $quantityBinding['entity_id'] ?? null;
+                    $sourceBinding = (new WorkIntentSourceClassifier)->binding([
+                        ...$intent->toArray(), ...($target === null ? [] : ['entity_id' => $target]),
+                    ], $input->facts);
+                    $intent = EstimateWorkIntent::fromArray([...$intent->toArray(), 'entity_id' => $sourceBinding['entity_id']]);
                     if ($intent->technologyPackageCandidate !== null
                         && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
                         throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
@@ -257,10 +278,18 @@ final readonly class RunEstimateComposer
                 $seenCandidateIds[$intent->candidateId] = true;
                 $intentsById[$intent->candidateId] = $intent->toArray();
             } catch (InvalidArgumentException $exception) {
-                $quarantined[] = ['index' => $index, 'reason' => $exception->getMessage()];
+                $quarantined[] = ['index' => $index, 'reason' => $exception->getMessage(),
+                    'work_name' => is_array($record) && is_string($record['name'] ?? null) && mb_strlen($record['name']) <= 300 ? $record['name'] : null,
+                    'next_action' => 'confirm_work_source',
+                    'source_fact_ids' => is_array($record) && is_array($record['source_fact_ids'] ?? null)
+                        ? array_values(array_filter($record['source_fact_ids'], static fn ($id): bool => is_string($id) && isset($allowedFactIds[$id]))) : []];
             }
         }
         ksort($supplementaryById, SORT_STRING);
+        if ($input->candidates === [] && $supplementaryById === [] && $quarantined === []) {
+            $quarantined[] = ['index' => -1, 'reason' => 'estimate_composer_work_scope_unresolved',
+                'work_name' => null, 'next_action' => 'provide_work_scope', 'source_fact_ids' => []];
+        }
 
         return [
             'intents' => [...array_map(

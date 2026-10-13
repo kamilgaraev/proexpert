@@ -23,9 +23,12 @@ final readonly class GetCurrentEvaluation
                 'profile_id' => $session->input_payload['profile_id'] ?? 'construction',
                 'construction_type' => $session->input_payload['construction_type'] ?? 'new_construction',
                 'selected_sections' => $session->input_payload['selected_sections'] ?? []];
+            $sourceInfoOnly = ($session->draft_payload['source_info_only'] ?? false) === true;
+            $policy['request_info'] = $session->draft_payload['estimate_composition']['request_info'] ?? [];
+            $policy['source_info_required'] = $sourceInfoOnly;
             $row = $this->database->table('estimate_generation_evaluation_revisions')->where('organization_id', $session->organization_id)
                 ->where('project_id', $projectId)->where('session_id', $sessionId)->orderByDesc('revision')->first();
-            if ($row === null) {
+            if ($row === null || $sourceInfoOnly) {
                 return [...$policy, 'revision' => null, 'state_version' => (int) $session->state_version, 'result' => null, 'confirmed_scenario' => null];
             }
             $recalculationPending = in_array($session->status->value, ['generating', 'processing_documents'], true);
