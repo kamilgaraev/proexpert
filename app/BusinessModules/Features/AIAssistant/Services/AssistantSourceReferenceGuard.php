@@ -149,7 +149,7 @@ class AssistantSourceReferenceGuard
             if ($query !== null && ($reference['content_scope'] ?? null) === 'structured') {
                 $table = $query->getModel()->getTable();
                 $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
-                $internalColumns = array_intersect([...($type === 'schedule_task' ? ['schedule_id'] : []),
+                $internalColumns = array_intersect([...$this->policy->entityProjectScopeColumns($type, $query->getModel()),
                     ...($relatedFields === [] ? [] : [AssistantDomainRelatedFields::parentColumn($type)])], $columns);
                 $safeColumns = $engineeringReference ? $allowed : (AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? $columns);
                 $columns = array_values(array_intersect($columns, $safeColumns));
@@ -162,7 +162,7 @@ class AssistantSourceReferenceGuard
                 return false;
             }
             if ($relatedFields !== []) { AssistantDomainRelatedFields::hydrate([$entity], $type, $organizationId); }
-            if ($type === 'schedule_task' && array_key_exists('project_id', $reference) && ($reference['content_scope'] ?? null) === 'structured'
+            if (($type !== 'machinery_asset' || ! isset($reference['machinery_project_scope'])) && array_key_exists('project_id', $reference) && ($reference['content_scope'] ?? null) === 'structured'
                 && $reference['project_id'] !== $this->policy->resolvedEntityProjectId($actor, $organizationId, $type, $entity)) {
                 return false;
             }

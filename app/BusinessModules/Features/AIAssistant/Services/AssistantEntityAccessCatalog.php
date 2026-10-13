@@ -58,6 +58,12 @@ final class AssistantEntityAccessCatalog
         'performance_act' => ['contract', 'contract'], 'performance_act_line' => ['performanceAct', 'performance_act'],
     ];
     private const SECURITY_PARENT_COLUMNS = [
+        'acceptance_checklist' => ['acceptance_scope_id' => ['type' => 'acceptance_scope', 'nullable' => false, 'match_project' => true]],
+        'acceptance_checklist_item' => ['acceptance_checklist_id' => ['type' => 'acceptance_checklist', 'nullable' => false]],
+        'production_labor_timesheet' => ['work_order_id' => ['type' => 'production_labor_work_order', 'nullable' => false, 'match_project' => true]],
+        'production_labor_work_order_line' => ['work_order_id' => ['type' => 'production_labor_work_order', 'nullable' => false]],
+        'production_labor_timesheet_entry' => ['timesheet_id' => ['type' => 'production_labor_timesheet', 'nullable' => false],
+            'work_order_line_id' => ['type' => 'production_labor_work_order_line', 'nullable' => false]],
         'inventory_act' => ['warehouse_id' => ['type' => 'warehouse', 'nullable' => false]],
         'warehouse_storage_cell' => ['warehouse_id' => ['type' => 'warehouse', 'nullable' => false],
             'zone_id' => ['type' => 'warehouse_zone', 'nullable' => true, 'matches' => ['warehouse_id' => 'warehouse_id']]],
