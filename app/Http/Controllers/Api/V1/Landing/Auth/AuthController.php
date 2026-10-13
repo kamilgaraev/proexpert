@@ -20,6 +20,8 @@ use App\Models\User;
 use App\Services\Auth\JwtAuthService;
 use App\Services\Auth\RegistrationIdempotencyService;
 use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshUnavailableException;
+use App\Services\Auth\WebRefreshRejectedException;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\PerformanceMonitor;
 use Illuminate\Http\JsonResponse;
@@ -263,8 +265,7 @@ class AuthController extends Controller
         $refreshToken = $request->attributes->get('web_refresh_token');
 
         if (! $payload instanceof WebAuthTokenPayload || ! is_string($refreshToken) || $request->user() === null) {
-            return LandingResponse::error(trans_message('auth.token_error'), 401)
-                ->withCookie($this->refreshCookies->clear('lk'));
+            return LandingResponse::error(trans_message('auth.token_error'), 401);
         }
 
         try {
@@ -277,13 +278,20 @@ class AuthController extends Controller
                 'csrf_token' => $tokens->csrfToken,
             ], trans_message('auth.token_refreshed'))
                 ->withCookie($this->refreshCookies->make('lk', $tokens->refreshToken, $tokens->refreshExpiresAt));
-        } catch (\Throwable $exception) {
+        } catch (WebRefreshUnavailableException) {
+            return LandingResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
+        } catch (WebRefreshRejectedException $exception) {
             Log::warning('landing.web_auth.refresh_failed', [
                 'exception_class' => $exception::class,
             ]);
 
-            return LandingResponse::error(trans_message('auth.token_error'), 401)
-                ->withCookie($this->refreshCookies->clear('lk'));
+            return LandingResponse::error(trans_message('auth.token_error'), 401);
+        } catch (\Throwable $exception) {
+            Log::warning('landing.web_auth.refresh_unavailable', ['exception_class' => $exception::class]);
+
+            return LandingResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
         }
     }
 
@@ -295,7 +303,7 @@ class AuthController extends Controller
             return LandingResponse::error(trans_message('auth.token_error'), 401);
         }
 
-        return LandingResponse::success(['csrf_token' => $payload->csrfToken]);
+        return LandingResponse::success(['csrf_token' => $payload->csrfToken, 'session_id' => $payload->sessionUuid]);
     }
 
     /**
@@ -309,13 +317,15 @@ class AuthController extends Controller
         $user = $request->user();
 
         if (! $payload instanceof WebAuthTokenPayload || $user === null) {
-            return LandingResponse::error(trans_message('auth.token_error'), 401)
-                ->withCookie($this->refreshCookies->clear('lk'));
+            return LandingResponse::error(trans_message('auth.token_error'), 401);
         }
 
         $this->webAuthentication->logout($user, 'lk', $payload->sessionUuid);
 
-        return LandingResponse::success(null, trans_message('auth.logout_success'))
-            ->withCookie($this->refreshCookies->clear('lk'));
+        $response = LandingResponse::success(null, trans_message('auth.logout_success'));
+
+        return $this->webAuthentication->canClearRefreshCookie($request, 'lk', $payload->sessionUuid)
+            ? $response->withCookie($this->refreshCookies->clear('lk'))
+            : $response;
     }
 }

@@ -6,6 +6,7 @@ namespace App\Http\Middleware;
 
 use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Services\Auth\WebAuthTokenService;
+use App\Services\Auth\WebAuthFailureResponder;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,14 +20,14 @@ final class VerifyWebCsrfToken
         $csrfToken = $request->header('X-CSRF-Token');
 
         if (! is_string($csrfToken) || $csrfToken === '') {
-            return $this->error($audience);
+            return WebAuthFailureResponder::reject($request, $audience, 403, 'web_csrf_missing');
         }
 
         $refreshPayload = $request->attributes->get('web_refresh_payload');
 
         if ($refreshPayload instanceof WebAuthTokenPayload) {
             if (! is_string($refreshPayload->csrfToken) || ! hash_equals($refreshPayload->csrfToken, $csrfToken)) {
-                return $this->error($audience);
+                return WebAuthFailureResponder::reject($request, $audience, 403, 'web_csrf_mismatch');
             }
 
             return $next($request);
@@ -37,20 +38,10 @@ final class VerifyWebCsrfToken
         if (! $accessPayload instanceof WebAuthTokenPayload
             || ! $this->tokens->matchesCurrentCsrfToken($accessPayload, $csrfToken)
         ) {
-            return $this->error($audience);
+            return WebAuthFailureResponder::reject($request, $audience, 403, 'web_csrf_mismatch');
         }
 
         return $next($request);
     }
 
-    private function error(string $audience): Response
-    {
-        $message = trans_message('auth.access_denied');
-
-        return match ($audience) {
-            'admin' => \App\Http\Responses\AdminResponse::error($message, 403),
-            'customer' => \App\Http\Responses\CustomerResponse::error($message, 403),
-            default => \App\Http\Responses\LandingResponse::error($message, 403),
-        };
-    }
 }

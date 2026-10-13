@@ -24,47 +24,46 @@ final class AuthenticateWebRefreshToken
 
     public function handle(Request $request, Closure $next, string $audience): Response
     {
+        $refreshToken = $this->cookies->tokenFromRequest($request, $audience);
+        if ($refreshToken === null) {
+            return $this->error($audience);
+        }
+
         try {
-            $refreshToken = $this->cookies->tokenFromRequest($request, $audience);
-
-            if ($refreshToken === null) {
-                return $this->error($audience);
-            }
-
             $payload = $this->tokens->parse($refreshToken, $audience, 'refresh');
-            $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
-            $user = User::query()->find($payload->userId);
-
-            if ($session === null
-                || ! $user instanceof User
-                || ! $user->is_active
-                || (int) $session->user_id !== (int) $user->id
-            ) {
-                return $this->error($audience);
-            }
-
-            if ($payload->organizationId !== null
-                && ! $user->activeOrganizations()->whereKey($payload->organizationId)->exists()
-            ) {
-                $this->sessions->revoke($session, 'organization_membership_inactive');
-                $this->tokens->invalidateRefreshSession($audience, $payload->sessionUuid);
-
-                return $this->membershipError($audience);
-            }
-
-            $guard = $audience === 'admin' ? 'api_admin' : 'api_landing';
-            Auth::shouldUse($guard);
-            Auth::guard($guard)->setUser($user);
-            $request->setUserResolver(static fn (): User => $user);
-            $request->attributes->set('web_auth_audience', $audience);
-            $request->attributes->set('web_refresh_payload', $payload);
-            $request->attributes->set('web_refresh_token', $refreshToken);
-            $request->attributes->set('auth_session', $session);
-
-            return $next($request);
         } catch (Throwable) {
             return $this->error($audience);
         }
+        $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
+        $user = User::query()->find($payload->userId);
+
+        if ($session === null
+            || ! $user instanceof User
+            || ! $user->is_active
+            || (int) $session->user_id !== (int) $user->id
+        ) {
+            return $this->error($audience);
+        }
+
+        if ($payload->organizationId !== null
+            && ! $user->activeOrganizations()->whereKey($payload->organizationId)->exists()
+        ) {
+            $this->sessions->revoke($session, 'organization_membership_inactive');
+            $this->tokens->invalidateRefreshSession($audience, $payload->sessionUuid);
+
+            return $this->membershipError($audience);
+        }
+
+        $guard = $audience === 'admin' ? 'api_admin' : 'api_landing';
+        Auth::shouldUse($guard);
+        Auth::guard($guard)->setUser($user);
+        $request->setUserResolver(static fn (): User => $user);
+        $request->attributes->set('web_auth_audience', $audience);
+        $request->attributes->set('web_refresh_payload', $payload);
+        $request->attributes->set('web_refresh_token', $refreshToken);
+        $request->attributes->set('auth_session', $session);
+
+        return $next($request);
     }
 
     private function error(string $audience): Response

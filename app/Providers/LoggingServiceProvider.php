@@ -22,20 +22,20 @@ class LoggingServiceProvider extends ServiceProvider
     public function register(): void
     {
         // Регистрировать контексты (новый экземпляр для каждого запроса)
-        $this->app->bind(RequestContext::class, function ($app) {
+        $this->app->scoped(RequestContext::class, function ($app) {
             return new RequestContext();
         });
 
-        $this->app->bind(UserContext::class, function ($app) {
+        $this->app->scoped(UserContext::class, function ($app) {
             return new UserContext();
         });
 
-        $this->app->bind(PerformanceContext::class, function ($app) {
+        $this->app->scoped(PerformanceContext::class, function ($app) {
             return new PerformanceContext();
         });
 
         // Регистрировать специализированные логгеры
-        $this->app->singleton(AuditLogger::class, function ($app) {
+        $this->app->scoped(AuditLogger::class, function ($app) {
             return new AuditLogger(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),
@@ -43,7 +43,7 @@ class LoggingServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(BusinessLogger::class, function ($app) {
+        $this->app->scoped(BusinessLogger::class, function ($app) {
             return new BusinessLogger(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),
@@ -51,7 +51,7 @@ class LoggingServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(SecurityLogger::class, function ($app) {
+        $this->app->scoped(SecurityLogger::class, function ($app) {
             return new SecurityLogger(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),
@@ -59,7 +59,7 @@ class LoggingServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(TechnicalLogger::class, function ($app) {
+        $this->app->scoped(TechnicalLogger::class, function ($app) {
             return new TechnicalLogger(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),
@@ -67,7 +67,7 @@ class LoggingServiceProvider extends ServiceProvider
             );
         });
 
-        $this->app->singleton(AccessLogger::class, function ($app) {
+        $this->app->scoped(AccessLogger::class, function ($app) {
             return new AccessLogger(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),
@@ -76,7 +76,7 @@ class LoggingServiceProvider extends ServiceProvider
         });
 
         // Регистрировать основной LoggingService
-        $this->app->singleton(LoggingService::class, function ($app) {
+        $this->app->scoped(LoggingService::class, function ($app) {
             return new LoggingService(
                 $app->make(RequestContext::class),
                 $app->make(UserContext::class),

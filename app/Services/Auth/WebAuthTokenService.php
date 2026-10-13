@@ -37,6 +37,19 @@ final class WebAuthTokenService
         ?int $organizationId,
         bool $remembered,
     ): WebAuthTokenPair {
+        $pair = $this->buildPair($user, $audience, $sessionUuid, $organizationId, $remembered);
+        $this->persistRefreshToken($audience, $sessionUuid, $pair);
+
+        return $pair;
+    }
+
+    private function buildPair(
+        User $user,
+        string $audience,
+        string $sessionUuid,
+        ?int $organizationId,
+        bool $remembered,
+    ): WebAuthTokenPair {
         $configuration = $this->configuration($audience);
         $now = new DateTimeImmutable;
         $accessExpiresAt = $now->add(new DateInterval('PT'.$this->accessTtlMinutes().'M'));
@@ -69,7 +82,7 @@ final class WebAuthTokenService
             $csrfToken,
             $refreshTokenId,
         );
-        $pair = new WebAuthTokenPair(
+        return new WebAuthTokenPair(
             $accessToken,
             $refreshToken,
             $csrfToken,
@@ -77,10 +90,6 @@ final class WebAuthTokenService
             $accessExpiresAt,
             $refreshExpiresAt,
         );
-
-        $this->persistRefreshToken($audience, $sessionUuid, $pair);
-
-        return $pair;
     }
 
     public function parse(string $token, string $audience, string $expectedTokenUse): WebAuthTokenPayload
@@ -167,7 +176,7 @@ final class WebAuthTokenService
 
                 if ($session === null || (int) $session->user_id !== (int) $user->id || ! $user->is_active) {
                     $this->revokeForRefreshFailure($payload);
-                    throw new RuntimeException('Refresh session is no longer active.');
+                    throw new WebRefreshRejectedException('Refresh session is no longer active.');
                 }
 
                 $record = Cache::get($this->refreshCacheKey($payload->audience, $payload->sessionUuid));
@@ -187,10 +196,10 @@ final class WebAuthTokenService
                     }
 
                     $this->revokeForRefreshFailure($payload);
-                    throw new RuntimeException('Refresh token replay detected.');
+                    throw new WebRefreshRejectedException('Refresh token replay detected.');
                 }
 
-                $rotated = $this->issue(
+                $rotated = $this->buildPair(
                     $user,
                     $payload->audience,
                     $payload->sessionUuid,
@@ -198,11 +207,12 @@ final class WebAuthTokenService
                     $payload->remembered,
                 );
                 $this->cacheRotationResult($payload, $rotated);
+                $this->persistRefreshToken($payload->audience, $payload->sessionUuid, $rotated);
 
                 return $rotated;
             });
         } catch (LockTimeoutException) {
-            throw new RuntimeException('Refresh token rotation is unavailable.');
+            throw new WebRefreshUnavailableException('Refresh token rotation is unavailable.');
         }
     }
 
@@ -267,7 +277,7 @@ final class WebAuthTokenService
         );
 
         if ($stored !== true) {
-            throw new RuntimeException('Refresh session storage failed.');
+            throw new WebRefreshUnavailableException('Refresh session storage failed.');
         }
     }
 
@@ -343,8 +353,7 @@ final class WebAuthTokenService
         );
 
         if ($stored !== true) {
-            $this->revokeForRefreshFailure($payload);
-            throw new RuntimeException('Refresh rotation result storage failed.');
+            throw new WebRefreshUnavailableException('Refresh rotation result storage failed.');
         }
     }
 

@@ -8,6 +8,7 @@ use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\WebAuthTokenPair;
 use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -100,6 +101,23 @@ final class WebAuthenticationService
 
         if ($session !== null && (int) $session->user_id === (int) $user->id) {
             $this->sessions->revoke($session, 'user_logout');
+        }
+    }
+
+    public function canClearRefreshCookie(Request $request, string $audience, string $sessionUuid): bool
+    {
+        $name = config("web_auth.cookies.{$audience}.name");
+        $token = is_string($name) ? $request->cookie($name) : null;
+        if (! is_string($token) || $token === '') {
+            return false;
+        }
+
+        try {
+            $payload = $this->tokens->parse($token, $audience, 'refresh');
+
+            return hash_equals($payload->sessionUuid, $sessionUuid);
+        } catch (Throwable) {
+            return false;
         }
     }
 }

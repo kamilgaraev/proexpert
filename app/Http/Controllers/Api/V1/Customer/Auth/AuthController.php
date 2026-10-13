@@ -15,6 +15,8 @@ use App\Http\Requests\Api\V1\Customer\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Customer\Auth\ResetPasswordRequest;
 use App\Http\Responses\CustomerResponse;
 use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshUnavailableException;
+use App\Services\Auth\WebRefreshRejectedException;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\Customer\Auth\CustomerAuthService;
 use Illuminate\Http\JsonResponse;
@@ -119,8 +121,7 @@ class AuthController extends Controller
         $refreshToken = $request->attributes->get('web_refresh_token');
 
         if (! $payload instanceof WebAuthTokenPayload || ! is_string($refreshToken) || $request->user() === null) {
-            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401)
-                ->withCookie($this->refreshCookies->clear('customer'));
+            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401);
         }
 
         try {
@@ -137,14 +138,21 @@ class AuthController extends Controller
                     $tokens->refreshToken,
                     $tokens->refreshExpiresAt,
                 ));
-        } catch (Throwable $exception) {
+        } catch (WebRefreshUnavailableException) {
+            return CustomerResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
+        } catch (WebRefreshRejectedException $exception) {
             Log::error('customer.auth.refresh.failed', [
                 'user_id' => $request->user()?->id,
                 'exception_class' => $exception::class,
             ]);
 
-            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401)
-                ->withCookie($this->refreshCookies->clear('customer'));
+            return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401);
+        } catch (Throwable $exception) {
+            Log::warning('customer.auth.refresh.unavailable', ['exception_class' => $exception::class]);
+
+            return CustomerResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
         }
     }
 
@@ -156,7 +164,7 @@ class AuthController extends Controller
             return CustomerResponse::error(trans_message('customer.auth.refresh_error'), 401);
         }
 
-        return CustomerResponse::success(['csrf_token' => $payload->csrfToken]);
+        return CustomerResponse::success(['csrf_token' => $payload->csrfToken, 'session_id' => $payload->sessionUuid]);
     }
 
     public function logout(Request $request): JsonResponse
@@ -166,16 +174,19 @@ class AuthController extends Controller
             $user = $request->user();
 
             if (! $payload instanceof WebAuthTokenPayload || $user === null) {
-                return CustomerResponse::error(trans_message('customer.auth.logout_error'), 401)
-                    ->withCookie($this->refreshCookies->clear('customer'));
+                return CustomerResponse::error(trans_message('customer.auth.logout_error'), 401);
             }
 
             $this->webAuthentication->logout($user, 'customer', $payload->sessionUuid);
 
-            return CustomerResponse::success(
+            $response = CustomerResponse::success(
                 null,
                 trans_message('customer.auth.logout_success')
-            )->withCookie($this->refreshCookies->clear('customer'));
+            );
+
+            return $this->webAuthentication->canClearRefreshCookie($request, 'customer', $payload->sessionUuid)
+                ? $response->withCookie($this->refreshCookies->clear('customer'))
+                : $response;
         } catch (Throwable $exception) {
             Log::error('customer.auth.logout.failed', [
                 'user_id' => $request->user()?->id,

@@ -48,50 +48,50 @@ final class WebInterfaceSecurityMiddleware
 
         try {
             $payload = $this->tokens->parse($accessToken, $audience, 'access');
-            $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
-            $user = User::query()->find($payload->userId);
-
-            if ($session === null
-                || ! $user instanceof User
-                || ! $user->is_active
-                || (int) $session->user_id !== (int) $user->id
-            ) {
-                return $this->error($audience, 401);
-            }
-
-            $organization = $this->resolveOrganization($user, $payload, $audience);
-
-            if ($organization === false) {
-                return $this->error($audience, 403);
-            }
-
-            $context = $organization !== null
-                ? AuthorizationContext::getOrganizationContext((int) $organization->id)
-                : AuthorizationContext::getSystemContext();
-
-            if (! $this->hasInterfaceAccess($user, $audience, $context)
-                || ! $this->hasRequiredInterfacePermission($user, $audience, $organization?->id)
-            ) {
-                return $this->error($audience, 403);
-            }
-
-            if (! $request->isMethodSafe() && ! $this->origins->allows($request->header('Origin'), $audience)) {
-                return $this->error($audience, 403);
-            }
-
-            $this->bindAuthenticatedUser($request, $user, $payload, $session, $audience);
-
-            if ($organization !== null) {
-                $request->attributes->set('current_organization_id', (int) $organization->id);
-                $request->attributes->set('current_organization', $organization);
-                $user->current_organization_id = (int) $organization->id;
-                App::instance(OrganizationContext::class, new OrganizationContext($organization));
-            }
-
-            return $next($request);
         } catch (Throwable) {
             return $this->error($audience, 401);
         }
+        $session = $this->sessions->findActiveByUuid($payload->sessionUuid);
+        $user = User::query()->find($payload->userId);
+
+        if ($session === null
+            || ! $user instanceof User
+            || ! $user->is_active
+            || (int) $session->user_id !== (int) $user->id
+        ) {
+            return $this->error($audience, 401);
+        }
+
+        $organization = $this->resolveOrganization($user, $payload, $audience);
+
+        if ($organization === false) {
+            return $this->error($audience, 403);
+        }
+
+        $context = $organization !== null
+            ? AuthorizationContext::getOrganizationContext((int) $organization->id)
+            : AuthorizationContext::getSystemContext();
+
+        if (! $this->hasInterfaceAccess($user, $audience, $context)
+            || ! $this->hasRequiredInterfacePermission($user, $audience, $organization?->id)
+        ) {
+            return $this->error($audience, 403);
+        }
+
+        if (! $request->isMethodSafe() && ! $this->origins->allows($request->header('Origin'), $audience)) {
+            return $this->error($audience, 403);
+        }
+
+        $this->bindAuthenticatedUser($request, $user, $payload, $session, $audience);
+
+        if ($organization !== null) {
+            $request->attributes->set('current_organization_id', (int) $organization->id);
+            $request->attributes->set('current_organization', $organization);
+            $user->current_organization_id = (int) $organization->id;
+            App::instance(OrganizationContext::class, new OrganizationContext($organization));
+        }
+
+        return $next($request);
     }
 
     private function audienceFor(Request $request): ?string

@@ -17,6 +17,8 @@ use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\Services\Activity\ActivityEventRecorder;
 use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshUnavailableException;
+use App\Services\Auth\WebRefreshRejectedException;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\Logging\LoggingService;
 use Illuminate\Http\Request;
@@ -175,8 +177,7 @@ class AuthController extends Controller
         $refreshToken = $request->attributes->get('web_refresh_token');
 
         if (! $payload instanceof WebAuthTokenPayload || ! is_string($refreshToken) || $request->user() === null) {
-            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED)
-                ->withCookie($this->refreshCookies->clear('admin'));
+            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED);
         }
 
         try {
@@ -189,13 +190,20 @@ class AuthController extends Controller
                 'csrf_token' => $tokens->csrfToken,
             ], trans_message('auth.token_refreshed'))
                 ->withCookie($this->refreshCookies->make('admin', $tokens->refreshToken, $tokens->refreshExpiresAt));
-        } catch (\Throwable $exception) {
+        } catch (WebRefreshUnavailableException) {
+            return AdminResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
+        } catch (WebRefreshRejectedException $exception) {
             $this->logging->security('auth.admin.refresh.failed', [
                 'exception_class' => $exception::class,
             ], 'warning');
 
-            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED)
-                ->withCookie($this->refreshCookies->clear('admin'));
+            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED);
+        } catch (\Throwable $exception) {
+            $this->logging->security('auth.admin.refresh.unavailable', ['exception_class' => $exception::class], 'warning');
+
+            return AdminResponse::error(trans_message('errors.service_unavailable'), 503, null, ['code' => 'web_refresh_unavailable'])
+                ->header('Retry-After', '1');
         }
     }
 
@@ -207,7 +215,7 @@ class AuthController extends Controller
             return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED);
         }
 
-        return AdminResponse::success(['csrf_token' => $payload->csrfToken]);
+        return AdminResponse::success(['csrf_token' => $payload->csrfToken, 'session_id' => $payload->sessionUuid]);
     }
 
     /**
@@ -221,14 +229,16 @@ class AuthController extends Controller
         $user = $request->user();
 
         if (! $payload instanceof WebAuthTokenPayload || $user === null) {
-            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED)
-                ->withCookie($this->refreshCookies->clear('admin'));
+            return AdminResponse::error(trans_message('auth.token_error'), Response::HTTP_UNAUTHORIZED);
         }
 
         $this->webAuthentication->logout($user, 'admin', $payload->sessionUuid);
 
-        return AdminResponse::success(null, trans_message('auth.logout_success'))
-            ->withCookie($this->refreshCookies->clear('admin'));
+        $response = AdminResponse::success(null, trans_message('auth.logout_success'));
+
+        return $this->webAuthentication->canClearRefreshCookie($request, 'admin', $payload->sessionUuid)
+            ? $response->withCookie($this->refreshCookies->clear('admin'))
+            : $response;
     }
 
     private function recordAuthActivity(
