@@ -32,6 +32,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
     private Project $hidden;
     private array $deniedModules = [];
     private array $deniedPermissions = [];
+    private array $additionalModules = [];
     private bool $duplicateProjectRows = false;
 
     protected function setUp(): void
@@ -45,7 +46,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => collect([
-            'ai-assistant', 'project-management', 'payments', 'budget-estimates', 'reports',
+            'ai-assistant', 'project-management', 'payments', 'budget-estimates', 'reports', ...$this->additionalModules,
         ])->reject(fn (string $slug): bool => in_array($slug, $this->deniedModules, true))
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $projectAccess = Mockery::mock(UserProjectAccessService::class);
@@ -253,6 +254,95 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
         $this->assertSame([], $optimized->get()->pluck('id')->all());
         $this->assertSame([], $batchIds());
+    }
+
+    public function test_counter_batches_carry_scoped_rows_without_reading_sources_twice(): void
+    {
+        $this->duplicateProjectRows = true;
+        $this->additionalModules = ['budgeting'];
+        $source = $this->source($this->organization->id, $this->visible->id, 'project', 'project', $this->visible->id);
+        DB::statement('INSERT INTO ai_rag_sources (organization_id, project_id, identity_project_id, source_type, entity_type, entity_id, identity_part_key, title, checksum, indexed_at) '
+            ."SELECT ?, ?, ?, 'project', 'project', ?::text, 'count-part-' || n, 'Counter source', md5('counter'), NOW() FROM generate_series(1, 1000) n",
+            [$this->organization->id, $this->visible->id, $this->visible->id, $this->visible->id]);
+        $estimate = Estimate::create(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'number' => 'counter-scope-'.$this->organization->id, 'name' => 'Estimate', 'estimate_date' => today()]);
+        $this->source($this->organization->id, $this->visible->id, 'estimate', 'estimate', $estimate->id);
+        $source->replicate()->forceFill(['entity_id' => '0'.$this->visible->id])->saveQuietly();
+        $source->replicate()->forceFill(['project_id' => $this->hidden->id, 'identity_part_key' => 'hidden'])->saveQuietly();
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $source->replicate()->forceFill(['organization_id' => $foreign->id])->saveQuietly();
+        $snapshot = DB::table('epm_data_mart_snapshots')->insertGetId([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $this->organization->id,
+            'project_id' => $this->visible->id, 'report_scope' => 'project', 'scope_hash' => hash('sha256', 'scope'),
+            'status' => 'ready', 'formula_version' => 'v1', 'source_hash' => hash('sha256', 'source'),
+            'filters' => '{}', 'payload' => '{}', 'freshness' => '{}', 'source_refs' => '[]', 'generated_at' => now(),
+        ]);
+        $legacy = $this->source($this->organization->id, $this->visible->id, 'budgeting', 'epm_data_mart_snapshot', $snapshot);
+        $legacy->replicate()->forceFill(['identity_part_key' => 'current-revision', 'metadata' => [
+            \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::FIELD => \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revision('epm_data_mart_snapshot'),
+        ]])->saveQuietly();
+        $file = \App\Models\File::withoutEvents(fn () => \App\Models\File::create([
+            'organization_id' => $this->organization->id, 'user_id' => $this->actor->id,
+            'fileable_type' => Project::class, 'fileable_id' => $this->visible->id,
+            'name' => 'Counter.pdf', 'original_name' => 'Counter.pdf', 'path' => 'org-'.$this->organization->id.'/counter.pdf',
+            'disk' => 's3', 'mime_type' => 'application/pdf', 'size' => 100,
+        ]));
+        $document = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::withoutEvents(fn () => \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->visible->id, 'file_id' => $file->id,
+            'parent_entity_type' => 'project', 'parent_entity_id' => (string) $this->visible->id,
+            'storage_path' => $file->path, 'filename' => 'Counter.pdf', 'mime_type' => 'application/pdf',
+            'checksum' => hash('sha256', 'document'), 'size_bytes' => 100, 'status' => 'ready',
+        ]));
+        $this->source($this->organization->id, $this->visible->id, 'file_document', 'assistant_document', $document->id);
+        DB::table('ai_rag_chunks')->insert(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'source_id' => $source->id, 'chunk_index' => 0, 'content' => 'Counter chunk', 'content_hash' => hash('sha256', 'Counter chunk')]);
+        DB::statement('ANALYZE ai_rag_status_sources');
+        $aggregate = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
+        $batches = $this->policy->aggregateSourceIdentityBatches(RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'),
+            $this->actor, $this->organization->id, $columns, $aggregate);
+        self::assertCount(1, $batches);
+        $read = static function () use ($batches): array {
+            $result = [];
+            foreach ($batches as $batch) {
+                foreach ($batch->get() as $row) {
+                    $result[$row->source_type] = [(int) $row->stored_count, (int) $row->chunk_count, (int) $row->indexed_count];
+                }
+            }
+            ksort($result);
+
+            return $result;
+        };
+        self::assertSame(['budgeting' => [1, 0, 0], 'estimate' => [1, 0, 0], 'file_document' => [1, 0, 0], 'project' => [1001, 1, 0]], $read());
+        $documentBatches = $this->policy->aggregateSourceIdentityBatches(
+            RagSource::query()->from('ai_rag_status_sources as ai_rag_sources')->where('source_type', 'file_document'),
+            $this->actor, $this->organization->id, $columns, $aggregate);
+        self::assertCount(1, $documentBatches);
+        self::assertSame('file_document', $documentBatches[0]->first()->source_type);
+        self::assertSame(1, (int) $documentBatches[0]->first()->stored_count);
+        $scanned = 0;
+        $collect = static function (array $node) use (&$collect, &$scanned): void {
+            if (($node['Relation Name'] ?? null) === 'ai_rag_status_sources') {
+                $scanned += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+            }
+            foreach ($node['Plans'] ?? [] as $child) {
+                $collect($child);
+            }
+        };
+        $plan = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
+        $collect(json_decode($plan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        self::assertLessThanOrEqual(1200, $scanned, 'Bounded counter batches must not recover the same source rows again after their identity check.');
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->delete();
+        self::assertSame(['budgeting' => [1, 0, 0], 'estimate' => [1, 0, 0], 'file_document' => [1, 0, 0], 'project' => [1001, 0, 0]], $read());
+        $file->update(['path' => 'counter/replaced.pdf']);
+        self::assertSame(['budgeting' => [1, 0, 0], 'estimate' => [1, 0, 0], 'project' => [1001, 0, 0]], $read());
+        self::assertNull($documentBatches[0]->first());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        self::assertSame([], $read());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        self::assertSame([], $read());
     }
 
     public function test_present_report_identity_keeps_structured_content_scope_checks(): void

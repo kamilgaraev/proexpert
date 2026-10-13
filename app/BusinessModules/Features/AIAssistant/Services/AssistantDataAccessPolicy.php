@@ -692,7 +692,10 @@ final class AssistantDataAccessPolicy
                     $batchIdentitySources = $expectedProjection && $joinSourceIds
                         ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
                         : $identitySources;
-                    $sourceColumns = ! $expectedProjection && $joinSourceIds && $types === ['design_additional'] && ! in_array($table.'.*', $columns, true)
+                    $sourceColumns = ! $expectedProjection && $joinSourceIds && ! in_array($table.'.*', $columns, true)
+                        && ($types === ['design_additional'] || ($batchSize !== null && $columns === [
+                            $table.'.id', $table.'.source_type', $table.'.project_id', $table.'.chunk_count', $table.'.indexed_chunk_count',
+                        ]))
                         ? $candidateColumns : null;
                     if ($sourceColumns !== null) {
                         $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: false)->select([])->toBase();
@@ -778,7 +781,7 @@ final class AssistantDataAccessPolicy
                 $documentCandidates = AIAssistantDocument::query()->where('organization_id', $organizationId)
                     ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
                         $documentIdentities->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
-                $branch = $this->sourceQueries->identityBranch($this->accessibleDocuments($user, $organizationId, $documentCandidates), 'file_document', 'assistant_document', $identitySources, $table, $expectedProjection);
+                $branch = $this->sourceQueries->identityBranch($this->accessibleDocuments($user, $organizationId, $documentCandidates), 'file_document', 'assistant_document', $identitySources, $table, $expectedProjection, $sourceColumns);
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
 
