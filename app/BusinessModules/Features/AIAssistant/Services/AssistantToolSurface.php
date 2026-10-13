@@ -48,6 +48,8 @@ final class AssistantToolSurface
             '/внимани|приоритет|главн[а-яё]*\s+проблем|план[её]рк|риски\s+(?:проекта|объекта)/iu' => ['get_project_attention'],
             '/сотрудник|персонал|people|workforce/iu' => ['search_users'],
             '/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu' => ['get_project_staff_roster'],
+            '/материал|поставк|достав/iu' => ['get_project_deliveries'],
+            '/отсутст|отпуск|больнич|командиров/iu' => ['get_project_daily_staff'],
             '/табел|кто\s+работал|сколько\s+часов|уч[её]т.*врем/iu' => ['get_project_workforce_summary'],
             '/сч[её]т|плат[её]ж|оплат/iu' => ['get_project_payment_readiness'],
             '/документ|файл/iu' => ['get_document_readiness'],

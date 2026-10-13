@@ -12,6 +12,11 @@ use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrgan
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationNotificationsReader;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationProjectsReader;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationSuppliersReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantCatalogLookupReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOwnProjectAccessReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationPurchaseOrdersReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectDailyStaffReader;
+use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectDeliveriesReader;
 use App\Models\Contract;
 use App\Models\Project;
 use App\Services\Contract\ContractOrganizationViewService;
@@ -45,12 +50,18 @@ final class AssistantOrganizationReadonlyGuardTest extends TestCase
             $lifecycle = (new \ReflectionClass(AssistantRequestLifecycle::class))->newInstanceWithoutConstructor();
             $context = new AssistantRequestExecutionContext($lifecycle, new AssistantRequest, $actor, 30000);
             app()->instance(AssistantRequestExecutionContext::class, $context); $context->activate();
-            DB::transaction(function () use ($org, $actor): void {
+            DB::transaction(function () use ($org, $actor, $project): void {
                 DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
                 foreach ([AssistantOrganizationProjectsReader::class, AssistantOrganizationSuppliersReader::class,
-                    AssistantOrganizationActivityReader::class, AssistantOrganizationNotificationsReader::class, AssistantContractSupplementaryReader::class] as $class) {
-                    $reader = app($class); $args = $class === AssistantContractSupplementaryReader::class
-                        ? ['contract_number' => 'GUARD-52', 'project_id' => null, 'project_query' => 'Объект проверки'] : ['scope' => 'organization'];
+                    AssistantOrganizationActivityReader::class, AssistantOrganizationNotificationsReader::class, AssistantContractSupplementaryReader::class,
+                    AssistantCatalogLookupReader::class, AssistantOwnProjectAccessReader::class, AssistantOrganizationPurchaseOrdersReader::class,
+                    AssistantProjectDailyStaffReader::class, AssistantProjectDeliveriesReader::class] as $class) {
+                    $reader = app($class); $args = match ($class) {
+                        AssistantContractSupplementaryReader::class => ['contract_number' => 'GUARD-52', 'project_id' => null, 'project_query' => 'Объект проверки'],
+                        AssistantCatalogLookupReader::class => ['material_query' => 'цемент', 'work_type_query' => 'бетонированию'],
+                        AssistantProjectDailyStaffReader::class, AssistantProjectDeliveriesReader::class => ['project_id' => (int) $project->id],
+                        default => ['scope' => 'organization'],
+                    };
                     $result = $reader->read($actor, $org, $args);
                     self::assertNotEmpty($result['server_formatted_answer']);
                     self::assertTrue($reader->matchesReference($actor, $org, $result['source_refs'][0]), $class);
