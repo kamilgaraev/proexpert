@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Enums\EstimatePositionItemType;
+use App\BusinessModules\Features\BudgetEstimates\Jobs\CalculateEstimateStatisticsJob;
+use App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimatePositionCatalog;
@@ -15,6 +17,8 @@ use App\Models\Project;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -26,6 +30,8 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Storage::fake('s3');
+        Bus::fake([CalculateEstimateStatisticsJob::class, GenerateEstimateSnapshotJob::class]);
         \App\Models\Module::query()->create([
             'name' => 'Сметы',
             'slug' => 'budget-estimates',
@@ -253,6 +259,89 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         $this->assertEquals(3, $item->fresh()->quantity);
     }
 
+    public function test_bulk_save_updates_nested_sections_and_estimate_totals_without_an_extra_recalculation(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, [
+            'vat_rate' => 0, 'total_direct_costs' => 30300, 'total_amount' => 30300, 'total_amount_with_vat' => 30300,
+        ]);
+        $root = $this->createSection($estimate, ['section_total_amount' => 30300]);
+        $child = $this->createSection($estimate, ['parent_section_id' => $root->id, 'section_total_amount' => 30300]);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $primer = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $child->id, 'quantity' => 20, 'unit_price' => 180, 'direct_costs' => 3600, 'total_amount' => 3600,
+        ]);
+        $this->createItem($estimate, $unit, ['estimate_section_id' => $child->id, 'direct_costs' => 16200, 'total_amount' => 16200]);
+        $this->createItem($estimate, $unit, ['estimate_section_id' => $root->id, 'direct_costs' => 10500, 'total_amount' => 10500]);
+        $this->createItem($estimate, $unit, ['estimate_section_id' => $child->id, 'parent_work_id' => $primer->id, 'total_amount' => 90000]);
+        $this->createItem($estimate, $unit, ['estimate_section_id' => $root->id, 'is_not_accounted' => true, 'total_amount' => 80000]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/bulk-update", [
+                'items' => [['id' => $primer->id, 'quantity' => 21]],
+            ])->assertOk();
+
+        $this->assertEquals(3780, $primer->fresh()->total_amount);
+        $this->assertEquals(19980, $child->fresh()->section_total_amount);
+        $this->assertEquals(30480, $root->fresh()->section_total_amount);
+        $this->assertEquals(30480, $estimate->fresh()->total_direct_costs);
+        $this->assertEquals(30480, $estimate->fresh()->total_amount);
+        $this->assertEquals(30480, $estimate->fresh()->total_amount_with_vat);
+        Bus::assertDispatchedTimes(GenerateEstimateSnapshotJob::class, 1);
+        Bus::assertDispatchedTimes(CalculateEstimateStatisticsJob::class, 1);
+    }
+
+    public function test_move_copy_and_delete_refresh_section_totals_and_keep_vat_and_contingency(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, ['vat_rate' => 20, 'contingency_amount' => 500]);
+        $firstSection = $this->createSection($estimate);
+        $secondSection = $this->createSection($estimate);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $item = $this->createItem($estimate, $unit, ['estimate_section_id' => $firstSection->id]);
+        $this->createItem($estimate, $unit, ['quantity' => 2, 'unit_price' => 100, 'direct_costs' => 200, 'total_amount' => 200]);
+        $endpoint = "/api/v1/admin/estimates/constructor/{$estimate->id}";
+
+        $this->withHeaders($context->authHeaders())->postJson("{$endpoint}/move-to-section", [
+            'item_ids' => [$item->id], 'section_id' => $secondSection->id,
+        ])->assertOk();
+        $this->assertEquals(0, $firstSection->fresh()->section_total_amount);
+        $this->assertEquals(1000, $secondSection->fresh()->section_total_amount);
+        $this->assertEquals(1700, $estimate->fresh()->total_amount);
+        $this->assertEquals(2040, $estimate->fresh()->total_amount_with_vat);
+
+        $this->withHeaders($context->authHeaders())->postJson("{$endpoint}/copy-items", [
+            'item_ids' => [$item->id], 'target_estimate_id' => $estimate->id, 'target_section_id' => $secondSection->id,
+        ])->assertCreated();
+        $this->assertEquals(2000, $secondSection->fresh()->section_total_amount);
+        $this->assertEquals(2700, $estimate->fresh()->total_amount);
+        $this->assertEquals(3240, $estimate->fresh()->total_amount_with_vat);
+        $this->assertEquals(1, $item->fresh()->quantity);
+        $this->assertEquals(1000, $item->fresh()->unit_price);
+
+        $this->withHeaders($context->authHeaders())->postJson("{$endpoint}/bulk-delete", [
+            'item_ids' => [$item->id],
+        ])->assertOk();
+        $this->assertEquals(1000, $secondSection->fresh()->section_total_amount);
+        $this->assertEquals(1700, $estimate->fresh()->total_amount);
+        $this->assertEquals(2040, $estimate->fresh()->total_amount_with_vat);
+    }
+
+    public function test_explicit_recalculation_dispatches_snapshot_and_statistics_only_once(): void
+    {
+        $context = $this->createContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $this->createItem($estimate, $this->createMeasurementUnit($context->organization));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/recalculate", [])
+            ->assertOk();
+        Bus::assertDispatchedTimes(GenerateEstimateSnapshotJob::class, 1);
+        Bus::assertDispatchedTimes(CalculateEstimateStatisticsJob::class, 1);
+    }
+
     public function test_saving_restored_positions_uses_fresh_structure_and_old_positions_return_conflict(): void
     {
         $context = $this->createContext();
@@ -303,6 +392,7 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         $this->assertEquals(700, $updated->direct_costs);
         $this->assertEquals(350, $updated->unit_price);
         $this->assertEquals(745, $updated->total_amount);
+        $this->assertEquals(745, $estimate->fresh()->total_amount);
     }
 
     public function test_constructor_denies_a_project_without_assignment(): void

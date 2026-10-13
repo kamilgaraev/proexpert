@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\Services\Estimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Normative\EnhancedCalculationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimatePositionCatalog;
 use App\Models\EstimateSection;
 use App\Models\NormativeRate;
+use App\Repositories\EstimateSectionRepository;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
@@ -19,6 +21,8 @@ class EstimateConstructorService
 {
     public function __construct(
         private readonly EnhancedCalculationService $calculationService,
+        private readonly EstimateCalculationService $totalsService,
+        private readonly EstimateSectionRepository $sectionRepository,
     ) {
     }
 
@@ -297,17 +301,23 @@ class EstimateConstructorService
                 'apply_indices' => true,
                 'calculation_date' => now(),
             ]),
-        ]);
+        ], recalculateTotals: false);
     }
 
-    private function withMutableEstimate(Estimate $estimate, callable $operation): mixed
+    private function withMutableEstimate(Estimate $estimate, callable $operation, bool $recalculateTotals = true): mixed
     {
-        return DB::transaction(function () use ($estimate, $operation): mixed {
+        return DB::transaction(function () use ($estimate, $operation, $recalculateTotals): mixed {
             $lockedEstimate = Estimate::query()->whereKey($estimate->id)->lock('FOR UPDATE NOWAIT')->firstOrFail();
             $this->assertMutable($lockedEstimate);
             $estimate->setRawAttributes($lockedEstimate->getAttributes(), true);
 
             $result = $operation();
+            if ($recalculateTotals) {
+                foreach ($this->sectionRepository->getRootSections($estimate->id) as $section) {
+                    $this->totalsService->calculateSectionTotal($section);
+                }
+                $this->totalsService->calculateEstimateTotal($estimate);
+            }
             app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService::class)->invalidateStructure($estimate);
 
             return $result;
