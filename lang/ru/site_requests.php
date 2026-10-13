@@ -3,6 +3,12 @@
 declare(strict_types=1);
 
 return [
+    'form_fields' => [
+        'location' => 'место/локация',
+        'estimated_cost' => 'ориентировочная стоимость',
+        'requester_comment' => 'комментарий заявителя',
+    ],
+    'required_date_not_past' => 'Требуемая дата не может быть раньше сегодняшней даты.',
     'validation_error' => 'Данные заявок не прошли валидацию.',
     'list_error' => 'Не удалось загрузить список заявок.',
     'not_found' => 'Заявка не найдена.',

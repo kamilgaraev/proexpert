@@ -32,6 +32,9 @@ class UpdateSiteRequestRequest extends FormRequest
             // Основные поля
             'title' => ['sometimes', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
+            'location' => ['nullable', 'string', 'max:2000'],
+            'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
+            'requester_comment' => ['nullable', 'string', 'max:10000'],
             'priority' => ['sometimes', new Enum(SiteRequestPriorityEnum::class)],
             'required_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
@@ -94,6 +97,9 @@ class UpdateSiteRequestRequest extends FormRequest
     {
         return [
             'title' => 'название',
+            'location' => trans_message('site_requests.form_fields.location'),
+            'estimated_cost' => trans_message('site_requests.form_fields.estimated_cost'),
+            'requester_comment' => trans_message('site_requests.form_fields.requester_comment'),
             'priority' => 'приоритет',
             'required_date' => 'желаемая дата',
             'material_quantity' => 'количество',

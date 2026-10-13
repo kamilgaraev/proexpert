@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -48,6 +53,9 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
                 'project_id' => $project->id,
                 'title' => 'Pour slab materials',
                 'description' => 'Materials for morning slab pour',
+                'location' => 'Office, first floor',
+                'estimated_cost' => 30300.25,
+                'requester_comment' => 'Training supply request',
                 'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
                 'priority' => 'high',
                 'required_date' => now()->addDays(2)->toDateString(),
@@ -72,6 +80,9 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $createResponse->assertCreated();
         $createResponse->assertJsonPath('success', true);
         $createResponse->assertJsonPath('data.title', 'Pour slab materials');
+        $createResponse->assertJsonPath('data.location', 'Office, first floor')
+            ->assertJsonPath('data.estimated_cost', 30300.25)
+            ->assertJsonPath('data.requester_comment', 'Training supply request');
 
         $group = SiteRequestGroup::query()
             ->where('organization_id', $context->organization->id)
@@ -85,6 +96,12 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ->get();
 
         $this->assertCount(2, $requests);
+        $this->assertSame('30300.25', $group->estimated_cost);
+        foreach ($requests as $request) {
+            $this->assertSame('Office, first floor', $request->location);
+            $this->assertSame('Training supply request', $request->requester_comment);
+            $this->assertNull($request->estimated_cost);
+        }
         $this->assertSame(SiteRequestStatusEnum::DRAFT, $requests[0]->status);
         $this->assertSame($material->id, $requests[0]->material_id);
         $this->assertSame('Concrete mix', $requests[0]->material_name);
@@ -103,6 +120,69 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertContains($requests[0]->id, $ids);
         $this->assertContains($requests[1]->id, $ids);
         $this->assertNotContains($foreignRequest->id, $ids);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/site-requests/groups/{$group->id}", [
+                'estimated_cost' => 0, 'location' => 'Office, second floor', 'requester_comment' => 'Updated context',
+            ])->assertOk()->assertJsonPath('data.estimated_cost', 0)
+            ->assertJsonPath('data.location', 'Office, second floor');
+        foreach ($requests as $request) {
+            $request->refresh();
+            $this->assertSame('Office, second floor', $request->location);
+            $this->assertSame('Updated context', $request->requester_comment);
+            $this->assertNull($request->estimated_cost);
+        }
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/site-requests/groups/{$group->id}", [
+                'description' => null, 'estimated_cost' => null, 'location' => null, 'requester_comment' => null,
+            ])->assertOk()->assertJsonPath('data.estimated_cost', null);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/site-requests/groups/{$group->id}")
+            ->assertOk()->assertJsonPath('data.location', null)->assertJsonPath('data.requester_comment', null)
+            ->assertJsonPath('data.description', null);
+        foreach ($requests as $request) {
+            $this->assertNull($request->fresh()->location);
+            $this->assertNull($request->fresh()->requester_comment);
+        }
+    }
+
+    public function test_single_request_context_is_stored_and_historical_date_can_be_edited(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests', [
+            'project_id' => $project->id, 'title' => 'Training request', 'request_type' => 'other',
+            'location' => 'Office', 'estimated_cost' => 0, 'requester_comment' => 'No payment',
+        ])->assertCreated()->assertJsonPath('data.estimated_cost', 0);
+        $id = $response->json('data.id');
+        $this->assertDatabaseHas('site_requests', ['id' => $id, 'location' => 'Office', 'requester_comment' => 'No payment', 'estimated_cost' => 0]);
+        $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/site-requests/{$id}", [
+            'required_date' => '2020-01-01', 'estimated_cost' => 42.50, 'location' => 'Floor 2', 'requester_comment' => null,
+        ])->assertOk()->assertJsonPath('data.required_date', '2020-01-01')->assertJsonPath('data.estimated_cost', 42.5);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/site-requests/{$id}")
+            ->assertOk()->assertJsonPath('data.location', 'Floor 2')->assertJsonPath('data.requester_comment', null);
+    }
+
+    public function test_invalid_costs_and_past_creation_date_are_rejected_without_mutation(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $payload = ['project_id' => $project->id, 'title' => 'Training request', 'request_type' => 'other'];
+        foreach ([-1, 1.001, 1000000000000] as $cost) {
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests', [...$payload, 'estimated_cost' => $cost])
+                ->assertUnprocessable()->assertJsonValidationErrors('estimated_cost');
+        }
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests', [...$payload, 'required_date' => '2020-01-01'])
+            ->assertUnprocessable()->assertJsonValidationErrors('required_date');
+        $this->assertStringNotContainsString('today', $response->getContent());
+        $this->assertSame(trans_message('site_requests.required_date_not_past'), $response->json('errors.required_date.0'));
+        $this->assertDatabaseMissing('site_requests', ['organization_id' => $context->organization->id]);
+        $this->assertDatabaseMissing('site_request_groups', ['organization_id' => $context->organization->id]);
     }
 
     public function test_site_request_creation_rejects_foreign_project_and_material_without_mutation(): void
@@ -454,8 +534,10 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
 
         $this->assertSame(16, $approvalChecks);
 
-        $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "purchase_requests"')));
-        $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "payment_documents"')));
+        $purchaseQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "purchase_requests"'));
+        $this->assertCount(1, $purchaseQueries, $purchaseQueries->implode("\n"));
+        $paymentQueries = $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "payment_documents"'));
+        $this->assertCount(1, $paymentQueries, $paymentQueries->implode("\n"));
     }
 
     public function test_operator_can_close_material_request_without_procurement_with_audited_reason(): void
@@ -510,6 +592,42 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ])->assertUnprocessable();
         $this->assertSame(SiteRequestStatusEnum::APPROVED, $request->fresh()->status);
         $this->assertDatabaseMissing('site_request_history', ['site_request_id' => $request->id, 'action' => 'status_changed']);
+    }
+
+    public function test_linked_payment_still_blocks_closure_with_cached_presence_and_fresh_request(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createSiteRequest($context, $project);
+        $request->update(['status' => SiteRequestStatusEnum::APPROVED]);
+        $document = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'document_number' => 'PAY-CLOSURE-'.$request->id,
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $context->organization->id,
+            'amount' => 100, 'currency' => 'RUB', 'paid_amount' => 0, 'remaining_amount' => 100,
+            'status' => PaymentDocumentStatus::DRAFT,
+        ]);
+        $request->paymentDocuments()->attach($document->id, ['amount' => 100]);
+        $closure = app(\App\BusinessModules\Features\SiteRequests\Services\SiteRequestClosureService::class);
+        $this->assertFalse($closure->isAvailable($request->fresh()));
+        $cachedRequest = SiteRequest::query()->withExists('paymentDocuments')->findOrFail($request->id);
+        $this->assertFalse($closure->isAvailable($cachedRequest));
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/site-requests/{$request->id}/status", [
+            'status' => 'completed', 'close_without_procurement' => true, 'notes' => 'Материалы на объекте',
+        ])->assertUnprocessable();
+        $this->assertSame(SiteRequestStatusEnum::APPROVED, $request->fresh()->status);
+        $document->delete();
+        $this->assertTrue($closure->isAvailable($request->fresh()));
+        $request->update(['payment_document_id' => $document->id]);
+        $this->assertFalse($closure->isAvailable($request->fresh()));
     }
 
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest

@@ -40,6 +40,9 @@ class SiteRequestResource extends JsonResource
             // Основные поля
             'title' => $this->title,
             'description' => $this->description,
+            'location' => $this->location,
+            'estimated_cost' => $this->estimated_cost === null ? null : (float) $this->estimated_cost,
+            'requester_comment' => $this->requester_comment,
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
             'status_color' => $this->status->color(),

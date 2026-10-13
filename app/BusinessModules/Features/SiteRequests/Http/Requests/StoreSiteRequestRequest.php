@@ -52,6 +52,9 @@ class StoreSiteRequestRequest extends FormRequest
             'project_id' => ['required', 'integer', $this->projectExistsRule()],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
+            'location' => ['nullable', 'string', 'max:2000'],
+            'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
+            'requester_comment' => ['nullable', 'string', 'max:10000'],
             'request_type' => ['required', new Enum(SiteRequestTypeEnum::class)],
             'priority' => ['sometimes', new Enum(SiteRequestPriorityEnum::class)],
             'required_date' => ['nullable', 'date', 'after_or_equal:today'],
@@ -168,6 +171,9 @@ class StoreSiteRequestRequest extends FormRequest
         return [
             'project_id' => 'проект',
             'title' => 'название',
+            'location' => trans_message('site_requests.form_fields.location'),
+            'estimated_cost' => trans_message('site_requests.form_fields.estimated_cost'),
+            'requester_comment' => trans_message('site_requests.form_fields.requester_comment'),
             'description' => 'описание',
             'request_type' => 'тип заявки',
             'priority' => 'приоритет',
@@ -192,6 +198,7 @@ class StoreSiteRequestRequest extends FormRequest
     {
         return [
             'required' => 'Поле :attribute обязательно для заполнения',
+            'required_date.after_or_equal' => trans_message('site_requests.required_date_not_past'),
             'required_without' => 'Поле :attribute обязательно, если не указано :values',
             'date' => 'Поле :attribute должно быть датой',
             'after_or_equal' => 'Поле :attribute должно быть не раньше :date',
