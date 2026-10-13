@@ -177,6 +177,57 @@ final class ConstructionJournalCollaborationTest extends TestCase
         }
     }
 
+    public function test_default_read_requires_one_fresh_view_check_and_preserves_wildcard_and_export(): void
+    {
+        [$project, , $users, $contract] = $this->fixture();
+        $journal = app(ConstructionJournalService::class)->createJournal($project, ['name' => 'Журнал', 'contract_id' => $contract->id], $users[3]);
+        $journal->setRelation('project', $project);
+        $this->app->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/construction-journals/1'));
+        foreach ([
+            [['view'], ['view' => true], true, ['view']],
+            [['view'], ['view' => false, '*' => true], false, ['view']],
+            [['export'], ['view' => false, '*' => true, 'export' => true], true, ['view', '*', 'export']],
+            [['export'], ['view' => true, 'export' => false], false, ['view', 'export']],
+            [[], ['view' => true], false, ['view']],
+        ] as [$permissions, $grants, $allowed, $expected]) {
+            $calls = [];
+            $authorization = \Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('can')->andReturnUsing(function (User $actor, string $permission, array $context) use (&$calls, $grants, $project): bool {
+                self::assertSame((int) $actor->current_organization_id, $context['organization_id']);
+                self::assertSame((int) $project->id, $context['project_id']);
+                self::assertTrue($context['strict_project_scope']);
+                $key = str_replace('construction-journal.', '', $permission);
+                $calls[] = $key;
+
+                return $grants[$key] ?? false;
+            });
+            $access = new ConstructionJournalAccessService(app(ProjectParticipantService::class), app(\App\Services\Project\UserProjectAccessService::class), $authorization);
+            $passed = true;
+            try {
+                $access->assertReadable($users[0], $journal, $permissions);
+            } catch (AuthorizationException $exception) {
+                $passed = false;
+                self::assertSame(trans_message('construction_journal.errors.access_denied'), $exception->getMessage());
+            }
+            self::assertSame($allowed, $passed);
+            self::assertSame($expected, $calls);
+        }
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->with($users[0], 'construction-journal.view', \Mockery::type('array'))->once()->andReturn(false);
+        $authorization->shouldReceive('can')->with($users[0], 'construction-journal.*', \Mockery::type('array'))->once()->andReturn(true);
+        $access = new ConstructionJournalAccessService(app(ProjectParticipantService::class), app(\App\Services\Project\UserProjectAccessService::class), $authorization);
+        self::assertTrue($access->canRead($users[0], $journal));
+        $unreachable = \Mockery::mock(AuthorizationService::class);
+        $unreachable->shouldNotReceive('can');
+        $access = new ConstructionJournalAccessService(app(ProjectParticipantService::class), app(\App\Services\Project\UserProjectAccessService::class), $unreachable);
+        try {
+            $access->assertReadable($users[4], $journal);
+            self::fail('Expected inaccessible project to reject before permission evaluation.');
+        } catch (AuthorizationException $exception) {
+            self::assertSame(trans_message('construction_journal.errors.access_denied'), $exception->getMessage());
+        }
+    }
+
     public function test_manual_work_can_be_rejected_resubmitted_and_confirmed_without_estimate_or_schedule(): void
     {
         [$project, $organizations, $users, $contract] = $this->fixture();
