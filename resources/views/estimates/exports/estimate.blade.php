@@ -6,20 +6,20 @@
     <title>Смета {{ $estimate['number'] ?? '' }}</title>
     <style>
         @include('pdf.partials.most-brand-styles')
-        @page {
-            margin: 12mm 15mm;
-        }
-
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
+        @page {
+            margin: 12mm 15mm !important;
+        }
+
         body {
             font-family: DejaVu Sans, sans-serif;
             font-size: 9pt;
-            line-height: 1.4;
+            line-height: 1.2;
             color: #1a1a1a;
             background: #ffffff;
         }
@@ -49,14 +49,14 @@
         /* Основной заголовок документа */
         .title {
             text-align: center;
-            font-size: 16pt;
+            font-size: 14pt;
             font-weight: bold;
-            margin: 20px 0 25px 0;
+            margin: 8px 0 12px 0;
             color: #2d3748;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            border-bottom: 3px solid #667eea;
-            padding-bottom: 10px;
+            letter-spacing: 0.6px;
+            border-bottom: 1px solid #667eea;
+            padding-bottom: 6px;
         }
 
         /* Информационная карточка */
@@ -64,8 +64,8 @@
             background: #f7fafc;
             border: 2px solid #e2e8f0;
             border-radius: 8px;
-            padding: 15px 20px;
-            margin-bottom: 25px;
+            padding: 6px 8px;
+            margin-bottom: 12px;
         }
 
         .info-table {
@@ -82,7 +82,7 @@
         }
 
         .info-table td {
-            padding: 8px 10px;
+            padding: 2px 6px;
         }
 
         .info-table td:first-child {
@@ -99,15 +99,17 @@
         .main-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 20px;
-            font-size: 8.5pt;
+            margin-bottom: 10px;
+            font-size: 8pt;
+            table-layout: fixed;
+            word-wrap: break-word;
         }
 
         .main-table th {
-            background: linear-gradient(180deg, #4a5568 0%, #2d3748 100%);
+            background-color: #2d3748;
             color: white;
             border: 1px solid #2d3748;
-            padding: 8px 5px;
+            padding: 5px 4px;
             text-align: center;
             font-weight: bold;
             font-size: 8pt;
@@ -116,7 +118,7 @@
 
         .main-table td {
             border: 1px solid #cbd5e0;
-            padding: 6px 5px;
+            padding: 5px 4px;
             vertical-align: top;
         }
 
@@ -124,28 +126,40 @@
             background-color: #f7fafc;
         }
 
+        .main-table thead {
+            display: table-header-group;
+        }
+
+        .main-table tr {
+            page-break-inside: avoid;
+        }
+
+        .main-table td.text-right {
+            white-space: nowrap;
+        }
+
         /* Строка раздела */
         .section-row {
-            background: linear-gradient(180deg, #edf2f7 0%, #e2e8f0 100%);
+            background-color: #edf2f7;
             font-weight: bold;
-            font-size: 9.5pt;
+            font-size: 9pt;
             color: #2d3748;
         }
 
         .section-row td {
-            padding: 10px 8px;
+            padding: 6px 5px;
             border: 2px solid #cbd5e0;
         }
 
         /* Итоги по разделу */
         .section-total-row {
-            background: linear-gradient(180deg, #fef5e7 0%, #fdeaa3 100%);
+            background-color: #fef5e7;
             font-weight: bold;
             color: #744210;
         }
 
         .section-total-row td {
-            padding: 7px 5px;
+            padding: 5px 4px;
             border: 1px solid #f6ad55;
         }
 
@@ -172,19 +186,20 @@
 
         /* Секция итогов */
         .totals-section {
-            margin-top: 30px;
-            margin-bottom: 25px;
+            margin-top: 10px;
+            margin-bottom: 10px;
             background: #f7fafc;
-            padding: 20px;
+            padding: 8px;
             border-radius: 8px;
             border: 2px solid #e2e8f0;
+            page-break-inside: avoid;
         }
 
         .totals-title {
             text-align: center;
-            font-size: 13pt;
+            font-size: 11pt;
             font-weight: bold;
-            margin-bottom: 15px;
+            margin-bottom: 6px;
             color: #2d3748;
             text-transform: uppercase;
             letter-spacing: 1.5px;
@@ -201,7 +216,7 @@
         }
 
         .totals-table td {
-            padding: 8px 15px;
+            padding: 2px 8px;
         }
 
         .totals-table td:first-child {
@@ -216,6 +231,7 @@
             font-weight: bold;
             color: #2d3748;
             font-size: 10pt;
+            white-space: nowrap;
         }
 
         .totals-table tr:last-child {
@@ -224,19 +240,19 @@
         }
 
         .totals-table tr:last-child td {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background-color: #1e3a8a;
             color: white;
             font-size: 11pt;
-            padding: 12px 15px;
+            padding: 6px 8px;
             font-weight: bold;
         }
 
         /* Блок подписей */
         .signatures {
-            margin-top: 40px;
+            margin-top: 14px;
             page-break-inside: avoid;
             background: #f7fafc;
-            padding: 20px;
+            padding: 8px;
             border-radius: 8px;
             border: 1px solid #e2e8f0;
         }
@@ -244,7 +260,7 @@
         .signatures-title {
             font-size: 11pt;
             font-weight: bold;
-            margin-bottom: 20px;
+            margin-bottom: 8px;
             color: #2d3748;
             text-align: center;
             text-transform: uppercase;
@@ -252,14 +268,12 @@
         }
 
         .signature-line {
-            margin-bottom: 18px;
-            display: flex;
-            align-items: center;
+            margin-bottom: 4px;
         }
 
         .signature-line strong {
             display: inline-block;
-            width: 35%;
+            width: 30%;
             color: #4a5568;
             font-size: 9pt;
         }
@@ -267,8 +281,8 @@
         .signature-line span {
             border-bottom: 2px solid #cbd5e0;
             display: inline-block;
-            flex: 1;
-            padding: 5px 10px;
+            width: 65%;
+            padding: 2px 0;
             color: #718096;
             font-size: 8pt;
         }
@@ -323,12 +337,6 @@
 </head>
 <body>
     @include('pdf.partials.most-brand-header')
-    {{-- Header with МОСТ branding --}}
-    <div class="header">
-        <div>MOST</div>
-        <div class="header-subtitle">Система управления проектами и смет</div>
-    </div>
-
     {{-- Title --}}
     <div class="title">
         Локальный Сметный Расчет
@@ -401,15 +409,15 @@
         <thead>
             <tr>
                 <th style="width: 5%;">№</th>
-                <th style="width: 10%;">Код</th>
-                <th style="width: 35%;">Наименование</th>
-                <th style="width: 8%;">Ед.изм.</th>
-                <th style="width: 10%;">Кол-во</th>
+                <th style="width: 8%;">Код</th>
+                <th style="width: 33%;">Наименование</th>
+                <th style="width: 10%;">Ед.изм.</th>
+                <th style="width: 11%;">Кол-во</th>
                 @if($options['show_prices'])
                 <th style="width: 12%;">Цена</th>
                 <th style="width: 12%;">Сумма</th>
                 @endif
-                <th style="width: 8%;">Примечание</th>
+                <th style="width: 9%;">Примечание</th>
             </tr>
         </thead>
         <tbody>
@@ -482,11 +490,6 @@
         @endforeach
     </div>
 
-    {{-- Footer --}}
-    <footer>
-        <strong>МОСТ</strong> - Профессиональная система управления строительством |
-        Экспорт: {{ $metadata['export_date'] ? \Carbon\Carbon::parse($metadata['export_date'])->format('d.m.Y H:i') : '' }}
-    </footer>
     @include('pdf.partials.most-brand-footer')
 </body>
 </html>

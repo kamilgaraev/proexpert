@@ -27,6 +27,7 @@ return [
         'X-Requested-With',
     ],
     'exposed_headers' => [
+        'Content-Disposition',
         'Content-Length',
         'ETag',
     ],
