@@ -28,6 +28,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
     private bool $sourceTotalMismatch = false;
 
+    private bool $unsupportedExpenseRule = false;
+
     public function __construct(
         protected SpreadsheetTableReader $reader,
         protected SpreadsheetHeaderDetector $headerDetector,
@@ -127,7 +129,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 'items_count' => count($items),
                 'sections_count' => count($sections),
             ],
-            validation: $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items, metadata: ['source_total_mismatch' => $this->sourceTotalMismatch]))->toArray(),
+            validation: $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items, metadata: ['source_total_mismatch' => $this->sourceTotalMismatch, 'unsupported_expense_rule' => $this->unsupportedExpenseRule]))->toArray(),
             summary: [
                 'rows_count' => count($sections) + count($items),
             ],
@@ -138,6 +140,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 'worksheet_name' => $structure->metadata['worksheet_name'] ?? null,
                 'worksheet_title' => $structure->metadata['worksheet_title'] ?? null,
                 'source_total_mismatch' => $this->sourceTotalMismatch,
+                'unsupported_expense_rule' => $this->unsupportedExpenseRule,
             ],
         );
     }
@@ -151,7 +154,9 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $errors[] = trans_message('estimate.import_empty_preview');
         }
 
-        if (($preview->metadata['source_total_mismatch'] ?? false) === true) {
+        if (($preview->metadata['unsupported_expense_rule'] ?? false) === true) {
+            $errors[] = trans_message('estimate.import_unsupported_expense_rule');
+        } elseif (($preview->metadata['source_total_mismatch'] ?? false) === true) {
             $errors[] = trans_message('estimate.import_source_total_mismatch');
         }
 
@@ -173,6 +178,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     {
         $this->footerData = [];
         $this->sourceTotalMismatch = false;
+        $this->unsupportedExpenseRule = false;
         foreach ($this->worksheetDescriptorsFromStructure($structure) as $worksheet) {
             yield from $this->rowsToDtos(
                 $this->reader->readRows($filePath, null, $worksheet['worksheet_index']),
@@ -198,9 +204,14 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         $mapping = $this->mappingForStructure($structure);
         $costBlocks = (new SpreadsheetCostBlockParser)->analyze($rows, $mapping, $headerRow);
         $this->sourceTotalMismatch = $this->sourceTotalMismatch || $costBlocks['total_mismatch'];
+        $this->unsupportedExpenseRule = $this->unsupportedExpenseRule || ($costBlocks['unsupported_rule'] ?? false);
         if ($costBlocks['footer'] !== []) {
             foreach ($costBlocks['footer'] as $field => $amount) {
-                $this->footerData[$field] = $field === 'vat_rate' ? $amount : ($this->footerData[$field] ?? 0) + $amount;
+                if (is_array($amount)) {
+                    $this->footerData[$field][] = $amount;
+                } else {
+                    $this->footerData[$field] = $field === 'vat_rate' ? $amount : ($this->footerData[$field] ?? 0) + $amount;
+                }
             }
         }
         $currentSectionPath = null;
@@ -211,7 +222,11 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         foreach ($rows as $rowNumber => $row) {
             if ($rowNumber <= $headerRow) {
                 $section = $this->detectStandaloneSectionRow($row);
-                if ($section !== null) {
+                $worksheetTitle = $structure->metadata['worksheet_title'] ?? $structure->metadata['worksheet_name'] ?? '';
+                $isWorksheetGroup = count($structure->metadata['worksheets'] ?? []) > 1
+                    && $worksheetTitle !== '' && $section !== null
+                    && mb_strtolower(trim($section['name'])) === mb_strtolower(trim($worksheetTitle));
+                if ($section !== null && ($section['number'] !== null || $isWorksheetGroup)) {
                     $sectionDto = $this->makeSectionRowDto(
                         (int) $rowNumber,
                         $row,
@@ -1039,6 +1054,13 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
         if (preg_match('/^(\d+(?:\.\d+)*)\.?\s+(.+)$/u', $text, $match) === 1) {
             return $this->sectionCandidate((string) $match[1], (string) $match[2]);
+        }
+
+        if (preg_match('/^(?:раздел|глава|объект)\b/iu', $text) === 1) {
+            $explicitSection = $this->parseExplicitSectionTitle($text, '');
+            if ($explicitSection !== null) {
+                return $explicitSection;
+            }
         }
 
         if (preg_match('/\d+(?:[\s.,]\d+)?\s*(?:₽|руб\.?)/iu', $text) === 1) {

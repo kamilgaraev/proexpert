@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet;
 
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 final class SpreadsheetCostBlockParser
@@ -14,8 +16,15 @@ final class SpreadsheetCostBlockParser
         $positions = [];
         $current = null;
         $footer = [];
+        $summaryControls = [];
         $referenceTotal = 0.0;
         $indices = [];
+        $isBaseSummary = false;
+        $baseControls = [];
+        $expensePrecision = null;
+        $globalIndex = null;
+        $globalTotal = null;
+        $indexedPrecisions = [];
 
         foreach ($rows as $rowNumber => $row) {
             $name = trim((string) $this->cell($row, $mapping['name'] ?? null));
@@ -24,6 +33,8 @@ final class SpreadsheetCostBlockParser
             $label = mb_strtolower($name !== '' ? $name : ($code !== '' ? $code : $position));
             $amount = $numbers->parse($this->cell($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)))
                 ?? $numbers->parse($this->cell($row, $mapping['unit_price'] ?? null));
+            $rawAmount = $this->cell($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null))
+                ?? $this->cell($row, $mapping['unit_price'] ?? null);
 
             if ($rowNumber <= $headerRow) {
                 if (preg_match('/^(?:(?:строительных|монтажных|прочих) работ|оборудования|прочие затраты)$/u', $label) === 1
@@ -35,6 +46,30 @@ final class SpreadsheetCostBlockParser
                         }
                     }
                 }
+
+                continue;
+            }
+
+            if (str_contains($label, 'прямые затраты') && str_contains($label, 'по смете') && str_contains($label, 'базисн')) {
+                $isBaseSummary = true;
+                $current = null;
+                if ($amount !== null) {
+                    $baseControls['direct_costs'] = $amount;
+                }
+
+                continue;
+            }
+
+            if ($isBaseSummary && in_array($label, ['накладные расходы', 'сметная прибыль'], true) && $amount !== null) {
+                $baseControls[$label === 'накладные расходы' ? 'overhead_cost' : 'profit_cost'] = $amount;
+
+                continue;
+            }
+
+            if ($isBaseSummary && str_starts_with($label, 'всего с учетом')
+                && preg_match('/смр\s*=\s*([\d,.]+)/u', $label, $matches) === 1 && $amount !== null) {
+                $globalIndex = $numbers->parse($matches[1]);
+                $globalTotal = $amount;
 
                 continue;
             }
@@ -70,6 +105,9 @@ final class SpreadsheetCostBlockParser
                 $current = null;
                 if (preg_match('/ндс\D*([\d,.]+)\s*%/u', $label, $matches) === 1) {
                     $footer['vat_rate'] = $numbers->parse($matches[1]);
+                    if ($amount !== null) {
+                        $footer['vat_amount'] = $amount;
+                    }
                 }
 
                 continue;
@@ -79,15 +117,11 @@ final class SpreadsheetCostBlockParser
                 $current = null;
                 if (str_contains($label, 'смете') && $amount !== null) {
                     $vatRate = $footer['vat_rate'] ?? null;
+                    $summaryControls[] = ['amount' => $amount, 'vat_rate' => $vatRate];
                     $footer['total_estimate_cost'] = $vatRate !== null ? round($amount / (1 + $vatRate / 100), 2) : $amount;
-                }
-
-                continue;
-            }
-
-            if ($position !== '' || $amount === null) {
-                if (str_starts_with($label, 'раздел')) {
-                    $current = null;
+                    if ($vatRate !== null) {
+                        $footer['total_with_vat'] = $amount;
+                    }
                 }
 
                 continue;
@@ -98,10 +132,24 @@ final class SpreadsheetCostBlockParser
             if ($charge !== null) {
                 if ($current !== null) {
                     $positions[$current][$charge] = $amount;
-                } elseif (isset($footer['total_estimate_cost'])) {
+                    if ($amount !== null) {
+                        $expensePrecision = max($expensePrecision ?? 0, $this->precision($rawAmount));
+                    }
+                    if (preg_match('/([\d,.]+)\s*%\s*фот\s*\(от\s*([^)]+)\)/u', $label, $rule) === 1) {
+                        $rate = $numbers->parse($rule[1]);
+                        $basis = $numbers->parse($rule[2]);
+                        if ($rate !== null && $basis !== null) {
+                            $positions[$current][$charge.'_rule'] = ['rate' => $rate, 'basis' => $basis];
+                        }
+                    }
+                } elseif ($amount !== null && isset($footer['total_estimate_cost'])) {
                     $footer[$charge.'_cost'] = $amount;
                 }
 
+                continue;
+            }
+
+            if ($position !== '' || $amount === null) {
                 continue;
             }
 
@@ -112,17 +160,68 @@ final class SpreadsheetCostBlockParser
             if (str_starts_with($label, 'итого') && str_contains($label, 'накладн') && str_contains($label, 'прибыл')) {
                 $positions[$current]['total'] = $amount;
             } elseif (str_starts_with($label, 'всего с учетом')
-                && ($positions[$current]['overhead'] !== null || $positions[$current]['profit'] !== null)) {
+                && ($positions[$current]['overhead'] !== null || $positions[$current]['profit'] !== null
+                    || isset($positions[$current]['overhead_rule']) || isset($positions[$current]['profit_rule']))) {
                 $base = $positions[$current]['total'] ?? $positions[$current]['base_total'];
                 $index = preg_match('/смр\s*=\s*([\d,.]+)/u', $label, $matches) === 1
                     ? $numbers->parse($matches[1]) : null;
                 $index ??= $base !== null && $base != 0 ? $amount / $base : 1.0;
                 $positions[$current]['index'] = $index;
                 $positions[$current]['total'] = $amount;
+                $indexedPrecisions[] = $this->precision($rawAmount);
                 if ($index > 0) {
                     $indices[(string) $index] = $index;
                 }
             }
+        }
+
+        if ($globalIndex !== null && $globalIndex > 0 && $globalTotal !== null) {
+            $amountPrecision = $indexedPrecisions !== [] ? max($indexedPrecisions) : 2;
+            $expensePrecision ??= $amountPrecision;
+            try {
+                $calculated = (new SpreadsheetAggregateCostCalculator)->calculate($positions, $globalIndex, $expensePrecision, $amountPrecision);
+            } catch (\InvalidArgumentException $exception) {
+                if ($exception->getMessage() !== 'spreadsheet_expense_rule_missing') {
+                    throw $exception;
+                }
+
+                return ['positions' => [], 'footer' => [], 'total_mismatch' => true, 'unsupported_rule' => true];
+            }
+            $calculatedTotal = BigDecimal::of((string) $calculated['totals']['total_estimate_cost']);
+            $mismatch = $calculatedTotal->compareTo((string) $globalTotal) !== 0;
+            foreach ($baseControls as $component => $control) {
+                $mismatch = $mismatch || BigDecimal::of((string) $calculated['base_totals'][$component])->compareTo((string) $control) !== 0;
+            }
+            if (isset($footer['total_estimate_cost'])) {
+                $mismatch = $mismatch || $calculatedTotal->compareTo((string) $footer['total_estimate_cost']) !== 0;
+            }
+            foreach ($summaryControls as $control) {
+                $controlVat = $control['vat_rate'] !== null
+                    ? $calculatedTotal->multipliedBy((string) $control['vat_rate'])->multipliedBy('0.01')->toScale(2, RoundingMode::HalfUp)
+                    : BigDecimal::zero();
+                $mismatch = $mismatch || $calculatedTotal->plus($controlVat)->compareTo((string) $control['amount']) !== 0;
+            }
+            if (isset($footer['vat_rate'])) {
+                $vat = $calculatedTotal->multipliedBy((string) $footer['vat_rate'])->multipliedBy('0.01')->toScale(2, RoundingMode::HalfUp);
+                if (isset($footer['vat_amount'])) {
+                    $mismatch = $mismatch || $vat->compareTo((string) $footer['vat_amount']) !== 0;
+                }
+                if (isset($footer['total_with_vat'])) {
+                    $mismatch = $mismatch || $calculatedTotal->plus($vat)->compareTo((string) $footer['total_with_vat']) !== 0;
+                }
+            }
+            $footer = $calculated['totals'] + array_intersect_key($footer, ['vat_rate' => true, 'vat_amount' => true, 'total_with_vat' => true]);
+            $footer['calculation'] = [
+                'expenses_scope' => 'rate_group',
+                'index_scope' => 'estimate',
+                'expense_precision' => $expensePrecision,
+                'amount_precision' => $amountPrecision,
+                'price_index' => $globalIndex,
+                'base_totals' => $calculated['base_totals'],
+                'declared_total' => $globalTotal,
+            ];
+
+            return ['positions' => $calculated['positions'], 'footer' => $footer, 'total_mismatch' => $mismatch];
         }
 
         $commonIndex = count($indices) === 1 ? reset($indices) : null;
@@ -161,7 +260,7 @@ final class SpreadsheetCostBlockParser
         }
 
         $parsedTotal = array_sum(array_column($result, 'total'));
-        $tolerance = count($positions) * max(1, $commonIndex ?? 1) * 0.5 + 1;
+        $tolerance = 0.004;
         $difference = $expected !== null ? min(abs($parsedTotal - $expected), abs($parsedTotal + $globalCharges - $expected)) : 0;
         if ($expected !== null && $difference <= $tolerance) {
             $footer['total_estimate_cost'] = $expected;
@@ -176,5 +275,12 @@ final class SpreadsheetCostBlockParser
     private function cell(array $row, ?string $column): mixed
     {
         return $column !== null && $column !== '' ? ($row[Coordinate::columnIndexFromString($column) - 1] ?? null) : null;
+    }
+
+    private function precision(mixed $amount): int
+    {
+        $value = (new SpreadsheetNumberParser)->parse($amount);
+
+        return $value !== null && BigDecimal::of((string) $value)->strippedOfTrailingZeros()->getScale() <= 0 ? 0 : 2;
     }
 }

@@ -249,6 +249,92 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         }
     }
 
+    public function test_plain_import_respects_zero_vat_even_when_source_footer_has_vat(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->fromArray([
+            ['Document caption'],
+            ['No', 'Code', 'Name', 'Unit', 'Qty', 'Price', 'Total'],
+            ['Раздел 1. Works'],
+            ['1', 'RATE-1', 'Test work', 'шт', 1, 100, 100],
+            [null, 'Накладные расходы 20% ФОТ (от 3)', null, null, null, null, 1],
+            [null, 'Сметная прибыль 10% ФОТ (от 3)', null, null, null, null, 0],
+            [null, 'Всего с учетом "СМР=1,17"', null, null, null, null, 118],
+            ['2', 'RATE-2', 'Second work', 'шт', 1, 50, 50],
+            [null, 'Накладные расходы 20% ФОТ (от 3)', null, null, null, null, 1],
+            [null, 'Сметная прибыль 10% ФОТ (от 3)', null, null, null, null, 0],
+            [null, 'Всего с учетом "СМР=1,17"', null, null, null, null, 60],
+            ['Итого прямые затраты по смете в базисных ценах', null, null, null, null, null, 150],
+            ['Накладные расходы', null, null, null, null, null, 1],
+            ['Сметная прибыль', null, null, null, null, null, 1],
+            ['Всего с учетом "СМР=1,17"', null, null, null, null, null, 178],
+            [null, null, 'Итого по смете', null, null, null, 178],
+            [null, null, 'НДС 22%', null, null, null, 39.16],
+            [null, null, 'Всего по смете', null, null, null, 217.16],
+        ]);
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'import-vat-');
+        $filePath = $temporaryPath.'.xlsx';
+        rename($temporaryPath, $filePath);
+        (new Xlsx($spreadsheet))->save($filePath);
+        $spreadsheet->disconnectWorksheets();
+
+        try {
+            Queue::fake();
+            Storage::fake('s3');
+            $organization = Organization::factory()->create();
+            $user = User::factory()->create();
+            $project = Project::factory()->create(['organization_id' => $organization->id]);
+            $storedPath = "org-{$organization->id}/estimate-imports/".basename($filePath);
+            Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
+            $session = ImportSession::create([
+                'user_id' => $user->id,
+                'organization_id' => $organization->id,
+                'status' => 'mapped',
+                'file_path' => $storedPath,
+                'file_name' => 'import-vat.xlsx',
+                'file_size' => filesize($filePath),
+                'file_format' => 'xlsx',
+                'options' => [
+                    'format_handler' => 'custom_excel',
+                    'structure' => [
+                        'format_slug' => 'custom_excel',
+                        'header_row' => 2,
+                        'column_mapping' => ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'unit' => 'D', 'quantity' => 'E', 'unit_price' => 'F', 'total_price' => 'G'],
+                    ],
+                    'estimate_settings' => [
+                        'name' => 'VAT import regression',
+                        'project_id' => $project->id,
+                        'financial_mode' => 'plain',
+                        'vat_rate' => 0,
+                    ],
+                ],
+                'stats' => [],
+            ]);
+
+            app(ImportPipelineService::class)->run($session);
+            $estimate = Estimate::query()->findOrFail($session->fresh()->stats['estimate_id']);
+            self::assertSame(0.0, (float) $estimate->vat_rate);
+            self::assertSame(178.0, (float) $estimate->total_amount);
+            self::assertSame(178.0, (float) $estimate->total_amount_with_vat);
+            self::assertSame(22, $estimate->metadata['footer']['vat_rate']);
+            self::assertSame(178.0, (float) EstimateItem::query()->where('estimate_id', $estimate->id)->sum('total_amount'));
+            self::assertSame(['Works'], EstimateSection::query()->where('estimate_id', $estimate->id)->pluck('name')->all());
+            $service = app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateService::class);
+            $estimate = $service->update($estimate, ['vat_rate' => 22]);
+            self::assertSame(178.0, (float) $estimate->total_amount);
+            self::assertSame(217.16, (float) $estimate->total_amount_with_vat);
+            $estimate = $service->update($estimate, ['vat_rate' => 0]);
+            self::assertSame(178.0, (float) $estimate->total_amount);
+            self::assertSame(178.0, (float) $estimate->total_amount_with_vat);
+            self::assertSame(176.0, (float) $estimate->total_direct_costs);
+            self::assertSame(1.0, (float) $estimate->total_overhead_costs);
+            self::assertSame(1.0, (float) $estimate->total_estimated_profit);
+        } finally {
+            @unlink($filePath);
+        }
+    }
+
     private function createWorkbookWithTitleSheet(): string
     {
         $spreadsheet = new Spreadsheet();
