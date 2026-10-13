@@ -42,6 +42,11 @@ class ProjectParticipantService
      */
     public function getHierarchy(Project $project): array
     {
+        return $this->getHierarchyWithActivity($project)['hierarchy'];
+    }
+
+    public function getHierarchyWithActivity(Project $project): array
+    {
         $activeParticipants = ProjectOrganization::query()
             ->where('project_id', $project->id)
             ->where('is_active', true)
@@ -61,12 +66,13 @@ class ProjectParticipantService
                 $join->on('hierarchy.organization_id', '=', 'active_participants.organization_id')
                     ->where('hierarchy.project_id', '=', $project->id);
             })
-            ->leftJoinSub(Organization::query()->select(['id', 'name']), 'participant_organizations', 'participant_organizations.id', '=', 'active_participants.organization_id')
+            ->leftJoinSub(Organization::query()->select(['id', 'name', 'is_active']), 'participant_organizations', 'participant_organizations.id', '=', 'active_participants.organization_id')
             ->select([
                 'active_participants.organization_id',
                 'hierarchy.organization_id as hierarchy_organization_id',
                 'hierarchy.parent_organization_id',
                 'participant_organizations.name as organization_name',
+                'participant_organizations.is_active as organization_is_active',
             ])
             ->selectSub($customerRoot, 'customer_root_organization_id')
             ->orderBy('active_participants.organization_id')
@@ -101,7 +107,7 @@ class ProjectParticipantService
             ];
         }
 
-        return [
+        $hierarchy = [
             'configured' => $configured,
             'root_organization_id' => $rootId,
             'parents' => array_values(array_map(
@@ -115,6 +121,12 @@ class ProjectParticipantService
                 )
             )),
             'participants' => $participants,
+        ];
+
+        return [
+            'hierarchy' => $hierarchy,
+            'active_organization_ids' => $facts->filter(static fn ($row): bool => (bool) $row->organization_is_active)
+                ->pluck('organization_id')->map(static fn ($id): int => (int) $id)->all(),
         ];
     }
 

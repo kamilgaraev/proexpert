@@ -56,6 +56,16 @@ class ProjectParticipantHierarchyTest extends TestCase
             ],
         ], $hierarchy);
 
+        $activity = $this->hierarchyActivityWithOneQuery($service, $project);
+        self::assertSame($hierarchy, $activity['hierarchy']);
+        self::assertSame([(int) $customer->id], $activity['active_organization_ids']);
+        DB::table('organizations')->where('id', $owner->id)->update(['is_active' => true]);
+        self::assertSame([(int) $owner->id, (int) $customer->id], $this->hierarchyActivityWithOneQuery($service, $project)['active_organization_ids']);
+        DB::table('organizations')->where('id', $customer->id)->update(['is_active' => false]);
+        self::assertSame([(int) $owner->id], $this->hierarchyActivityWithOneQuery($service, $project)['active_organization_ids']);
+        DB::table('organizations')->where('id', $customer->id)->update(['is_active' => true]);
+        self::assertSame($hierarchy, $this->hierarchyActivityWithOneQuery($service, $project)['hierarchy']);
+
         DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $customer->id)->update(['role_new' => ProjectOrganizationRole::OBSERVER->value]);
         DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $child->id)->update(['role_new' => ProjectOrganizationRole::CUSTOMER->value]);
         $changedRole = $this->hierarchyWithOneQuery($service, $project);
@@ -109,6 +119,21 @@ class ProjectParticipantHierarchyTest extends TestCase
             self::assertSame(1, count($selects));
 
             return $hierarchy;
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
+    private function hierarchyActivityWithOneQuery(ProjectParticipantService $service, Project $project): array
+    {
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $facts = $service->getHierarchyWithActivity($project);
+            self::assertCount(1, DB::getQueryLog());
+
+            return $facts;
         } finally {
             DB::disableQueryLog();
             DB::flushQueryLog();
