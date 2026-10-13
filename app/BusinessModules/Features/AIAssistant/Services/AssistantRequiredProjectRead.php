@@ -41,6 +41,10 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
+        if (($operational['name'] ?? null) === 'get_catalog_lookup') {
+            $arguments = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantCatalogLookupReader::arguments($query);
+            return $arguments === null ? null : ['name' => 'get_catalog_lookup', 'arguments' => $arguments];
+        }
         if (($operational['name'] ?? null) === 'get_contract_supplementary_readiness') {
             $number = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantContractSupplementaryReader::contractNumber($query);
             return $number === null || $scope->requested && $scope->projectId === null ? null : ['name' => $operational['name'],

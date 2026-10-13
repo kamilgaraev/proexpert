@@ -218,7 +218,7 @@ final class WorkforceProService
         });
     }
 
-    public function scheduleCalendar(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null): array
+    public function scheduleCalendar(int $organizationId, string $dateFrom, string $dateTo, ?int $projectId = null, ?int $readLimit = null): array
     {
         if ($projectId !== null) {
             $this->assertProject($organizationId, $projectId);
@@ -228,12 +228,16 @@ final class WorkforceProService
         $end = CarbonImmutable::parse($dateTo)->startOfDay();
         $days = $this->calendarDays($start, $end);
 
-        $assignments = DB::table('workforce_employee_assignments as assignment')
+        $assignmentsQuery = DB::table('workforce_employee_assignments as assignment')
             ->join('workforce_employees as employee', 'employee.id', '=', 'assignment.employee_id')
             ->join('workforce_departments as department', 'department.id', '=', 'assignment.department_id')
             ->join('workforce_positions as position', 'position.id', '=', 'assignment.position_id')
             ->leftJoin('workforce_work_schedules as schedule', 'schedule.id', '=', 'assignment.work_schedule_id')
             ->where('assignment.organization_id', $organizationId)
+            ->where('employee.organization_id', $organizationId)
+            ->where('department.organization_id', $organizationId)
+            ->where('position.organization_id', $organizationId)
+            ->where(static fn (Builder $q) => $q->whereNull('assignment.work_schedule_id')->orWhere('schedule.organization_id', $organizationId))
             ->where('assignment.status', 'active')
             ->whereNull('assignment.deleted_at')
             ->whereNull('employee.deleted_at')
@@ -258,8 +262,12 @@ final class WorkforceProService
                 'schedule.schedule_type',
                 'schedule.hours_per_day',
                 'schedule.week_pattern',
-            ])
-            ->get();
+            ]);
+        if ($readLimit !== null && ($readLimit < 1 || (clone $assignmentsQuery)->count() > $readLimit
+            || (clone $assignmentsQuery)->whereRaw("OCTET_LENGTH(COALESCE(schedule.week_pattern::text, '')) > 4096")->exists())) {
+            throw new DomainException('calendar_read_limit');
+        }
+        $assignments = $assignmentsQuery->get();
 
         $scheduleIds = $assignments
             ->pluck('work_schedule_id')
@@ -290,11 +298,13 @@ final class WorkforceProService
             : DB::table('workforce_absences as absence')
                 ->join('workforce_absence_types as type', 'type.id', '=', 'absence.absence_type_id')
                 ->where('absence.organization_id', $organizationId)
+                ->where('type.organization_id', $organizationId)
                 ->whereIn('absence.employee_id', $employeeIds)
                 ->where('absence.status', 'approved')
                 ->whereDate('absence.start_date', '<=', $end->toDateString())
                 ->whereDate('absence.end_date', '>=', $start->toDateString())
                 ->select('absence.employee_id', 'absence.start_date', 'absence.end_date', 'type.name as label')
+                ->when($readLimit !== null, static fn (Builder $q) => $q->limit($readLimit + 1))
                 ->get()
                 ->groupBy('employee_id');
 
@@ -306,9 +316,14 @@ final class WorkforceProService
                 ->where('status', 'approved')
                 ->whereDate('start_date', '<=', $end->toDateString())
                 ->whereDate('end_date', '>=', $start->toDateString())
-                ->select('employee_id', 'start_date', 'end_date', 'destination')
+                ->select('employee_id', 'start_date', 'end_date')
+                ->when($readLimit !== null, static fn (Builder $q) => $q->limit($readLimit + 1))
                 ->get()
                 ->groupBy('employee_id');
+
+        if ($readLimit !== null && ($absences->flatten(1)->count() > $readLimit || $businessTrips->flatten(1)->count() > $readLimit)) {
+            throw new DomainException('calendar_read_limit');
+        }
 
         return [
             'days' => $days,

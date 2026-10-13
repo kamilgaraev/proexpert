@@ -12,9 +12,11 @@ final class AssistantOperationalReaderRegistry
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
         '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu',
         '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu',
+        '/материал[а-яё]*.*(?:жд[её]м|ожида|достав)|(?:жд[её]м|ожида).*материал|поставк[а-яё]*.*просроч|просроч[а-яё]*.*(?:поставк|достав)/iu',
         AssistantProjectActReader::INTENT_PATTERN,
-        '/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', '/тендер/iu',
+        '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', '/тендер/iu',
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
+
     public const TOOLS = [
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
@@ -27,56 +29,115 @@ final class AssistantOperationalReaderRegistry
         'get_project_report_catalog' => AssistantProjectReportCatalogReader::class,
         'get_project_site_request_queue' => AssistantProjectSiteRequestReader::class,
         'get_project_tender_decisions' => AssistantTenderReader::class,
+        'get_project_deliveries' => AssistantProjectDeliveriesReader::class,
+        'get_project_daily_staff' => AssistantProjectDailyStaffReader::class,
         'get_project_staff_roster' => AssistantProjectStaffReader::class,
         'get_project_act_readiness' => AssistantProjectActReader::class,
     ];
+
     public const ORGANIZATION_TOOLS = [
         'get_organization_project_roster' => AssistantOrganizationProjectsReader::class,
         'get_organization_supplier_roster' => AssistantOrganizationSuppliersReader::class,
         'get_organization_activity_summary' => AssistantOrganizationActivityReader::class,
+        'get_own_project_access' => AssistantOwnProjectAccessReader::class,
+        'get_organization_purchase_orders' => AssistantOrganizationPurchaseOrdersReader::class,
         'get_organization_notifications' => AssistantOrganizationNotificationsReader::class,
     ];
-    public const NAMED_TOOLS = ['get_contract_supplementary_readiness' => AssistantContractSupplementaryReader::class];
+
+    public const NAMED_TOOLS = ['get_catalog_lookup' => AssistantCatalogLookupReader::class, 'get_contract_supplementary_readiness' => AssistantContractSupplementaryReader::class];
 
     public static function forReference(string $type): ?string
     {
-        foreach ([...self::TOOLS, ...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $class) { if ($class::TYPE === $type) { return $class; } }
+        foreach ([...self::TOOLS, ...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $class) {
+            if ($class::TYPE === $type) {
+                return $class;
+            }
+        }
+
         return null;
     }
 
     public static function intent(string $query): ?array
     {
-        if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) { return null; }
+        if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
+            return null;
+        }
         foreach (self::NAMED_TOOLS as $name => $class) {
-            if (! $class::hasIntent($query)) { continue; }
-            foreach (self::TOPICS as $pattern) { if (preg_match($pattern, $query) === 1) { return null; } }
-            foreach (self::ORGANIZATION_TOOLS as $organizationReader) { if ($organizationReader::hasIntent($query)) { return null; } }
+            if (! $class::hasIntent($query)) {
+                continue;
+            }
+            foreach (self::TOPICS as $pattern) {
+                if (preg_match($pattern, $query) === 1) {
+                    return null;
+                }
+            }
+            foreach (self::ORGANIZATION_TOOLS as $organizationReader) {
+                if ($organizationReader::hasIntent($query)) {
+                    return null;
+                }
+            }
+
             return $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
         }
-        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|поставк|закуп|снабжен|склад|табел|техник|при[её]мк/iu', $query) === 1
-            || preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query)
-            || preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query)) { return null; }
+        $purchaseOrders = AssistantOrganizationPurchaseOrdersReader::matches($query);
+        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $query) === 1
+            || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
+            || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query))
+            || (preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query))) {
+            return null;
+        }
         $topics = 0;
         foreach (self::TOPICS as $pattern) {
-            if (preg_match($pattern, $query) === 1) { $topics++; }
+            if (preg_match($pattern, $query) === 1) {
+                $topics++;
+            }
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
-            if ($class::hasIntent($query)) { $organizationMatches[] = $class::matches($query) ? ['name' => $name, 'reader' => $class] : null; }
+            if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {
+                continue;
+            }
+            if ($class::hasIntent($query)) {
+                $organizationMatches[] = $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
+            }
         }
-        if ($organizationMatches !== []) { return $topics === 0 && count($organizationMatches) === 1 ? $organizationMatches[0] : null; }
-        if ($topics !== 1) { return null; }
+        if ($organizationMatches !== []) {
+            return $topics === 0 && count($organizationMatches) === 1 ? $organizationMatches[0] : null;
+        }
+        if ($topics !== 1) {
+            return null;
+        }
         $matches = [];
-        foreach (self::TOOLS as $name => $class) { if ($class::matches($query)) { $matches[] = ['name' => $name, 'reader' => $class]; } }
-        if (preg_match('/стоим/iu', $query) === 1 && ($matches[0]['name'] ?? null) !== 'get_project_change_readiness') { return null; }
+        foreach (self::TOOLS as $name => $class) {
+            if ($class::matches($query)) {
+                $matches[] = ['name' => $name, 'reader' => $class];
+            }
+        }
+        if (preg_match('/стоим/iu', $query) === 1 && ($matches[0]['name'] ?? null) !== 'get_project_change_readiness') {
+            return null;
+        }
+
         return count($matches) === 1 ? $matches[0] : null;
     }
 
     public static function hasIntent(string $query): bool
     {
-        foreach (self::ORGANIZATION_TOOLS as $class) { if ($class::hasIntent($query)) { return true; } }
-        foreach (self::NAMED_TOOLS as $class) { if ($class::hasIntent($query)) { return true; } }
-        foreach (self::TOPICS as $pattern) { if (preg_match($pattern, $query) === 1) { return true; } }
+        foreach (self::ORGANIZATION_TOOLS as $class) {
+            if ($class::hasIntent($query)) {
+                return true;
+            }
+        }
+        foreach (self::NAMED_TOOLS as $class) {
+            if ($class::hasIntent($query)) {
+                return true;
+            }
+        }
+        foreach (self::TOPICS as $pattern) {
+            if (preg_match($pattern, $query) === 1) {
+                return true;
+            }
+        }
+
         return false;
     }
 }

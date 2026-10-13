@@ -15,10 +15,13 @@ final readonly class AssistantProjectStaffReader extends AssistantProjectOperati
     public static function matches(string $query): bool
     {
         return preg_match('/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', $query) === 1
-            && preg_match('/создай|удали|назначь|уволь|измени|зарплат|оклад|оплат|выплат|табел|отработ|работал|смен|телефон|почт|допуск|паспорт|график|зависимост|критическ[а-яё]*\s+путь|задач[а-яё]*.*просроч|за\s+(?:прошл|сентябр|октябр)|на\s+(?:завтра|следующ)/iu', $query) !== 1;
+            && preg_match('/создай|удали|назначь|уволь|измени|зарплат|оклад|оплат|выплат|табел|отработ|работал|смен|телефон|почт|допуск|паспорт|график|отсутст|отпуск|больнич|командиров|зависимост|критическ[а-яё]*\s+путь|задач[а-яё]*.*просроч|за\s+(?:прошл|сентябр|октябр)|на\s+(?:завтра|следующ)/iu', $query) !== 1;
     }
 
-    protected function domain(): string { return 'workforce'; }
+    protected function domain(): string
+    {
+        return 'workforce';
+    }
 
     protected function collect(User $actor, int $organizationId, int $projectId): array
     {
@@ -40,6 +43,7 @@ final readonly class AssistantProjectStaffReader extends AssistantProjectOperati
             ->get()->map(static fn ($row): array => ['id' => (int) $row->id, 'employee_id' => (int) $row->employee_id,
                 'name' => trim(implode(' ', array_filter([$row->last_name, $row->first_name, $row->middle_name]))),
                 'department' => $row->department, 'position' => $row->position, 'from' => $row->valid_from, 'to' => $row->valid_to])->all();
+
         return ['employees' => $total, 'assignments' => $assignments, 'examples' => $examples];
     }
 
@@ -53,6 +57,7 @@ final readonly class AssistantProjectStaffReader extends AssistantProjectOperati
         }
         $lines[] = trans_message('ai_assistant_operational.staff_basis');
         $lines[] = trans_message('ai_assistant_operational.examples_basis');
+
         return implode("\n", $lines);
     }
 }
