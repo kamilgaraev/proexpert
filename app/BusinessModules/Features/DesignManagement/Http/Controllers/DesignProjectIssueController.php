@@ -10,6 +10,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignProjec
 use App\BusinessModules\Features\DesignManagement\Http\Requests\DesignProjectIssueActionRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueSubmissionService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
@@ -21,7 +22,10 @@ use Illuminate\Validation\Rules\File;
 
 final class DesignProjectIssueController extends Controller
 {
-    public function __construct(private readonly DesignProjectIssueService $issues) {}
+    public function __construct(
+        private readonly DesignProjectIssueService $issues,
+        private readonly DesignProjectIssueSubmissionService $submissions,
+    ) {}
 
     public function index(ListDesignProjectIssuesRequest $request, int $projectId): JsonResponse
     {
@@ -35,9 +39,11 @@ final class DesignProjectIssueController extends Controller
     public function store(StoreDesignProjectIssueRequest $request, int $projectId): JsonResponse
     {
         try {
-            return AdminResponse::success(new DesignProjectIssueResource($this->issues->create($request->user(), $this->organizationId($request), $projectId, $request->validated())), trans_message('design_issues.messages.created'), 201);
+            return AdminResponse::success(new DesignProjectIssueResource($this->submissions->submit(
+                $request->user(), $this->organizationId($request), $projectId, $request->validated(), $request->header('Idempotency-Key')
+            )), trans_message('design_issues.messages.created'), 201);
         } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return AdminResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
         }
     }
 

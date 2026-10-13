@@ -18,7 +18,10 @@ use Illuminate\Database\Eloquent\Model;
 
 final class DesignIssueContextResolver
 {
-    public function __construct(private readonly DesignModelSessionAccessService $sessionAccess) {}
+    public function __construct(
+        private readonly DesignModelSessionAccessService $sessionAccess,
+        private readonly DesignAccessService $access,
+    ) {}
 
     public function resolve(User $actor, int $organizationId, int $projectId, array $payload): array
     {
@@ -154,7 +157,39 @@ final class DesignIssueContextResolver
         }
         if (($payload['annotations'] ?? null) !== null) {
             $annotations = $this->annotations($payload['annotations']);
-            if ($annotations['strokes'] !== []) {
+            if (isset($annotations['page_number'])) {
+                if (! isset($context['version_id']) || $hasRevision || $hasView
+                    || isset($payload['camera']) || isset($payload['point']) || $requestedElements !== []) {
+                    throw $this->invalidTarget();
+                }
+                $document = $this->find(DesignArtifactVersion::class, $context['version_id'], $organizationId, $projectId);
+                if (! $document instanceof DesignArtifactVersion
+                    || ! str_starts_with((string) $document->source_file_path, 'org-'.$organizationId.'/')
+                    || (! in_array($document->file_format, ['pdf', 'pdfa'], true)
+                        && ! in_array($document->source_mime_type, ['image/png', 'image/jpeg', 'image/webp'], true))) {
+                    throw $this->invalidTarget();
+                }
+                $this->access->assertVersion($document, $actor, 'design-management.documents.view', strictProjectScope: true);
+                if (! $this->access->canAccessProject($actor, $organizationId, $projectId, 'design-management.review', true)) {
+                    throw $this->invalidTarget();
+                }
+                $artifactType = $document->artifact?->artifact_type;
+                $artifactType = $artifactType instanceof \BackedEnum ? $artifactType->value : $artifactType;
+                if ($artifactType === 'model' && ($document->artifact?->section_id === null
+                    || trim((string) $document->artifact?->document_code) === '')) {
+                    throw $this->invalidTarget();
+                }
+                if (isset($context['sheet_id'])) {
+                    $sheet = $this->find(DesignDocumentSheet::class, $context['sheet_id'], $organizationId, $projectId);
+                    if (! $sheet instanceof DesignDocumentSheet
+                        || ($sheet->file_page_number !== null && (int) $sheet->file_page_number !== $annotations['page_number'])) {
+                        throw $this->invalidTarget();
+                    }
+                }
+                if (str_starts_with((string) $document->source_mime_type, 'image/') && $annotations['page_number'] !== 1) {
+                    throw $this->invalidTarget();
+                }
+            } elseif ($annotations['strokes'] !== []) {
                 if (! $this->cameraSnapshot($payload['camera'] ?? null)) {
                     throw $this->invalidTarget();
                 }
@@ -173,7 +208,13 @@ final class DesignIssueContextResolver
 
     private function annotations(mixed $annotations): array
     {
-        if (! is_array($annotations) || ! $this->hasOnlyKeys($annotations, ['schema_version', 'width', 'height', 'strokes'])
+        $keys = ['schema_version', 'width', 'height', 'strokes'];
+        if (is_array($annotations) && array_key_exists('page_number', $annotations)) {
+            $keys[] = 'page_number';
+        }
+        if (! is_array($annotations) || ! $this->hasOnlyKeys($annotations, $keys)
+            || (array_key_exists('page_number', $annotations) && (! is_int($annotations['page_number'])
+                || $annotations['page_number'] < 1 || $annotations['page_number'] > 10000))
             || ($annotations['schema_version'] ?? null) !== 1
             || ! $this->boundedNumber($annotations['width'] ?? null, 0, 16384) || (float) $annotations['width'] <= 0
             || ! $this->boundedNumber($annotations['height'] ?? null, 0, 16384) || (float) $annotations['height'] <= 0
@@ -218,6 +259,7 @@ final class DesignIssueContextResolver
 
         return [
             'schema_version' => 1,
+            ...isset($annotations['page_number']) ? ['page_number' => $annotations['page_number']] : [],
             'width' => (float) $annotations['width'],
             'height' => (float) $annotations['height'],
             'strokes' => $strokes,

@@ -113,6 +113,33 @@ final class MobileDesignManagementHttpContractTest extends TestCase
             ->assertJsonMissing(['coordinate_transformations']);
     }
 
+    public function test_document_page_annotations_are_shared_with_admin_and_replay_without_duplication(): void
+    {
+        [$context, $project, $version] = $this->fixture();
+        $version->artifact->update(['artifact_type' => 'drawing_set']);
+        $version->update(['file_format' => 'pdf', 'source_mime_type' => 'application/pdf', 'source_original_name' => 'plans.pdf']);
+        $payload = ['project_id' => $project->id, 'title' => 'Проверить чертёж', 'severity' => 'minor',
+            'version_id' => $version->id, 'annotations' => ['schema_version' => 1, 'page_number' => 3,
+                'width' => 1000, 'height' => 700, 'strokes' => [['kind' => 'line', 'color' => '#E53935', 'width' => 3,
+                    'points' => [['x' => 0.1, 'y' => 0.2], ['x' => 0.8, 'y' => 0.9]]]]]];
+        $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile_drawing_issue_0001'];
+        $first = $this->withHeaders($headers)->postJson($this->base().'/project-issues', $payload)->assertCreated()
+            ->assertJsonPath('data.context.annotations.page_number', 3);
+        $this->withHeaders($headers)->postJson($this->base().'/project-issues', $payload)->assertCreated()
+            ->assertJsonPath('data.id', $first->json('data.id'))->assertJsonPath('data.receipt.replayed', true);
+        $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/project-issues?project_id='.$project->id.'&version_id='.$version->id)
+            ->assertOk()->assertJsonPath('data.0.context.annotations.page_number', 3);
+        self::assertSame(1, QualityDefect::query()->where('project_id', $project->id)->count());
+        $this->withHeaders($context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile_drawing_issue_0002'])
+            ->postJson($this->base().'/project-issues', array_replace($payload, ['camera' => ['position' => [1, 2, 3]]]))->assertUnprocessable();
+        $this->withHeaders($context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile_drawing_issue_0003'])
+            ->postJson($this->base().'/project-issues', array_replace($payload, ['project_id' => $project->id + 100000]))->assertNotFound();
+        $adminIssue = app(\App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueService::class)
+            ->find($context->user, (int) $context->organization->id, (int) $first->json('data.id'));
+        $admin = (new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource($adminIssue))->resolve();
+        self::assertSame('#e53935', $admin['context']['annotations']['strokes'][0]['color']);
+    }
+
     public function test_issue_creation_replay_checks_project_and_exact_version_element(): void
     {
         [$context, $project, $version] = $this->fixture();

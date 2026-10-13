@@ -36,11 +36,15 @@ final readonly class DesignAccessService
         return $actor;
     }
 
-    public function canAccessProject(User $actor, int $organizationId, int $projectId, string $permission): bool
+    public function canAccessProject(User $actor, int $organizationId, int $projectId, string $permission, bool $strictProjectScope = false): bool
     {
+        $context = ['organization_id' => $organizationId, 'project_id' => $projectId];
+        if ($strictProjectScope) {
+            $context['strict_project_scope'] = true;
+        }
         return $actor->belongsToOrganization($organizationId)
             && $this->projectAccess->queryAccessibleProjects($actor, $organizationId)->where('projects.id', $projectId)->exists()
-            && $this->authorization->can($actor, $permission, ['organization_id' => $organizationId, 'project_id' => $projectId]);
+            && $this->authorization->can($actor, $permission, $context);
     }
 
     public function accessibleProjectIds(User $actor, int $organizationId, string $permission): Builder
@@ -68,7 +72,7 @@ final readonly class DesignAccessService
         }
     }
 
-    public function assertVersion(DesignArtifactVersion $version, User $actor, string $permission, bool $modelOnly = false): void
+    public function assertVersion(DesignArtifactVersion $version, User $actor, string $permission, bool $modelOnly = false, bool $strictProjectScope = false): void
     {
         $version->loadMissing('artifact.package', 'artifact.section');
         $artifact = $version->artifact;
@@ -87,7 +91,7 @@ final readonly class DesignAccessService
                 || (int) $section->project_id !== (int) $version->project_id
                 || (int) $section->package_id !== (int) $package->id))
             || ($modelOnly && ($artifactType !== 'model' || $version->file_format !== 'ifc'))
-            || ! $this->canAccessProject($actor, (int) $version->organization_id, (int) $version->project_id, $permission)) {
+            || ! $this->canAccessProject($actor, (int) $version->organization_id, (int) $version->project_id, $permission, $strictProjectScope)) {
             throw new DomainException(trans_message('design_management.errors.version_not_found'));
         }
     }
