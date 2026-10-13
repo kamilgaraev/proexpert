@@ -60,7 +60,13 @@ final class AssistantOrganizationReadonlyGuardTest extends TestCase
                     AssistantOrganizationActivityReader::class, AssistantOrganizationNotificationsReader::class, AssistantContractSupplementaryReader::class,
                     AssistantCatalogLookupReader::class, AssistantOwnProjectAccessReader::class, AssistantOrganizationPurchaseOrdersReader::class,
                     AssistantProjectDailyStaffReader::class, AssistantProjectDeliveriesReader::class, AssistantDocumentReadinessReader::class,
-                    AssistantProjectPaymentReader::class, AssistantProjectContractRosterReader::class, AssistantProjectMaterialStockReader::class] as $class) {
+                    AssistantProjectPaymentReader::class, AssistantProjectContractRosterReader::class, AssistantProjectMaterialStockReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationCreditBalanceReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationUsersReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantAssignableRolesReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOwnAdminPermissionsReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationPackagesReader::class,
+                    \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationModulesReader::class] as $class) {
                     $reader = app($class); $args = match ($class) {
                         AssistantContractSupplementaryReader::class => ['contract_number' => 'GUARD-52', 'project_id' => null, 'project_query' => 'Объект проверки'],
                         AssistantCatalogLookupReader::class => ['material_query' => 'цемент', 'work_type_query' => 'бетонированию'],

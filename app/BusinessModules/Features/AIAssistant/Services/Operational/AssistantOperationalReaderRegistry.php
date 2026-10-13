@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
 final class AssistantOperationalReaderRegistry
 {
+    private const STAFF_TOPIC = '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu';
     private const TOPICS = ['/журнал(?![а-яё]*\s+(?:событи|действи))/iu', '/безопасност|охран[а-яё]*\s+труд|происшеств|нарушен/iu',
         '/rfi|вопрос[а-яё]*\s+проектировщик|изменен[а-яё]*.*(?:согласован|решени|влияни)/iu',
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
@@ -14,7 +15,7 @@ final class AssistantOperationalReaderRegistry
         '/доступн[а-яё]*\s+отч[её]т|каталог[а-яё]*\s+отч[её]т|отч[её]т[а-яё]*.*(?:подойдут|помогут|подходит)/iu',
         '/материал[а-яё]*.*(?:жд[её]м|ожида|достав)|(?:жд[её]м|ожида).*материал|поставк[а-яё]*.*просроч|просроч[а-яё]*.*(?:поставк|достав)/iu',
         AssistantProjectActReader::INTENT_PATTERN,
-        '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu', '/тендер/iu',
+        self::STAFF_TOPIC, '/тендер/iu',
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
@@ -36,6 +37,12 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_user_counts' => AssistantOrganizationUsersReader::class,
+        'get_assignable_user_roles' => AssistantAssignableRolesReader::class,
+        'get_own_admin_permissions' => AssistantOwnAdminPermissionsReader::class,
+        'get_organization_credit_balance' => AssistantOrganizationCreditBalanceReader::class,
+        'get_organization_active_packages' => AssistantOrganizationPackagesReader::class,
+        'get_organization_effective_modules' => AssistantOrganizationModulesReader::class,
         'get_organization_project_roster' => AssistantOrganizationProjectsReader::class,
         'get_organization_supplier_roster' => AssistantOrganizationSuppliersReader::class,
         'get_organization_activity_summary' => AssistantOrganizationActivityReader::class,
@@ -80,14 +87,18 @@ final class AssistantOperationalReaderRegistry
             return $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
         }
         $purchaseOrders = AssistantOrganizationPurchaseOrdersReader::matches($query);
-        if (preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $query) === 1
+        $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
+        if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $query) === 1)
             || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
             || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query))
-            || (preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query))) {
+            || (! $governance && preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query))) {
             return null;
         }
         $topics = 0;
         foreach (self::TOPICS as $pattern) {
+            if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
+                continue;
+            }
             if (preg_match($pattern, $query) === 1) {
                 $topics++;
             }

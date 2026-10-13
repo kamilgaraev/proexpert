@@ -71,6 +71,8 @@ final class AssistantStructuredFactSafetyTest extends TestCase
         self::assertStringContainsString('Сумма: 9007199254740993.17', $html);
         self::assertStringContainsString('href="/payments?entity_id=7"', $html);
         self::assertSame('partial', $payload['structured_fact_evidence']['validation_status']);
+        self::assertSame('2026-09-29T12:00:00Z', $payload['structured_fact_evidence']['fetched_at']);
+        self::assertStringContainsString('2026-09-29 12:00:00 UTC', str_replace('\\', '', $payload['server_formatted_facts']));
     }
 
     public function test_factual_guard_replaces_model_status_date_and_count_claims_with_returned_proof(): void
@@ -251,6 +253,22 @@ final class AssistantStructuredFactSafetyTest extends TestCase
         $row = AssistantStructuredFactFormatter::row($model, $type, $fields, $this->reference($id, $type, $fields));
 
         return AssistantStructuredFactFormatter::payload([$row], '2026-09-29T12:00:00Z');
+    }
+
+    public function test_organization_facts_name_the_actual_account_section_without_catalog_link(): void
+    {
+        $metadata = \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantCoreBusinessMetadata::records()['core_organization'];
+        self::assertSame('', $metadata['navigation']);
+        $model = new class extends Model {};
+        $model->setRawAttributes(['id' => 3, 'legal_name' => 'Организация', 'tax_number' => '1234567890'], true);
+        $fields = ['legal_name', 'tax_number'];
+        $ref = $this->reference(3, 'core_organization', $fields);
+        $ref['navigation']['url'] = '';
+        $row = AssistantStructuredFactFormatter::row($model, 'core_organization', $fields, $ref);
+        $result = AssistantStructuredFactFormatter::payload([$row], '2026-10-13T19:49:00Z');
+        self::assertStringContainsString('личном кабинете МОСТ', $result['server_formatted_facts']);
+        self::assertStringNotContainsString('/catalogs', $result['server_formatted_facts']);
+        self::assertStringContainsString('UTC', $result['server_formatted_facts']);
     }
 
     private function reference(int $id, string $type, array $fields): array
