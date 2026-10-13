@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 
 final class AcceptedDocumentFactProjector
@@ -24,7 +25,8 @@ final class AcceptedDocumentFactProjector
             return null;
         }
 
-        $type = match ($claim->factType) {
+        $documentContext = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
+        $type = $documentContext !== null ? 'work_scope' : match ($claim->factType) {
             'area' => $numeric
                 ? ($this->isBuildingTotalArea($claim->entityKey)
                     ? 'total_area'
@@ -45,7 +47,7 @@ final class AcceptedDocumentFactProjector
 
         return [
             'fact_type' => $type,
-            'label_key' => match ($type) {
+            'label_key' => $documentContext !== null ? $claim->factType : match ($type) {
                 'room_area', 'zone_area' => 'area',
                 'height' => 'elevation',
                 default => $type,

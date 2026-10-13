@@ -11,6 +11,18 @@ use PHPUnit\Framework\TestCase;
 
 final class AcceptedDocumentFactProjectionTest extends TestCase
 {
+    public function test_typed_document_requirement_uses_compatible_storage_without_inventing_a_quantity(): void
+    {
+        $claim = $this->claim('equipment_specification', ['type' => 'string', 'data' => 'Спецификация насоса P1: марка и комплектация.'], null, 'equipment.p1');
+        $projected = $this->project($claim);
+        self::assertSame('work_scope', $projected['fact_type']);
+        self::assertSame('equipment_specification', $projected['label_key']);
+        self::assertNull($projected['value_number']);
+        self::assertNull($projected['unit']);
+        self::assertSame($claim->value['data'], $projected['value_text']);
+        self::assertNull($this->project($this->claim('equipment_specification', ['type' => 'boolean', 'data' => true], null, 'equipment.p1')));
+    }
+
     #[Test]
     public function signed_and_numeric_zero_levels_use_the_existing_height_storage_contract(): void
     {

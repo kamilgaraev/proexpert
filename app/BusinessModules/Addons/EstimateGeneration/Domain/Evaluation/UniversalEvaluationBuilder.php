@@ -161,6 +161,17 @@ final readonly class UniversalEvaluationBuilder
             unset($scenario);
         }
         $result = $this->calculator->calculate($scenarios, $scope, $requirements, $scopeConfirmed);
+        foreach ($result['missing_requirements'] as &$requirement) {
+            if (! is_array($requirement)) {
+                continue;
+            }
+            $entity = $entityIds[$requirement['entity_id'] ?? ''] ?? null;
+            $name = $entity?->attributes['name'] ?? $entity?->attributes['identity']['label'] ?? null;
+            if (is_string($name) && trim($name) !== '') {
+                $requirement['entity_name'] = mb_substr($name, 0, 160);
+            }
+        }
+        unset($requirement);
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],
             'coverage' => $coverage, 'priority_questions' => $this->questions->prioritize($questionCandidates),

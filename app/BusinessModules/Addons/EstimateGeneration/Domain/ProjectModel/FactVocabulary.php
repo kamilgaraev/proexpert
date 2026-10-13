@@ -10,6 +10,67 @@ final class FactVocabulary
 {
     public const VERSION = 'project-facts:v1';
 
+    private const DOCUMENT_DOMAINS = [
+        'heating_system' => 'heating', 'heating_specification' => 'heating', 'radiator_specification' => 'heating', 'heating_test_program' => 'heating',
+        'water_supply_system' => 'water_supply', 'water_supply_specification' => 'water_supply', 'water_supply_test_program' => 'water_supply',
+        'sewerage_system' => 'sewerage', 'sewerage_specification' => 'sewerage', 'sewerage_test_program' => 'sewerage',
+        'ventilation_system' => 'ventilation', 'ventilation_specification' => 'ventilation', 'ventilation_test_program' => 'ventilation',
+        'electricity_system' => 'electricity', 'electrical_specification' => 'electricity', 'electricity_test_program' => 'electricity',
+        'automation_system' => 'automation', 'automation_specification' => 'automation', 'automation_test_program' => 'automation',
+        'pipeline_specification' => 'technological_pipelines', 'technological_pipeline_specification' => 'technological_pipelines', 'pipeline_test_program' => 'technological_pipelines',
+        'equipment_specification' => 'equipment',
+        'industrial_specification' => 'industrial', 'technology_requirements' => 'industrial', 'industry_work_checklist' => 'industrial',
+    ];
+
+    private const DOCUMENT_ENTITIES = [
+        'heating' => ['heating_system', 'radiator', 'heater', 'equipment'],
+        'water_supply' => ['water_supply_system', 'water_pipe', 'equipment'],
+        'sewerage' => ['sewerage_system', 'sewer_pipe', 'equipment'],
+        'ventilation' => ['ventilation_system', 'ventilation_duct', 'equipment'],
+        'electricity' => ['electrical_system', 'electrical_circuit', 'equipment'],
+        'automation' => ['automation_system', 'control_system', 'equipment'],
+        'technological_pipelines' => ['technological_pipeline', 'process_system', 'equipment'],
+        'equipment' => ['equipment'],
+    ];
+
+    public static function documentTypes(): array
+    {
+        return array_keys(self::DOCUMENT_DOMAINS);
+    }
+
+    public static function documentDomain(string $type): ?string
+    {
+        return self::DOCUMENT_DOMAINS[$type] ?? null;
+    }
+
+    public static function documentSupportsEntity(string $type, string $entityType): bool
+    {
+        $domain = self::documentDomain($type);
+        $kinds = array_values(array_unique(array_merge(array_keys(self::PARAMETERS), ...array_values(self::DOCUMENT_ENTITIES))));
+
+        return $domain === 'industrial' ? in_array($entityType, $kinds, true)
+            : in_array($entityType, self::DOCUMENT_ENTITIES[$domain ?? ''] ?? [], true);
+    }
+
+    /** A cited text is a document context, never a numeric measurement or a generated design. */
+    public static function documentObservation(string $type, string $entityKey, array $value, ?string $unit): ?array
+    {
+        if (self::documentDomain($type) === null || $unit !== null || ($value['type'] ?? null) !== 'string'
+            || ! is_string($value['data'] ?? null) || trim($value['data']) === '' || mb_strlen($value['data']) > 500
+            || preg_match('~[\x00-\x08\x0B\x0C\x0E-\x1F]~u', $value['data']) === 1) {
+            return null;
+        }
+        $kinds = array_values(array_unique(array_merge(array_keys(self::PARAMETERS), ...array_values(self::DOCUMENT_ENTITIES))));
+        usort($kinds, static fn (string $left, string $right): int => strlen($right) <=> strlen($left));
+        foreach ($kinds as $kind) {
+            if (preg_match('/^'.preg_quote($kind, '/').'[:._-][a-z0-9][a-z0-9._:-]{0,119}$/iD', $entityKey) === 1 && self::documentSupportsEntity($type, $kind)) {
+                return ['semantic_type' => $kind, 'excerpt' => trim($value['data'])];
+            }
+        }
+
+        return null;
+    }
+
     private const PARAMETERS = [
         'room' => ['area', 'length', 'width', 'height'],
         'wall' => ['length', 'height', 'thickness'],
@@ -30,6 +91,17 @@ final class FactVocabulary
         'plan_area' => ['plan_area', 'roof_plan_area', 'площадь кровли в плане'],
         'slope_rise' => ['slope_rise', 'roof_slope_rise', 'подъём ската', 'подъем ската'],
         'slope_run' => ['slope_run', 'roof_slope_run', 'заложение ската'],
+        'equipment_specification' => ['equipment_specification', 'спецификация оборудования'],
+        'heating_specification' => ['heating_specification', 'спецификация отопления'],
+        'water_supply_specification' => ['water_supply_specification', 'спецификация водоснабжения'],
+        'electrical_specification' => ['electrical_specification', 'спецификация электрики'],
+        'pipeline_specification' => ['pipeline_specification', 'спецификация трубопроводов'],
+        'heating_test_program' => ['heating_test_program', 'программа испытаний отопления'],
+        'water_supply_test_program' => ['water_supply_test_program', 'программа испытаний водоснабжения'],
+        'electricity_test_program' => ['electricity_test_program', 'программа испытаний электрики'],
+        'industrial_specification' => ['industrial_specification', 'промышленная спецификация'],
+        'technology_requirements' => ['technology_requirements', 'технологические требования'],
+        'industry_work_checklist' => ['industry_work_checklist', 'отраслевой перечень работ'],
     ];
 
     private const METRIC_UNITS = [
