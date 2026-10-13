@@ -133,6 +133,12 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                $documentEngineering = $projection['type'] === 'equipment'
+                    && ($projection['attributes']['properties']['document_context'] ?? false) === true;
+                if ($documentEngineering) {
+                    // Equal marks on different source sheets do not prove one physical asset.
+                    $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
+                }
                 $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
                 if ($roomIdentityFact) {
                     // A repeated room label is not proof that separate photographs show the same room.
@@ -181,7 +187,7 @@ final readonly class ProjectModelEvidenceWriter
                         $scope->sourceVersion,
                         $projection['type'],
                         $entityId,
-                        $entityScope === '' && ! $roomIdentityFact ? $legacyEntityIds : [],
+                        $entityScope === '' && ! $roomIdentityFact && ! $documentEngineering ? $legacyEntityIds : [],
                     );
                 }
                 $entities[$entityId] = new Entity(
@@ -446,7 +452,8 @@ final readonly class ProjectModelEvidenceWriter
         $document = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
         if ($document !== null) {
             $kind = $document['semantic_type'];
-            $physical = in_array($kind, Entity::TYPES, true) ? $kind : (FactVocabulary::entityType($claim->entityKey) !== null ? 'quantity' : 'equipment');
+            $physical = in_array($kind, Entity::TYPES, true) ? $kind
+                : (FactVocabulary::entityType($claim->entityKey) !== null && ! in_array($kind, FactVocabulary::engineeringTypes(), true) ? 'quantity' : 'equipment');
             $sourceKey = is_string($claim->locator['source_entity_key'] ?? null) ? $claim->locator['source_entity_key'] : $claim->entityKey;
             $name = preg_replace('/^[a-z_]+[:._-]/', '', $sourceKey) ?? $sourceKey;
             $attributes = $physical === 'equipment'
@@ -532,6 +539,20 @@ final readonly class ProjectModelEvidenceWriter
             ];
         }
         $semanticType = FactVocabulary::entityType($claim->entityKey);
+        if ($semanticType !== null && in_array($semanticType, FactVocabulary::engineeringTypes(), true)) {
+            $measurement = ($claim->value['type'] ?? null) === 'number'
+                ? FactVocabulary::engineeringObservation($claim->entityKey, $type, $value, $claim->unit) : null;
+            if ($measurement === null) {
+                return null;
+            }
+            $sourceKey = is_string($claim->locator['source_entity_key'] ?? null) ? $claim->locator['source_entity_key'] : $claim->entityKey;
+
+            return ['type' => 'equipment', 'fact_type' => $measurement['parameter'],
+                'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['name' => preg_replace('/^[a-z_]+[:._-]/', '', $sourceKey) ?? $sourceKey,
+                    'equipment_code' => 'document:'.substr(hash('sha256', $claim->entityKey), 0, 32),
+                    'properties' => ['semantic_type' => $semanticType, 'document_context' => true, 'source_entity_key' => $sourceKey]]];
+        }
         if ($semanticType !== null
             && FactVocabulary::supports($semanticType, $type)
             && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {

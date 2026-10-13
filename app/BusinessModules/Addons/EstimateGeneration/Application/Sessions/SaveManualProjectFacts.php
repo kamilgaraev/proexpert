@@ -77,7 +77,7 @@ final readonly class SaveManualProjectFacts
                 $id = 'entity:'.hash('sha256', json_encode([$sessionId, 'manual', $row['type'], $key, $row['floor'] ?? null, $row['zone'] ?? null], JSON_THROW_ON_ERROR));
                 if (isset($row['existing_entity_id'])) {
                     $existing = $activeEntities[$row['existing_entity_id']] ?? null;
-                    if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->type) !== $row['type']
+                    if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->attributes['properties']['semantic_type'] ?? $existing->type) !== $row['type']
                         || ($row['parameters'] ?? []) === []
                         || array_intersect(['name', 'floor', 'zone', 'parent_key', 'coverage'], array_keys($row)) !== []) {
                         throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => 'Выберите доступный объект текущей сессии. Для ответа изменяются только его числовые параметры.']);
@@ -122,7 +122,13 @@ final readonly class SaveManualProjectFacts
                 } elseif (in_array($type, ['opening', 'roof_facet', 'roof_opening'], true)) {
                     throw ValidationException::withMessages(['entities.'.$index.'.parent_key' => 'Для проёма или грани требуется родительский объект.']);
                 }
-                $entities[$id] = new Entity($id, ...[...$scope, $sourceVersion, in_array($type, Entity::TYPES, true) ? $type : 'quantity', $id, $attributes]);
+                $physicalType = in_array($type, Entity::TYPES, true) ? $type : 'quantity';
+                if (in_array($type, FactVocabulary::engineeringTypes(), true)) {
+                    $physicalType = 'equipment';
+                    $attributes = ['name' => $row['name'] ?? $row['key'], 'equipment_code' => 'manual:'.substr(hash('sha256', $id), 0, 32),
+                        'properties' => $attributes];
+                }
+                $entities[$id] = new Entity($id, ...[...$scope, $sourceVersion, $physicalType, $id, $attributes]);
             }
             $facts = $proofs = [];
             foreach ($input['entities'] as $index => $row) {
@@ -150,7 +156,7 @@ final readonly class SaveManualProjectFacts
                 }
                 foreach ($row['parameters'] ?? [] as $parameter => $entry) {
                     $parameter = FactVocabulary::parameter($parameter);
-                    $group = in_array($parameter, ['area', 'plan_area'], true) ? 'area' : 'length';
+                    $group = $parameter === 'equipment_count' ? 'count' : (in_array($parameter, ['area', 'plan_area'], true) ? 'area' : 'length');
                     $factor = FactVocabulary::factor($group, $entry['unit']);
                     if (! FactVocabulary::supports($row['type'], $parameter) || $factor === null || isset($parameters[$parameter])) {
                         throw ValidationException::withMessages(['entities.'.$index.'.parameters' => 'Параметр, единица или повторение параметра не поддерживается.']);
@@ -164,12 +170,16 @@ final readonly class SaveManualProjectFacts
                     if (! CanonicalSourceDecimal::isNonNegative($number) || ($parameter !== 'slope_rise' && BigDecimal::of($number)->isZero())) {
                         throw ValidationException::withMessages(['entities.'.$index.'.parameters' => 'Размер должен быть положительным, не более четырёх знаков после запятой.']);
                     }
+                    if (in_array($row['type'], FactVocabulary::engineeringTypes(), true)
+                        && FactVocabulary::engineeringObservation($row['type'].':input', $parameter, $number, $entry['unit']) === null) {
+                        throw ValidationException::withMessages(['entities.'.$index.'.parameters' => 'Проверьте единицу и значение: количество оборудования должно быть целым.']);
+                    }
                     $basis = $entry['basis'];
                     $measurement = $basis === 'measurement';
                     $node = $this->evidence->insertOrGet(new EvidenceData(...[
                         ...$scope, $measurement ? EvidenceType::Measured : EvidenceType::SourceFact, EvidenceSourceType::UserInput, 'input:'.$sessionId, $sourceVersion,
                         ['source_key' => 'source:'.hash('sha256', $requestId.'|'.$entity->id.'|'.$parameter.'|'.$basis), 'native_reference' => 'input_payload.manual_facts'],
-                        $measurement ? ['quantity' => BigDecimal::of($number)->multipliedBy($factor)->toFloat(), 'unit' => $group === 'area' ? 'm2' : 'm', 'method' => 'user_confirmed']
+                        $measurement ? ['quantity' => BigDecimal::of($number)->multipliedBy($factor)->toFloat(), 'unit' => $group === 'count' ? 'pcs' : ($group === 'area' ? 'm2' : 'm'), 'method' => 'user_confirmed']
                             : ['fact_key' => 'quantity', 'fact_value' => $number], 0.0, EvidenceProducer::UserInputNormalizer->value,
                         'sha256:'.hash('sha256', 'manual-facts:v1:'.$basis),
                     ]));

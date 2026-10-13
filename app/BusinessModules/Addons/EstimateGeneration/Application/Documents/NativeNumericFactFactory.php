@@ -80,6 +80,9 @@ final class NativeNumericFactFactory
                 $key = $document['semantic_type'].':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity, $location], JSON_THROW_ON_ERROR)), 0, 32);
                 $location['source_entity_key'] = $entity;
             }
+            if ($kind !== null && in_array($kind, FactVocabulary::engineeringTypes(), true)) {
+                $location['source_entity_key'] = $entity;
+            }
             $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
                 'unit' => $document !== null ? null : $rawUnit, 'literal_type' => $document !== null ? 'string'
                     : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number'),
@@ -152,6 +155,10 @@ final class NativeNumericFactFactory
                     $value = (string) BigDecimal::of((string) $value);
                     if (! CanonicalSourceDecimal::isPositive($value) && ! ($record['parameter'] === 'slope_rise' && CanonicalSourceDecimal::isNonNegative($value))) {
                         $reason = 'native_numeric_precision_or_value_requires_confirmation';
+                    } elseif ((in_array(FactVocabulary::entityType($record['entity']), FactVocabulary::engineeringTypes(), true)
+                            || in_array($record['parameter'], FactVocabulary::engineeringParameters(), true))
+                        && FactVocabulary::engineeringObservation($record['entity'], $record['parameter'], $value, $unit) === null) {
+                        $reason = 'native_engineering_measurement_invalid';
                     }
                 } catch (Throwable) {
                     $reason = 'native_numeric_value_invalid';

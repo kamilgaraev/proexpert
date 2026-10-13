@@ -11,6 +11,38 @@ use PHPUnit\Framework\TestCase;
 
 final class NativeNumericFactFactoryTest extends TestCase
 {
+    public function test_engineering_rows_share_only_the_same_source_mark_and_reject_wrong_dimensions(): void
+    {
+        $headers = [['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+            ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.']];
+        $cells = [];
+        foreach ([['equipment.p1', 'equipment_specification', 'Насос P1, модель и комплектность', ''],
+            ['equipment.p1', 'Количество оборудования', '3', 'шт'],
+            ['water_pipe.w1', 'Длина трубопровода', '12500', 'mm'],
+            ['electrical_circuit.e1', 'Длина кабеля', '40', 'm'],
+            ['equipment.p2', 'equipment_count', '1.5', 'шт'],
+            ['water_pipe.w2', 'pipe_length', '25', 'm2'],
+            ['equipment:', 'equipment_count', '2', 'шт']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $cells[] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $native = ['sheet' => 'Spec', 'header_cells' => $headers, 'cells' => $cells];
+        $factory = new NativeNumericFactFactory;
+        $publication = $factory->spreadsheet($this->context(), $native);
+        self::assertCount(4, $publication->claims);
+        self::assertSame($publication->claims[0]->entityKey, $publication->claims[1]->entityKey);
+        self::assertSame('equipment.p1', $publication->claims[1]->locator['source_entity_key']);
+        self::assertTrue($publication->numericSources->certifies($publication->claims[1]));
+        self::assertSame(['native_engineering_measurement_invalid', 'native_engineering_measurement_invalid', 'native_engineering_measurement_invalid'],
+            array_column($publication->quarantinedItems, 'reason_code'));
+        $context = $this->context();
+        $other = new DocumentUnitExecutionContext($context->unitId, $context->organizationId, $context->projectId,
+            $context->sessionId, $context->documentId + 1, $context->type, $context->index, $context->sourceVersion,
+            [], 'source.xlsx', 'application/octet-stream', 'source.xlsx', 'claim-token', 1, 0, 'draft', 17);
+        self::assertNotSame($publication->claims[1]->entityKey, $factory->spreadsheet($other, $native)->claims[1]->entityKey);
+    }
+
     public function test_specification_text_is_published_with_cell_evidence_but_never_as_a_numeric_measurement(): void
     {
         $native = ['sheet' => 'Спецификация', 'header_cells' => [

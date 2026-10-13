@@ -11,6 +11,17 @@ use PHPUnit\Framework\TestCase;
 
 final class AcceptedDocumentFactProjectionTest extends TestCase
 {
+    public function test_engineering_measurement_retains_parameter_and_value_without_new_legacy_types(): void
+    {
+        $claim = $this->claim('equipment_count', ['type' => 'number', 'data' => '3'], 'count', 'equipment.p1');
+        $result = $this->project($claim);
+        self::assertSame('dimension', $result['fact_type']);
+        self::assertSame('equipment_count', $result['label_key']);
+        self::assertSame('3', $result['value_number']);
+        self::assertSame('count', $result['unit']);
+        self::assertNull($this->project($this->claim('equipment_count', ['type' => 'number', 'data' => '1.5'], 'count', 'equipment.p1')));
+    }
+
     public function test_typed_document_requirement_uses_compatible_storage_without_inventing_a_quantity(): void
     {
         $claim = $this->claim('equipment_specification', ['type' => 'string', 'data' => 'Спецификация насоса P1: марка и комплектация.'], null, 'equipment.p1');

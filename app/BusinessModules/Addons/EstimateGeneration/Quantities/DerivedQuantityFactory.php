@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
@@ -35,7 +36,8 @@ final class DerivedQuantityFactory
             return $this->issues($preflightIssues);
         }
         $formula = is_string($request['formula_identity'] ?? null) ? $request['formula_identity'] : '';
-        $roles = self::FORMULAS[$formula] ?? null;
+        $engineering = FactVocabulary::engineeringFormulas()[$formula] ?? null;
+        $roles = self::FORMULAS[$formula] ?? ($engineering !== null ? ['measurement'] : null);
         if ($roles === null) {
             return $this->unresolved('formula_unknown', 'formula');
         }
@@ -90,6 +92,17 @@ final class DerivedQuantityFactory
         $target = $entities[$entityId] ?? null;
         if (! $target instanceof Entity) {
             return $this->unresolved('entity_missing', 'entity', $entityId);
+        }
+        if ($engineering !== null) {
+            $semantic = (string) ($target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type);
+            $source = $facts[$requestedOperands['measurement'] ?? ''] ?? null;
+            if (! $source instanceof Fact) {
+                return $this->unresolved('operand_missing', 'measurement');
+            }
+            if (! in_array($semantic, $engineering['entities'], true) || ! $source instanceof Fact || $source->entityId !== $target->id
+                || (FactVocabulary::engineeringObservation($semantic.':measurement', $source->type, $source->value, $source->unit)['formula'] ?? null) !== $formula) {
+                return $this->unresolved('engineering_measurement_incompatible', 'measurement');
+            }
         }
         $quantityBinding = null;
         $quantityBindingDecision = null;
@@ -881,6 +894,10 @@ final class DerivedQuantityFactory
 
     private function calculate(string $formula, array $resolved, string $technologyOperation): BigDecimal
     {
+        if (isset(FactVocabulary::engineeringFormulas()[$formula])) {
+            return $this->decimal($resolved['measurement'][0]);
+        }
+
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
@@ -923,6 +940,10 @@ final class DerivedQuantityFactory
 
     private function outputUnit(string $formula, array $resolved): string
     {
+        if (isset(FactVocabulary::engineeringFormulas()[$formula])) {
+            return FactVocabulary::engineeringFormulas()[$formula]['unit'];
+        }
+
         return match ($formula) {
             'earthwork_volume' => 'm3',
             'technology_work_package' => $resolved['base_quantity'][0]['unit'],
@@ -933,6 +954,9 @@ final class DerivedQuantityFactory
 
     private function expectedGroup(string $formula, string $role, ?string $outputUnit): string
     {
+        if (isset(FactVocabulary::engineeringFormulas()[$formula])) {
+            return FactVocabulary::engineeringFormulas()[$formula]['group'];
+        }
         if ($role === 'coefficient') {
             return 'count';
         }

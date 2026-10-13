@@ -26,7 +26,8 @@ final class AcceptedDocumentFactProjector
         }
 
         $documentContext = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
-        $type = $documentContext !== null ? 'work_scope' : match ($claim->factType) {
+        $engineering = $numeric ? FactVocabulary::engineeringObservation($claim->entityKey, $claim->factType, $value, $claim->unit) : null;
+        $type = $documentContext !== null ? 'work_scope' : ($engineering !== null ? 'dimension' : match ($claim->factType) {
             'area' => $numeric
                 ? ($this->isBuildingTotalArea($claim->entityKey)
                     ? 'total_area'
@@ -40,18 +41,18 @@ final class AcceptedDocumentFactProjector
             'table' => 'table_row',
             'note' => 'note',
             default => null,
-        };
+        });
         if ($type === null) {
             return null;
         }
 
         return [
             'fact_type' => $type,
-            'label_key' => $documentContext !== null ? $claim->factType : match ($type) {
+            'label_key' => $documentContext !== null ? $claim->factType : ($engineering !== null ? $engineering['parameter'] : match ($type) {
                 'room_area', 'zone_area' => 'area',
                 'height' => 'elevation',
                 default => $type,
-            },
+            }),
             'value_text' => $numeric ? null : (is_bool($value) ? ($value ? 'true' : 'false') : (string) $value),
             'value_number' => $numeric ? $value : null,
             'unit' => $type === 'height' ? ($this->canonicalUnit($claim->unit) ?? 'm') : $this->canonicalUnit($claim->unit),

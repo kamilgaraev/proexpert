@@ -13,6 +13,24 @@ use PHPUnit\Framework\TestCase;
 
 final class EvaluationParameterQuestionBuilderTest extends TestCase
 {
+    public function test_missing_equipment_count_is_one_integer_question_for_purchase_and_installation(): void
+    {
+        $entity = new Entity('equipment:p1', 1, 2, 3, 'sha256:'.str_repeat('a', 64), 'equipment', 'equipment:p1',
+            ['name' => 'Насос P1', 'properties' => ['semantic_type' => 'equipment']]);
+        $warning = ['code' => 'canonical_quantity_unresolved', 'entity_id' => $entity->id, 'formula' => 'equipment_count',
+            'inputs' => [['code' => 'operand_missing', 'operand' => 'measurement']]];
+        $positions = [];
+        foreach (['equipment.purchase', 'equipment.install'] as $work) {
+            $positions[] = ['key' => $work, 'entity_id' => $entity->id, 'work_key' => $work, 'quantity' => null, 'unit' => 'pcs'];
+        }
+        $questions = (new EvaluationParameterQuestionBuilder)->candidates($positions, new ProjectModelSnapshot([$entity], [], [], []), [$warning]);
+        self::assertCount(1, $questions);
+        self::assertSame('equipment_count', $questions[0]['answer']['parameter']);
+        self::assertSame('count', $questions[0]['answer']['unit']);
+        self::assertSame('Насос P1', $questions[0]['answer']['entity_name']);
+        self::assertSame(['equipment.purchase', 'equipment.install'], $questions[0]['affected_position_keys']);
+    }
+
     private function entity(string $id = 'wall:1', string $type = 'wall'): Entity
     {
         return new Entity($id, 1, 2, 3, 'sha256:'.str_repeat('a', 64), $type, $id);

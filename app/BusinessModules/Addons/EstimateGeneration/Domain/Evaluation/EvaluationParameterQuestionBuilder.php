@@ -14,10 +14,14 @@ final class EvaluationParameterQuestionBuilder
 {
     private const LABELS = ['area' => 'площадь', 'length' => 'длину', 'width' => 'ширину', 'height' => 'высоту',
         'thickness' => 'толщину', 'depth' => 'глубину', 'plan_area' => 'площадь в плане',
-        'slope_rise' => 'подъём ската', 'slope_run' => 'горизонтальную проекцию ската'];
+        'slope_rise' => 'подъём ската', 'slope_run' => 'горизонтальную проекцию ската',
+        'equipment_count' => 'количество оборудования', 'pipe_length' => 'длину трубопровода', 'cable_length' => 'длину кабеля', 'duct_length' => 'длину воздуховода'];
 
     private const ENTITIES = ['room' => 'Помещение', 'wall' => 'Стена', 'opening' => 'Проём в стене',
-        'site' => 'Участок земляных работ', 'roof' => 'Кровля', 'roof_facet' => 'Грань кровли', 'roof_opening' => 'Проём в кровле'];
+        'site' => 'Участок земляных работ', 'roof' => 'Кровля', 'roof_facet' => 'Грань кровли', 'roof_opening' => 'Проём в кровле',
+        'equipment' => 'Оборудование', 'radiator' => 'Радиатор', 'water_pipe' => 'Трубопровод водоснабжения',
+        'sewer_pipe' => 'Трубопровод канализации', 'technological_pipeline' => 'Технологический трубопровод',
+        'electrical_circuit' => 'Кабельная цепь', 'ventilation_duct' => 'Воздуховод'];
 
     public function candidates(array $positions, ProjectModelSnapshot $snapshot, array $warnings): array
     {
@@ -35,7 +39,7 @@ final class EvaluationParameterQuestionBuilder
                 'unit' => $fact->unit, 'origin' => $fact->origin, 'status' => $fact->status, 'evidence_ids' => $fact->evidenceIds,
             ];
             if ($fact->status === 'confirmed' && $fact->origin === 'user_input' && is_numeric($fact->value)
-                && FactVocabulary::factor(in_array($parameter, ['area', 'plan_area'], true) ? 'area' : 'length', $fact->unit ?? '') !== null) {
+                && FactVocabulary::factor($parameter === 'equipment_count' ? 'count' : (in_array($parameter, ['area', 'plan_area'], true) ? 'area' : 'length'), $fact->unit ?? '') !== null) {
                 $supplied[$fact->entityId][$parameter] = true;
             }
         }
@@ -53,23 +57,27 @@ final class EvaluationParameterQuestionBuilder
                 continue;
             }
             foreach ($byEntity[$position['entity_id']] ?? [] as $warning) {
-                $purpose = CurrentProjectDerivedQuantityService::FORMULA_PURPOSES[$warning['formula'] ?? ''] ?? null;
+                $formula = (string) ($warning['formula'] ?? '');
+                $purpose = CurrentProjectDerivedQuantityService::formulaPurpose($formula);
                 if (! is_string($purpose) || ! is_string($position['unit'] ?? null)
                     || ! $mapper->acceptsExactSource($position['work_key'], $purpose, $position['unit'])) {
                     continue;
                 }
                 foreach ($warning['inputs'] ?? [] as $issue) {
                     if (! is_array($issue) || ! in_array($issue['code'] ?? null, [
-                        'operand_missing', 'operand_not_confirmed', 'operand_origin_requires_confirmation',
+                        'operand_missing', 'operand_not_confirmed', 'operand_origin_requires_confirmation', 'engineering_measurement_incompatible',
                     ], true)) {
                         continue;
                     }
                     $fact = $facts[$issue['fact_id'] ?? ''] ?? null;
                     $entity = $entities[$fact?->entityId ?? $warning['entity_id']] ?? null;
-                    $type = $entity?->attributes['semantic_type'] ?? $entity?->type;
+                    $type = $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type;
                     $parameter = FactVocabulary::parameter($fact?->type ?? (string) ($issue['operand'] ?? ''));
                     if ($parameter === 'measurement' && $warning['formula'] === 'direct_floor_area') {
                         $parameter = 'area';
+                    }
+                    if ($parameter === 'measurement' && isset(FactVocabulary::engineeringFormulas()[$formula])) {
+                        $parameter = FactVocabulary::engineeringFormulas()[$formula]['parameter'];
                     }
                     if ($entity === null || ! is_string($type) || ! isset(self::ENTITIES[$type], self::LABELS[$parameter])
                         || ! FactVocabulary::supports($type, $parameter)) {
@@ -79,9 +87,10 @@ final class EvaluationParameterQuestionBuilder
                     if ($issue['code'] === 'operand_missing' && isset($supplied[$entity->id][$parameter])) {
                         continue;
                     }
-                    $name = $names[$entity->id] ?? self::ENTITIES[$type];
+                    $name = $names[$entity->id] ?? (is_string($entity->attributes['name'] ?? null) && trim($entity->attributes['name']) !== ''
+                        ? mb_substr($entity->attributes['name'], 0, 160) : self::ENTITIES[$type]);
                     $key = 'parameter:'.$entity->id.':'.$parameter;
-                    $unit = in_array($parameter, ['area', 'plan_area'], true) ? 'm2' : 'm';
+                    $unit = $parameter === 'equipment_count' ? 'count' : (in_array($parameter, ['area', 'plan_area'], true) ? 'm2' : 'm');
                     $groups[$key] ??= ['key' => $key, 'question' => 'Уточните '.self::LABELS[$parameter].' объекта «'.$name.'».',
                         'affected_position_keys' => [], 'correctness_blocker' => true, 'cost_blocker' => true, 'easy_to_answer' => true,
                         'next_action' => 'confirm_project_parameter', 'effect' => 'Ответ уточнит объём и стоимость связанных работ.',

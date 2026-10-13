@@ -31,6 +31,9 @@ final class WorkItemQuantityMapper
         if ($sourcePurpose === $workKey) {
             return true;
         }
+        if ($sourcePurpose === 'equipment.count' && in_array($workKey, ['equipment.purchase', 'equipment.install'], true)) {
+            return true;
+        }
         if (DirectTakeoffRequiredWorkItems::contains($workKey) && ! in_array($workKey, ['roof.area', 'roof.flat_area'], true)) {
             return false;
         }
@@ -49,7 +52,7 @@ final class WorkItemQuantityMapper
         $matches = [];
         foreach ($quantities as $raw) {
             $quantity = $this->quantity($raw);
-            $purpose = $quantity === null ? null : (CurrentProjectDerivedQuantityService::FORMULA_PURPOSES[$quantity->formulaKey] ?? null);
+            $purpose = $quantity === null ? null : CurrentProjectDerivedQuantityService::formulaPurpose($quantity->formulaKey);
             if ($quantity === null || ! is_string($purpose) || ($quantity->formulaInputs['entity_id'] ?? null) !== $entityId
                 || $quantity->reviewBlockers !== [] || ($quantity->source === QuantitySource::Estimated && $quantity->assumptions === [])
                 || ! $this->acceptsExactSource($workKey, $purpose, $quantity->unit)) {
@@ -300,6 +303,8 @@ final class WorkItemQuantityMapper
             'warehouse.gates', 'warehouse.loading_nodes' => $floorCount('0.005'),
 
             'electrical.main_cable' => $engineeringLength('electrical', '0.40'),
+            'equipment.purchase', 'equipment.install' => ['sources' => [['key' => 'equipment.count', 'factor' => '1']], 'unit' => 'pcs'],
+            'pipelines.install', 'ventilation.duct' => ['sources' => [['key' => $key, 'factor' => '1']], 'unit' => 'm'],
             'electrical.trays' => $engineeringLength('electrical', '0.25'),
             'electrical.power_lines', 'lighting.lines' => $engineeringLength('electrical', '0.80'),
             'electrical.grounding' => $engineeringLength('electrical', '0.12'),

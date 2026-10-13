@@ -9,6 +9,25 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkIntentSourceClassifierTest extends TestCase
 {
+    public function test_measured_equipment_count_does_not_alone_request_purchase_or_installation(): void
+    {
+        $this->expectExceptionMessage('estimate_composer_work_source_unrelated');
+        (new WorkIntentSourceClassifier)->binding(['work_key' => 'equipment.purchase', 'source_fact_ids' => ['fact:count']],
+            [['id' => 'fact:count', 'type' => 'equipment_count', 'entity_type' => 'equipment', 'entity_id' => 'equipment:p1',
+                'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['proof:count']]]);
+    }
+
+    public function test_equipment_specification_supports_the_selected_asset_and_not_a_pipeline(): void
+    {
+        $source = ['id' => 'fact:spec', 'type' => 'equipment_specification', 'entity_type' => 'equipment', 'entity_id' => 'equipment:p1',
+            'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['proof:spec']];
+        $classifier = new WorkIntentSourceClassifier;
+        self::assertSame('equipment', $classifier->binding(['work_key' => 'equipment.install', 'entity_id' => 'equipment:p1',
+            'source_fact_ids' => ['fact:spec']], [$source])['work_section']);
+        $this->expectExceptionMessage('estimate_composer_work_source_unrelated');
+        $classifier->binding(['work_key' => 'pipelines.install', 'source_fact_ids' => ['fact:spec']], [$source]);
+    }
+
     private function roof(): array
     {
         return ['id' => 'fact:roof', 'type' => 'roof_type', 'entity_id' => 'roof:1', 'entity_type' => 'roof',

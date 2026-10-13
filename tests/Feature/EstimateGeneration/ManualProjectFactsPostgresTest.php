@@ -20,6 +20,36 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_manual_engineering_count_replays_and_rejects_fractional_units_without_ai(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $input = ['entities' => [['key' => 'pump-1', 'type' => 'equipment', 'name' => 'Насос P1',
+            'parameters' => ['equipment_count' => ['value' => '3', 'unit' => 'count', 'basis' => 'measurement']]]]];
+        $save = app(SaveManualProjectFacts::class);
+        $request = (string) Str::uuid();
+        $result = $save->handle($actor, $scope[1], $scope[2], 0, $request, $input);
+        self::assertSame('3', $result['quantities']['equipment.count']['amount']);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($save->handle($actor, $scope[1], $scope[2], 0, $request, $input)));
+        $snapshot = app(ProjectModelRepository::class)->snapshot(...$scope);
+        $entity = $snapshot->entities[0];
+        $answer = ['entities' => [['key' => 'answer', 'type' => 'equipment', 'existing_entity_id' => $entity->id,
+            'parameters' => ['equipment_count' => ['value' => '4', 'unit' => 'count', 'basis' => 'input']]]]];
+        $updated = $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $answer);
+        self::assertSame('4', $updated['quantities']['equipment.count']['amount']);
+        self::assertCount(1, app(ProjectModelRepository::class)->snapshot(...$scope)->entities);
+        $answer['entities'][0]['parameters']['equipment_count']['value'] = '1.5';
+        $before = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        try {
+            $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $answer);
+            self::fail('Fractional equipment count accepted.');
+        } catch (ValidationException) {
+            self::assertSame($before, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+    }
+
     public function test_wall_openings_roof_floor_and_excavation_are_calculated_from_manual_facts_without_ai(): void
     {
         [$actor, $session] = $this->fixture();

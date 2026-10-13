@@ -15,6 +15,23 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class FactVocabularyTest extends TestCase
 {
+    public function test_equal_engineering_marks_on_different_source_sheets_do_not_merge(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $claim = new ObservationClaim('literal:spec', 'observer_literal', 'equipment.p1', 'equipment_specification',
+            ['type' => 'string', 'data' => 'Насос P1, модель и требования монтажа'], null, 'literal:source', true,
+            7, 9, 11, 'sha256:'.str_repeat('a', 64), ['page' => 1]);
+        $decisions = (new ArbitrationIntentIngestor)->ingest([['claim_id' => $claim->id, 'status' => 'accepted',
+            'supporting_claim_ids' => [$claim->id], 'evidence_refs' => [$claim->evidenceRef], 'reason' => 'Текст прочитан в источнике']], [$claim])->accepted;
+        foreach ([[13, 1], [14, 1], [13, 2]] as [$document, $page]) {
+            $writer->writeArbitration([$claim], $decisions, $document, $page);
+        }
+        self::assertCount(3, $models->entities);
+        self::assertCount(3, $models->facts);
+        self::assertCount(3, array_unique(array_column($models->facts, 'entityId')));
+    }
+
     public function test_numeric_evidence_must_match_entity_parameter_value_and_floor(): void
     {
         $target = $this->claim('literal:1', 'wall:1', 'height', '3', 'm', false);
