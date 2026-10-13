@@ -187,6 +187,27 @@ final class AssistantRequiredProjectReadTest extends TestCase
         return ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
     }
 
+    public function test_commercial_executive_and_production_questions_bind_native_project_tools_and_keep_mixed_requests_unforced(): void
+    {
+        foreach (['Какие коммерческие предложения по нашему объекту ещё ждут нашего решения или ответа заказчика? Что нужно сделать следующим шагом?' => 'get_project_proposal_readiness',
+            'Что у нас по исполнительной документации объекта: какие комплекты ещё не переданы заказчику и что мешает их передать? Есть ли передачи, по которым ждём ответ?' => 'get_project_executive_readiness',
+            'Какие производственные наряды по нашему объекту уже представлены, но ещё не приняты? Кто отвечает за закрытие и что надо проверить перед принятием?' => 'get_project_production_readiness'] as $query => $name) {
+            $plan = $this->plan($query);
+            self::assertSame(['name' => $name, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+            self::assertNotNull(AssistantRequiredProjectRead::decisionReader($name, $query));
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_handover_summary', $query));
+            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $name, ['project_id' => 99]));
+            self::assertContains($name, \App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface::names([$name], $plan));
+        }
+        foreach (['Какие коммерческие предложения и исполнительные документы ждут решения по нашему объекту?',
+            'Покажи производственные наряды и журналы работ нашего проекта.',
+            'Какие исполнительные документы не переданы и сколько потрачено на нашем объекте?',
+            'Что написано в исполнительной документации нашего объекта? Приведи выдержки и объясни правила.'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_executive_readiness', $query));
+        }
+    }
+
     public function test_current_project_budget_reads_the_actual_budget_without_an_invented_currency_field(): void
     {
         $plan = $this->plan('Какой бюджет у нашего объекта? В какой валюте сумма?');

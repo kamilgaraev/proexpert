@@ -27,6 +27,34 @@ use Tests\TestCase;
 
 final class AssistantOperationalReadinessTest extends TestCase
 {
+    public function test_journal_authors_follow_native_entry_visibility_without_user_directory_access(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $actor = Model::withoutEvents(fn () => $fixture->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+            'construction-journal' => ['construction-journal.view'], 'budget-estimates' => ['budget-estimates.view']]));
+        $org = (int) $fixture->organization->id;
+        Model::withoutEvents(function () use ($actor, $project, $org): void {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            \App\Domain\Authorization\Models\UserRoleAssignment::assignRole(user: $actor, roleSlug: 'project_manager',
+                context: \App\Domain\Authorization\Models\AuthorizationContext::getProjectContext((int) $project->id, $org));
+        });
+        $journal = Model::withoutEvents(fn () => ConstructionJournal::query()->create(['organization_id' => $org, 'performing_organization_id' => $org,
+            'project_id' => $project->id, 'name' => 'Авторство', 'journal_number' => 'AUTHOR-1', 'start_date' => '2026-10-01', 'status' => 'active', 'created_by_user_id' => $actor->id]));
+        Model::withoutEvents(fn () => ConstructionJournalEntry::query()->create(['journal_id' => $journal->id, 'entry_date' => '2026-10-01',
+            'entry_number' => 1, 'work_description' => 'Работа', 'status' => 'draft', 'created_by_user_id' => $fixture->owner->id]));
+        $access = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+        self::assertFalse($access->canReadDomain($actor, $org, 'people'));
+        $reader = app(AssistantProjectJournalReader::class);
+        $result = $reader->read($actor, $org, ['project_id' => (int) $project->id]);
+        self::assertSame([(int) $fixture->owner->id => $fixture->owner->name], $result['data']['creator_names']);
+        self::assertStringNotContainsString($fixture->owner->email, json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertTrue($reader->matchesReference($actor, $org, $result['source_refs'][0]));
+        $fixture->owner->updateQuietly(['name' => 'Имя изменено']);
+        self::assertFalse($reader->matchesReference($actor, $org, $result['source_refs'][0]));
+    }
+
     public function test_operational_summaries_use_current_native_states_complete_counts_and_project_isolation(): void
     {
         Queue::fake(); config(['cache.default' => 'array']);
