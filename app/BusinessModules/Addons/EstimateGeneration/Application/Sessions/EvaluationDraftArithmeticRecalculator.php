@@ -61,7 +61,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     }
                     if (! $explicitQuantity && $quantity === null && is_string($expectedEntity)
                         && ($item['metadata']['quantity_reset_required'] ?? false) !== true) {
-                        $workKey = $item['metadata']['requirement_key'] ?? $item['work_key'] ?? $item['key'];
+                        $workKey = $item['work_key'] ?? $item['key'];
                         $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
                     }
                     $oldUnit = $item['unit'] ?? null;

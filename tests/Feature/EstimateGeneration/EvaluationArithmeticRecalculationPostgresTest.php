@@ -61,9 +61,9 @@ final class EvaluationArithmeticRecalculationPostgresTest extends EstimateGenera
             'quantity_coverage_warnings' => $saved['warnings'],
             'local_estimates' => [['key' => 'finishing', 'title' => 'Отделка', 'sections' => [['key' => 'walls', 'title' => 'Стены', 'work_items' => [
                 ['key' => 'paint', 'work_key' => 'finish.paint', 'name' => 'Окраска стен', 'item_type' => 'priced_work', 'unit' => 'm2',
-                    'quantity' => null, 'metadata' => ['scope_entity_id' => $wall->id]],
+                    'quantity' => null, 'metadata' => ['scope_entity_id' => $wall->id, 'requirement_key' => 'finishing']],
                 ['key' => 'plaster', 'work_key' => 'rough.walls', 'name' => 'Подготовка стен', 'item_type' => 'priced_work', 'unit' => 'm2',
-                    'quantity' => null, 'metadata' => ['scope_entity_id' => $wall->id]],
+                    'quantity' => null, 'metadata' => ['scope_entity_id' => $wall->id, 'requirement_key' => 'finishing']],
             ]]]]]];
         $draft['evaluation_result'] = app(UniversalEvaluationBuilder::class)->build($draft, $snapshot);
         self::assertSame('height', $draft['evaluation_result']['priority_questions'][0]['answer']['parameter']);

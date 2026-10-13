@@ -26,6 +26,15 @@ final class ConfirmedDeliveryCostTest extends TestCase
         }
     }
 
+    public function test_specific_transport_work_uses_its_separate_delivery_requirement_without_losing_scope_checks(): void
+    {
+        $delivery = [...$this->delivery(), 'work_key' => 'equipment.transport', 'coverage_requirement' => 'delivery'];
+        self::assertSame(['RUB' => '120.00'], $this->calculate($delivery)['scenarios'][0]['total_by_currency']);
+        foreach ([['coverage_requirement' => 'commissioning'], ['entity_id' => 'equipment:other'], ['quantity' => null]] as $change) {
+            self::assertNull($this->calculate([...$delivery, ...$change])['scenarios'][0]['total_by_currency']);
+        }
+    }
+
     private function calculate(array $delivery): array
     {
         $purchase = ['key' => 'purchase', 'entity_id' => 'equipment:1', 'work_key' => 'equipment_purchase', 'section' => 'equipment', 'name' => 'Оборудование',
