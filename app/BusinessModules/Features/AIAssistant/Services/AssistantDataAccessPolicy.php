@@ -244,6 +244,9 @@ final class AssistantDataAccessPolicy
         if ($type === AssistantProjectPaymentReader::TYPE) {
             return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectPaymentReader::class)->matchesReference($user, $organizationId, $reference));
         }
+        if ($type === AssistantProjectHandoverReader::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectHandoverReader::class)->matchesReference($user, $organizationId, $reference));
+        }
         if ($type === AssistantProjectMachineryReader::TYPE) {
             return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectMachineryReader::class)->matchesReference($user, $organizationId, $reference));
         }

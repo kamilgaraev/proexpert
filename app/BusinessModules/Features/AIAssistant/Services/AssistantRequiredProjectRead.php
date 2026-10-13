@@ -10,12 +10,14 @@ final readonly class AssistantRequiredProjectRead
 {
     public static function decisionReader(string $toolName, string $query): ?string
     {
+        if ($toolName !== 'get_project_handover_summary' && AssistantProjectHandoverReader::hasIntent($query)) { return null; }
         return match ($toolName) {
             'get_project_finance_overview' => AssistantProjectFinanceOverview::matches($query) ? AssistantProjectFinanceOverview::class : null,
             'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::matches($query) ? AssistantProjectScheduleImpactReader::class : null,
             'get_project_workforce_summary' => AssistantProjectWorkforceReader::matches($query) ? AssistantProjectWorkforceReader::class : null,
             'get_project_payment_readiness' => AssistantProjectPaymentReader::matches($query) ? AssistantProjectPaymentReader::class : null,
             'get_project_machinery_summary' => AssistantProjectMachineryReader::matches($query) ? AssistantProjectMachineryReader::class : null,
+            'get_project_handover_summary' => AssistantProjectHandoverReader::matches($query) ? AssistantProjectHandoverReader::class : null,
             'get_project_contract_roster' => AssistantProjectContractRosterReader::matches($query) ? AssistantProjectContractRosterReader::class : null,
             'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
                 ? \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class : null,
@@ -26,6 +28,7 @@ final readonly class AssistantRequiredProjectRead
     public static function fromPlan(array $plan): ?array
     {
         $query = (string) ($plan['request']['message'] ?? '');
+        if (AssistantProjectHandoverReader::hasIntent($query) && ! AssistantProjectHandoverReader::matches($query)) { return null; }
         if (($arguments = \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::readyListArguments($query)) !== null) {
             return ['name' => 'search_assistant_documents', 'arguments' => $arguments];
         }
@@ -40,6 +43,9 @@ final readonly class AssistantRequiredProjectRead
             return ['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => $scope->projectId, 'focus' => AssistantProjectScheduleImpactReader::focus($query)]];
         }
         if (! $scope->requested || $scope->projectId === null) { return null; }
+        if (AssistantProjectHandoverReader::matches($query)) {
+            return ['name' => 'get_project_handover_summary', 'arguments' => ['project_id' => $scope->projectId]];
+        }
         if (AssistantProjectContractRosterReader::matches($query)) {
             return ['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => $scope->projectId]];
         }
