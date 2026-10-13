@@ -58,20 +58,28 @@ final class ExecutiveDocumentInput
             ];
     }
 
-    public function validateMapping(array $data, ExecutiveDocumentSet $set): array
+    public function validateMapping(array $data, ExecutiveDocumentSet $set, bool $preserveExplicitFields = false): array
     {
         $rules = $this->rules();
         unset($rules['initial_version'], $rules['initial_version.file'], $rules['initial_version.version_number'], $rules['initial_version.uploaded_at'], $rules['initial_version.file_kind'], $rules['initial_version.signature_file'], $rules['source_warehouse_passport_file_id']);
         unset($data['initial_version']);
-        return $this->normalize(Validator::make($data, $rules)->validate(), $set);
+        return $this->normalize(Validator::make($data, $rules)->validate(), $set, $preserveExplicitFields);
     }
 
-    public function normalize(array $validated, ExecutiveDocumentSet $set): array
+    public function normalize(array $validated, ExecutiveDocumentSet $set, bool $preserveExplicitFields = false): array
     {
+        $explicitFields = [];
+        if ($preserveExplicitFields && ($validated['document_type'] ?? null) === 'hidden_work_act') {
+            $profile = $this->profileRegistry->require('hidden_work_act');
+            $declaredFields = collect($profile['fields'] ?? [])
+                ->filter(static fn (array $field): bool => ($field['type'] ?? null) !== 'relation' && ($field['key'] ?? null) !== 'act_number')
+                ->pluck('key')->all();
+            $explicitFields = array_values(array_intersect(array_keys($validated['profile_data'] ?? []), $declaredFields));
+        }
         $validated = $this->normalizeWorkTypeReference($validated, $set);
         $validated = $this->normalizeProjectLocationReference($validated, $set);
         $validated = $this->normalizeCompletedWorkReference($validated, $set);
-        $validated = $this->hiddenWorkActAutofillService->applyToDocumentPayload($validated, $set);
+        $validated = $this->hiddenWorkActAutofillService->applyToDocumentPayload($validated, $set, $explicitFields);
         $validated = $this->normalizeJournalEntryReference($validated, $set);
         $validated = $this->normalizeQualityDefectReference($validated, $set);
         $validated = $this->normalizeAcceptanceScopeReference($validated, $set);

@@ -68,7 +68,7 @@ final class HiddenWorkActAutofillService
         );
     }
 
-    public function applyToDocumentPayload(array $validated, ExecutiveDocumentSet $set): array
+    public function applyToDocumentPayload(array $validated, ExecutiveDocumentSet $set, array $explicitFields = []): array
     {
         if (($validated['document_type'] ?? null) !== 'hidden_work_act') {
             return $validated;
@@ -100,7 +100,7 @@ final class HiddenWorkActAutofillService
             unset($profileData['act_number']);
         }
 
-        $validated['profile_data'] = $this->mergeProfileData($profileData, $defaults['profile_data']);
+        $validated['profile_data'] = $this->mergeProfileData($profileData, $defaults['profile_data'], $explicitFields);
 
         if (empty($validated['document_date']) && !empty($defaults['document_date'])) {
             $validated['document_date'] = $defaults['document_date'];
@@ -292,9 +292,12 @@ final class HiddenWorkActAutofillService
             ->get(['id', 'document_date']);
     }
 
-    private function mergeProfileData(array $profileData, array $defaults): array
+    private function mergeProfileData(array $profileData, array $defaults, array $explicitFields = []): array
     {
         foreach ($defaults as $key => $value) {
+            if (in_array($key, $explicitFields, true) && array_key_exists($key, $profileData)) {
+                continue;
+            }
             if (($profileData[$key] ?? null) === null || $profileData[$key] === '' || $profileData[$key] === []) {
                 $profileData[$key] = $value;
             }

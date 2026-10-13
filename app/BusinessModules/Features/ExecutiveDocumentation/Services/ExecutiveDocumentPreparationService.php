@@ -32,10 +32,17 @@ final class ExecutiveDocumentPreparationService
         ], true)) {
             throw ValidationException::withMessages(['document_type' => 'Выберите одну из пяти форм актов.']);
         }
+        $registry = app(ExecutiveDocumentProfileRegistry::class);
+        $profileKeys = array_column($registry->require($data['document_type'])['fields'], 'key');
+        $submittedProfile = is_array($data['profile_data'] ?? null) ? $data['profile_data'] : [];
+        if (array_diff(array_keys($submittedProfile), $profileKeys) !== []) {
+            throw ValidationException::withMessages(['profile_data' => 'Проверьте реквизиты составляемого акта.']);
+        }
         $input = app(ExecutiveDocumentInput::class);
-        $data = $input->validateMapping($data, $set);
+        $data = $input->validateMapping($data, $set, true);
+        $data['profile_data'] = array_intersect_key($data['profile_data'] ?? [], array_flip($profileKeys));
         $input->validatePreparedProfile($data);
-        $invalid = app(ExecutiveDocumentProfileRegistry::class)->validateProfileData($data['document_type'], $data['profile_data']);
+        $invalid = $registry->validateProfileData($data['document_type'], $data['profile_data']);
         if ($invalid !== []) {
             throw ValidationException::withMessages(['profile_data' => 'Проверьте реквизиты составляемого акта.']);
         }

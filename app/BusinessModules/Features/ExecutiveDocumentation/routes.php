@@ -35,6 +35,9 @@ Route::prefix('api/v1/admin/executive-documentation')
         Route::get('/sets/{id}', [ExecutiveDocumentationController::class, 'showSet'])
             ->middleware('authorize:executive-documentation.view')
             ->name('sets.show');
+        Route::patch('/sets/{id}', [ExecutiveDocumentationController::class, 'updateSet'])
+            ->middleware('authorize:executive-documentation.edit')
+            ->name('sets.update');
         Route::post('/sets/{id}/documents', [ExecutiveDocumentationController::class, 'storeDocument'])
             ->middleware('authorize:executive-documentation.create')
             ->name('documents.store');

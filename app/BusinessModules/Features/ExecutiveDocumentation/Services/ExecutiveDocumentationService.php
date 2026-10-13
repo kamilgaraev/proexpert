@@ -124,6 +124,21 @@ final class ExecutiveDocumentationService
         return $set->fresh(self::SET_RELATIONS);
     }
 
+    public function updateSet(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocumentSet
+    {
+        return DB::transaction(function () use ($set, $userId, $data): ExecutiveDocumentSet {
+            $set = ExecutiveDocumentSet::query()->lockForUpdate()->findOrFail($set->id);
+            $this->mutationGuard->assertSetActor($set, $userId, 'executive-documentation.edit');
+            if ($set->status !== ExecutiveDocumentStatusEnum::DRAFT) {
+                throw new DomainException(trans_message('executive_documentation.errors.set_metadata_locked'));
+            }
+            $set->fill(array_intersect_key($data, array_flip(['title', 'stage_name', 'zone_name', 'planned_transmittal_date'])));
+            $set->save();
+
+            return $set->fresh(self::SET_RELATIONS);
+        });
+    }
+
     public function addDocument(ExecutiveDocumentSet $set, int $userId, array $data): ExecutiveDocument
     {
         $this->mutationGuard->assertSetActor($set, $userId, 'executive-documentation.create');
