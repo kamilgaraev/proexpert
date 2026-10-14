@@ -801,7 +801,7 @@ final class AssistantBimModelReaderTest extends TestCase
     public function test_project_model_catalog_and_equipment_read_beyond_five_preserve_current_scope(): void
     {
         $ids = [];
-        for ($i = 0; $i < 7; $i++) {
+        for ($i = 0; $i < 14; $i++) {
             $version = $this->model('Модель '.$i, 'current-'.$i.'.ifc');
             $ids[] = $version->id;
             $derivative = $this->readyIndex($version, 1);
@@ -813,18 +813,25 @@ final class AssistantBimModelReaderTest extends TestCase
         $catalog = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'answer_kind' => 'models']);
         self::assertSame($ids, array_column(array_column($catalog['models'], 'version'), 'id'));
         self::assertFalse($catalog['needs_clarification']);
-        self::assertSame(7, substr_count($catalog['server_formatted_answer'], 'Текущая версия.'));
+        self::assertSame(14, substr_count($catalog['server_formatted_answer'], 'Текущая версия.'));
         self::assertStringNotContainsString('Прежняя модель', $catalog['server_formatted_answer']);
         foreach ($catalog['models'] as $model) { self::assertSame([], $model['elements']); }
         self::assertNotNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
-        $equipment = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'include_estimate_links' => true]);
-        self::assertCount(7, $equipment['models']);
+        DB::flushQueryLog(); DB::enableQueryLog();
+        try {
+            $equipment = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'include_estimate_links' => true]);
+            $queries = DB::getQueryLog();
+        } finally { DB::disableQueryLog(); DB::flushQueryLog(); }
+        self::assertCount(14, $equipment['models']);
+        self::assertCount(14, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS indexed_count')));
+        self::assertCount(14, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS equipment_count_kind')));
+        self::assertSame([], array_values(array_filter($queries, static fn (array $query): bool => preg_match('/^select count\\(\\*\\) as aggregate from "design_ifc_model_elements"/i', $query['query']) === 1)));
         foreach ($equipment['models'] as $model) {
             self::assertSame(['pump' => 1, 'ventilation_unit' => 0], $model['equipment_counts']);
             self::assertSame('complete', $model['semantic_coverage']['status']);
         }
         $single = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
-        self::assertCount(7, $single['models']);
+        self::assertCount(14, $single['models']);
         self::assertFalse($single['bim_evidence']['too_many_models']);
         foreach ($single['models'] as $model) {
             self::assertSame(1, $model['total']);
@@ -833,7 +840,7 @@ final class AssistantBimModelReaderTest extends TestCase
         }
         $this->allowEstimateLinks();
         $authorized = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
-        self::assertCount(7, $authorized['models']);
+        self::assertCount(14, $authorized['models']);
         foreach ($authorized['models'] as $model) { self::assertSame('page_limited', $model['estimate_link_coverage']); }
         \App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion::query()->whereKey($ids[0])->update(['is_current' => false]);
         self::assertNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));

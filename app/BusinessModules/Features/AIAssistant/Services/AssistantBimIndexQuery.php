@@ -13,26 +13,35 @@ final readonly class AssistantBimIndexQuery
     public function read(Builder $scope, array $filters, array $categories, array $units, bool $retainRows = false): array
     {
         $table = $scope->getModel()->getTable();
-        $proof = (clone $scope)->reorder()->select([])->selectRaw("COUNT(*) AS indexed_count, COUNT(*) FILTER (WHERE {$table}.source_schema_version = 2) AS schema2_count, md5(COALESCE(string_agg(md5(concat_ws('|', {$table}.id::text, {$table}.updated_at::text, {$table}.source_content_hash)), '' ORDER BY {$table}.id), '')) AS fingerprint")->first();
+        $proofScope = (clone $scope)->reorder()->select(array_map(static fn (string $column): string => $table.'.'.$column,
+            ['id', 'updated_at', 'source_content_hash', 'source_schema_version', 'category']));
+        $proofSql = 'WITH _assistant_index_scope AS MATERIALIZED ('.$proofScope->toSql().")
+            SELECT COUNT(*) AS indexed_count, COUNT(*) FILTER (WHERE source_schema_version = 2) AS schema2_count,
+                md5(COALESCE(string_agg(md5(concat_ws('|', id::text, updated_at::text, source_content_hash)), '' ORDER BY id), '')) AS fingerprint,
+                (SELECT COALESCE(jsonb_agg(to_jsonb(categories)), '[]'::jsonb) FROM
+                    (SELECT category, COUNT(*) AS element_count FROM _assistant_index_scope
+                        GROUP BY category ORDER BY category LIMIT 101) categories) AS category_counts
+            FROM _assistant_index_scope";
+        $proof = $scope->getQuery()->getConnection()->selectOne($proofSql, $proofScope->getBindings(), ! $proofScope->getQuery()->useWritePdo);
         $indexedCount = (int) ($proof?->indexed_count ?? 0);
         $schema2Count = (int) ($proof?->schema2_count ?? 0);
         $fingerprint = $proof?->fingerprint;
-        $categoriesResult = (clone $scope)->reorder()->select($table.'.category')->selectRaw('COUNT(*) AS element_count')
-            ->groupBy($table.'.category')->orderBy($table.'.category')->limit(101)->get()
-            ->map(static fn ($row): array => ['category' => $row->category, 'count' => (int) $row->element_count])->all();
+        $categoriesResult = array_map(static fn (array $row): array => ['category' => $row['category'], 'count' => (int) $row['element_count']],
+            json_decode($proof?->category_counts ?? '[]', true, flags: JSON_THROW_ON_ERROR));
         $this->predicate->apply($scope, $filters, $categories);
-        $matchedCount = (clone $scope)->count();
         $equipmentCounts = [];
         if (! empty($filters['equipment_kinds'])) {
+            $matchedCount = 0;
             $equipmentCounts = array_fill_keys($filters['equipment_kinds'], 0);
             $expression = AssistantBimIndexPredicate::equipmentCountExpression();
             foreach ((clone $scope)->reorder()->select([])->selectRaw($expression.' AS equipment_count_kind, COUNT(*) AS equipment_count')
                 ->groupByRaw($expression)->get() as $row) {
+                $matchedCount += (int) $row->equipment_count;
                 if (array_key_exists((string) $row->equipment_count_kind, $equipmentCounts)) {
                     $equipmentCounts[(string) $row->equipment_count_kind] = (int) $row->equipment_count;
                 }
             }
-        }
+        } else { $matchedCount = (clone $scope)->count(); }
         $columns = ['id', 'project_id', 'version_id', 'derivative_id', 'express_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'];
         $selected = array_map(static fn (string $column): string => $table.'.'.$column, $columns);
         $page = (clone $scope)->select($selected)->orderBy($table.'.id')->offset($filters['offset'])->limit($filters['limit'])->get()
