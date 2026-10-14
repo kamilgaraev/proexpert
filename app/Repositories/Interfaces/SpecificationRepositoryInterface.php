@@ -8,6 +8,7 @@ use App\Models\Specification;
 interface SpecificationRepositoryInterface
 {
     public function create(array $data): Specification;
+    public function createOwned(array $data, int $organizationId): Specification;
     public function find(int $id, array $columns = ['*'], array $relations = [], array $appends = []): ?Specification;
     public function update(int $id, array $data): bool;
     public function delete(int $id): bool;

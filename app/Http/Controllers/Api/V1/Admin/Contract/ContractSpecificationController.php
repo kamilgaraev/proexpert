@@ -179,7 +179,7 @@ class ContractSpecificationController extends Controller
             }
 
             $specificationDTO = $request->toDto();
-            $specification = $this->specificationService->create($specificationDTO);
+            $specification = $this->specificationService->create($specificationDTO, (int) $contractModel->organization_id);
 
             // Деактивируем все предыдущие спецификации
             $contractModel->specifications()->updateExistingPivot(

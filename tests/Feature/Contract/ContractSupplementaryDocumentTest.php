@@ -111,7 +111,7 @@ final class ContractSupplementaryDocumentTest extends TestCase
         self::assertSame('200.00', $contract->refresh()->total_amount);
         self::assertSame(2, $contract->specifications()->count());
         self::assertSame(1, $contract->specifications()->wherePivot('is_active', true)->count());
-        self::assertNotNull(\App\Models\Specification::where('supplementary_document_id', $document['id'])->first());
+        self::assertSame((int) $contract->organization_id, \App\Models\Specification::where('supplementary_document_id', $document['id'])->first()?->organization_id);
         self::assertSame($revisionHash, DB::table('contract_builder_revisions')->where('id', $revision['id'])->value('content_hash'));
         self::assertSame($revisionText, DB::table('contract_builder_revisions')->where('id', $revision['id'])->value('document'));
         self::assertSame((int) $effectiveBefore, (int) DB::table('contract_builder_instances')->where('contract_id', $contract->id)->value('effective_revision_id'));
