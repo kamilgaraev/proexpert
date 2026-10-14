@@ -54,9 +54,9 @@ final class EvidenceSchema
         };
         if ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::EvaluationChoice->value) {
             $schema = ['fact_key' => 'attribute', 'fact_value' => 'sha256'];
-        } elseif ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::RoomName->value) {
+        } elseif ($type === EvidenceType::SourceFact && in_array($value['fact_key'] ?? null, [EvidenceAttribute::RoomName->value, EvidenceAttribute::RoomNumber->value], true)) {
             $schema = ['fact_key' => 'attribute', 'fact_value' => 'sha256'];
-        } elseif ($type === EvidenceType::Extracted && ($value['field_key'] ?? null) === EvidenceAttribute::RoomName->value) {
+        } elseif ($type === EvidenceType::Extracted && in_array($value['field_key'] ?? null, [EvidenceAttribute::RoomName->value, EvidenceAttribute::RoomNumber->value], true)) {
             $schema = ['field_key' => 'attribute', 'field_value' => 'sha256'];
         } elseif ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::Elevation->value) {
             $schema['fact_value'] = 'signed_source_decimal';

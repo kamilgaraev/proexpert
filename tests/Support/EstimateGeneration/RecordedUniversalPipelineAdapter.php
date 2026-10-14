@@ -75,7 +75,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $fixture = json_decode($recording, true, 32, JSON_THROW_ON_ERROR);
         if (($fixture['schema_version'] ?? null) !== 1 || ($fixture['provenance'] ?? null) !== 'synthetic_transport_fixture'
             || ($fixture['accuracy_calibrated'] ?? null) !== false || count($fixture['recordings'] ?? []) < 2
-            || count($fixture['recordings']) > 4) {
+            || count($fixture['recordings']) > 6) {
             throw new BenchmarkContractException('recorded_replay_descriptor_invalid');
         }
         $initialInput = $fixture['initial_input'] ?? [];
@@ -194,6 +194,33 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         } catch (\Throwable $error) {
             throw new BenchmarkContractException('recorded_replay_pipeline_failure:'.json_encode([
                 'cause_class' => $error::class,
+                'attempt_status' => $error instanceof \App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException ? $error->attemptStatus : null,
+                'audit_request_shapes' => array_values(array_filter(array_map(static function (array $exchange): ?array {
+                    $body = json_decode((string) $exchange['request']->getBody(), true, 128, JSON_THROW_ON_ERROR);
+                    foreach ($body['messages'] ?? [] as $message) {
+                        if (($message['role'] ?? null) !== 'user' || ! is_string($message['content'] ?? null)) {
+                            continue;
+                        }
+                        $input = json_decode($message['content'], true, 128, JSON_THROW_ON_ERROR)['audit_input'] ?? null;
+                        if (is_array($input)) {
+                            $workKeys = [];
+                            foreach ($input['draft']['local_estimates'] ?? [] as $local) {
+                                foreach ($local['sections'] ?? [] as $section) {
+                                    foreach ($section['work_items'] ?? [] as $item) {
+                                        $workKeys[] = $item['key'] ?? null;
+                                    }
+                                }
+                            }
+
+                            return ['cycle' => $input['cycle'] ?? null, 'part_id' => $input['part_id'] ?? null,
+                                'work_keys' => array_column($input['context_manifest']['work_manifest'] ?? [], 'key'),
+                                'part_work_keys' => $workKeys,
+                                'total_facts' => $input['context_manifest']['total_facts'] ?? null];
+                        }
+                    }
+
+                    return null;
+                }, array_slice($this->history, $historyStart)))),
                 'native_binding_error' => $this->lastRun['native_binding_error'] ?? null,
                 'native_quantity_metadata' => $this->lastRun['native_quantity_metadata'] ?? [],
                 'native_calculation_debug' => $this->lastRun['native_calculation_debug'] ?? [],

@@ -14,6 +14,42 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class NativeNumericFactFactoryTest extends TestCase
 {
+    public function test_native_room_number_preserves_leading_zeros_and_joins_only_its_parser_room_and_floor(): void
+    {
+        $native = $this->roomSheet('001');
+        $native['cells'][1]['value'] = 'Номер помещения';
+        $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $native);
+        self::assertSame(['room_number', 'length'], array_column($publication->claims, 'factType'));
+        self::assertSame('001', $publication->claims[0]->value['data']);
+        self::assertNull($publication->claims[0]->unit);
+        self::assertSame('xlsx:sheet:Размеры!C2', $publication->claims[0]->locator['native_reference']);
+        self::assertFalse($publication->numericSources->certifies($publication->claims[0]));
+        $models = new InMemoryProjectModelRepository;
+        (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration(
+            $publication->claims, $publication->decisions, 13, 1, $publication->numericSources);
+        self::assertCount(1, $models->entities);
+        $entity = array_values($models->entities)[0];
+        self::assertSame('1', $entity->attributes['floor_id']);
+        self::assertArrayNotHasKey('room_number', $entity->attributes);
+        self::assertArrayNotHasKey('name', $entity->attributes);
+        $number = array_values(array_filter($models->facts, static fn ($fact): bool => $fact->type === 'room_number'))[0];
+        self::assertSame('001', $number->value);
+        self::assertSame('confirmed', $number->status);
+        self::assertSame($entity->id, $number->entityId);
+        self::assertNull((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation)->name($publication->claims[0]));
+    }
+
+    public function test_invalid_native_room_number_does_not_become_an_untyped_quantity(): void
+    {
+        foreach ([['Офис', 'room:office', ''], ['001', 'wall:1', ''], ['001', 'room:office', 'm2'], [1, 'room:office', '']] as [$value, $entity, $unit]) {
+            $native = $this->roomSheet($value, $entity, $unit);
+            $native['cells'][1]['value'] = 'room_number';
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $native);
+            self::assertSame(['length'], array_column($publication->claims, 'factType'));
+            self::assertSame('native_room_identity_invalid', $publication->quarantinedItems[0]['reason_code']);
+        }
+    }
+
     public function test_room_name_shares_the_dimension_entity_and_retains_literal_cell_evidence(): void
     {
         $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $this->roomSheet('Офис'));

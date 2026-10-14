@@ -12,6 +12,24 @@ use ReflectionMethod;
 
 final class EstimateGenerationDocumentSemanticProjectionTest extends TestCase
 {
+    public function test_room_number_is_human_readable_and_keeps_leading_zeros_without_becoming_a_dimension(): void
+    {
+        $presenter = new CanonicalDocumentFactPresenter(static fn (string $key): string => [
+            'estimate_generation.canonical_result.room_number' => 'Номер помещения',
+        ][$key] ?? $key);
+        $canonical = ['entity_key' => 'room.office', 'fact_type' => 'room_number',
+            'value' => ['type' => 'string', 'data' => '001'], 'unit' => null];
+        $payload = ['document_arbitration' => ['decisions' => [['status' => 'accepted',
+            'canonical_claim' => $canonical, 'supporting_claim_ids' => [], 'evidence_refs' => []]]]];
+        $result = $presenter->present($payload, 1);
+        self::assertCount(1, $result);
+        self::assertSame('Номер помещения — 001', $result[0]['label']);
+        self::assertSame(['type' => 'string', 'data' => '001'], $result[0]['value']);
+        self::assertNull($result[0]['unit']);
+        $payload['document_arbitration']['decisions'][0]['canonical_claim']['unit'] = 'm2';
+        self::assertSame([], $presenter->present($payload, 1));
+    }
+
     #[Test]
     public function visual_inventory_is_a_typed_russian_contract_and_one_malformed_item_is_isolated(): void
     {

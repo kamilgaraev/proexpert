@@ -11,6 +11,18 @@ use PHPUnit\Framework\TestCase;
 
 final class AcceptedDocumentFactProjectionTest extends TestCase
 {
+    public function test_room_number_has_a_text_label_in_compatible_document_storage_without_quantity(): void
+    {
+        $projection = $this->project($this->claim('room_number', ['type' => 'string', 'data' => '001'], null, 'room.office'));
+        self::assertNotNull($projection);
+        self::assertSame('note', $projection['fact_type']);
+        self::assertSame('room_number', $projection['label_key']);
+        self::assertSame('001', $projection['value_text']);
+        self::assertNull($projection['value_number']);
+        self::assertNull($projection['unit']);
+        self::assertNull($this->project($this->claim('room_number', ['type' => 'string', 'data' => '001'], 'm2', 'room.office')));
+    }
+
     public function test_engineering_measurement_retains_parameter_and_value_without_new_legacy_types(): void
     {
         $claim = $this->claim('equipment_count', ['type' => 'number', 'data' => '3'], 'count', 'equipment.p1');

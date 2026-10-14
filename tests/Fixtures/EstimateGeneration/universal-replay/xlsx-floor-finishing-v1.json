@@ -109,6 +109,54 @@
           "total_tokens": 150
         }
       }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-native-auditor-part-4",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-native-auditor-part-5",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
     }
   ]
 }

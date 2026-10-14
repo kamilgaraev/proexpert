@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
@@ -35,6 +36,43 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_page_local_room_numbers_are_isolated_without_confirming_or_replacing_names(): void
+    {
+        foreach (['001', '002'] as $secondNumber) {
+            [, $session, $document] = $this->fixture();
+            $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+            $writer = app(ProjectModelEvidenceWriter::class);
+            foreach ([1 => '001', 2 => $secondNumber] as $page => $number) {
+                $locator = ['document_id' => (int) $document->id, 'page' => $page,
+                    'unit_type' => 'pdf_page', 'unit_index' => $page];
+                $claim = new ObservationClaim('literal:number:'.$page, 'observer_literal', 'room.1', 'room_number',
+                    ['type' => 'string', 'data' => $number], null, 'pdf:page:'.$page.':number', true,
+                    ...[...$scope, $document->source_version, $locator]);
+                $writer->writeArbitration([$claim], [new ArbitrationDecision($claim->id, 'accepted',
+                    [$claim->id], [$claim->evidenceRef], 'explicit', null)], (int) $document->id, $page);
+                $name = new ObservationClaim('literal:name:'.$page, 'observer_literal', 'room.1', 'room_name',
+                    ['type' => 'string', 'data' => 'Кабинет'], null, 'pdf:page:'.$page.':name', true,
+                    ...[...$scope, $document->source_version, $locator]);
+                $writer->writeIndependentObservations([$name], (int) $document->id, $page);
+            }
+            $snapshot = app(ProjectModelRepository::class)->snapshot(...$scope);
+            $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+            self::assertCount(2, $numbers);
+            self::assertNotSame($numbers[0]->entityId, $numbers[1]->entityId);
+            self::assertSame(['confirmed'], array_values(array_unique(array_column($numbers, 'status'))));
+            self::assertSame(['001', $secondNumber], array_column($numbers, 'value'));
+            foreach ($numbers as $number) {
+                $names = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->entityId === $number->entityId && $fact->type === 'room_name'));
+                self::assertSame([], $names);
+            }
+            $names = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_name' && $fact->value === 'Кабинет'));
+            self::assertCount(2, $names);
+            self::assertSame(['candidate'], array_values(array_unique(array_column($names, 'status'))));
+            self::assertNotSame($names[0]->entityId, $names[1]->entityId);
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
+    }
+
     public function test_source_document_role_round_trips_without_confirming_identity_or_rewriting_history(): void
     {
         [, $session] = $this->fixture(documentRole: 'floor_plan');
