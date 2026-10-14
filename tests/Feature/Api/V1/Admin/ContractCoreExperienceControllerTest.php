@@ -724,6 +724,71 @@ class ContractCoreExperienceControllerTest extends TestCase
         self::assertSame(3, PerformanceActLine::where('performance_act_id', $act->id)->whereNull('unit')->count());
     }
 
+    public function test_full_contract_details_preserve_act_workflow_status_period_and_lock(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Workflow contractor');
+        $contract = $this->createContract($context->organization, $project, $contractor);
+        $submitted = ['submitted_by_user_id' => $context->user->id, 'submitted_at' => '2026-06-09 09:00:00'];
+        $approved = $submitted + ['approved_by_user_id' => $context->user->id, 'approval_date' => '2026-06-10'];
+        $locked = ['locked_by_user_id' => $context->user->id, 'locked_at' => '2026-06-10 12:00:00'];
+        $acts = [];
+        $expectedLocks = [];
+
+        foreach ([
+            [ContractPerformanceAct::STATUS_PENDING_APPROVAL, false, false, $submitted],
+            [ContractPerformanceAct::STATUS_REJECTED, false, false, $submitted + [
+                'rejected_by_user_id' => $context->user->id, 'rejected_at' => '2026-06-10 10:00:00',
+                'rejection_reason' => 'Teaching rejection',
+            ]],
+            [ContractPerformanceAct::STATUS_APPROVED, true, true, $approved],
+            [ContractPerformanceAct::STATUS_SIGNED, true, true, $approved + [
+                'signed_by_user_id' => $context->user->id, 'signed_at' => '2026-06-10 11:00:00',
+            ]],
+            [ContractPerformanceAct::STATUS_ANNULLED, false, true, $locked],
+            [ContractPerformanceAct::STATUS_DRAFT, false, true, $locked],
+            [ContractPerformanceAct::STATUS_DRAFT, false, false, []],
+        ] as $index => [$status, $isApproved, $isLocked, $workflow]) {
+            $act = ContractPerformanceAct::query()->create(array_merge([
+                'contract_id' => $contract->id, 'project_id' => $project->id,
+                'act_document_number' => 'WORKFLOW-CARD-'.$index, 'act_date' => '2026-06-10',
+                'period_start' => '2026-06-01', 'period_end' => '2026-06-10',
+                'amount' => 100, 'currency' => 'RUB', 'status' => $status, 'is_approved' => $isApproved,
+                'created_by_user_id' => $context->user->id,
+            ], $workflow));
+            $acts[$act->id] = $act->fresh();
+            $expectedLocks[$act->id] = $isLocked;
+        }
+
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/contracts/{$contract->id}/full");
+        $response->assertOk()->assertJsonCount(count($acts), 'data.performance_acts');
+        $returned = collect($response->json('data.performance_acts'))->keyBy('id');
+
+        foreach ($acts as $id => $act) {
+            $row = $returned->get($id);
+            self::assertIsArray($row);
+            self::assertSame($act->status, $row['status']);
+            self::assertSame($act->is_approved, $row['is_approved']);
+            self::assertSame($expectedLocks[$id], $row['is_locked']);
+            self::assertSame('2026-06-01', substr((string) $row['period_start'], 0, 10));
+            self::assertSame('2026-06-10', substr((string) $row['period_end'], 0, 10));
+            self::assertSame(100.0, (float) $row['amount']);
+            self::assertSame($act->rejection_reason, $row['rejection_reason']);
+
+            foreach (['created_by_user_id', 'submitted_by_user_id', 'approved_by_user_id',
+                'rejected_by_user_id', 'signed_by_user_id', 'locked_by_user_id'] as $field) {
+                self::assertSame($act->{$field}, $row[$field], $field);
+            }
+            foreach (['submitted_at', 'rejected_at', 'signed_at', 'locked_at', 'created_at', 'updated_at'] as $field) {
+                self::assertSame($act->{$field}?->toIso8601String(), $row[$field], $field);
+            }
+            self::assertSame($act->getRawOriginal(), $act->fresh()->getRawOriginal());
+        }
+    }
+
     private function createContractor(
         Organization $organization,
         string $name,
