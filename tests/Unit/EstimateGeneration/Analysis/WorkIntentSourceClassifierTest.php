@@ -9,6 +9,27 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkIntentSourceClassifierTest extends TestCase
 {
+    public function test_unknown_work_does_not_become_verified_by_a_model_supplied_section(): void
+    {
+        $this->expectExceptionMessage('estimate_composer_work_definition_unverified');
+        (new WorkIntentSourceClassifier)->binding(['work_key' => 'custom.installation', 'work_section' => 'roofing',
+            'source_fact_ids' => ['fact:roof']], [$this->roof()]);
+    }
+
+    public function test_a_generic_boolean_answer_or_section_confirmation_is_not_an_unknown_work_definition(): void
+    {
+        foreach ([['type' => 'evaluation_answer', 'value' => true],
+            ['type' => 'work_scope', 'value' => ['section' => 'roofing']]] as $answer) {
+            try {
+                (new WorkIntentSourceClassifier)->binding(['work_key' => 'custom.installation', 'work_section' => 'roofing',
+                    'source_fact_ids' => ['fact:answer']], [[...$this->roof(), ...$answer, 'id' => 'fact:answer', 'origin' => 'user_input']]);
+                self::fail('A generic answer verified an unknown operation.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_work_definition_unverified', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_measured_equipment_count_does_not_alone_request_purchase_or_installation(): void
     {
         $this->expectExceptionMessage('estimate_composer_work_source_unrelated');

@@ -36,9 +36,23 @@ final class WorkIntentSourceClassifier
         $byId = array_column($facts, null, 'id');
         $relevant = [];
         $unconfirmed = false;
+        $definitionUnverified = false;
         foreach ($intent['source_fact_ids'] as $id) {
             $fact = $byId[$id] ?? null;
             if (! is_array($fact)) {
+                continue;
+            }
+            // An unknown model work has no server definition. A categorical
+            // document fact cannot verify it merely by matching a claimed section.
+            // A user's description can still provide a bounded preliminary outline.
+            if ($registered === null && ! (($fact['type'] ?? null) === 'evaluation_answer'
+                && ($fact['origin'] ?? null) === 'user_input'
+                && ((($fact['context_kind'] ?? null) === 'initial_description'
+                    && is_array($fact['declared_work_sections'] ?? null))
+                    || (is_array($fact['value'] ?? null) && is_string($fact['value']['description'] ?? null)
+                        && trim($fact['value']['description']) !== '')))) {
+                $definitionUnverified = true;
+
                 continue;
             }
             $type = $fact['type'] ?? null;
@@ -75,6 +89,9 @@ final class WorkIntentSourceClassifier
             $relevant[$id] = $intent['entity_id'] ?? $entityId;
         }
         if ($relevant === []) {
+            if ($definitionUnverified) {
+                throw new InvalidArgumentException('estimate_composer_work_definition_unverified');
+            }
             throw new InvalidArgumentException($unconfirmed ? 'estimate_composer_work_context_unconfirmed' : 'estimate_composer_work_source_unrelated');
         }
         $entities = array_values(array_unique(array_values($relevant)));
