@@ -33,7 +33,8 @@ final class AssistantToolResultProjection
             $view = array_intersect_key($result, array_flip(['status', 'needs_clarification', 'validation_status', 'error', 'reason']));
             $view['server_formatted_answer'] = $result['server_summary_answer'] ?? null;
             $filters = $result['bim_evidence']['filters'] ?? [];
-            if (($filters['answer_kind'] ?? null) === 'materials') {
+            $materialSummary = in_array($filters['answer_kind'] ?? null, ['materials', 'materials_and_quantities'], true);
+            if ($materialSummary) {
                 $view['server_formatted_answer'] = trans_message('ai_assistant_bim.provider_material_summary');
             }
             $view['filters'] = array_intersect_key($filters, array_flip(['answer_kind', 'equipment_kind', 'equipment_kinds', 'element_query', 'material_query',
@@ -44,11 +45,18 @@ final class AssistantToolResultProjection
                     'semantic_matching_count', 'equipment_counts', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage', 'material_summary']));
                 $projected['version'] = array_intersect_key($model['version'] ?? [], array_flip(['id', 'project_id', 'artifact_id',
                     'title', 'version_number', 'source_original_name', 'is_current']));
-                if (($filters['answer_kind'] ?? null) === 'materials') {
+                if ($materialSummary) {
                     if (is_array($projected['material_summary'] ?? null)) {
                         $names = $projected['material_summary']['names'] ?? [];
                         $projected['material_summary']['names'] = array_slice($names, 0, 10);
                         $projected['material_summary']['provider_names_truncated'] = count($names) > 10;
+                    }
+                    if (($filters['answer_kind'] ?? null) === 'materials_and_quantities') {
+                        $quantities = $model['quantity_totals'] ?? [];
+                        $projected['quantity_totals'] = array_map(static fn (array $quantity): array => array_intersect_key($quantity,
+                            array_flip(['name', 'dimension', 'unit', 'elements', 'sum', 'coverage'])), array_slice($quantities, 0, 20));
+                        $projected['quantity_summary_truncated'] = $model['quantity_summary_truncated'] ?? false;
+                        $projected['provider_quantities_truncated'] = count($quantities) > 20;
                     }
                     $view['models'][] = $projected;
                     continue;

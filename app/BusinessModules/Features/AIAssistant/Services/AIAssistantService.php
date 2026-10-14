@@ -2092,18 +2092,31 @@ class AIAssistantService
                 $args['query'] = $requestQuery;
             }
         }
-        if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
-            $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
-        }
         if ($toolName === 'get_bim_model_elements') {
             $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
+            $organizationWide = AssistantRequestProjectScope::organizationWide($requestQuery);
+            $contextProjectId = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            if ($organizationWide) {
+                $args['project_id'] = null;
+            } elseif ($contextProjectId !== null && ($args['version_id'] ?? null) === null && ($args['compare_version_id'] ?? null) === null
+                && (($args['project_id'] ?? null) === null
+                || ($namedProject === null && ! AssistantBimModelSelector::hasExplicitModelScope($requestQuery,
+                    is_string($args['model_query'] ?? null) ? $args['model_query'] : null)))) {
+                $args['project_id'] = $contextProjectId;
+            }
             $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);
             $bimSchema = $this->toolRegistry->getTool($toolName)?->getParametersSchema()['properties'] ?? [];
             $requestedKinds = $this->simpleBimEquipmentKinds($requestQuery, $namedProject
                 ?? (is_string($args['model_query'] ?? null) ? trim($args['model_query']) : ''));
+            $equipmentCountRequested = AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)
+                || ($requestedKinds !== [] && preg_match('/(?<!\pL)(?:посчитай|подсч[её]т)(?!\pL)/iu', $requestQuery) === 1);
             if (isset($bimSchema['answer_kind'])) {
                 if (! array_key_exists('answer_kind', $args)) { $args['answer_kind'] = 'elements'; }
-                if (AssistantBimAnswerIntent::materialList($requestQuery)) {
+                if (AssistantBimAnswerIntent::materialsAndQuantities($requestQuery)) {
+                    $args['answer_kind'] = 'materials_and_quantities';
+                    $args['include_quantities'] = true;
+                    $args['include_properties'] = $args['include_estimate_links'] = false;
+                } elseif (AssistantBimAnswerIntent::materialList($requestQuery)) {
                     $args['answer_kind'] = 'materials';
                     $args['include_quantities'] = $args['include_properties'] = $args['include_estimate_links'] = false;
                 }
@@ -2132,7 +2145,7 @@ class AIAssistantService
                     'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
                     if (isset($bimSchema[$field])) { $args[$field] = null; }
                 }
-                if (AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)) {
+                if ($equipmentCountRequested) {
                     foreach (['include_properties', 'include_quantities', 'include_estimate_links'] as $field) {
                         if (isset($bimSchema[$field])) { $args[$field] = false; }
                     }
@@ -2142,7 +2155,7 @@ class AIAssistantService
             }
             if ($requestedKinds !== [] && isset($bimSchema['equipment_kinds'])
                 && (count($requestedKinds) > 1 || $requestedKinds === ['ventilation_unit'])
-                && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)) {
+                && $equipmentCountRequested) {
                 $args['equipment_kinds'] = $requestedKinds;
                 $args['equipment_kind'] = null;
                 if (preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1) { $args['model_query'] = null; }
@@ -2157,19 +2170,20 @@ class AIAssistantService
                 $args['offset'] = 0;
                 $args['limit'] = 1;
             }
-            if ($requestedKinds !== [] && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)
+            if ($requestedKinds !== [] && $equipmentCountRequested
                 && $this->bimEstimateLinksRequested($requestQuery)) {
                 if (isset($bimSchema['include_estimate_links'])) {
                     $args['include_estimate_links'] = true;
                 }
                 if (isset($bimSchema['limit'])) { $args['limit'] = 20; }
             }
-            $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
+            $projectScopeRequested = ! $organizationWide
+                && (AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery));
             if ($projectScopeRequested && $namedProject === null) {
                 $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             }
             $providedProjectId = is_int($args['project_id'] ?? null) ? $args['project_id'] : null;
-            $projectId = $providedProjectId ?? $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            $projectId = $providedProjectId ?? ($organizationWide ? null : $this->resolveRagProjectId($taskPlan['request']['context'] ?? []));
             if ($projectId !== null && ($namedProject !== null || is_string($args['model_query'] ?? null))) {
                 $projectName = $this->readableBimProjectName($user, $organizationId, $projectId);
                 if (is_string($projectName)) {
@@ -3971,13 +3985,14 @@ class AIAssistantService
     private function simpleBimEquipmentKinds(string $question, string $alias): array
     {
         $remaining = preg_replace('/(?<![\pL\pN])'.preg_quote($alias, '/').'(?![\pL\pN])/iu', ' ', $question);
+        $remaining = preg_replace('/(?<![\pL\pN])(?:мне\s+нужен\s+)?раздельн[\pL]*\s+подсч[её]т(?:\s*,?\s*чтобы\s+не\s+задвоить\s+оборудование)?(?![\pL\pN])/iu', ' ', $remaining ?? '');
         $equipmentPattern = '/(?<![\pL\pN])(?:кондиционер[\pL]*|сплит[ -]?систем[\pL]*|вентилятор[\pL]*|(?:вентиляционн|приточн|вытяжн)[\pL]*\s+установ[\pL]*|вентустанов[\pL]*|насос[\pL]*|кот[её]л[\pL]*|котлы|котлов|чиллер[\pL]*)(?![\pL\pN])/iu';
         preg_match_all($equipmentPattern, $remaining ?? '', $equipmentTerms);
         $projection = new AssistantBimIndexProjection;
         $kinds = array_values(array_unique(array_map(fn (string $term): string => $projection->queryEquipment($term) ?? 'ventilation_unit', $equipmentTerms[0])));
         if ($kinds === []) { return []; }
         $remaining = preg_replace($equipmentPattern, ' ', $remaining ?? '');
-        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|и|ли|со?|наш[\pL]*|объект[\pL]*|найдено|связ[\pL]*|сметн[\pL]*|позици[\pL]*|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
+        $remaining = preg_replace('/(?<![\pL\pN])(?:а|у|нас|в|во|и|ли|со?|отдельно|раздельно|наш[\pL]*|объект[\pL]*|найдено|связ[\pL]*|сметн[\pL]*|позици[\pL]*|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|всех|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
 
         return preg_match('/[\pL\pN]/u', $remaining ?? $question) === 0 ? $kinds : [];
     }

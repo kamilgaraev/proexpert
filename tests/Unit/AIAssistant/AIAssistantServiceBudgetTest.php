@@ -635,6 +635,281 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame(0, $seen['offset']);
     }
 
+    public function test_equipment_followup_keeps_context_project_and_separates_requested_kinds(): void
+    {
+        foreach ([
+            ['А отдельно сколько вентиляторов и сколько вентиляционных установок? Мне нужен раздельный подсчёт, чтобы не задвоить оборудование.', null, 52],
+            ['А отдельно сколько вентиляторов и сколько вентиляционных установок? Мне нужен раздельный подсчёт, чтобы не задвоить оборудование.', 100, 52],
+            ['Посчитай вентиляторы и вентиляционные установки раздельно.', null, 52],
+            ['Сколько вентиляторов и вентиляционных установок во всех проектах?', 52, null],
+        ] as [$query, $inputProjectId, $expectedProjectId]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+            $seen = [];
+            $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+                $seen = $args;
+                return ['status' => 'success'];
+            });
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'followup', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['project_id' => $inputProjectId, 'model_query' => null, 'equipment_kind' => 'fan',
+                    'element_query' => 'вентиляторы', 'equipment_kinds' => null, 'include_properties' => true,
+                    'include_quantities' => true, 'include_estimate_links' => true, 'answer_kind' => 'elements', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame($expectedProjectId, $seen['project_id']);
+            self::assertSame(['fan', 'ventilation_unit'], $seen['equipment_kinds']);
+            self::assertNull($seen['equipment_kind']);
+            self::assertNull($seen['element_query']);
+            self::assertFalse($seen['include_quantities']);
+            self::assertFalse($seen['include_estimate_links']);
+            self::assertSame(0, $seen['offset']);
+            self::assertSame(1, $seen['limit']);
+        }
+    }
+
+    public function test_explicit_named_object_preserves_its_project_instead_of_selected_context(): void
+    {
+        $query = 'Покажи вентиляторы по объекту «Гаражная»';
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+            'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+        ], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => 100], $this->anything(), $this->anything())
+            ->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $service->canonicalBimProjects = [100 => 'Гаражная'];
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'named_object', 'name' => 'get_bim_model_elements',
+            'arguments' => '{"model_query":null,"project_id":100}'], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertSame('Гаражная', \App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject($query));
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject('В нашем объекте есть насосы и вентиляционные установки?'));
+    }
+
+    public function test_explicit_named_model_keeps_resolved_project_instead_of_context(): void
+    {
+        foreach ([['Покажи элементы модели «Гаражная»', 'Гаражная'], ['Покажи элементы модели Гаражная', 'Гаражная'],
+            ['Покажи элементы garage.ifc', 'Гаражная'], ['Покажи элементы Гаражной BIM-модели', 'Гаражной'],
+            ['Покажи элементы «Гаражного» комплекта', 'Гаражного']] as [$query, $selector]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with(['model_query' => $selector, 'project_id' => 100], $this->anything(), $this->anything())
+                ->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $service->canonicalBimProjects = [100 => 'Другой разрешённый проект'];
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'named_model', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['model_query' => $selector, 'project_id' => 100], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasExplicitModelScope('Покажи элементы моделей в формате .ifc', null));
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasExplicitModelScope('Покажи элементы garage.ifc', null));
+    }
+
+    public function test_file_name_and_file_format_apply_different_project_scopes(): void
+    {
+        foreach ([['Покажи элементы garage.ifc', 100], ['Покажи элементы моделей в формате .ifc', 52]] as [$query, $expectedProjectId]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => $expectedProjectId], $this->anything(), $this->anything())
+                ->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'file_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => '{"model_query":null,"project_id":100}'], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
+    public function test_explicit_bim_version_keeps_resolved_project(): void
+    {
+        foreach ([['Покажи версию 88', ['version_id' => 88], 100], ['Сравни версии 88 и 89', ['version_id' => 88, 'compare_version_id' => 89], 100],
+            ['Покажи версию 88', ['version_id' => 88], null], ['Сравни версии 88 и 89', ['version_id' => 88, 'compare_version_id' => 89], null]] as [$query, $versions, $projectId]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+                'version_id' => ['type' => ['integer', 'null']], 'compare_version_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $args = ['model_query' => null, 'project_id' => $projectId] + $versions;
+            $tool->expects($this->once())->method('execute')->with($args, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'version_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode($args, JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
+    public function test_named_bim_element_is_not_resolved_as_construction_project(): void
+    {
+        $query = 'Покажи свойства объекта «Насос 1» в BIM-модели';
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+            'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            'element_query' => ['type' => ['string', 'null']], 'include_properties' => ['type' => 'boolean'],
+        ], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => 52,
+            'element_query' => 'Насос 1', 'include_properties' => true], $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_element', 'name' => 'get_bim_model_elements',
+            'arguments' => '{"model_query":null,"project_id":null,"element_query":"Насос 1","include_properties":true}'], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject($query));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasProjectScope($query));
+    }
+
+    public function test_equipment_count_parser_preserves_explicit_exclusion(): void
+    {
+        $service = $this->makeService(new AIToolRegistry, true);
+        $parser = new \ReflectionMethod($service, 'simpleBimEquipmentKinds');
+        self::assertSame([], $parser->invoke($service, 'Сколько вентиляторов, но не вентиляционных установок?', ''));
+    }
+
+    public function test_material_quantity_overview_binds_both_full_index_facets(): void
+    {
+        $query = 'По модели «Информационная модель в формате IFC» покажи материалы, объёмы и единицы измерения. Можно ли по этим данным считать закупку?';
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        self::assertContains('materials_and_quantities', $properties['answer_kind']['enum']);
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'materials_quantities', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['model_query' => 'Информационная модель в формате IFC', 'project_id' => null,
+                'answer_kind' => 'elements', 'include_quantities' => false, 'include_properties' => true, 'include_estimate_links' => true], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame(52, $seen['project_id']);
+        self::assertSame('materials_and_quantities', $seen['answer_kind']);
+        self::assertTrue($seen['include_quantities']);
+        self::assertFalse($seen['include_properties']);
+        self::assertFalse($seen['include_estimate_links']);
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimAnswerIntent::materialsAndQuantities('Покажи материалы, но не объёмы'));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimAnswerIntent::materialsAndQuantities('Покажи объёмы и единицы измерения в модели, без материалов'));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimAnswerIntent::materialsAndQuantities('Количество материалов в модели'));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimAnswerIntent::materialsAndQuantities('Покажи перечень материалов для всех единиц оборудования в BIM-модели'));
+    }
+
+    public function test_material_quantity_wording_routes_without_losing_explicit_properties(): void
+    {
+        foreach ([
+            ['Покажи материалы и количественные показатели в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы и их количества в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы, объёмы и свойства элементов BIM-модели', 'elements', true],
+            ['Количество материалов в BIM-модели', 'elements', true],
+            ['Количество разных материалов в BIM-модели', 'elements', true],
+            ['Количество всех материалов в BIM-модели', 'elements', true],
+            ['Количество видов материалов в BIM-модели', 'elements', true],
+            ['Покажи материалы и количество элементов в BIM-модели', 'elements', true],
+            ['Покажи материалы и количество дверей', 'elements', true],
+            ['Покажи материалы и количества элементов в BIM-модели', 'elements', true],
+            ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, но не показывай свойства', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не нужны', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не показывай', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не выводи', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, но без сметных связей в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы без связей со сметными позициями', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, сметные связи не нужны', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы и сметные связи', 'elements', true],
+            ['Покажи материалы и объёмы, не забудь свойства', 'elements', true],
+            ['Покажи материалы и объёмы, не прекращай показывать свойства', 'elements', true],
+            ['Покажи материалы и объёмы, а не только свойства', 'elements', true],
+            ['Покажи не только материалы, но и объёмы', 'materials_and_quantities', false],
+            ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы не показывай в BIM-модели', 'materials', false],
+        ] as [$query, $expectedKind, $expectedProperties]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+            $seen = [];
+            $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+                $seen = $args;
+                return ['status' => 'success'];
+            });
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'materials_wording', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['model_query' => null, 'project_id' => null, 'answer_kind' => 'elements',
+                    'include_quantities' => true, 'include_properties' => true], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+            self::assertSame($expectedKind, $seen['answer_kind']);
+            self::assertSame($expectedProperties, $seen['include_properties']);
+            self::assertSame($expectedKind !== 'materials', $seen['include_quantities']);
+            self::assertSame(52, $seen['project_id']);
+        }
+    }
+
+    public function test_negated_organization_scope_keeps_selected_bim_project(): void
+    {
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide('Не меняй настройки, покажи во всех проектах'));
+        foreach (['Не забудь проверить по всем проектам', 'Не забывай проверять по всем проектам',
+            'Не прекращай проверять по всем проектам', 'Не только по всем проектам'] as $positiveQuery) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide($positiveQuery));
+        }
+        foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
+            'Покажи вентиляторы, не во всей организации', 'Не ищи по всем проектам, покажи только текущий',
+            'Не надо искать по всем проектам, покажи текущий проект', 'Не работай по всем проектам',
+            'Не выполняй поиск по всем проектам'] as $query) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => 52], $this->anything(), $this->anything())
+                ->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'negative_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => '{"model_query":null,"project_id":52}'], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
     public function test_manager_pumps_and_ventilation_count_preserves_estimate_links(): void
     {
         $tool = $this->createMock(AIToolInterface::class);

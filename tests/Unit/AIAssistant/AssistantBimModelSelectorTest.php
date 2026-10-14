@@ -14,6 +14,12 @@ final class AssistantBimModelSelectorTest extends TestCase
         self::assertNull(AssistantBimModelSelector::withoutProjectAlias('севгу', 'СевГУ: учебный корпус',
             'у нас в проекте севгу есть кондиционеры, сколько их?'));
         self::assertSame('севгу', AssistantBimModelSelector::namedProject('у нас в проекте севгу есть кондиционеры, сколько их?'));
+        foreach (['Покажи материалы по объекту строительства «Гараж»', 'Покажи материалы по объекту капитального строительства «Гараж»',
+            'Покажи материалы по объекту строительства Гараж'] as $query) {
+            self::assertSame('Гараж', AssistantBimModelSelector::namedProject($query));
+            self::assertTrue(AssistantBimModelSelector::hasProjectScope($query));
+            self::assertTrue(AssistantBimModelSelector::isProjectQuestion('Гараж', $query));
+        }
         self::assertSame('Красный дом', AssistantBimModelSelector::namedProject('В проекте Красный дом сколько кондиционеров?'));
         self::assertNull(AssistantBimModelSelector::namedProject('Сколько кондиционеров в текущем проекте?'));
         self::assertNull(AssistantBimModelSelector::namedProject('В текущем проекте есть кондиционеры, сколько их?'));

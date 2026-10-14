@@ -193,6 +193,31 @@ final class AssistantToolResultProjectionTest extends TestCase
         self::assertCount(8, AssistantToolResultProjection::forProvider('get_bim_model_elements', $result)['models'][0]['elements'][0]['properties']);
     }
 
+    public function test_combined_material_quantity_provider_projection_is_bounded_and_private(): void
+    {
+        $quantities = array_map(static fn (int $id): array => ['name' => 'Volume'.$id, 'dimension' => 'volume',
+            'unit' => 'm3', 'elements' => 1, 'sum' => 3, 'coverage' => 'full_matching_index', '_private' => 'private-marker'], range(1, 100));
+        $result = ['status' => 'success', 'server_summary_answer' => str_repeat('private-marker', 10000),
+            'server_formatted_answer' => str_repeat('private-marker', 10000),
+            'bim_evidence' => ['filters' => ['answer_kind' => 'materials_and_quantities', 'include_quantities' => true]],
+            'models' => [['material_summary' => ['names' => array_map(static fn (int $id): string => 'Material'.$id, range(1, 30)), 'total' => 30],
+                'quantity_totals' => $quantities, 'quantity_summary_truncated' => true,
+                'elements' => [['properties' => ['secret' => 'private-marker']]], 'categories' => ['private-marker']]],
+            'source_refs' => [['private' => 'private-marker']]];
+        $view = AssistantToolResultProjection::forProvider('get_bim_model_elements', $result);
+        self::assertSame(trans_message('ai_assistant_bim.provider_material_summary'), $view['server_formatted_answer']);
+        self::assertCount(10, $view['models'][0]['material_summary']['names']);
+        self::assertTrue($view['models'][0]['material_summary']['provider_names_truncated']);
+        self::assertCount(20, $view['models'][0]['quantity_totals']);
+        self::assertSame(3, $view['models'][0]['quantity_totals'][0]['sum']);
+        self::assertTrue($view['models'][0]['provider_quantities_truncated']);
+        self::assertTrue($view['models'][0]['quantity_summary_truncated']);
+        self::assertArrayNotHasKey('elements', $view['models'][0]);
+        self::assertArrayNotHasKey('categories', $view['models'][0]);
+        self::assertStringNotContainsString('private-marker', json_encode($view, JSON_THROW_ON_ERROR));
+        self::assertLessThan(4096, strlen(json_encode($view, JSON_THROW_ON_ERROR)));
+    }
+
     public function test_bim_projection_preserves_requested_properties_links_and_property_changes(): void
     {
         $result = ['status' => 'success', 'bim_evidence' => ['filters' => ['property_name' => 'CoolingCapacity',

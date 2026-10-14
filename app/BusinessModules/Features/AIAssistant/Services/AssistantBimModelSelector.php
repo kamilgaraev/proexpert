@@ -6,6 +6,19 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 final class AssistantBimModelSelector
 {
+    public static function hasExplicitModelScope(string $question, ?string $selector): bool
+    {
+        $prefix = '(?:модел[а-яё]*|файл[а-яё]*|комплект[а-яё]*)\s+(?:(?:ifc|bim|с\s+названием|под\s+названием)\s+)*';
+        if (preg_match('/'.$prefix.'[«"“\x27‘][^»"”\x27’]+[»"”\x27’]|(?<![\pL\pN])[\pL\pN][\pL\pN_.()\-]*\.ifc(?![\pL\pN])/iu', $question) === 1) {
+            return true;
+        }
+
+        if ($selector === null || trim($selector) === '') { return false; }
+        $literal = preg_quote(trim($selector), '/');
+
+        return preg_match('/'.$prefix.'[«"“\x27‘]?'.$literal.'(?![\pL\pN])|(?<![\pL\pN])[«"“\x27‘]?'.$literal.'[»"”\x27’]?\s+(?:(?:ifc|bim|бим)[\s-]+)?(?:модел|файл|комплект)[а-яё]*(?!\pL)/iu', $question) === 1;
+    }
+
     public static function withoutProjectAlias(?string $modelQuery, string $projectName, string $question): ?string
     {
         if ($modelQuery === null || trim($modelQuery) === '') {
@@ -38,23 +51,23 @@ final class AssistantBimModelSelector
         $literal = preg_quote(str_replace('ё', 'е', mb_strtolower(trim($selector))), '/');
         $query = str_replace('ё', 'е', mb_strtolower($question));
 
-        return preg_match('/проект[а-я]*\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
+        return preg_match('/(?:проект[а-я]*|(?:по|на|в)\s+(?:строительн[а-я]*\s+)?объект[а-я]*(?:\s+(?:капитальн[а-я]*\s+)?строительств[а-я]*)?)\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
     }
 
     public static function hasProjectScope(string $question): bool
     {
-        return preg_match('/(?<![\pL\pN])проект(?:е|у|а)?(?![\pL\pN])/iu', $question) === 1;
+        return preg_match('/(?<![\pL\pN])(?:проект(?:е|у|а)?|(?:по|на|в)\s+(?:строительн[а-яё]*\s+)?объект(?:е|у|а)?)(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function namedProject(string $question): ?string
     {
-        if (! preg_match('/(?<![\pL\pN])проект(?:е|у|а)?\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
+        if (! preg_match('/(?<![\pL\pN])(?:проект(?:е|у|а)?|(?:по|на|в)\s+(?:строительн[а-яё]*\s+)?объект(?:е|у|а)?(?:\s+(?:капитальн[а-яё]*\s+)?строительств[а-яё]*)?)\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
             return null;
         }
         if ($match[1] !== '') {
             return trim($match[1]);
         }
-        if (preg_match('/(?<![\pL\pN])(?:текущ|выбран|эт[ао]|данн)[а-яё]*\s+проект/iu', $question)) {
+        if (preg_match('/(?<![\pL\pN])(?:наш|текущ|выбран|эт[ао]|данн)[а-яё]*\s+(?:проект|объект)/iu', $question)) {
             return null;
         }
         $name = trim((string) preg_split('/\s+(?:есть|сколько|покажи|посчитай|найди|проверь|какие|котор[а-яё]*|и)(?![\pL\pN])/iu', $match[2], 2)[0]);

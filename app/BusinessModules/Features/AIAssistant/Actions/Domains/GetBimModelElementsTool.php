@@ -27,7 +27,7 @@ final readonly class GetBimModelElementsTool implements AIToolInterface
     public function getParametersSchema(): array
     {
         $properties = [
-            'answer_kind' => ['type' => 'string', 'enum' => ['elements', 'materials', 'models'],
+            'answer_kind' => ['type' => 'string', 'enum' => ['elements', 'materials', 'materials_and_quantities', 'models'],
                 'description' => trans_message('ai_assistant_bim.answer_kind_description')],
             'model_query' => ['type' => ['string', 'null'], 'maxLength' => 200,
                 'description' => trans_message('ai_assistant_bim.model_query_description')],

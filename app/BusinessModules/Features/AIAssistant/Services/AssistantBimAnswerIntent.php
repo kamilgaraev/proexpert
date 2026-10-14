@@ -6,6 +6,20 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 final readonly class AssistantBimAnswerIntent
 {
+    public static function materialsAndQuantities(string $query): bool
+    {
+        $negatedPrefix = '(?<!\pL)(?:без|не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL)))\s+(?:[\pL\pN-]+\s+){0,4}';
+        $excludedSuffix = '(?:не\s+(?:нуж|показыва|вывод|включа|добавля)[а-яё]*|исключи[а-яё]*|убери[а-яё]*)';
+        $propertyQuery = preg_replace('/'.$negatedPrefix.'свойств[а-яё]*(?!\pL)|(?<!\pL)свойств[а-яё]*\s+'.$excludedSuffix.'/iu', '', $query) ?? $query;
+        $linkFacet = '(?:сметн[а-яё]*\s+)?связ[а-яё]*(?:\s+со?\s+смет[а-яё]*(?:\s+позици[а-яё]*)?)?';
+        $additionalQuery = preg_replace('/'.$negatedPrefix.$linkFacet.'(?!\pL)|(?<!\pL)'.$linkFacet.'\s+'.$excludedSuffix.'/iu', '', $propertyQuery) ?? $propertyQuery;
+
+        return preg_match('/(?<!\pL)материал[а-яё]*(?!\pL)/iu', $query) === 1
+            && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*|количественн[а-яё]*\s+(?:показател|данн|характеристик)[а-яё]*|количества(?=\s*(?:[,.;!?]|$)|\s+(?:в|из|по|для|на)(?!\pL)))(?!\pL)/iu', $query) === 1
+            && preg_match('/'.$negatedPrefix.'(?:материал|объ[её]м|количеств|единиц)|(?<!\pL)(?:материал|объ[её]м|количеств|единиц)[а-яё]*\s+'.$excludedSuffix.'/iu', $query) !== 1
+            && preg_match('/(?<!\pL)(?:свойств|связ|сметн)[а-яё]*(?!\pL)/iu', $additionalQuery) !== 1;
+    }
+
     public static function materialList(string $query): bool
     {
         return preg_match('/(?<!\pL)(?:каки[ея]|список|перечень|названи[ея]|покажи[а-яё]*)\s+(?:все[х]?\s+)?материал[а-яё]*(?!\pL)/iu', $query) === 1

@@ -49,7 +49,8 @@ final readonly class AssistantBimIndexQuery
             $result[$versionId] = ['categories' => [], 'elements' => [], 'total' => 0, 'observed_matches' => 0,
                 'has_more' => false, 'scan_complete' => true, 'scanned_count' => 0, 'index_fingerprint' => md5(''),
                 'schema2_row_count' => 0, 'equipment_counts' => array_fill_keys($filters['equipment_kinds'] ?? [], 0),
-                'matching_count_coverage' => 'full_index_query', 'material_summary' => null, 'quantity_totals' => [], 'comparison_rows' => []];
+                'matching_count_coverage' => 'full_index_query', 'material_summary' => null, 'quantity_totals' => [],
+                'quantity_summary_truncated' => false, 'comparison_rows' => []];
         }
         foreach ($connection->select($sql, $proofScope->getBindings(), $useReadPdo) as $proof) {
             $versionId = (int) $proof->version_id;
@@ -126,6 +127,7 @@ final readonly class AssistantBimIndexQuery
             ->map(fn ($element): array => $this->pageRow($element, $filters))->all();
         $rows = [];
         $quantities = [];
+        $quantitySummaryTruncated = false;
         $scanned = 0;
         $complete = true;
         $deadline = microtime(true) + ($retainRows ? 4.0 : 8.0);
@@ -154,6 +156,7 @@ final readonly class AssistantBimIndexQuery
                     $key = json_encode([$quantity['name'], $quantity['dimension'], $quantity['unit']], JSON_THROW_ON_ERROR);
                     if (! isset($quantities[$key])) {
                         if (count($quantities) >= 100) {
+                            $quantitySummaryTruncated = true;
                             continue;
                         }
                         $quantities[$key] = $quantity + ['elements' => 0, 'sum' => 0.0];
@@ -179,9 +182,9 @@ final readonly class AssistantBimIndexQuery
             'scan_complete' => $complete, 'scanned_count' => $indexedCount, 'index_fingerprint' => $fingerprint,
             'schema2_row_count' => $schema2Count, 'equipment_counts' => $equipmentCounts,
             'matching_count_coverage' => 'full_index_query',
-            'material_summary' => ($filters['answer_kind'] ?? 'elements') === 'materials'
+            'material_summary' => in_array($filters['answer_kind'] ?? 'elements', ['materials', 'materials_and_quantities'], true)
                 ? (new AssistantBimMaterialSummary($this->projection))->read($scope, $filters['offset'], $filters['limit']) : null,
-            'quantity_totals' => $quantityRows, 'comparison_rows' => $rows];
+            'quantity_totals' => $quantityRows, 'quantity_summary_truncated' => $quantitySummaryTruncated, 'comparison_rows' => $rows];
     }
 
     private function pageRow(\Illuminate\Database\Eloquent\Model $element, array $filters): array
