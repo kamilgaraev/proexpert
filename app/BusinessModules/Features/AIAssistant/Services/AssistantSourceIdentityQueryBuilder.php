@@ -13,22 +13,63 @@ final class AssistantSourceIdentityQueryBuilder
 {
     private const MAX_SOURCE_BATCH_ROWS = 10000;
 
-    public function planBatches(array $identities, array $sourceCounts, ?int $batchSize, bool $expectedProjection): array
+    public function planBatches(array $identities, array $sourceCounts, ?int $batchSize, bool $expectedProjection, bool $boundSourceIdentities = false): array
     {
         $presentTypes = [];
-        foreach ($identities as $types) { $presentTypes += $types; }
+        foreach ($identities as $types) {
+            $presentTypes += $types;
+        }
         $batches = $batchSize === null ? [null] : $this->sourceCountBatches(array_keys($presentTypes), $sourceCounts, $batchSize);
         $planned = [];
         foreach ($batches as $types) {
             if ($expectedProjection && count($types ?? []) === 1
                 && ($types === ['organization_reporting'] || ($sourceCounts[$types[0]] ?? 0) > self::MAX_SOURCE_BATCH_ROWS)) {
                 foreach ($identities as $entityType => $identity) {
-                    if (isset($identity[$types[0]])) { $planned[] = ['types' => $types, 'entity' => $entityType]; }
+                    if (isset($identity[$types[0]])) {
+                        $planned[] = ['types' => $types, 'entity' => $entityType];
+                    }
                 }
-            } else { $planned[] = ['types' => $types, 'entity' => null]; }
+            } elseif ($boundSourceIdentities && ! $expectedProjection && $batchSize !== null) {
+                $groups = $this->sourceEntityGroups($types, $identities, $batchSize);
+                if (count($groups) > 1) {
+                    foreach ($groups as $entities) {
+                        $planned[] = ['types' => $types, 'entity' => null, 'entities' => $entities];
+                    }
+                } else {
+                    $planned[] = ['types' => $types, 'entity' => null];
+                }
+            } else {
+                $planned[] = ['types' => $types, 'entity' => null];
+            }
         }
 
         return $planned;
+    }
+
+    private function sourceEntityGroups(array $types, array $identities, int $batchSize): array
+    {
+        $present = array_fill_keys($types, true);
+        $groups = [];
+        $group = [];
+        $branches = 0;
+        foreach ($identities as $entityType => $sources) {
+            $weight = count(array_intersect_key($sources, $present));
+            if ($weight === 0) {
+                continue;
+            }
+            if ($group !== [] && $branches + $weight > $batchSize) {
+                $groups[] = $group;
+                $group = [];
+                $branches = 0;
+            }
+            $group[] = $entityType;
+            $branches += $weight;
+        }
+        if ($group !== []) {
+            $groups[] = $group;
+        }
+
+        return $groups;
     }
 
     public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null): QueryBuilder
