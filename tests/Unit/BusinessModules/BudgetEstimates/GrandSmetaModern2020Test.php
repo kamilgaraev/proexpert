@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSm
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\StatefulGrandSmetaProcessor;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportRowPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\GrandSmetaRuntimeBridge;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult;
@@ -321,6 +322,164 @@ final class GrandSmetaModern2020Test extends TestCase
         self::assertFalse($validation->isValid());
         self::assertSame($preview->validation['errors'], $validation->errors);
         self::assertSame($preview->validation['warnings'], $validation->warnings);
+    }
+
+    public function test_export_inactive_rows_are_preserved_without_blocking_verified_group_indices(): void
+    {
+        $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+            $preview = $bridge->preview(new ImportSession, $path, $structure);
+            self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+            self::assertCount(6, $preview->items);
+            self::assertSame(0.11, $preview->totals['total_amount']);
+            $allRows = iterator_to_array($bridge->streamRows(new ImportSession, $path, $structure), false);
+            $rows = array_values(array_filter($allRows, fn ($row) => !$row->isSection && !$row->isSubItem));
+            self::assertSame([false, true, false], array_map(fn ($row) => $row->isNotAccounted, $rows));
+            self::assertSame([0.06, 0.06, 0.05], array_map(fn ($row) => $row->currentTotalAmount, $rows));
+            self::assertSame('grand_export_inactive', $rows[1]->rawData['source_accounting']['marker']);
+            self::assertSame('group_largest_remainder_v1', $rows[0]->rawData['index_provenance']['machinery']['rounding_strategy']);
+            self::assertSame('position_half_up_v1', $rows[1]->rawData['index_provenance']['machinery']['rounding_strategy']);
+            $children = array_values(array_filter($allRows, fn ($row) => $row->isSubItem));
+            self::assertSame([0.06, 0.06, 0.05], array_map(fn ($row) => $row->currentTotalAmount, $children));
+            self::assertTrue($children[1]->isNotAccounted);
+            self::assertSame('parent_indexed_component', $children[0]->rawData['total_source']);
+        });
+    }
+
+    public function test_inactive_modern_root_does_not_add_source_charges_twice(): void
+    {
+        $row = new EstimateImportRowDTO(
+            rowNumber: 1, sectionNumber: '1', itemName: 'Неучтённая работа', quantity: 1,
+            unitPrice: 0.1, currentTotalAmount: 0.15, overheadAmount: 0.03, profitAmount: 0.02,
+            isNotAccounted: true, rawData: ['financial_structure' => ['layout' => 'grand_modern_2020']],
+        );
+        self::assertSame(0.15, (new ImportRowPolicy)->totalAmount($row));
+    }
+
+    public function test_export_accounting_state_supports_an_omitted_optional_quantity_coefficient(): void
+    {
+        $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+            self::assertSame('', $structure->columnMapping['quantity_coefficient']);
+            $preview = $bridge->preview(new ImportSession, $path, $structure);
+            self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+            self::assertSame(0.11, $preview->totals['total_amount']);
+            $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item']));
+            self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+        }, quantityCoefficient: false);
+    }
+
+    public function test_numbered_positions_without_codes_keep_the_export_accounting_state(): void
+    {
+        foreach ([[7], [4, 7, 10]] as $codeLessRows) {
+            $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+                $preview = $bridge->preview(new ImportSession, $path, $structure);
+                self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+                self::assertSame(0.11, $preview->totals['total_amount']);
+                $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item']));
+                self::assertCount(3, $roots);
+                self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+                self::assertEmpty($roots[1]['code']);
+            }, codeLessRows: $codeLessRows);
+        }
+    }
+
+    public function test_accounting_cohorts_only_include_parsed_positions_and_ignore_numbered_sections_and_footers(): void
+    {
+        $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+            $preview = $bridge->preview(new ImportSession, $path, $structure);
+            self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+            self::assertSame(0.11, $preview->totals['total_amount']);
+            $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item'] && !$row['is_section']));
+            self::assertCount(3, $roots);
+            self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+        }, decorate: static function ($sheet): void {
+            $sheet->insertNewRowBefore(4, 1);
+            $sheet->setCellValue('A4', 1);
+            $sheet->setCellValue('C4', 'Раздел 1. Работы');
+            $sheet->setCellValue('A14', 2);
+            $sheet->setCellValue('A18', 3);
+            $sheet->setCellValue('C18', 'Справочная строка в итогах');
+        });
+    }
+
+    public function test_theme_and_indexed_active_font_colors_do_not_break_accounting_detection(): void
+    {
+        $color = new \PhpOffice\PhpSpreadsheet\Style\Color;
+        $color->setARGB(null);
+        self::assertIsString($color->getRGB());
+        foreach (['theme' => '1', 'indexed' => '8'] as $attribute => $value) {
+            $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure) use ($attribute, $value): void {
+                $archive = new \ZipArchive;
+                self::assertTrue($archive->open($path));
+                $styles = new \DOMDocument;
+                self::assertTrue($styles->loadXML($archive->getFromName('xl/styles.xml')));
+                $fontColor = (new \DOMXPath($styles))->query('/*[local-name()="styleSheet"]/*[local-name()="fonts"]/*[local-name()="font"][1]/*[local-name()="color"]')->item(0);
+                self::assertInstanceOf(\DOMElement::class, $fontColor);
+                while ($fontColor->attributes->length > 0) {
+                    $fontColor->removeAttribute($fontColor->attributes->item(0)->nodeName);
+                }
+                $fontColor->setAttribute($attribute, $value);
+                $archive->addFromString('xl/styles.xml', $styles->saveXML());
+                $archive->close();
+                $preview = $bridge->preview(new ImportSession, $path, $structure);
+                self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+                self::assertSame(0.11, $preview->totals['total_amount']);
+                $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item']));
+                self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+            });
+        }
+    }
+
+    public function test_gray_font_or_helper_mirror_alone_cannot_exclude_positions(): void
+    {
+        foreach ([[true, false, true], [false, true, true], ['partial', true, true], [true, true, false]] as [$gray, $mirrors, $producer]) {
+            $this->withInactiveWorkbook($gray, $mirrors, $producer, function ($bridge, $path, $structure): void {
+                $preview = $bridge->preview(new ImportSession, $path, $structure);
+                self::assertFalse($preview->validation['is_valid']);
+                self::assertCount(3, $preview->items);
+                self::assertSame([false, false, false], array_column($preview->items, 'is_not_accounted'));
+            });
+        }
+    }
+
+    private function withInactiveWorkbook(bool|string $gray, bool $mirrors, bool $producer, \Closure $assert, bool $quantityCoefficient = true, array $codeLessRows = [], ?\Closure $decorate = null): void
+    {
+        $book = new Spreadsheet;
+        $sheet = $book->getActiveSheet();
+        $sheet->setCellValue('A1', $producer ? 'ГРАНД-Смета 2026.2' : 'Расчёт');
+        $sheet->setCellValue('J1', 'Сметная стоимость в базисном уровне цен');
+        $sheet->setCellValue('M1', 'Индексы');
+        $sheet->setCellValue('N1', 'Сметная стоимость в текущем уровне цен');
+        $sheet->fromArray([1, 2, 3, null, null, 4, 5, $quantityCoefficient ? 6 : null, 7, 8, 9, 10, 11, 12], null, 'A3', true);
+        foreach ([4 => 'Работа один', 7 => 'Неучтённая работа', 10 => 'Работа два'] as $row => $name) {
+            foreach (['A' => $row === 4 ? 1 : 2, 'B' => in_array($row, $codeLessRows, true) ? null : 'ГЭСН-'.$row, 'C' => $name, 'I' => 1] as $column => $value) {
+                $sheet->setCellValue($column.$row, $value);
+            }
+            $sheet->setCellValue('C'.($row + 1), 'ЭМ');
+            $sheet->setCellValue('L'.($row + 1), 0.05);
+            $sheet->setCellValue('C'.($row + 2), 'Итого по расценке');
+            $sheet->setCellValue('L'.($row + 2), 0.05);
+            $sheet->setCellValue(($mirrors && $row === 7 ? 'Q' : 'P').$row, $name);
+        }
+        if ($gray) {
+            $sheet->getStyle($gray === 'partial' ? 'C7' : 'A7:C7')->getFont()->getColor()->setARGB('FF7F7F7F');
+        }
+        foreach ([13 => ['C' => 'Итоги по смете:'], 14 => ['C' => 'Строительные работы'], 15 => ['C' => 'Эксплуатация машин и механизмов', 'L' => 0.1, 'M' => 1.1, 'N' => 0.11], 16 => ['C' => 'Всего', 'N' => 0.11]] as $row => $values) {
+            foreach ($values as $column => $value) $sheet->setCellValue($column.$row, $value);
+        }
+        if ($decorate !== null) {
+            $decorate($sheet);
+        }
+        $temporary = tempnam(sys_get_temp_dir(), 'grand-accounting-');
+        $path = $temporary.'.xlsx';
+        unlink($temporary);
+        (new Xlsx($book))->save($path);
+        $book->disconnectWorksheets();
+        try {
+            $bridge = new GrandSmetaRuntimeBridge(new GrandSmetaHandler, new GrandSmetaParser(new StatefulGrandSmetaProcessor), new GrandSmetaXMLParser);
+            $assert($bridge, $path, $bridge->detectStructure(new ImportSession, $path));
+        } finally {
+            unlink($path);
+        }
     }
 
     private function withWorkbook(bool $missing, float $net, float $vat, \Closure $assert): void

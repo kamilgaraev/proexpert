@@ -88,6 +88,10 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
                 }
             }
 
+            if (($options['layout'] ?? null) === 'modern_2020') {
+                $states = (new GrandSmetaAccountingStateReader)->detect($filePath, $sheet, $mapping, $headerRow, $this->processor->getModernPositionRows());
+                $this->processor->setSourceAccountingStates($states);
+            }
             $result = $this->processor->getResult();
 
             $allRows = array_merge($result['items'], $result['sections']);

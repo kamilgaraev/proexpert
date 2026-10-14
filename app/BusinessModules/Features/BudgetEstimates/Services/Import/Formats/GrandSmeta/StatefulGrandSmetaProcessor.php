@@ -36,6 +36,26 @@ class StatefulGrandSmetaProcessor
     private int $worksheetIndex = 0;
     private string $worksheetName = '';
 
+    public function getModernPositionRows(): array
+    {
+        return array_map(static fn (EstimateImportRowDTO $position): int => $position->rowNumber, $this->modernSourcePositions());
+    }
+
+    public function setSourceAccountingStates(array $states): void
+    {
+        foreach ($this->modernSourcePositions() as $position) {
+            if (isset($states[$position->rowNumber])) {
+                $position->isNotAccounted = true;
+                $position->rawData['source_accounting'] = $states[$position->rowNumber];
+            }
+        }
+    }
+
+    private function modernSourcePositions(): array
+    {
+        return $this->currentPosition === null ? $this->modernPositions : [...$this->modernPositions, $this->currentPosition];
+    }
+
     public function setWorksheet(int $index, string $name): void
     {
         $this->worksheetIndex = $index;
@@ -382,6 +402,9 @@ class StatefulGrandSmetaProcessor
             $this->components['unaccounted_resource'] = null;
         }
         $child->rawData['parent_source_identity'] = $this->worksheetIndex.':'.$this->currentPosition->rowNumber;
+        if ($component !== null) {
+            $child->rawData['component_category'] = $component;
+        }
         $this->items[] = $child;
     }
 
@@ -470,6 +493,7 @@ class StatefulGrandSmetaProcessor
             }
             $index = (float) reset($indices);
             $parts = [];
+            $inactiveParts = [];
             $known = 0.0;
             $actualBase = 0.0;
             foreach ($this->modernPositions as $position) {
@@ -481,6 +505,12 @@ class StatefulGrandSmetaProcessor
                     $current = $position->currentTotalAmount;
                 }
                 if ($base === null) {
+                    continue;
+                }
+                if ($position->isNotAccounted) {
+                    if ($current === null) {
+                        $inactiveParts[$position->rowNumber] = BigDecimal::of((string) $base)->multipliedBy((string) $index);
+                    }
                     continue;
                 }
                 $actualBase += $base;
@@ -509,6 +539,12 @@ class StatefulGrandSmetaProcessor
             if (!$groupsValid) {
                 continue;
             }
+            foreach ($this->modernPositions as $position) {
+                if (isset($inactiveParts[$position->rowNumber])) {
+                    $exact = $inactiveParts[$position->rowNumber];
+                    $this->applyIndexedComponent($position, $category, $exact->toScale(2, RoundingMode::HalfUp), $exact, $index, $groups, 'position_half_up_v1');
+                }
+            }
             if ($parts === []) {
                 continue;
             }
@@ -534,15 +570,7 @@ class StatefulGrandSmetaProcessor
                 if (!isset($allocated[$position->rowNumber])) {
                     continue;
                 }
-                $value = $allocated[$position->rowNumber]->toFloat();
-                if ($category === 'materials' && $position->itemType === 'material' && $position->rawData['component_sources']['base'] === []) {
-                    $position->currentTotalAmount = $value;
-                } else {
-                    $position->rawData['component_sources']['current'][$category] = $value;
-                    $property = $category === 'machinery' ? 'machineryCost' : 'materialsCost';
-                    $position->{$property} = $value;
-                }
-                $position->rawData['index_provenance'][$category] = ['groups' => $groups, 'index' => $index, 'exact_amount' => (string) $parts[$position->rowNumber]];
+                $this->applyIndexedComponent($position, $category, $allocated[$position->rowNumber], $parts[$position->rowNumber], $index, $groups, 'group_largest_remainder_v1');
             }
         }
         foreach ($this->modernPositions as $position) {
@@ -561,6 +589,47 @@ class StatefulGrandSmetaProcessor
                 $position->rawData['financial_structure']['effective_unit_price'] = $position->currentTotalAmount / $position->quantity;
             }
         }
+        $parents = [];
+        foreach ($this->modernPositions as $position) {
+            $parents[$position->rawData['source_identity']] = $position;
+        }
+        foreach ($this->items as $child) {
+            $parent = $parents[$child->rawData['parent_source_identity'] ?? ''] ?? null;
+            $category = $child->rawData['component_category'] ?? null;
+            if ($parent === null || $category === null) {
+                continue;
+            }
+            if ($parent->isNotAccounted) {
+                $child->isNotAccounted = true;
+            }
+            if ($child->currentTotalAmount === null && isset($parent->rawData['index_provenance'][$category])) {
+                $child->currentTotalAmount = $parent->rawData['component_sources']['current'][$category];
+                $child->rawData['total_source'] = 'parent_indexed_component';
+                $child->rawData['index_provenance'][$category] = $parent->rawData['index_provenance'][$category];
+                if (($child->quantity ?? 0) != 0) {
+                    $child->currentUnitPrice = $child->currentTotalAmount / $child->quantity;
+                    $child->unitPrice = $child->currentUnitPrice;
+                }
+            }
+        }
+    }
+
+    private function applyIndexedComponent(EstimateImportRowDTO $position, string $category, BigDecimal $amount, BigDecimal $exact, float $index, array $groups, string $strategy): void
+    {
+        if ($category === 'materials' && $position->itemType === 'material' && $position->rawData['component_sources']['base'] === []) {
+            $position->currentTotalAmount = $amount->toFloat();
+        } else {
+            $position->rawData['component_sources']['current'][$category] = $amount->toFloat();
+            $property = $category === 'machinery' ? 'machineryCost' : 'materialsCost';
+            $position->{$property} = $amount->toFloat();
+        }
+        $position->rawData['index_provenance'][$category] = [
+            'groups' => $groups,
+            'index' => $index,
+            'exact_amount' => (string) $exact,
+            'rounding_strategy' => $strategy,
+            'rounding_adjustment' => $amount->minus($exact->toScale(2, RoundingMode::HalfUp))->toFloat(),
+        ];
     }
 
     private function processFooterRow(string $name, array $rowData, array $mapping): void
