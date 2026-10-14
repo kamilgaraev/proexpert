@@ -86,6 +86,14 @@ class SpecificationRepository extends BaseRepository implements SpecificationRep
         return $model;
     }
 
+    public function createOwned(array $data, int $organizationId): Specification
+    {
+        $specification = new Specification;
+        $specification->fill($data)->forceFill(['organization_id' => $organizationId])->save();
+
+        return $specification;
+    }
+
     public function find(int $id, array $columns = ['*'], array $relations = [], array $appends = []): ?Specification
     {
         /** @var Specification|null $model */
@@ -97,13 +105,18 @@ class SpecificationRepository extends BaseRepository implements SpecificationRep
     private function forOrganization(int $organizationId): Builder
     {
         return Specification::query()
-            ->whereHas(
-                'contracts',
-                fn ($query) => $query->where('contracts.organization_id', $organizationId),
-            )
+            ->where(function ($query) use ($organizationId): void {
+                $query->where('specifications.organization_id', $organizationId)
+                    ->orWhere(function ($legacy) use ($organizationId): void {
+                        $legacy->whereNull('specifications.organization_id')->whereHas(
+                            'contracts',
+                            fn ($contracts) => $contracts->where('contracts.organization_id', $organizationId),
+                        );
+                    });
+            })
             ->whereDoesntHave(
                 'contracts',
-                fn ($query) => $query->where('contracts.organization_id', '!=', $organizationId),
+                fn ($query) => $query->withTrashed()->where('contracts.organization_id', '!=', $organizationId),
             )
             ->with([
                 'contracts' => fn ($query) => $query

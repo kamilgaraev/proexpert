@@ -223,6 +223,7 @@ class SpecificationRepositoryProjectFilterTest extends TestCase
         );
 
         $this->assertNotNull($created);
+        $this->assertSame($organizationId, $created->organization_id);
         $this->assertSame(['C-OWN'], $created->contracts->pluck('number')->all());
         $this->assertDatabaseHas('contract_specification', [
             'contract_id' => $contractId,
@@ -251,6 +252,49 @@ class SpecificationRepositoryProjectFilterTest extends TestCase
 
         $this->assertNull($created);
         $this->assertDatabaseMissing('specifications', ['number' => 'S-FORBIDDEN']);
+    }
+
+    public function test_detached_specification_remains_available_to_its_owner_for_reattachment(): void
+    {
+        $organizationId = DB::table('organizations')->insertGetId(['name' => 'Own org']);
+        $foreignOrganizationId = DB::table('organizations')->insertGetId(['name' => 'Foreign org']);
+        $contractId = $this->createContract($organizationId, 'C-DETACH');
+        $repository = new SpecificationRepository();
+        $service = new SpecificationService($repository);
+        $specification = $service->createForOrganization(
+            new SpecificationDTO('S-DETACH', '2026-05-08', 150, ['Работы'], 'draft'),
+            $contractId,
+            $organizationId,
+        );
+        self::assertNotNull($specification);
+        DB::table('contract_specification')->where('specification_id', $specification->id)->delete();
+
+        self::assertSame($specification->id, $repository->findForOrganization($specification->id, $organizationId)?->id);
+        self::assertSame([$specification->id], $repository->paginateForOrganization($organizationId)->pluck('id')->all());
+        self::assertNull($repository->findForOrganization($specification->id, $foreignOrganizationId));
+        $this->attach($contractId, $specification->id);
+        self::assertSame(['C-DETACH'], $repository->findForOrganization($specification->id, $organizationId)?->contracts->pluck('number')->all());
+    }
+
+    public function test_explicit_owner_never_exposes_foreign_links_or_accepts_payload_owner(): void
+    {
+        $organizationId = DB::table('organizations')->insertGetId(['name' => 'Own org']);
+        $foreignOrganizationId = DB::table('organizations')->insertGetId(['name' => 'Foreign org']);
+        $ownContractId = $this->createContract($organizationId, 'C-OWN');
+        $foreignContractId = $this->createContract($foreignOrganizationId, 'C-FOREIGN');
+        $repository = new SpecificationRepository();
+        $specification = $repository->createOwned([
+            'number' => 'S-OWNED', 'spec_date' => '2026-05-08', 'scope_items' => [],
+            'organization_id' => $foreignOrganizationId,
+        ], $organizationId);
+        self::assertSame($organizationId, $specification->organization_id);
+        self::assertSame($specification->id, $repository->findForOrganization($specification->id, $organizationId)?->id);
+        $this->attach($ownContractId, $specification->id);
+        $this->attach($foreignContractId, $specification->id);
+        self::assertNull($repository->findForOrganization($specification->id, $organizationId));
+        self::assertNull($repository->findForOrganization($specification->id, $foreignOrganizationId));
+        DB::table('contracts')->where('id', $foreignContractId)->update(['deleted_at' => now()]);
+        self::assertNull($repository->findForOrganization($specification->id, $organizationId));
     }
 
     private function createSpecification(string $number, string $date): int
@@ -297,6 +341,7 @@ class SpecificationRepositoryProjectFilterTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'contract_builder_instances',
             'contract_specification',
             'contract_project',
             'specifications',
@@ -339,8 +384,13 @@ class SpecificationRepositoryProjectFilterTest extends TestCase
             $table->foreignId('contract_id');
             $table->foreignId('project_id');
         });
+        Schema::create('contract_builder_instances', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('contract_id');
+        });
         Schema::create('specifications', function (Blueprint $table): void {
             $table->id();
+            $table->foreignId('organization_id')->nullable();
             $table->string('number')->unique();
             $table->date('spec_date');
             $table->decimal('total_amount', 18, 2)->default(0);

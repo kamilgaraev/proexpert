@@ -20,6 +20,7 @@ class Specification extends Model
     ];
 
     protected $casts = [
+        'organization_id' => 'integer',
         'spec_date' => 'date',
         'total_amount' => 'decimal:2',
         'scope_items' => 'array',
@@ -31,4 +32,4 @@ class Specification extends Model
                     ->withPivot('attached_at')
                     ->withTimestamps();
     }
-} 
+}

@@ -1285,6 +1285,55 @@ final class ContractBuilderDraftTest extends TestCase
         $restricted->schedule($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash'], null, $date, 'Согласованный договор', 'activation');
     }
 
+    public function test_specification_owner_migration_preserves_generated_rows_and_unambiguous_legacy_ownership(): void
+    {
+        [$actor, $other, $contract, , , $revision] = $this->fixture(application: true);
+        $ownerId = (int) $actor->current_organization_id;
+        $foreignId = (int) $other->current_organization_id;
+        $generated = app(\App\Services\Contract\SpecificationService::class)->applyRevisionPlan($contract, $revision['id'], '2026-10-14', []);
+        self::assertSame($ownerId, $generated->organization_id);
+        $migration = require database_path('migrations/2026_10_14_051856_add_organization_owner_to_specifications.php');
+        $migration->down();
+        $foreignContractId = DB::table('contracts')->insertGetId([
+            'organization_id' => $foreignId, 'project_id' => $contract->project_id,
+            'contractor_id' => $contract->contractor_id, 'number' => 'FOREIGN-OWNER-TEST',
+            'date' => '2026-10-14', 'status' => 'draft', 'total_amount' => 100,
+        ]);
+        $seed = static fn (string $number): int => DB::table('specifications')->insertGetId([
+            'number' => $number, 'spec_date' => '2026-10-14', 'scope_items' => '[]',
+        ]);
+        $ownId = $seed('OWNER-LEGACY');
+        $sharedId = $seed('OWNER-CONFLICT');
+        $orphanId = $seed('OWNER-UNKNOWN');
+        $contract->specifications()->attach([$ownId, $sharedId], ['attached_at' => now(), 'is_active' => false]);
+        DB::table('contract_specification')->insert([
+            'contract_id' => $foreignContractId, 'specification_id' => $sharedId, 'is_active' => false,
+        ]);
+
+        $migration->up();
+
+        self::assertSame($ownerId, \App\Models\Specification::findOrFail($ownId)->organization_id);
+        self::assertNull(\App\Models\Specification::findOrFail($sharedId)->organization_id);
+        self::assertNull(\App\Models\Specification::findOrFail($orphanId)->organization_id);
+        self::assertNull($generated->refresh()->organization_id);
+        $repository = app(\App\Repositories\SpecificationRepository::class);
+        $contract->specifications()->detach($ownId);
+        self::assertSame($ownId, $repository->findForOrganization($ownId, $ownerId)?->id);
+        self::assertNull($repository->findForOrganization($sharedId, $ownerId));
+        self::assertNull($repository->findForOrganization($orphanId, $ownerId));
+        self::assertSame($generated->id, $repository->findForOrganization($generated->id, $ownerId)?->id);
+        foreach ([[$ownId, 'specification_organization_owner_immutable'], [$generated->id, 'revision_specification_immutable']] as [$id, $error]) {
+            try {
+                DB::transaction(static fn () => DB::table('specifications')->where('id', $id)->update(['organization_id' => $foreignId]));
+                self::fail('Specification owner reassignment must be rejected');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString($error, $exception->getMessage());
+            }
+        }
+        self::assertSame($ownerId, \App\Models\Specification::findOrFail($ownId)->organization_id);
+        self::assertNull($generated->refresh()->organization_id);
+    }
+
     public function test_revision_application_is_atomic_due_dated_retryable_and_amendment_preserves_facts_and_private_payment_plans(): void
     {
         $this->enableImmutableAuditWriter();
@@ -1334,6 +1383,7 @@ final class ContractBuilderDraftTest extends TestCase
         self::assertSame('Эта редакция уже действует.', $effectiveState['activation_blocker']['message']);
         self::assertSame(1, $contract->specifications()->count());
         self::assertSame('work-1', $contract->activeSpecification()->scope_items[0]['id']);
+        self::assertSame((int) $contract->organization_id, $contract->activeSpecification()->organization_id);
         self::assertSame(['works'], $contract->activeSpecification()->scope_items[0]['clause_ids']);
         self::assertSame(0, $contract->performanceActs()->count());
         self::assertSame(0, $contract->payments()->count());

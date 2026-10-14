@@ -15,9 +15,9 @@ class SpecificationService
         protected SpecificationRepositoryInterface $repository
     ) {}
 
-    public function create(SpecificationDTO $dto): Specification
+    public function create(SpecificationDTO $dto, int $organizationId): Specification
     {
-        return $this->repository->create($dto->toArray());
+        return $this->repository->createOwned($dto->toArray(), $organizationId);
     }
 
     public function createForOrganization(
@@ -35,7 +35,7 @@ class SpecificationService
             }
             app(ContractBuilderMutationGuard::class)->assertLegacy($contract);
 
-            $specification = $this->repository->create($dto->toArray());
+            $specification = $this->create($dto, (int) $contract->organization_id);
             $contract->specifications()->updateExistingPivot(
                 $contract->specifications()->pluck('specifications.id')->all(),
                 ['is_active' => false],
@@ -79,6 +79,7 @@ class SpecificationService
             }
             $specification = new Specification;
             $specification->forceFill([
+                'organization_id' => $locked->organization_id,
                 'builder_revision_id' => $revisionId, 'number' => 'REV-'.$contract->id.'-'.$revisionId,
                 'spec_date' => $date, 'total_amount' => (string) $total, 'scope_items' => $rows, 'status' => 'approved',
             ])->save();
@@ -110,6 +111,7 @@ class SpecificationService
             }
             $specification = new Specification;
             $specification->forceFill([
+                'organization_id' => $locked->organization_id,
                 'supplementary_document_id' => $documentId, 'number' => 'SA-'.$contract->id.'-'.$documentId,
                 'spec_date' => $date, 'total_amount' => (string) $total, 'scope_items' => $rows, 'status' => 'approved',
             ])->save();
