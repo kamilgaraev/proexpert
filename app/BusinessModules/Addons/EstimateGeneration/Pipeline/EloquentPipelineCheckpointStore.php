@@ -74,6 +74,27 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 'input_version' => $context->inputVersion,
             ];
 
+            $previous = $this->query()->where($identity)->lockForUpdate()->first();
+            if ($previous?->status === CheckpointStatus::Completed) {
+                return CheckpointClaim::alreadyCompleted($context, $stage);
+            }
+            if ($previous?->status === CheckpointStatus::Running && $previous->lease_expires_at !== null
+                && $previous->lease_expires_at->toDateTimeImmutable() > $now) {
+                return CheckpointClaim::busy($context, $stage);
+            }
+            $attemptQuery = $this->query()->where('session_id', $context->sessionId)
+                ->where('organization_id', $context->organizationId)->where('project_id', $context->projectId)
+                ->where('generation_attempt_id', $context->generationAttemptId)->where('stage', $stage->value);
+            if ($context->documentId !== null) {
+                // Document processing has its own source identity and physical-send budget.
+                $attemptQuery->where('input_version', $context->inputVersion);
+            }
+            $attempts = (int) $attemptQuery->sum('attempt_count');
+            if (PipelineRetryBudget::exhausted($attempts)) {
+                throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException(
+                    \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory::Terminal, 'pipeline_stage_retry_exhausted');
+            }
+
             $inserted = $this->database->table('estimate_generation_pipeline_checkpoints')->insertOrIgnore([
                 ...$identity,
                 'organization_id' => $context->organizationId,

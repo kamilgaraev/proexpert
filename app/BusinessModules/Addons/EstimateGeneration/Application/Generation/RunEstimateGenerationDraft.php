@@ -36,6 +36,13 @@ readonly class RunEstimateGenerationDraft
             $run = $this->pipeline->run($snapshot);
         } catch (StaleEstimateGenerationState) {
             return;
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException $error) {
+            if ($error->safeCode !== 'pipeline_stage_retry_exhausted') {
+                throw $error;
+            }
+            app(HandleEstimateGenerationDraftFailure::class)->handle($snapshot, $error);
+
+            return;
         }
 
         if (! $run->dispatchNext) {

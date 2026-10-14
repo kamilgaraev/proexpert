@@ -49,7 +49,17 @@ final class SimpleFailureRecoveryPolicyTest extends TestCase
         ));
     }
 
-    private function failure(FailureCategory $category): FailureData
+    #[Test]
+    public function permanent_recoverable_failure_stops_at_the_shared_attempt_limit_without_discarding_a_usable_draft(): void
+    {
+        $policy = new SimpleFailureRecoveryPolicy;
+        self::assertSame(FailureRecoveryOutcome::Retry, $policy->decide($this->failure(FailureCategory::Recoverable, 2), 7, EstimateGenerationStatus::Generating, false));
+        self::assertSame(FailureRecoveryOutcome::Terminal, $policy->decide($this->failure(FailureCategory::Recoverable, 3), 7, EstimateGenerationStatus::Generating, false));
+        self::assertSame(FailureRecoveryOutcome::NeedsInput, $policy->decide($this->failure(FailureCategory::Recoverable, 3), 7, EstimateGenerationStatus::Generating, true));
+        self::assertSame(FailureRecoveryOutcome::Ignore, $policy->decide($this->failure(FailureCategory::Recoverable, 3), 8, EstimateGenerationStatus::Generating, false));
+    }
+
+    private function failure(FailureCategory $category, int $attempt = 1): FailureData
     {
         return new FailureData(new FailureContext(
             organizationId: 1,
@@ -57,7 +67,7 @@ final class SimpleFailureRecoveryPolicyTest extends TestCase
             sessionId: 3,
             stage: ProcessingStage::BuildDraft,
             operation: 'run_stage',
-            attempt: 1,
+            attempt: $attempt,
             correlationId: '018f4a20-3f4c-7a11-8a22-123456789abc',
             eventId: '018f4a20-3f4c-7a11-8a22-123456789abd',
             expectedSessionStateVersion: 7,
