@@ -20,6 +20,92 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_description_numeric_proposal_requires_explicit_target_and_current_source_and_replays_for_free(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'description' => 'Площадь 12 м². Высота 3 м.']]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter::class)->write($session, $actor);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        self::assertCount(1, $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+        $get = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetDescriptionNumericProposals::class);
+        $list = $get->handle($actor, $scope[1], $scope[2]);
+        self::assertSame('0', $list['cost_units']);
+        self::assertSame(['area', 'height'], array_column($list['proposals'], 'parameter'));
+        $proposal = $list['proposals'][0];
+        $input = ['entities' => [['key' => 'chosen-room', 'type' => 'room', 'name' => 'Подтверждённое помещение', 'parameters' => ['area' => [
+            'value' => '12', 'unit' => 'm2', 'basis' => 'input', 'description_proposal' => array_intersect_key($proposal,
+                array_flip(['proposal_id', 'source_fact_id', 'source_fact_version', 'source_value_hash'])),
+        ]]]]];
+        $save = app(SaveManualProjectFacts::class);
+        foreach (['changed_value', 'measurement', 'wrong_source', 'changed_description', 'disabled_gate'] as $case) {
+            $invalid = $input;
+            if ($case === 'changed_value') {
+                $invalid['entities'][0]['parameters']['area']['value'] = '15';
+            } elseif ($case === 'measurement') {
+                $invalid['entities'][0]['parameters']['area']['basis'] = 'measurement';
+            } elseif ($case === 'wrong_source') {
+                $invalid['entities'][0]['parameters']['area']['description_proposal']['source_fact_version'] = 2;
+            } elseif ($case === 'changed_description') {
+                $session->update(['input_payload' => [...$session->input_payload, 'description' => 'Площадь 16 м².']]);
+            } else {
+                config(['estimate-generation.universal_enabled' => false]);
+            }
+            try {
+                $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), $invalid);
+                self::fail('Unverified proposal must be rejected: '.$case);
+            } catch (ValidationException) {
+                self::assertSame(0, $session->fresh()->state_version);
+                self::assertCount(1, $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+            }
+            config(['estimate-generation.universal_enabled' => true]);
+            $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'description' => 'Площадь 12 м². Высота 3 м.']]);
+        }
+        $requestId = (string) Str::uuid();
+        $result = $save->handle($actor, $scope[1], $scope[2], 0, $requestId, $input);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($save->handle($actor, $scope[1], $scope[2], 0, $requestId, $input)));
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame('12', $result['quantities']['floor_area']['amount']);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $fact = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'area'))[0];
+        self::assertSame('user_input', $fact->origin);
+        $proof = array_column($snapshot->evidence, null, 'id')[$fact->evidenceIds[0]];
+        self::assertSame('input_payload.description', $proof->nativeReference);
+        $decision = $models->decisionsForSelectedFacts(...[...$scope, [$fact->id]])[0];
+        self::assertStringContainsString($proposal['proposal_id'], $decision->reason);
+        self::assertStringContainsString($proposal['source_fact_id'], $decision->reason);
+        self::assertStringContainsString($proposal['source_value_hash'], $decision->reason);
+        self::assertStringContainsString($proposal['quote'], $decision->reason);
+        self::assertStringContainsString($fact->entityId, $decision->reason);
+        $assumptionInput = $input;
+        unset($assumptionInput['entities'][0]['name']);
+        $assumptionInput['entities'][0]['existing_entity_id'] = $fact->entityId;
+        $assumptionInput['entities'][0]['parameters']['area']['basis'] = 'assumption';
+        $assumed = $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $assumptionInput);
+        self::assertSame('estimated', $assumed['quantities']['floor_area']['source']);
+        $current = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertSame('user_assumption', array_values(array_filter($current->facts, static fn ($fact): bool => $fact->type === 'area'))[0]->origin);
+        self::assertLessThanOrEqual(1000, strlen($models->decisionsForSelectedFacts(...[...$scope, $assumed['fact_ids']])[0]->reason));
+        self::assertCount(1, array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'evaluation_answer'));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
+    public function test_long_whitespace_description_is_not_an_unconfirmable_proposal_and_manual_input_still_works(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'description' => 'Площадь'.str_repeat(' ', 900).'12 м²']]);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactsWriter::class)->write($session, $actor);
+        $list = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetDescriptionNumericProposals::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertSame([], $list['proposals']);
+        $result = app(SaveManualProjectFacts::class)->handle($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(),
+            ['entities' => [$this->entity('room', 'room-1', ['area' => '12'], 'm2')]]);
+        self::assertSame('12', $result['quantities']['floor_area']['amount']);
+        self::assertSame('0', $result['cost_units']);
+    }
+
     public function test_reparenting_invalidates_both_coverages_and_only_changes_relation_facts(): void
     {
         [$actor, $session] = $this->fixture();
