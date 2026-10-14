@@ -38,23 +38,23 @@ final class AssistantBimModelSelector
         $literal = preg_quote(str_replace('ё', 'е', mb_strtolower(trim($selector))), '/');
         $query = str_replace('ё', 'е', mb_strtolower($question));
 
-        return preg_match('/проект[а-я]*\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
+        return preg_match('/(?:проект|объект)[а-я]*\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
     }
 
     public static function hasProjectScope(string $question): bool
     {
-        return preg_match('/(?<![\pL\pN])проект(?:е|у|а)?(?![\pL\pN])/iu', $question) === 1;
+        return preg_match('/(?<![\pL\pN])(?:проект|объект)(?:е|у|а)?(?![\pL\pN])/iu', $question) === 1;
     }
 
     public static function namedProject(string $question): ?string
     {
-        if (! preg_match('/(?<![\pL\pN])проект(?:е|у|а)?\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
+        if (! preg_match('/(?<![\pL\pN])(?:проект|объект)(?:е|у|а)?\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
             return null;
         }
         if ($match[1] !== '') {
             return trim($match[1]);
         }
-        if (preg_match('/(?<![\pL\pN])(?:текущ|выбран|эт[ао]|данн)[а-яё]*\s+проект/iu', $question)) {
+        if (preg_match('/(?<![\pL\pN])(?:наш|текущ|выбран|эт[ао]|данн)[а-яё]*\s+(?:проект|объект)/iu', $question)) {
             return null;
         }
         $name = trim((string) preg_split('/\s+(?:есть|сколько|покажи|посчитай|найди|проверь|какие|котор[а-яё]*|и)(?![\pL\pN])/iu', $match[2], 2)[0]);

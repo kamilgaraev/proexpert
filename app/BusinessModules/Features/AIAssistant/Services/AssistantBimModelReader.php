@@ -571,7 +571,9 @@ final readonly class AssistantBimModelReader
             $lines[] = trans_message('ai_assistant_bim.model_catalog_basis');
             return implode("\n\n", $lines);
         }
-        if (($filters['answer_kind'] ?? 'elements') === 'materials') { return $this->materialAnswer($models, $tooMany); }
+        if (in_array($filters['answer_kind'] ?? 'elements', ['materials', 'materials_and_quantities'], true)) {
+            return $this->materialAnswer($models, $tooMany, $filters['answer_kind'] === 'materials_and_quantities');
+        }
         if ($models === []) {
             return trans_message('ai_assistant_bim.model_not_found');
         }

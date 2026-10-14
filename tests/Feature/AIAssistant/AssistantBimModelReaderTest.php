@@ -420,6 +420,7 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertStringContainsString('• Бетон', $empty['server_formatted_answer']);
         self::assertStringContainsString('В полном готовом индексе не найдены поддерживаемые количественные показатели', $empty['server_formatted_answer']);
         self::assertStringContainsString('недостаточно для расчёта объёма закупки', $empty['server_formatted_answer']);
+        self::assertStringNotContainsString('Состав загруженной модели', $empty['server_formatted_answer']);
         self::assertNotNull($this->reader->verifiedAnswer($empty, $this->fixture->member, $this->fixture->organization->id));
         $last->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2], 'materials' => ['Бетон'],
             'quantities' => ['Qto_SlabBaseQuantities' => ['GrossVolume' => 5.0]]]]);
@@ -427,6 +428,7 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertSame(5.0, $numeric['models'][0]['quantity_totals'][0]['sum']);
         self::assertSame('CUBIC_METRE', $numeric['models'][0]['quantity_totals'][0]['unit']);
         self::assertStringContainsString('GrossVolume', $numeric['server_formatted_answer']);
+        self::assertSame(1, substr_count($numeric['server_formatted_answer'], 'GrossVolume'));
         self::assertStringNotContainsString('В полном готовом индексе не найдены', $numeric['server_formatted_answer']);
         self::assertNull($this->reader->verifiedAnswer($empty, $this->fixture->member, $this->fixture->organization->id));
         $derivative->updateQuietly(['metadata' => ['indexed_element_count' => 21, 'ifc_index_schema_version' => 1]]);

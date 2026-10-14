@@ -2093,14 +2093,14 @@ class AIAssistantService
             }
         }
         if ($toolName === 'get_bim_model_elements') {
-            if (AssistantRequestProjectScope::organizationWide($requestQuery)) {
-                $args['project_id'] = null;
-            } elseif (($args['project_id'] ?? null) === null) {
-                $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
-            }
-        }
-        if ($toolName === 'get_bim_model_elements') {
             $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
+            $organizationWide = AssistantRequestProjectScope::organizationWide($requestQuery);
+            $contextProjectId = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            if ($organizationWide) {
+                $args['project_id'] = null;
+            } elseif ($contextProjectId !== null && (($args['project_id'] ?? null) === null || $namedProject === null)) {
+                $args['project_id'] = $contextProjectId;
+            }
             $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);
             $bimSchema = $this->toolRegistry->getTool($toolName)?->getParametersSchema()['properties'] ?? [];
             $requestedKinds = $this->simpleBimEquipmentKinds($requestQuery, $namedProject
@@ -2174,7 +2174,6 @@ class AIAssistantService
                 }
                 if (isset($bimSchema['limit'])) { $args['limit'] = 20; }
             }
-            $organizationWide = AssistantRequestProjectScope::organizationWide($requestQuery);
             $projectScopeRequested = ! $organizationWide
                 && (AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery));
             if ($projectScopeRequested && $namedProject === null) {
