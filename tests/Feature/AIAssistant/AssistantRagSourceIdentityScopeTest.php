@@ -454,6 +454,82 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->assertSame(0, array_sum($read()));
     }
 
+    public function test_counter_entity_groups_sum_every_counter_and_keep_fresh_scope(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $fixture = \Tests\Support\AssistantRealAuthorizationFixture::create(array_column(app(\App\Services\Modules\PackageCatalogService::class)->allPackages(), 'slug'));
+        $this->organization = $fixture->organization;
+        $this->actor = $fixture->owner;
+        $this->visible = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]));
+        $this->policy = app(AssistantDataAccessPolicy::class);
+        self::assertTrue($this->policy->canReadEntity($this->actor, $this->organization->id, 'project', $this->visible->id), 'fixture project ACL');
+        $entities = [
+            'core_cost_category' => DB::table('cost_categories')->insertGetId(['organization_id' => $this->organization->id, 'name' => 'Counter category']),
+            'core_supplier' => DB::table('suppliers')->insertGetId(['organization_id' => $this->organization->id, 'name' => 'Counter supplier']),
+            'core_payment_approval_rule' => DB::table('payment_approval_rules')->insertGetId([
+                'organization_id' => $this->organization->id, 'name' => 'Counter rule', 'conditions' => '{}', 'approval_chain' => '[]',
+            ]),
+            'core_organization_commercial_account' => DB::table('organization_commercial_accounts')->where('organization_id', $this->organization->id)->value('id'),
+            'core_counterparty' => DB::table('counterparties')->insertGetId(['organization_id' => $this->organization->id, 'name' => 'Counter counterparty']),
+            'core_project_organization' => DB::table('project_organization')->where('project_id', $this->visible->id)
+                ->where('organization_id', $this->organization->id)->value('id') ?? DB::table('project_organization')->insertGetId([
+                    'project_id' => $this->visible->id, 'organization_id' => $this->organization->id,
+                ]),
+            'core_project_participant_invitation' => DB::table('project_participant_invitations')->insertGetId([
+                'project_id' => $this->visible->id, 'organization_id' => $this->organization->id,
+                'invited_by_user_id' => $this->actor->id, 'role' => 'contractor', 'token' => (string) \Illuminate\Support\Str::uuid(),
+            ]),
+            'core_pto_workspace_task' => DB::table('pto_workspace_tasks')->insertGetId([
+                'organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+                'source_key' => 'counter', 'title' => 'Counter task', 'origin' => 'manual',
+            ]),
+            'core_customer_request' => DB::table('customer_requests')->insertGetId([
+                'organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+                'author_user_id' => $this->actor->id, 'title' => 'Counter request', 'request_type' => 'counter', 'body' => 'Counter body',
+            ]),
+        ];
+        $sources = [];
+        $chunks = [];
+        foreach ($entities as $type => $id) {
+            $source = $this->source($this->organization->id, $this->visible->id, 'core_business', $type, (int) $id);
+            $revision = \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revision($type);
+            if ($revision !== null) {
+                $source->forceFill(['metadata' => [\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::FIELD => $revision]])->saveQuietly();
+            }
+            self::assertTrue($this->policy->canReadSource($this->actor, $this->organization->id, $source->toArray()), $type);
+            $sources[] = $source;
+            $chunk = DB::table('ai_rag_chunks')->insertGetId(['organization_id' => $this->organization->id,
+                'project_id' => $this->visible->id, 'source_id' => $source->id, 'chunk_index' => 0,
+                'content' => 'Counter '.$type, 'content_hash' => hash('sha256', $type)]);
+            DB::update('UPDATE ai_rag_chunks SET embedding = ?::vector WHERE id = ?',
+                ['['.implode(',', \Tests\Support\RagTestEmbedding::fromLeadingValues([0.01])).']', $chunk]);
+            $chunks[] = $chunk;
+        }
+        $sources[0]->replicate()->forceFill(['identity_part_key' => 'second-part'])->saveQuietly();
+        $aggregate = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $batches = $this->policy->aggregateSourceIdentityBatches(RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'),
+            $this->actor, $this->organization->id, ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'], $aggregate);
+        self::assertCount(2, $batches);
+        foreach ($batches as $batch) {
+            self::assertGreaterThan(0, (int) $batch->first()->indexed_count);
+        }
+        \Illuminate\Support\Facades\Queue::fake();
+        app()->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $coverage = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService::class);
+        $read = fn (): array => $coverage->coverageForActor($this->organization->id, $this->actor, countsOnly: true);
+        $status = $read();
+        self::assertSame([10, 9, 9], [$status['stored_source_count'], $status['chunk_count'], $status['indexed_source_count']]);
+        DB::table('ai_rag_chunks')->where('id', $chunks[0])->update(['embedding' => null]);
+        $status = $read();
+        self::assertSame([10, 9, 8], [$status['stored_source_count'], $status['chunk_count'], $status['indexed_source_count']]);
+        Project::withoutEvents(fn () => $this->visible->delete());
+        self::assertSame(0, $read()['stored_source_count']);
+        Project::withoutEvents(fn () => $this->visible->restore());
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        self::assertSame(0, $read()['stored_source_count']);
+    }
+
     private function legacyAliasFixtures(): array
     {
         $template = DB::table('estimate_templates')->insertGetId([

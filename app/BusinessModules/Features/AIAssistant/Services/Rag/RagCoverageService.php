@@ -64,7 +64,15 @@ final class RagCoverageService
             foreach ($batches as $scoped) {
                 if ($checkpoint !== null) { $checkpoint(); }
                 $progress?->__invoke('source_counts');
-                $counts = $counts->merge($scoped->get()->keyBy('source_type'));
+                foreach ($scoped->get() as $count) {
+                    $previous = $counts->get($count->source_type);
+                    if ($previous !== null) {
+                        foreach (['stored_count', 'chunk_count', 'indexed_count'] as $field) {
+                            $count->{$field} = (int) $count->{$field} + (int) $previous->{$field};
+                        }
+                    }
+                    $counts->put($count->source_type, $count);
+                }
             }
         } else {
             foreach ($policy->sourceIdentityQueries($sources, $actor, $organizationId, $checkpoint) as $accessible) {
