@@ -158,8 +158,8 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
                     if ($this->scope($entity) === $this->scope($fact) && $entity->sourceVersion === $fact->sourceVersion
                         && $entity->id === $fact->entityId && $entity->type === 'room'
                         && ($entity->attributes['semantic_type'] ?? null) === 'room'
-                        && ($entity->attributes['identity_only'] ?? null) === true
-                        && ($entity->attributes['requires_confirmation'] ?? null) === true) {
+                        && ($entity->attributes['properties']['identity_only'] ?? null) === true
+                        && ($entity->attributes['properties']['requires_confirmation'] ?? null) === true) {
                         $identityCandidate = true;
                     }
                 }
@@ -324,8 +324,41 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         string $sourceVersion,
         array $quantities,
         array $inactiveLogicalIds,
+        ?string $expectedSnapshotToken = null,
     ): void {
+        if ($expectedSnapshotToken !== null) {
+            $technology = $this->currentTechnologyRecommendations($organizationId, $projectId, $sessionId);
+            $completeness = $this->currentCompleteness($organizationId, $projectId, $sessionId);
+            if ($this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001)['token'] !== $expectedSnapshotToken
+                || ($technology['source_version'] ?? null) !== $sourceVersion
+                || ($completeness['source_version'] ?? null) !== $sourceVersion
+                || ($technology['input_fingerprint'] ?? null) !== $expectedSnapshotToken
+                || ($completeness['input_fingerprint'] ?? null) !== $expectedSnapshotToken) {
+                throw new InvalidArgumentException('Derived quantity planning snapshot is stale.');
+            }
+        }
+        foreach ($quantities as $quantity) {
+            if (! $quantity instanceof DerivedQuantity
+                || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId] !== [$organizationId, $projectId, $sessionId]
+                || ($expectedSnapshotToken === null && $quantity->sourceVersion !== $sourceVersion)
+                || ($expectedSnapshotToken !== null && (
+                    ($quantity->snapshotIdentity['input_fingerprint'] ?? null) !== $expectedSnapshotToken
+                    || ($quantity->snapshotIdentity['technology_source_version'] ?? null) !== $sourceVersion
+                    || ($quantity->snapshotIdentity['completeness_source_version'] ?? null) !== $sourceVersion
+                    || ($quantity->snapshotIdentity['technology_run_id'] ?? null) !== ($technology['run_id'] ?? null)
+                    || ($quantity->snapshotIdentity['completeness_run_id'] ?? null) !== ($completeness['run_id'] ?? null)))) {
+                throw new InvalidArgumentException('Derived quantity projection scope is invalid.');
+            }
+        }
         $inactive = array_fill_keys(array_values(array_unique(array_filter($inactiveLogicalIds, 'is_string'))), true);
+        if ($expectedSnapshotToken !== null) {
+            foreach ($this->currentQuantities as $key => $quantity) {
+                if ([$quantity->organizationId, $quantity->projectId, $quantity->sessionId] === [$organizationId, $projectId, $sessionId]
+                    && array_key_exists('technology_source_version', $quantity->snapshotIdentity)) {
+                    unset($this->currentQuantities[$key]);
+                }
+            }
+        }
         foreach ($inactive as $logicalId => $_) {
             unset($this->currentQuantities[implode(':', [
                 $organizationId, $projectId, $sessionId, $sourceVersion, $logicalId,

@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Observati
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PhysicalMeasurementPublicationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\VerifiedNativeNumericSources;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
@@ -34,6 +35,8 @@ use InvalidArgumentException;
 
 final readonly class ProjectModelEvidenceWriter
 {
+    private const NATIVE_NAMED_ROOM_CONTRACT = 'native-named-room:v2';
+
     public function __construct(
         private ProjectModelRepository $models,
         private EvidenceRepository $evidence,
@@ -73,7 +76,8 @@ final readonly class ProjectModelEvidenceWriter
         if ($decisions === []) {
             return;
         }
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources): void {
+        $nativeRoomIdentities = $this->nativeRoomIdentities($byId, $decisions, $documentId, $pageNumber, $numericSources);
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $nativeRoomIdentities): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -140,7 +144,16 @@ final readonly class ProjectModelEvidenceWriter
                     $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
                 }
                 $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
-                if ($roomIdentityFact) {
+                $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
+                if ($nativeNamedRoom) {
+                    // New parser metadata must not collide with immutable older room rows.
+                    $entityIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
+                }
+                if ($roomIdentityFact && ! ($claim->explicitEvidence
+                    && ($claim->locator['unit_type'] ?? null) === DocumentUnitType::SpreadsheetSheet->value
+                    && ($claim->locator['document_id'] ?? null) === $documentId
+                    && ($claim->locator['page'] ?? null) === $pageNumber
+                    && isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]))) {
                     // A repeated room label is not proof that separate photographs show the same room.
                     $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
                 }
@@ -194,6 +207,11 @@ final readonly class ProjectModelEvidenceWriter
                             ...($entityScope === '' && ! $roomIdentityFact && ! $documentEngineering ? $legacyEntityIds : [])])),
                     );
                 }
+                if (isset($nativeRoomIdentities[$claim->entityKey.$entityScope])) {
+                    // Measurements and the candidate name share this parser entity.
+                    // Keep its name confirmation metadata when a later quantity is written.
+                    $projection['attributes'] = array_replace($entities[$entityId]->attributes ?? [], $projection['attributes']);
+                }
                 $entities[$entityId] = new Entity(
                     $entityId,
                     $scope->organizationId,
@@ -216,6 +234,9 @@ final readonly class ProjectModelEvidenceWriter
                 $factIdentity = $visualInventoryFact
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
                     : (new ClaimSemanticMatcher)->key($claim).$entityScope;
+                if ($nativeNamedRoom) {
+                    $factIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
+                }
                 $factId = 'fact:'.hash('sha256', implode('|', [
                     ($projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity)
                         .($numericProofs === [] ? '' : '|native-numeric-proof:v3:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($numericProofs))),
@@ -448,6 +469,35 @@ final readonly class ProjectModelEvidenceWriter
             || $claim->sessionId !== $scope->sessionId || $claim->sourceVersion !== $scope->sourceVersion) {
             throw new InvalidArgumentException('Arbitration claims do not share an exact scope.');
         }
+    }
+
+    /** Native numeric proofs bind a name only to the exact parser entity on this sheet. */
+    private function nativeRoomIdentities(array $claims, array $decisions, int $documentId, int $page, ?VerifiedNativeNumericSources $sources): array
+    {
+        $identities = [];
+        foreach ($decisions as $decision) {
+            $claim = $claims[$decision->claimId];
+            if ($decision->status === 'accepted' && $sources?->certifies($claim) === true
+                && ($claim->value['type'] ?? null) === 'number'
+                && str_starts_with($claim->entityKey, 'room:native.'.$documentId.'.'.$page.'.')
+                && ($claim->locator['unit_type'] ?? null) === DocumentUnitType::SpreadsheetSheet->value
+                && ($claim->locator['document_id'] ?? null) === $documentId
+                && ($claim->locator['page'] ?? null) === $page) {
+                $identities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)] = true;
+            }
+        }
+
+        $named = [];
+        foreach ($claims as $claim) {
+            if ((new RoomIdentityObservation)->name($claim) !== null && $claim->explicitEvidence
+                && ($claim->locator['unit_type'] ?? null) === DocumentUnitType::SpreadsheetSheet->value
+                && ($claim->locator['document_id'] ?? null) === $documentId
+                && ($claim->locator['page'] ?? null) === $page) {
+                $named[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)] = true;
+            }
+        }
+
+        return array_intersect_key($identities, $named);
     }
 
     /** @return array{type:string,attributes:array<string,mixed>,identity_key?:string,fact_type?:string}|null */

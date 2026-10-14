@@ -672,7 +672,7 @@ SQL, [
                             'organization_id' => $conflict->organizationId,
                             'project_id' => $conflict->projectId,
                             'session_id' => $conflict->sessionId,
-                            'source_version' => $conflict->sourceVersion,
+                            'source_version' => $fact->sourceVersion,
                         ]);
                     }
                 }
@@ -835,6 +835,7 @@ SQL, [
         string $sourceVersion,
         array $quantities,
         array $inactiveLogicalIds,
+        ?string $expectedSnapshotToken = null,
     ): void {
         $this->database->connection()->transaction(function () use (
             $organizationId,
@@ -843,26 +844,57 @@ SQL, [
             $sourceVersion,
             $quantities,
             $inactiveLogicalIds,
+            $expectedSnapshotToken,
         ): void {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
+            $technology = null;
+            $completeness = null;
+            if ($expectedSnapshotToken !== null) {
+                $technology = $this->currentTechnologyRecommendations($organizationId, $projectId, $sessionId);
+                $completeness = $this->currentCompleteness($organizationId, $projectId, $sessionId);
+                if (preg_match('/^[a-f0-9]{64}$/D', $expectedSnapshotToken) !== 1
+                    || ! hash_equals($expectedSnapshotToken, $this->snapshotForPlanning($organizationId, $projectId, $sessionId, 10001)['token'])
+                    || ($technology['source_version'] ?? null) !== $sourceVersion
+                    || ($completeness['source_version'] ?? null) !== $sourceVersion
+                    || ($technology['input_fingerprint'] ?? null) !== $expectedSnapshotToken
+                    || ($completeness['input_fingerprint'] ?? null) !== $expectedSnapshotToken) {
+                    throw new InvalidArgumentException('Derived quantity planning snapshot is stale.');
+                }
+            }
+            foreach ($quantities as $quantity) {
+                if (! $quantity instanceof DerivedQuantity
+                    || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId] !== [$organizationId, $projectId, $sessionId]
+                    || ($expectedSnapshotToken === null && $quantity->sourceVersion !== $sourceVersion)
+                    || ($expectedSnapshotToken !== null && (
+                        ($quantity->snapshotIdentity['input_fingerprint'] ?? null) !== $expectedSnapshotToken
+                        || ($quantity->snapshotIdentity['technology_source_version'] ?? null) !== $sourceVersion
+                        || ($quantity->snapshotIdentity['completeness_source_version'] ?? null) !== $sourceVersion
+                        || ($quantity->snapshotIdentity['technology_run_id'] ?? null) !== ($technology['run_id'] ?? null)
+                        || ($quantity->snapshotIdentity['completeness_run_id'] ?? null) !== ($completeness['run_id'] ?? null)))) {
+                    throw new InvalidArgumentException('Derived quantity projection scope is invalid.');
+                }
+            }
+            if ($expectedSnapshotToken !== null) {
+                // Only stage-five factory projections are replaced; geometry projections
+                // and immutable quantity/evidence history retain their own source scope.
+                $owned = $this->database->table('estimate_generation_project_model_derived_quantities')
+                    ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+                    ->whereRaw("jsonb_exists(snapshot_identity, 'technology_source_version')")->select('id');
+                $this->database->table('estimate_generation_project_model_derived_quantity_projections')
+                    ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+                    ->whereIn('derived_quantity_id', $owned)->delete();
+            }
             $inactive = array_values(array_unique(array_filter($inactiveLogicalIds, 'is_string')));
             if ($inactive !== []) {
                 $this->database->table('estimate_generation_project_model_derived_quantity_projections')
                     ->where('organization_id', $organizationId)
                     ->where('project_id', $projectId)
                     ->where('session_id', $sessionId)
-                    ->where('source_version', $sourceVersion)
+                    ->when($expectedSnapshotToken === null, fn ($query) => $query->where('source_version', $sourceVersion))
                     ->whereIn('logical_key', $inactive)
                     ->delete();
             }
             $this->appendDerivedQuantities($quantities, 200);
-            foreach ($quantities as $quantity) {
-                if (! $quantity instanceof DerivedQuantity
-                    || [$quantity->organizationId, $quantity->projectId, $quantity->sessionId, $quantity->sourceVersion]
-                        !== [$organizationId, $projectId, $sessionId, $sourceVersion]) {
-                    throw new InvalidArgumentException('Derived quantity projection scope is invalid.');
-                }
-            }
         }, 3);
     }
 
@@ -1141,8 +1173,10 @@ SQL, [
                         'session_id' => $link['session_id'],
                         'source_version' => $link['source_version'],
                         'stable_key' => $link['id'],
-                        'left_fact_id' => $factIds[$this->linkFactMapKey($link, $link['left_fact_id'])],
-                        'right_fact_id' => $factIds[$this->linkFactMapKey($link, $link['right_fact_id'])],
+                        'left_fact_id' => $factIds[$this->linkFactMapKey($link, $link['left_fact_id'], 'left')],
+                        'right_fact_id' => $factIds[$this->linkFactMapKey($link, $link['right_fact_id'], 'right')],
+                        'left_fact_source_version' => $link['left_fact_source_version'] ?? $link['source_version'],
+                        'right_fact_source_version' => $link['right_fact_source_version'] ?? $link['source_version'],
                         'strategy' => $link['strategy'],
                         'match_key' => $link['match_key'],
                         'reason' => $link['reason'],
@@ -1167,7 +1201,7 @@ SQL, [
                     ->whereIn('operation_identity', array_column($chunk, 'operation_identity'))
                     ->get([
                         'id', 'organization_id', 'project_id', 'session_id', 'source_version', 'operation_identity',
-                        'stable_key', 'left_fact_id', 'right_fact_id', 'strategy', 'match_key', 'reason', 'strategy_version',
+                        'stable_key', 'left_fact_id', 'right_fact_id', 'left_fact_source_version', 'right_fact_source_version', 'strategy', 'match_key', 'reason', 'strategy_version',
                         'status', 'candidate_fact_ids', 'candidate_evidence_ids',
                     ]) as $row) {
                     $key = $row->organization_id.':'.$row->project_id.':'.$row->session_id.':'.$row->source_version.':'.$row->operation_identity;
@@ -1183,6 +1217,8 @@ SQL, [
                     if ((string) $stored->stable_key !== $expected['stable_key']
                         || (int) $stored->left_fact_id !== $expected['left_fact_id']
                         || (int) $stored->right_fact_id !== $expected['right_fact_id']
+                        || (string) $stored->left_fact_source_version !== $expected['left_fact_source_version']
+                        || (string) $stored->right_fact_source_version !== $expected['right_fact_source_version']
                         || (string) $stored->strategy !== $expected['strategy']
                         || (string) $stored->match_key !== $expected['match_key']
                         || (string) $stored->reason !== $expected['reason']
@@ -1406,7 +1442,8 @@ SQL, [
                 );
             }
             if (count($facts) >= 2) {
-                $result[] = Conflict::between((string) $row->stable_key, $facts, (string) $row->reason);
+                $result[] = Conflict::betweenSources((string) $row->stable_key, $facts, (string) $row->reason,
+                    (string) $row->source_version);
             }
         }
 
@@ -1993,6 +2030,8 @@ SQL, [
             'source_version' => (string) $link->source_version,
             'left_fact_id' => (string) $link->left_stable_key,
             'right_fact_id' => (string) $link->right_stable_key,
+            'left_fact_source_version' => (string) ($link->left_fact_source_version ?? $link->source_version),
+            'right_fact_source_version' => (string) ($link->right_fact_source_version ?? $link->source_version),
             'strategy' => (string) $link->strategy,
             'match_key' => (string) $link->match_key,
             'reason' => (string) $link->reason,
@@ -3193,6 +3232,7 @@ SQL, [
             }
         }
         $factIds = [];
+        $current = [];
         foreach ($groups as $scopeKey => $group) {
             $scope = $group['scope'];
             foreach ($this->database->table('estimate_generation_project_model_fact_projections as projection')
@@ -3202,12 +3242,20 @@ SQL, [
                 ->where('projection.session_id', $scope['session_id'])
                 ->where('projection.is_current', true)
                 ->whereIn('fact.stable_key', array_values($group['ids']))
-                ->get(['fact.id', 'fact.stable_key']) as $row) {
-                $factIds[$scopeKey.':'.$row->stable_key] = (int) $row->id;
+                ->get(['fact.id', 'fact.stable_key', 'fact.source_version']) as $row) {
+                $factIds[$scopeKey.':'.$row->stable_key.':'.$row->source_version] = (int) $row->id;
+                $current[$scopeKey.':'.$row->stable_key] = true;
             }
             foreach ($group['ids'] as $stableKey) {
-                if (! isset($factIds[$scopeKey.':'.$stableKey])) {
+                if (! isset($current[$scopeKey.':'.$stableKey])) {
                     throw new InvalidArgumentException('Cross-document link fact is outside the requested scope.');
+                }
+            }
+        }
+        foreach ($links as $link) {
+            foreach (['left', 'right'] as $side) {
+                if (! isset($factIds[$this->linkFactMapKey($link, $link[$side.'_fact_id'], $side)])) {
+                    throw new InvalidArgumentException('Cross-document link fact version is outside the requested scope.');
                 }
             }
         }
@@ -3239,6 +3287,13 @@ SQL, [
             $link['source_version'],
         );
         ProjectModelInvariant::id($link['id'], 'Cross-document link');
+        foreach (['left', 'right'] as $side) {
+            if (array_key_exists($side.'_fact_source_version', $link) && ! is_string($link[$side.'_fact_source_version'])) {
+                throw new InvalidArgumentException('Cross-document link source version is invalid.');
+            }
+            ProjectModelInvariant::scope($link['organization_id'], $link['project_id'], $link['session_id'],
+                $link[$side.'_fact_source_version'] ?? $link['source_version']);
+        }
         ProjectModelInvariant::id($link['left_fact_id'], 'Cross-document left fact');
         ProjectModelInvariant::id($link['right_fact_id'], 'Cross-document right fact');
         if ($link['left_fact_id'] === $link['right_fact_id']
@@ -3275,9 +3330,9 @@ SQL, [
         return $link['organization_id'].':'.$link['project_id'].':'.$link['session_id'].':'.$evidenceId;
     }
 
-    private function linkFactMapKey(array $link, string $factId): string
+    private function linkFactMapKey(array $link, string $factId, string $side): string
     {
-        return $this->linkScopeKey($link).':'.$factId;
+        return $this->linkScopeKey($link).':'.$factId.':'.($link[$side.'_fact_source_version'] ?? $link['source_version']);
     }
 
     private function linkScopeKey(array $link): string

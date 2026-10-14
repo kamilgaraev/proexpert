@@ -44,6 +44,7 @@ interface ProjectModelRepository
         string $sourceVersion,
         array $quantities,
         array $inactiveLogicalIds,
+        ?string $expectedSnapshotToken = null,
     ): void;
 
     /** @param list<DerivedQuantity> $quantities */

@@ -12,7 +12,9 @@ use InvalidArgumentException;
 
 final readonly class CrossDocumentFactLinker
 {
-    private const STRATEGY_VERSION = 1;
+    private const STRATEGY_VERSION = 2;
+
+    public const CONTRACT = 'cross-document-sources:v2';
 
     public const MAX_EVIDENCE_PER_FACT = 20;
 
@@ -21,9 +23,13 @@ final readonly class CrossDocumentFactLinker
         private ?CrossDocumentFactArbitrator $arbitrator = null,
         private int $maxCandidatesPerFact = 20,
         private ?ProjectUnderstandingBudget $budget = null,
+        private ?string $runSourceVersion = null,
     ) {
         if ($maxCandidatesPerFact < 1 || $maxCandidatesPerFact > 100) {
             throw new InvalidArgumentException('Cross-document candidate limit is invalid.');
+        }
+        if ($runSourceVersion !== null && preg_match('/^sha256:[a-f0-9]{64}$/D', $runSourceVersion) !== 1) {
+            throw new InvalidArgumentException('Cross-document run source version is invalid.');
         }
     }
 
@@ -138,7 +144,7 @@ final readonly class CrossDocumentFactLinker
                         'organization_id' => $subject->organizationId,
                         'project_id' => $subject->projectId,
                         'session_id' => $subject->sessionId,
-                        'source_version' => $subject->sourceVersion,
+                        'source_version' => $this->relationSourceVersion([$subject, ...$right]),
                     ]);
                 } catch (ExpectedArbitrationFailure) {
                     $limitations[] = $this->conflictResolver->providerUnavailable();
@@ -251,7 +257,7 @@ final readonly class CrossDocumentFactLinker
             if (! $entity instanceof Entity) {
                 throw new InvalidArgumentException('Cross-document entity input is invalid.');
             }
-            $scope ??= [$entity->organizationId, $entity->projectId, $entity->sessionId, $entity->sourceVersion];
+            $scope ??= [$entity->organizationId, $entity->projectId, $entity->sessionId];
             $this->assertModelScope($entity, $scope);
             if (isset($entityById[$entity->id])) {
                 throw new InvalidArgumentException('Cross-document entity is duplicated.');
@@ -263,10 +269,13 @@ final readonly class CrossDocumentFactLinker
             if (! $fact instanceof Fact) {
                 throw new InvalidArgumentException('Cross-document fact input is invalid.');
             }
-            $scope ??= [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion];
+            $scope ??= [$fact->organizationId, $fact->projectId, $fact->sessionId];
             $this->assertModelScope($fact, $scope);
             if (! isset($entityById[$fact->entityId])) {
                 throw new InvalidArgumentException('Cross-document fact entity is outside the requested scope.');
+            }
+            if (isset($factList[$fact->id])) {
+                throw new InvalidArgumentException('Cross-document fact is duplicated.');
             }
             $factList[$fact->id] = $fact;
         }
@@ -290,7 +299,7 @@ final readonly class CrossDocumentFactLinker
 
     private function assertModelScope(object $record, array $scope): void
     {
-        if ([$record->organizationId, $record->projectId, $record->sessionId, $record->sourceVersion] !== $scope) {
+        if ([$record->organizationId, $record->projectId, $record->sessionId] !== $scope) {
             throw new InvalidArgumentException('Cross-document record is outside the requested scope.');
         }
     }
@@ -374,8 +383,11 @@ final readonly class CrossDocumentFactLinker
         array &$conflicts,
         array &$questions,
     ): void {
-        $identity = hash('sha256', implode('|', [$left->id, $right->id, $left->sourceVersion, 'cross-document-conflict:v1']));
-        $conflict = Conflict::between('conflict:cross-document:'.substr($identity, 0, 48), [$left, $right], 'cross_document_incompatible_values');
+        $sourceVersion = $this->relationSourceVersion([$left, $right]);
+        $identity = hash('sha256', implode('|', [$left->id, $right->id, $left->sourceVersion, $right->sourceVersion,
+            $sourceVersion, 'cross-document-conflict:v2']));
+        $conflict = Conflict::betweenSources('conflict:cross-document:'.substr($identity, 0, 48), [$left, $right],
+            'cross_document_incompatible_values', $sourceVersion);
         $conflicts[$conflict->id] = $conflict;
         $questions[$conflict->id] = $this->conflictResolver->question($conflict, $evidenceById);
     }
@@ -411,7 +423,7 @@ final readonly class CrossDocumentFactLinker
 
     private function operationIdentity(Fact $subject, array $candidates, string $strategy, string $matchKey): string
     {
-        $candidateIds = array_map(static fn (Fact $fact): string => $fact->id, $candidates);
+        $candidateIds = array_map(static fn (Fact $fact): string => $fact->id.':'.$fact->sourceVersion, $candidates);
         sort($candidateIds, SORT_STRING);
 
         return hash('sha256', implode('|', [
@@ -419,6 +431,7 @@ final readonly class CrossDocumentFactLinker
             $subject->projectId,
             $subject->sessionId,
             $subject->sourceVersion,
+            $this->relationSourceVersion([$subject, ...$candidates]),
             $strategy,
             $matchKey,
             $subject->id,
@@ -439,7 +452,7 @@ final readonly class CrossDocumentFactLinker
             'operation_identity' => $operationIdentity,
             'strategy' => $strategy,
             'match_key' => $matchKey,
-            'source_version' => $subject->sourceVersion,
+            'source_version' => $this->relationSourceVersion([$subject, ...$candidates]),
             'subject' => $this->scopedFact($subject, $evidenceById),
             'candidates' => array_map(fn (Fact $fact): array => $this->scopedFact($fact, $evidenceById), $candidates),
         ];
@@ -450,6 +463,7 @@ final readonly class CrossDocumentFactLinker
         return [
             'fact' => [
                 'id' => $fact->id,
+                'source_version' => $fact->sourceVersion,
                 'type' => $fact->type,
                 'value' => $fact->value,
                 'unit' => $fact->unit,
@@ -501,9 +515,11 @@ final readonly class CrossDocumentFactLinker
             'organization_id' => $left->organizationId,
             'project_id' => $left->projectId,
             'session_id' => $left->sessionId,
-            'source_version' => $left->sourceVersion,
+            'source_version' => $this->relationSourceVersion([$left, $right]),
             'left_fact_id' => $left->id,
             'right_fact_id' => $right->id,
+            'left_fact_source_version' => $left->sourceVersion,
+            'right_fact_source_version' => $right->sourceVersion,
             'strategy' => $strategy,
             'match_key' => $matchKey,
             'reason' => $reason,
@@ -512,6 +528,17 @@ final readonly class CrossDocumentFactLinker
             'status' => $status,
             'evidence' => ['left' => $left->evidenceIds, 'right' => $right->evidenceIds],
         ];
+    }
+
+    private function relationSourceVersion(array $facts): string
+    {
+        if ($this->runSourceVersion !== null) {
+            return $this->runSourceVersion;
+        }
+        $versions = array_values(array_unique(array_column($facts, 'sourceVersion')));
+        sort($versions, SORT_STRING);
+
+        return count($versions) === 1 ? $versions[0] : 'sha256:'.hash('sha256', implode("\0", $versions));
     }
 
     private function matchKey(mixed $value): ?string

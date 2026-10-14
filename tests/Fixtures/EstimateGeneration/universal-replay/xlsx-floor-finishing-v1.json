@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic_transport_fixture",
+  "accuracy_calibrated": false,
+  "tags": [
+    "construction",
+    "finishing",
+    "native_xlsx_joined_regression"
+  ],
+  "description": "Устройство нового пола: подготовить основание и выполнить финишную отделку. Объём и цена будут заданы пользователем отдельно.",
+  "profile_id": "construction",
+  "construction_type": "new_construction",
+  "selected_sections": [
+    "finishing"
+  ],
+  "recordings": [
+    {
+      "role": "estimate_composition",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"work_intents\":[{\"kind\":\"supplementary\",\"work_key\":\"preparation\",\"name\":\"Подготовка основания пола\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"m2\",\"work_section\":\"finishing\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"finishing\",\"name\":\"Финишная отделка пола\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"m2\",\"work_section\":\"finishing\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"finish.floor\",\"name\":\"Финишное покрытие пола по размерам ведомости\",\"derived_quantity_id\":\"__native_floor_area_quantity_id__\",\"source_fact_ids\":[\"__native_length_fact_id__\",\"__native_width_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"m2\",\"work_section\":\"finishing\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]}]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    }
+  ]
+}

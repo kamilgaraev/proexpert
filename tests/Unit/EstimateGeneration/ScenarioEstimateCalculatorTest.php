@@ -105,6 +105,20 @@ final class ScenarioEstimateCalculatorTest extends TestCase
         self::assertFalse($result['can_confirm_for_apply']);
     }
 
+    public function test_priced_work_cannot_be_confirmed_until_the_selected_scope_is_confirmed(): void
+    {
+        $scenario = ['id' => 'base', 'positions' => [$this->position('floor', '50', '0.03')], 'assumptions' => []];
+        $calculator = new ScenarioEstimateCalculator;
+        $pending = $calculator->calculate([$scenario], ['finishing'], [], false);
+        self::assertSame(['RUB' => '1.50'], $pending['scenarios'][0]['total_by_currency']);
+        self::assertFalse($pending['scope_confirmed']);
+        self::assertFalse($pending['can_confirm_for_apply']);
+        $confirmed = $calculator->calculate([$scenario], ['finishing'], [], true);
+        self::assertTrue($confirmed['scope_confirmed']);
+        self::assertTrue($confirmed['can_confirm_for_apply']);
+        self::assertSame($pending['scenarios'], $confirmed['scenarios']);
+    }
+
     private function position(string $key, ?string $quantity, ?string $price): array
     {
         return ['key' => $key, 'section' => 'finishing', 'unit' => 'm2', 'quantity' => $quantity,

@@ -93,6 +93,7 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         $filename = sprintf('%s-%05d.%s', $type->value, $index, match ($contentType) {
             'application/json' => 'json',
             'image/png' => 'png',
+            'image/svg+xml' => 'svg',
             'text/plain' => 'txt',
             default => throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_content_type_invalid'),
         });

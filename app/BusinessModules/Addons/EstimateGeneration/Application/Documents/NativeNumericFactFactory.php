@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Brick\Math\BigDecimal;
@@ -76,6 +77,11 @@ final class NativeNumericFactFactory
             $rawUnit = (string) ($cellsByColumn[$columns['unit']]['value'] ?? '');
             $document = FactVocabulary::documentObservation($parameter, $entity,
                 ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit);
+            $roomName = $parameter === 'room_name' ? RoomIdentityObservation::label($entity,
+                ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit) : null;
+            if ($roomName !== null) {
+                $value = $roomName;
+            }
             if ($document !== null) {
                 $key = $document['semantic_type'].':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity, $location], JSON_THROW_ON_ERROR)), 0, 32);
                 $location['source_entity_key'] = $entity;
@@ -84,8 +90,10 @@ final class NativeNumericFactFactory
                 $location['source_entity_key'] = $entity;
             }
             $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
-                'unit' => $document !== null ? null : $rawUnit, 'literal_type' => $document !== null ? 'string'
-                    : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number'),
+                'unit' => $document !== null || $roomName !== null ? null : $rawUnit,
+                'literal_type' => $document !== null || $roomName !== null ? 'string'
+                    : ($parameter === 'room_name' ? 'invalid_room_identity'
+                        : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number')),
                 'reference' => 'xlsx:sheet:'.(string) ($native['sheet'] ?? '').'!'.$cell['address'],
                 'confirmed' => $formula === null, 'reason' => $formula === null ? null : 'native_formula_requires_confirmation', 'location' => $location];
         }
@@ -122,8 +130,9 @@ final class NativeNumericFactFactory
         $quarantined = [];
         $verifiedFingerprints = [];
         foreach ($records as $index => $record) {
-            if (($record['literal_type'] ?? null) === 'invalid_document_context') {
-                $quarantined[] = ['role' => 'native', 'index' => $index, 'reason_code' => 'native_document_context_invalid'];
+            if (in_array($record['literal_type'] ?? null, ['invalid_document_context', 'invalid_room_identity'], true)) {
+                $quarantined[] = ['role' => 'native', 'index' => $index,
+                    'reason_code' => $record['literal_type'] === 'invalid_room_identity' ? 'native_room_identity_invalid' : 'native_document_context_invalid'];
 
                 continue;
             }
