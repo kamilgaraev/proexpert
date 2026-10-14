@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Evidence;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
 use App\Enums\CurrencyCode;
 use InvalidArgumentException;
 
@@ -16,6 +17,7 @@ final class EvidenceSchema
                 'document_id' => 'positive_int', 'unit_type' => 'unit_type', 'unit_index' => 'positive_int',
                 'page' => 'positive_int', 'sheet' => 'positive_int', 'region_key' => 'region_ref', 'element_key' => 'element_ref',
                 'bbox' => 'bbox', 'source_key' => 'source_ref', 'native_reference' => 'native_reference',
+                'document_role' => 'document_role',
             ],
             EvidenceType::Inferred => ['inference_key' => 'inference_ref', 'item_key' => 'item_ref'],
             EvidenceType::WorkItem, EvidenceType::NormativeMatch, EvidenceType::Price => ['item_key' => 'item_ref'],
@@ -94,6 +96,7 @@ final class EvidenceSchema
             'method' => is_string($value) && EvidenceMeasurementMethod::tryFrom($value) !== null,
             'confidence_band' => is_string($value) && EvidenceConfidenceBand::tryFrom($value) !== null,
             'unit_type' => is_string($value) && in_array($value, ['pdf_page', 'spreadsheet_sheet', 'raster_image', 'sketch', 'cad_drawing', 'text_page'], true),
+            'document_role' => is_string($value) && SourceDocumentRole::normalize($value) === $value,
             'region_ref' => self::boundedString($value, 87, '/^region:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'element_ref' => self::boundedString($value, 88, '/^element:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'source_ref' => self::boundedString($value, 87, '/^source:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),

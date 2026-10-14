@@ -308,6 +308,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     (string) $row->source_ref,
                     $choiceHash,
                     (string) $row->fingerprint,
+                    SourceDocumentRole::normalize($locator['document_role'] ?? null),
                 );
             }
         }

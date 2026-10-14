@@ -35,6 +35,49 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_source_document_role_round_trips_without_confirming_identity_or_rewriting_history(): void
+    {
+        [, $session] = $this->fixture(documentRole: 'floor_plan');
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        self::assertCount(2, $capture['snapshot']->evidence);
+        foreach ($capture['snapshot']->evidence as $evidence) {
+            self::assertSame('plan', $evidence->documentRole);
+            self::assertSame('document', $evidence->sourceType);
+        }
+        self::assertSame(['candidate'], array_values(array_unique(array_column($capture['snapshot']->facts, 'status'))));
+        foreach ($capture['source_entities'] as $entity) {
+            self::assertArrayNotHasKey('document_role', $entity->attributes, 'A document role must not become a physical room attribute.');
+        }
+        $rows = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->orderBy('id')->get()->all();
+        $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000100_preserve_document_role_evidence.php');
+        $migration->up();
+        $migration->up();
+        self::assertEquals($rows, DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->orderBy('id')->get()->all());
+        self::assertEquals($capture, $models->snapshotForUnderstanding(...[...$scope, 100, true]));
+        self::assertSame([], $models->snapshotForUnderstanding($scope[0] + 100000, $scope[1], $scope[2], 100, true)['snapshot']->evidence);
+
+        $invalid = (array) $rows[0];
+        unset($invalid['id']);
+        $invalid['fingerprint'] = hash('sha256', 'invalid-document-role');
+        $locator = json_decode($invalid['locator'], true, flags: JSON_THROW_ON_ERROR);
+        $locator['document_role'] = 'schedule';
+        $invalid['locator'] = json_encode($locator, JSON_THROW_ON_ERROR);
+        try {
+            DB::transaction(static fn () => DB::table('estimate_generation_evidence')->insert($invalid));
+            self::fail('Ambiguous document classification must be rejected by PostgreSQL.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('evidence_document_role_invalid', $exception->getMessage());
+        }
+        self::assertCount(2, DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->get());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        [, $legacySession] = $this->fixture();
+        $legacy = $models->snapshot((int) $legacySession->organization_id, (int) $legacySession->project_id, (int) $legacySession->id);
+        self::assertCount(2, $legacy->evidence);
+        self::assertSame([null, null], array_column($legacy->evidence, 'documentRole'));
+    }
+
     public function test_numeric_answer_on_a_document_room_keeps_its_identity_and_source_version_in_a_mixed_batch(): void
     {
         [$actor, $session, $document] = $this->fixture();
@@ -290,7 +333,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             'reason' => 'Подтверждаю название помещения по выбранному источнику.'];
     }
 
-    private function fixture(?array $draft = null): array
+    private function fixture(?array $draft = null, ?string $documentRole = null): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -312,7 +355,8 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
                 ['type' => 'string', 'data' => 'Кухня'], null, 'literal:room:'.($index + 1), true,
                 (int) $organization->id, (int) $project->id, (int) $session->id, $version,
                 ['page' => 1, 'unit_type' => 'raster_image', 'unit_index' => 1, 'floor_id' => $floor,
-                    'region_key' => 'region:'.str_repeat((string) ($index + 1), 64), 'bbox' => [10, 20, 30, 40]]);
+                    'region_key' => 'region:'.str_repeat((string) ($index + 1), 64), 'bbox' => [10, 20, 30, 40],
+                    ...($documentRole === null ? [] : ['document_role' => $documentRole])]);
             app(ProjectModelEvidenceWriter::class)->writeIndependentObservations([$claim], (int) $document->id, 1);
         }
 
