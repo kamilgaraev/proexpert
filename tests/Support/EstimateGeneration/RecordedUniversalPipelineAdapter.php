@@ -63,7 +63,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             || ! str_ends_with(DB::getDatabaseName(), '_testing')) {
             throw new BenchmarkContractException('recorded_replay_test_namespace_required');
         }
-        if ($case->sourceType !== BenchmarkSourceType::TextDescription) {
+        if (! in_array($case->sourceType, [BenchmarkSourceType::TextDescription, BenchmarkSourceType::SitePhoto], true)) {
             return BenchmarkPipelineResultData::unsupported();
         }
         $recording = file_get_contents($this->recordingPath);
@@ -75,10 +75,11 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             || ($fixture['accuracy_calibrated'] ?? null) !== false || count($fixture['recordings'] ?? []) !== 2) {
             throw new BenchmarkContractException('recorded_replay_descriptor_invalid');
         }
-        $description = $this->objects->read($case, 'input', 65536);
-        if (! hash_equals($case->inputSha256, hash('sha256', $description))) {
+        $source = $this->objects->read($case, 'input', $case->sourceType === BenchmarkSourceType::SitePhoto ? 1000000 : 65536);
+        if (! hash_equals($case->inputSha256, hash('sha256', $source))) {
             throw new BenchmarkContractException('recorded_replay_source_mismatch');
         }
+        $description = $case->sourceType === BenchmarkSourceType::SitePhoto ? $fixture['description'] : $source;
         ($this->storage ??= new InMemoryS3HttpStorage)->install();
         Http::fake([]);
         Http::preventStrayRequests();
@@ -87,10 +88,12 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         config(['estimate-generation.universal_enabled' => true, 'estimate-generation.credits.enabled' => true,
             'ai-assistant-credits.enforce' => false, 'cache.default' => 'array',
             'ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
-            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1',
+            'estimate-generation.vision.api_key' => 'fixture-not-a-real-key',
+            'estimate-generation.vision.base_uri' => 'https://vision.fixture.invalid/v1']);
         $rights = AssistantRealAuthorizationFixture::create();
         $rights->memberRole->update(['module_permissions' => ['ai-estimates' => [
-            'estimate_generation.create', 'estimate_generation.generate', 'estimate_generation.view', 'estimate_generation.review',
+            'estimate_generation.create', 'estimate_generation.generate', 'estimate_generation.view', 'estimate_generation.review', 'estimate_generation.upload_documents',
         ]]]);
         $actor = $rights->member;
         $actor->organizations()->updateExistingPivot($rights->organization->id, ['project_access_mode' => 'all_projects']);
@@ -103,6 +106,9 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
                 'profile_id' => $fixture['profile_id'], 'construction_type' => $fixture['construction_type'],
                 'price_policy' => 'catalog', 'selected_sections' => $fixture['selected_sections']],
         ], $actor);
+        $credits = $this->app->make(AICreditService::class);
+        $credits->grant($rights->organization, 1000000, 'purchase', null, 'test:recorded-universal-replay');
+        $documentRun = [];
         $facts = $this->app->make(ProjectModelRepository::class)->snapshot((int) $session->organization_id, (int) $project->id, (int) $session->id)->facts;
         $descriptionFacts = array_values(array_filter($facts, static fn ($fact): bool => $fact->type === 'evaluation_answer'
             && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
@@ -135,15 +141,23 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         } else {
             $this->transport->append(...$responses);
         }
-        $credits = $this->app->make(AICreditService::class);
-        $credits->grant($rights->organization, 1000000, 'purchase', null, 'test:recorded-universal-replay');
+        if ($case->sourceType === BenchmarkSourceType::SitePhoto) {
+            $session = $this->processPhoto($session, $actor, $source, $fixture, $documentRun);
+        }
         $operationId = (string) Str::uuid();
-        $quote = $this->app->make(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, $operationId, 'generation');
-        $this->app->make(RequestEstimateGeneration::class)->handle($session, 0, 'ai_assisted', $actor,
+        $quote = $this->app->make(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, (int) $session->state_version, $operationId, 'generation');
+        $request = $this->app->make(RequestEstimateGeneration::class)->handle($session, (int) $session->state_version, 'ai_assisted', $actor,
             creditApproval: ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]);
         $job = Queue::pushed(GenerateEstimateDraftJob::class)->first();
         if (! $job instanceof GenerateEstimateDraftJob) {
-            throw new BenchmarkContractException('recorded_replay_generation_not_queued');
+            $summary = $request->context['documents_summary'] ?? [];
+            throw new BenchmarkContractException('recorded_replay_generation_not_queued:'.json_encode([
+                'message_key' => $request->messageKey,
+                'http_status' => $request->httpStatus,
+                'session_status' => $request->session->status->value,
+                'problem_flags' => $summary['problem_flags'] ?? [],
+                'document_run' => $documentRun,
+            ], JSON_THROW_ON_ERROR));
         }
         foreach (ProcessingStage::cases() as $stage) {
             $job->handle($this->app->make(RunEstimateGenerationDraft::class));
@@ -184,15 +198,79 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $this->lastRun = ['session_id' => (int) $session->id, 'evaluation' => $evaluation, 'usage' => $usage->all(),
             'provider_requests' => count($this->history) - $historyStart, 'consumed_units_minor' => (int) $operation->consumed_units_minor,
             'available_minor' => $credits->balance($rights->organization)['available_minor'], 'recording_sha256' => $this->recordingSha256];
+        $this->lastRun['document_run'] = $documentRun;
         $this->lastRun['completed_stages'] = DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
             ->where('status', 'completed')->pluck('stage')->unique()->sort()->values()->all();
         $this->lastRun['request_hashes'] = array_map(static fn ($exchange): string => hash('sha256', (string) $exchange['request']->getBody()), array_slice($this->history, $historyStart));
         $job->handle($this->app->make(RunEstimateGenerationDraft::class));
         $this->lastRun['requests_after_replay'] = count($this->history) - $historyStart;
         $this->lastRun['usage_after_replay'] = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count();
-        Http::assertNothingSent();
+        if ($case->sourceType === BenchmarkSourceType::TextDescription) {
+            Http::assertNothingSent();
+        }
 
         return BenchmarkPipelineResultData::success($prediction, ['text_model' => 'gpt-6-luna', 'replay' => 'synthetic:v1'], (string) $cost, 'RUB');
+    }
+
+    private function processPhoto(\App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession $session, \App\Models\User $actor,
+        string $source, array $fixture, array &$run): \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession
+    {
+        if (! is_array($fixture['vision_response'] ?? null)) {
+            throw new BenchmarkContractException('recorded_replay_vision_missing');
+        }
+        $wireOwnership = [];
+        Http::fake(['https://vision.fixture.invalid/v1/chat/completions' => function () use ($fixture, $session, &$wireOwnership) {
+            $physical = DB::table('estimate_generation_vision_physical_attempts')->where('session_id', $session->id)->where('state', 'wire_started')->sole();
+            $role = DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->where('physical_attempt_id', $physical->attempt_id)->sole();
+            $wireOwnership[] = $physical->owner_token !== $role->owner_uuid;
+
+            return Http::response($fixture['vision_response'], 200);
+        }]);
+        $path = tempnam(sys_get_temp_dir(), 'most-photo-replay-');
+        try {
+            file_put_contents($path, $source);
+            $upload = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments::class)
+                ->handle($session, (int) $session->state_version, [new \Illuminate\Http\UploadedFile($path, 'room.png', 'image/png', null, true)], $actor, (string) Str::uuid());
+        } finally {
+            unlink($path);
+        }
+        $document = $upload->documents->sole();
+        $manifestJob = Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob::class)->first();
+        $manifestJob->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessEstimateGenerationDocument::class));
+        $session->refresh();
+        $id = (string) Str::uuid();
+        $quote = $this->app->make(EstimatorCreditOperations::class)->quote($actor, (int) $session->project_id, (int) $session->id, (int) $session->state_version, $id, 'documents');
+        $session = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\StartEstimatorDocumentOperation::class)
+            ->handle($actor, (int) $session->project_id, (int) $session->id, ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => (int) $session->state_version]);
+        $units = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit::query()->where('document_id', $document->id)->get();
+        if ($units->count() !== 1) {
+            throw new BenchmarkContractException('recorded_replay_photo_manifest_invalid');
+        }
+        $processor = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit::class);
+        foreach ($units as $unit) {
+            $processor->handle((int) $unit->id, $unit->source_version);
+        }
+        $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class)->handle($session->fresh());
+        $session->refresh();
+        $run = ['document_id' => (int) $document->id, 'operation_id' => $id, 'vision_requests' => Http::recorded()->count(),
+            'provider_ownership_preserved' => $wireOwnership,
+            'status' => $document->fresh()->status, 'units' => $units->map(static fn ($unit): string => $unit->fresh()->status->value)->all(),
+            'error_code' => $document->fresh()->error_code,
+            'unit_failure_codes' => $units->map(static fn ($unit): ?string => $unit->fresh()->failure_code)->all(),
+            'receipt' => json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('receipt'), true, 32, JSON_THROW_ON_ERROR)];
+        foreach ($units as $unit) {
+            $processor->handle((int) $unit->id, $unit->source_version);
+        }
+        $run['vision_requests_after_replay'] = Http::recorded()->count();
+        if ($run['units'] !== ['completed']) {
+            throw new BenchmarkContractException('recorded_replay_photo_not_completed:'.json_encode($run, JSON_THROW_ON_ERROR));
+        }
+        if ($session->status->value === 'input_review_required') {
+            $session = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession::class)
+                ->handle($session, (int) $session->state_version, \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent::InputConfirmed, $actor);
+        }
+
+        return $session;
     }
 
     private function seedSettings(): void

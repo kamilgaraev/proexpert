@@ -191,7 +191,9 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 || ! $this->physicalAttemptMatchesRun($attempt, $run)) {
                 throw new UsageInvariantViolation('AI role run physical attempt scope collision.');
             }
-            if ((string) $attempt->state === 'pre_wire') {
+            // Document attempts are leased by the Vision provider. A role only links
+            // to that attempt; replacing its owner would invalidate the wire fence.
+            if ((string) $attempt->state === 'pre_wire' && $attempt->unit_id === null) {
                 $this->database->table('estimate_generation_vision_physical_attempts')
                     ->where('attempt_id', $physicalAttemptId)->where('state', 'pre_wire')
                     ->update(['owner_token' => $ownerUuid, 'lease_expires_at' => $run->lease_expires_at, 'updated_at' => $now]);
