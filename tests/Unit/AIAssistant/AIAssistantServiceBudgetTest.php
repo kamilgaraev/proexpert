@@ -841,6 +841,8 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы и объёмы без связей со сметными позициями', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, сметные связи не нужны', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы и сметные связи', 'elements', true],
+            ['Покажи материалы и объёмы, не забудь свойства', 'elements', true],
+            ['Покажи материалы и объёмы, не прекращай показывать свойства', 'elements', true],
             ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
@@ -873,6 +875,10 @@ class AIAssistantServiceBudgetTest extends TestCase
     public function test_negated_organization_scope_keeps_selected_bim_project(): void
     {
         self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide('Не меняй настройки, покажи во всех проектах'));
+        foreach (['Не забудь проверить по всем проектам', 'Не забывай проверять по всем проектам',
+            'Не прекращай проверять по всем проектам'] as $positiveQuery) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide($positiveQuery));
+        }
         foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
             'Покажи вентиляторы, не во всей организации', 'Не ищи по всем проектам, покажи только текущий',
             'Не надо искать по всем проектам, покажи текущий проект', 'Не работай по всем проектам',

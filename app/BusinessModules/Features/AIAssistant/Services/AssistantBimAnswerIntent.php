@@ -9,7 +9,7 @@ final readonly class AssistantBimAnswerIntent
     public static function materialsAndQuantities(string $query): bool
     {
         $quantityQuery = preg_replace('/(?<!\pL)количеств[а-яё]*\s+(?:(?:вс[её][а-яё]*|разн[а-яё]*|различн[а-яё]*|уникальн[а-яё]*|вид[а-яё]*|тип[а-яё]*)\s+)*материал[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
-        $negatedPrefix = '(?<!\pL)(?:без|не)\s+(?:[\pL\pN-]+\s+){0,4}';
+        $negatedPrefix = '(?<!\pL)(?:без|не(?!\s+(?:забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL)))\s+(?:[\pL\pN-]+\s+){0,4}';
         $propertyQuery = preg_replace('/'.$negatedPrefix.'свойств[а-яё]*(?!\pL)|(?<!\pL)свойств[а-яё]*\s+(?:не\s+нуж[а-яё]*|исключи[а-яё]*|убери[а-яё]*)/iu', '', $query) ?? $query;
         $linkFacet = '(?:сметн[а-яё]*\s+)?связ[а-яё]*(?:\s+со?\s+смет[а-яё]*(?:\s+позици[а-яё]*)?)?';
         $additionalQuery = preg_replace('/'.$negatedPrefix.$linkFacet.'(?!\pL)|(?<!\pL)'.$linkFacet.'\s+(?:не\s+нуж[а-яё]*|исключи[а-яё]*|убери[а-яё]*)/iu', '', $propertyQuery) ?? $propertyQuery;
