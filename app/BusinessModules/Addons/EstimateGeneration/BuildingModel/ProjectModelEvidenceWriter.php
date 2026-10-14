@@ -159,12 +159,16 @@ final readonly class ProjectModelEvidenceWriter
                     // New parser metadata must not collide with immutable older room rows.
                     $entityIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
                 }
-                if ($roomIdentityFact && ! ($claim->explicitEvidence
+                if (($roomIdentityFact || $roomNumberFact) && ! ($claim->explicitEvidence
                     && ($claim->locator['unit_type'] ?? null) === DocumentUnitType::SpreadsheetSheet->value
                     && ($claim->locator['document_id'] ?? null) === $documentId
                     && ($claim->locator['page'] ?? null) === $pageNumber
                     && isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]))) {
-                    // A repeated room label is not proof that separate photographs show the same room.
+                    // Repeated page-local labels and numbers do not prove one physical room.
+                    if ($roomNumberFact) {
+                        // A number alone cannot replace an immutable candidate-name entity.
+                        $entityIdentity .= '|room-number-observation:v1';
+                    }
                     $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
                 }
                 $entityScope = (new ClaimSemanticMatcher)->entityScope($claim);
@@ -214,7 +218,7 @@ final readonly class ProjectModelEvidenceWriter
                         $projection['type'],
                         $entityId,
                         array_values(array_unique([$legacyCanonicalEntityId,
-                            ...($entityScope === '' && ! $roomIdentityFact && ! $documentEngineering ? $legacyEntityIds : [])])),
+                            ...($entityScope === '' && ! $roomIdentityFact && ! $roomNumberFact && ! $documentEngineering ? $legacyEntityIds : [])])),
                     );
                 }
                 if (isset($nativeRoomIdentities[$claim->entityKey.$entityScope])) {
@@ -495,7 +499,7 @@ final readonly class ProjectModelEvidenceWriter
         }
     }
 
-    /** Native numeric proofs bind a name only to the exact parser entity on this sheet. */
+    /** Native numeric proofs bind a literal name or number only to the exact parser entity on this sheet. */
     private function nativeRoomIdentities(array $claims, array $decisions, int $documentId, int $page, ?VerifiedNativeNumericSources $sources): array
     {
         $identities = [];
@@ -513,7 +517,8 @@ final readonly class ProjectModelEvidenceWriter
 
         $named = [];
         foreach ($claims as $claim) {
-            if ((new RoomIdentityObservation)->name($claim) !== null && $claim->explicitEvidence
+            if (((new RoomIdentityObservation)->name($claim) !== null || (new RoomNumberObservation)->number($claim) !== null)
+                && $claim->explicitEvidence
                 && ($claim->locator['unit_type'] ?? null) === DocumentUnitType::SpreadsheetSheet->value
                 && ($claim->locator['document_id'] ?? null) === $documentId
                 && ($claim->locator['page'] ?? null) === $page) {
