@@ -809,6 +809,10 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы и их количества в BIM-модели', 'materials_and_quantities', false],
             ['Покажи материалы, объёмы и свойства элементов BIM-модели', 'elements', true],
             ['Количество материалов в BIM-модели', 'elements', true],
+            ['Количество разных материалов в BIM-модели', 'elements', true],
+            ['Количество всех материалов в BIM-модели', 'elements', true],
+            ['Количество видов материалов в BIM-модели', 'elements', true],
+            ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
         ] as [$query, $expectedKind, $expectedProperties]) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');

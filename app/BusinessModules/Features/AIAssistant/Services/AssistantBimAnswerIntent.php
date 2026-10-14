@@ -8,9 +8,13 @@ final readonly class AssistantBimAnswerIntent
 {
     public static function materialsAndQuantities(string $query): bool
     {
+        $quantityQuery = preg_replace('/(?<!\pL)количеств[а-яё]*\s+(?:(?:вс[её][а-яё]*|разн[а-яё]*|различн[а-яё]*|уникальн[а-яё]*|вид[а-яё]*|тип[а-яё]*)\s+)*материал[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
+        $propertyQuery = preg_replace('/(?<!\pL)(?:без|не)\s+свойств[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
+
         return preg_match('/(?<!\pL)материал[а-яё]*(?!\pL)/iu', $query) === 1
-            && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*|количеств[а-яё]*(?!\pL)(?!\s+материал))(?!\pL)/iu', $query) === 1
-            && preg_match('/(?<!\pL)(?:не|без)\s+(?:материал|объ[её]м|количеств|единиц)|связ[а-яё]*|сметн[а-яё]*|свойств[а-яё]*/iu', $query) !== 1;
+            && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*|количеств[а-яё]*)(?!\pL)/iu', $quantityQuery) === 1
+            && preg_match('/(?<!\pL)(?:не|без)\s+(?:материал|объ[её]м|количеств|единиц)|связ[а-яё]*|сметн[а-яё]*/iu', $query) !== 1
+            && preg_match('/(?<!\pL)свойств[а-яё]*(?!\pL)/iu', $propertyQuery) !== 1;
     }
 
     public static function materialList(string $query): bool
