@@ -261,4 +261,39 @@ final class BackendSecurityRegressionTest extends TestCase
         self::assertTrue($team[$members[0]->id]['is_active']);
         self::assertFalse($team[$members[5]->id]['is_active']);
     }
+
+    public function test_shared_project_team_uses_membership_from_the_request_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $owner = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $owner->id]);
+        $project->organizations()->attach($context->organization->id, ['role' => 'contractor', 'is_active' => true]);
+        $member = User::factory()->create();
+        $context->organization->users()->attach($member->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
+        $project->users()->attach($member->id, ['role' => 'member', 'is_active' => true]);
+        $response = $this->getJson('/api/v1/admin/projects/'.$project->id, $context->authHeaders())->assertOk();
+        $team = collect($response->json('data.assigned_users'))->keyBy('id');
+        self::assertTrue($team[$member->id]['is_active']);
+        self::assertSame('assigned_projects', $team[$member->id]['project_access_mode']);
+        self::assertFalse($member->organizations()->whereKey($owner->id)->exists());
+    }
+
+    public function test_unassigned_project_materials_and_work_types_preserve_access_denial_codes(): void
+    {
+        $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        foreach (['materials', 'work-types'] as $operation) {
+            $path = '/api/v1/admin/projects/'.$project->id.'/'.$operation;
+            $this->getJson($path, $context->authHeaders())->assertForbidden();
+            $request = Request::create($path, 'GET');
+            $request->attributes->set('current_organization_id', $context->organization->id);
+            $request->setUserResolver(fn () => $context->user);
+            $controller = app(\App\Http\Controllers\Api\V1\Admin\ProjectController::class);
+            $response = $operation === 'materials'
+                ? $controller->getProjectMaterials($project, $request)
+                : $controller->getProjectWorkTypes($project, $request);
+            self::assertSame(404, $response->getStatusCode());
+        }
+    }
 }

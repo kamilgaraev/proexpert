@@ -93,9 +93,10 @@ class ProjectController extends Controller
                 return AdminResponse::error(trans_message('project.not_found'), 404);
             }
 
+            $organizationId = $this->resolveOrganizationId($request);
             return AdminResponse::success(new ProjectResource($project->load([
                 'users' => fn ($query) => $query->wherePivot('is_active', true),
-                'users.organizations' => fn ($query) => $query->where('organizations.id', (int) $project->organization_id),
+                'users.organizations' => fn ($query) => $query->where('organizations.id', $organizationId),
                 'costCategory',
                 'customerCounterparty',
             ])));
@@ -361,6 +362,8 @@ class ProjectController extends Controller
             );
 
             return AdminResponse::success($materials);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 404);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectMaterials', [
                 'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
@@ -383,6 +386,8 @@ class ProjectController extends Controller
             );
 
             return AdminResponse::success($workTypes);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 404);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectWorkTypes', [
                 'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
