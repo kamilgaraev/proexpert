@@ -35,6 +35,8 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
 
     public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
     {
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($input->draft, $workLimit);
         $payload = json_encode(['audit_input' => $input->canonicalPayload()], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (strlen($payload) > $this->maxInputBytes) {
             throw new InvalidArgumentException('estimate_auditor_input_limit_exceeded');

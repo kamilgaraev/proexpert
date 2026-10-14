@@ -30,6 +30,8 @@ final readonly class RunEstimateAudit
     /** @return array{accepted:bool,findings:list<array<string,mixed>>,quarantined_findings:list<array{index:int,reason:string}>} */
     public function run(EstimateAuditInput $input): array
     {
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($input->draft, $workLimit);
         if ($input->wireBytes() > $this->maximumInputBytes) {
             throw new InvalidArgumentException('estimate_auditor_input_limit_exceeded');
         }

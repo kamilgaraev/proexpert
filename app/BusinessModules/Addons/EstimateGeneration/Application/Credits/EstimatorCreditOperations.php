@@ -53,21 +53,18 @@ final readonly class EstimatorCreditOperations
             if ($activeDocuments !== null && $activeDocuments->operation_id !== strtolower($requestId)) {
                 throw new DomainException('estimator_credit_documents_processing_active');
             }
-            [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $this->parameters($session, $kind, $parameters));
-            $existing = $this->database->table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->lockForUpdate()->first();
-            if ($existing !== null && CanonicalPipelineJson::encode(json_decode($existing->credit_request, true, 64, JSON_THROW_ON_ERROR))
-                !== CanonicalPipelineJson::encode($request->identity())) {
-                throw new DomainException('estimator_credit_request_id_conflict');
-            }
-            if ($existing !== null) {
-                $quote = AICreditQuote::query()->whereKey($existing->quote_id)->firstOrFail();
-                if ($quote->expires_at->isPast()) {
-                    throw new DomainException('estimator_credit_quote_expired');
-                }
-            }
+            $normalized = $this->parameters($session, $kind, $parameters);
+            $existing = $this->database->table('estimate_generation_credit_operations')->where('operation_id', strtolower($requestId))->lockForUpdate()->first();
             $organization = Organization::query()->findOrFail($session->organization_id);
             app(\App\Services\Credits\AICreditCommercialService::class)->reconcileCurrentPaidPeriod($organization);
-            $payload = $this->credits->quoteEstimator($organization, $actor, $request);
+            if ($existing !== null) {
+                $request = $this->replayRequest($actor, $session, $existing, $kind, $normalized);
+                $plan = json_decode($existing->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+                $payload = $this->credits->replayEstimatorQuote($organization, $actor, (int) $existing->quote_id, $request);
+            } else {
+                [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $normalized);
+                $payload = $this->credits->quoteEstimator($organization, $actor, $request);
+            }
             $quote = AICreditQuote::query()->where('public_id', $payload['quote_id'])->where('organization_id', $organization->id)->firstOrFail();
             if ($existing === null) {
                 $this->database->table('estimate_generation_credit_operations')->insert([
@@ -156,30 +153,7 @@ final readonly class EstimatorCreditOperations
         if ($kind === 'dialogue' && ($parameters['idempotency_key'] ?? null) !== $operationId) {
             throw new DomainException('estimator_credit_dialogue_request_id_mismatch');
         }
-        $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
-            ->where('status', '<>', 'ignored')->orderBy('id')->get();
-        $manifest = [];
-        $rasterUnits = 0;
-        foreach ($kind === 'dialogue' ? [] : $documents as $document) {
-            $source = DocumentSourceVersion::fromDocument($document);
-            $units = $this->database->table('estimate_generation_processing_units')->where('organization_id', $session->organization_id)
-                ->where('project_id', $session->project_id)->where('session_id', $session->id)->where('document_id', $document->id)
-                ->where('source_version', $source)->orderBy('id')->get(['id', 'unit_type', 'unit_index', 'status', 'locator', 'metadata']);
-            $manifest[] = ['document_id' => (int) $document->id, 'source_version' => $source,
-                'mime_type' => $document->mime_type, 'units' => $units->map(static fn ($unit): array => [
-                    'id' => (int) $unit->id, 'type' => $unit->unit_type, 'index' => (int) $unit->unit_index,
-                    'processing_lineage_id' => json_decode($unit->metadata, true, 64, JSON_THROW_ON_ERROR)['processing_attempt_id'] ?? null,
-                    'locator_hash' => hash('sha256', CanonicalPipelineJson::encode(json_decode($unit->locator, true, 64, JSON_THROW_ON_ERROR)))])->all()];
-            $pending = $units->filter(static fn ($unit): bool => ! in_array($unit->status, ['completed', 'ignored'], true));
-            if ($units->isEmpty() && ! in_array($document->status, ['processed', 'completed'], true)) {
-                if (str_starts_with((string) $document->mime_type, 'image/') || $document->mime_type === 'application/pdf') {
-                    throw new DomainException('estimator_credit_document_preparation_required');
-                }
-            }
-            $rasterUnits += $pending->filter(static fn ($unit): bool => \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPaidWirePolicy::requiresPaidWire(
-                \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::from($unit->unit_type),
-                json_decode($unit->locator, true, 64, JSON_THROW_ON_ERROR)))->count();
-        }
+        [$manifest, $rasterUnits] = $this->manifest($session, $kind);
         $inputHash = $this->inputs->fromSession($session);
         $tariff = $this->prices->resolve('estimate_composition', 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable);
         $workItems = min(2000, max(32, $this->database->table('estimate_generation_quantity_takeoffs')->where('session_id', $session->id)
@@ -208,6 +182,72 @@ final readonly class EstimatorCreditOperations
             'supplier_tariff' => $tariff->toArray()];
 
         return [$this->request($identity), $plan];
+    }
+
+    private function manifest(EstimateGenerationSession $session, string $kind): array
+    {
+        $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+            ->where('status', '<>', 'ignored')->orderBy('id')->get();
+        $manifest = [];
+        $rasterUnits = 0;
+        foreach ($kind === 'dialogue' ? [] : $documents as $document) {
+            $source = DocumentSourceVersion::fromDocument($document);
+            $units = $this->database->table('estimate_generation_processing_units')->where('organization_id', $session->organization_id)
+                ->where('project_id', $session->project_id)->where('session_id', $session->id)->where('document_id', $document->id)
+                ->where('source_version', $source)->orderBy('id')->get(['id', 'unit_type', 'unit_index', 'status', 'locator', 'metadata']);
+            $manifest[] = ['document_id' => (int) $document->id, 'source_version' => $source,
+                'mime_type' => $document->mime_type, 'units' => $units->map(static fn ($unit): array => [
+                    'id' => (int) $unit->id, 'type' => $unit->unit_type, 'index' => (int) $unit->unit_index,
+                    'processing_lineage_id' => json_decode($unit->metadata, true, 64, JSON_THROW_ON_ERROR)['processing_attempt_id'] ?? null,
+                    'locator_hash' => hash('sha256', CanonicalPipelineJson::encode(json_decode($unit->locator, true, 64, JSON_THROW_ON_ERROR)))])->all()];
+            $pending = $units->filter(static fn ($unit): bool => ! in_array($unit->status, ['completed', 'ignored'], true));
+            if ($units->isEmpty() && ! in_array($document->status, ['processed', 'completed'], true)) {
+                if (str_starts_with((string) $document->mime_type, 'image/') || $document->mime_type === 'application/pdf') {
+                    throw new DomainException('estimator_credit_document_preparation_required');
+                }
+            }
+            $rasterUnits += $pending->filter(static fn ($unit): bool => \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPaidWirePolicy::requiresPaidWire(
+                \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::from($unit->unit_type),
+                json_decode($unit->locator, true, 64, JSON_THROW_ON_ERROR)))->count();
+        }
+
+        return [$manifest, $rasterUnits];
+    }
+
+    private function replayRequest(User $actor, EstimateGenerationSession $session, \stdClass $operation, string $kind, array $parameters): EstimatorCreditRequest
+    {
+        $request = $this->request(json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR));
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        if ((int) $operation->organization_id !== (int) $session->organization_id || (int) $operation->project_id !== (int) $session->project_id
+            || (int) $operation->session_id !== (int) $session->id || (int) $operation->actor_user_id !== (int) $actor->id
+            || $operation->kind !== $kind || (int) $operation->approved_state_version !== (int) $session->state_version
+            || $request->organizationId !== (int) $operation->organization_id || $request->projectId !== (int) $operation->project_id
+            || $request->sessionId !== (int) $operation->session_id || $request->actorUserId !== (int) $actor->id
+            || $request->operationId !== $operation->operation_id || $request->kind !== $kind || $request->stateVersion !== (int) $operation->approved_state_version
+            || $request->maximumCalls !== (int) $operation->maximum_calls || $request->maximumProviderCostMicroRub !== (int) $operation->maximum_provider_cost_micro_rub
+            || ! hash_equals($request->planHash, $operation->plan_hash)
+            || ! hash_equals($request->planHash, hash('sha256', CanonicalPipelineJson::encode($plan)))
+            || ! hash_equals($request->inputHash, $operation->input_hash) || ! hash_equals($request->sourceVersion, $operation->source_version)
+            || CanonicalPipelineJson::encode($plan['operation_parameters'] ?? []) !== CanonicalPipelineJson::encode($parameters)) {
+            throw new DomainException('estimator_credit_request_id_conflict');
+        }
+        if (! hash_equals($request->inputHash, $this->inputs->fromSession($session))) {
+            throw new StaleEstimateGenerationState((int) $session->id, $request->stateVersion);
+        }
+        [$manifest] = $this->manifest($session, $kind);
+        if (! hash_equals($request->manifestHash, $operation->manifest_hash)
+            || ! hash_equals($request->manifestHash, hash('sha256', CanonicalPipelineJson::encode($manifest)))) {
+            throw new DomainException('estimator_credit_manifest_changed');
+        }
+        if (isset($plan['known_context']) && is_array($plan['known_context'])) {
+            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? null,
+                $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
+            if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
+                throw new DomainException('estimator_known_context_changed');
+            }
+        }
+
+        return $request;
     }
 
     private function request(array $identity): EstimatorCreditRequest

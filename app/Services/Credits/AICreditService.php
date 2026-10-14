@@ -40,6 +40,24 @@ final class AICreditService
         return $this->quotePayload($quote);
     }
 
+    /** Read the exact frozen quote; never replace expired or missing terms with a newly priced quote. */
+    public function replayEstimatorQuote(Organization $organization, User $user, int $quoteId, EstimatorCreditRequest $request): array
+    {
+        $this->assertEstimatorActor($organization, $user, $request);
+        $quote = AICreditQuote::query()->whereKey($quoteId)->where('organization_id', $organization->id)
+            ->where('user_id', $user->id)->where('profile', EstimatorCreditRequest::PROFILE)
+            ->where('request_key', $request->requestKey())->where('request_hash', $this->canonicalEstimatorRequest($request))->first();
+        if ($quote === null) {
+            throw new DomainException('estimator_credit_quote_invalid');
+        }
+        if (! $quote->expires_at->isFuture()) {
+            throw new DomainException('estimator_credit_quote_expired');
+        }
+
+        return [...$this->quotePayload($quote), 'min_units_minor' => in_array($request->kind, ['documents', 'dialogue'], true)
+            ? 0 : (int) $quote->min_units_minor];
+    }
+
     public function beginEstimator(Organization $organization, User $user, string $quoteId, EstimatorCreditRequest $request): AICreditReservation
     {
         $this->assertEstimatorActor($organization, $user, $request);

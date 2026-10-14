@@ -65,11 +65,11 @@ final class EstimatorProcessingPlanTest extends TestCase
     public function test_a_large_operation_reserves_three_audits_two_corrections_and_three_sends_per_part(): void
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff());
-        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(65, $plan['audit_part_limit']);
         self::assertSame(3, $plan['composer_part_limit']);
-        self::assertSame(27, $plan['roles']['estimate_audit']['max_calls']);
-        self::assertSame(18, $plan['roles']['estimate_composer_correction']['max_calls']);
-        self::assertSame(54, $plan['maximum_calls']);
+        self::assertSame(585, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(390, $plan['roles']['estimate_composer_correction']['max_calls']);
+        self::assertSame(984, $plan['maximum_calls']);
     }
 
     public function test_complex_operation_reserves_every_engineer_part_before_execution(): void
@@ -85,13 +85,13 @@ final class EstimatorProcessingPlanTest extends TestCase
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, true, $this->tariff(), false,
             ['composer' => 4, 'audit' => 3, 'synthesis' => 2]);
         self::assertSame(4, $plan['composer_part_limit']);
-        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(32, $plan['audit_part_limit']);
         self::assertSame(2, $plan['synthesis_part_limit']);
         self::assertSame(12, $plan['roles']['estimate_composition']['max_calls']);
-        self::assertSame(27, $plan['roles']['estimate_audit']['max_calls']);
-        self::assertSame(18, $plan['roles']['estimate_composer_correction']['max_calls']);
+        self::assertSame(288, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(192, $plan['roles']['estimate_composer_correction']['max_calls']);
         self::assertSame(6, $plan['roles']['project_synthesis']['max_calls']);
-        self::assertSame(63, $plan['maximum_calls']);
+        self::assertSame(498, $plan['maximum_calls']);
         self::assertGreaterThan($baseline['maximum_provider_cost_micro_rub'], $plan['maximum_provider_cost_micro_rub']);
     }
 
@@ -100,8 +100,26 @@ final class EstimatorProcessingPlanTest extends TestCase
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff(), false,
             ['composer' => 1, 'audit' => 0, 'synthesis' => 1]);
         self::assertSame(3, $plan['composer_part_limit']);
-        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(65, $plan['audit_part_limit']);
         self::assertSame(0, $plan['synthesis_part_limit']);
+    }
+
+    public function test_future_audit_proofs_are_reserved_at_one_part_per_permitted_work_before_the_draft_exists(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
+        self::assertSame('estimator-processing-plan:v2', $plan['contract_version']);
+        self::assertSame('global_work_items:v1', $plan['work_ceiling_policy']);
+        self::assertSame(32, $plan['work_item_limit']);
+        self::assertSame(32, $plan['audit_part_limit']);
+        self::assertSame(288, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(192, $plan['roles']['estimate_composer_correction']['max_calls']);
+    }
+
+    public function test_a_future_audit_operation_above_the_finite_work_ceiling_requires_sections_before_a_quote(): void
+    {
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('estimator_processing_plan_requires_section_split');
+        (new EstimatorProcessingPlan)->build('generation', 0, 513, false, $this->tariff());
     }
 
     private function tariff(): AiPriceSnapshot

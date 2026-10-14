@@ -37,6 +37,8 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
 
     public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
     {
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates), $workLimit);
         $payload = json_encode(
             ['project' => $input->canonicalPayload()],
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
@@ -127,6 +129,8 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
 
     public function correct(EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
     {
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->audit->organizationId, $input->audit->projectId, $input->audit->sessionId, $input->audit->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($input->audit->draft, $workLimit);
         $payload = json_encode(
             ['correction_context' => $input->canonicalPayload()],
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,

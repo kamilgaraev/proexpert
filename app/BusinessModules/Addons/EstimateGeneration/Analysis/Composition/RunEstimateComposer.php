@@ -45,6 +45,8 @@ final readonly class RunEstimateComposer
         if ($limit === 0) {
             throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
         }
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates), $workLimit);
         $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
             $input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId, 'estimate_composition');
         $plan = $this->batches->withWirePolicy($policy)->plan($input);
@@ -52,13 +54,18 @@ final readonly class RunEstimateComposer
             throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
         }
         if (count($plan) === 1) {
-            return $this->runBatch($plan[0]);
+            $outcome = $this->runBatch($plan[0]);
+            $additional = array_filter($outcome['intents'], static fn (array $intent): bool => $intent['kind'] === 'supplementary');
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($additional), $workLimit);
+
+            return $outcome;
         }
         $existing = [];
         $supplementary = [];
         $quarantined = [];
         $workKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
         foreach ($plan as $batch) {
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($supplementary), $workLimit);
             $outcome = $this->runBatch($batch);
             foreach ($outcome['quarantined'] as $rejected) {
                 $quarantined[] = [...$rejected, 'batch_key' => $batch->batchKey];
@@ -75,6 +82,8 @@ final readonly class RunEstimateComposer
                 }
             }
         }
+
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($supplementary), $workLimit);
 
         return ['intents' => [...array_map(static fn (array $candidate): array => $existing[$candidate['candidate_id']], $input->candidates),
             ...array_column(array_values($supplementary), 'intent')], 'quarantined' => $quarantined];
