@@ -73,6 +73,10 @@ final class AssistantToolSurface
                 array_push($selected, ...$tools);
             }
         }
+        $operationalIntent = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
+        if ($operationalIntent !== null && isset(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::TOOLS[$operationalIntent['name']])) {
+            $selected[] = $operationalIntent['name'];
+        }
         foreach (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS as $name => $reader) {
             if ($reader::hasIntent($query)) { $selected[] = $name; }
         }

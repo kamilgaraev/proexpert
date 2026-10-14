@@ -45,6 +45,11 @@ final class AssistantOperationalReaderRegistry
         'get_organization_one_c_exchange_summary' => AssistantOneCExchangeSummaryReader::class,
         'get_organization_user_counts' => AssistantOrganizationUsersReader::class,
         'get_assignable_user_roles' => AssistantAssignableRolesReader::class,
+        'get_organization_business_profile' => AssistantOrganizationProfileReader::class,
+        'get_own_report_workspace' => AssistantReportWorkspaceReader::class,
+        'get_own_organization_roles' => AssistantOwnRolesReader::class,
+        'get_organization_verification' => AssistantOrganizationVerificationReader::class,
+        'get_own_report_subscriptions' => AssistantReportSubscriptionsReader::class,
         'get_own_admin_permissions' => AssistantOwnAdminPermissionsReader::class,
         'get_organization_credit_balance' => AssistantOrganizationCreditBalanceReader::class,
         'get_organization_active_packages' => AssistantOrganizationPackagesReader::class,
@@ -119,7 +124,7 @@ final class AssistantOperationalReaderRegistry
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
-            if (AssistantNotificationPreferencesReader::matches($query) && $class === AssistantOrganizationNotificationsReader::class) { continue; }
+            if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {
                 continue;
             }

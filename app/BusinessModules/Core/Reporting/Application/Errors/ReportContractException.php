@@ -37,6 +37,7 @@ final class ReportContractException extends RuntimeException
         'export_id',
         'cursor',
         'limit',
+        'status',
         'page',
         'search',
         'type',
