@@ -23,6 +23,9 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Хочу перенести задачи нашего объекта, задерживающие сроки, на завтра',
             'Сдвинь задачи нашего объекта, задерживающие этапы, на завтра',
             'Переносим задачи нашего объекта, задерживающие сроки, на завтра',
+            'Обнови сроки задач нашего объекта, задерживающих работы',
+            'Пожалуйста, обнови сроки задач нашего объекта, задерживающих этапы',
+            'Прошу добавьте задачи нашего объекта, задерживающие сроки',
             'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
         }
@@ -210,6 +213,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'По нашему объекту какие платежные документы сейчас готовы к оплате, а какие задерживаются? Что проверить перед оплатой?',
             'Какие платёжные документы нашего объекта просрочены?',
             'Какие счета по нашему объекту готовы к оплате?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен бюджетный лимит?',
+            'Какие счета нашего объекта готовы к оплате и у каких превышен лимит бюджета?',
         ] as $query) {
             self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]],
                 AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
@@ -220,6 +225,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие платежные документы готовы к оплате и какие акты требуют согласования?',
             'Оплати готовые платежные документы нашего объекта.',
             'Какие платежные документы нашего объекта готовы к оплате и каков бюджет?',
+            'Какие счета нашего объекта готовы к оплате, превышен ли бюджетный лимит и каков бюджет проекта?',
+            'Какие неоплаченные счета нашего объекта превышают бюджетный лимит и каковы расходы проекта?',
         ] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($query), $query);
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);

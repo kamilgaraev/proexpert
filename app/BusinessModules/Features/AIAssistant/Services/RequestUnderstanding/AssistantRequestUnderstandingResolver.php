@@ -193,11 +193,12 @@ final class AssistantRequestUnderstandingResolver
             return 'analyze';
         }
 
-        if ($this->isCreateRequest($normalized)) {
+        $mutationIntent = AssistantMutationIntent::type($normalized);
+        if ($mutationIntent === 'create') {
             return 'create';
         }
 
-        if ($this->isUpdateRequest($normalized)) {
+        if ($mutationIntent === 'update') {
             return 'update';
         }
 
@@ -205,7 +206,7 @@ final class AssistantRequestUnderstandingResolver
             return 'send';
         }
 
-        if ($this->isDeleteRequest($normalized)) {
+        if ($mutationIntent === 'delete') {
             return 'delete';
         }
 
@@ -507,21 +508,6 @@ final class AssistantRequestUnderstandingResolver
         return is_array($reference) && ($reference['type'] ?? null) === 'project'
             && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
             && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
-    }
-
-    private function isCreateRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['создай', 'добавь', 'создайте', 'добавьте']);
-    }
-
-    private function isUpdateRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['измени', 'обнови', 'назначь', 'перенеси']);
-    }
-
-    private function isDeleteRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['удали', 'удалите']);
     }
 
     private function hasLeadingCommand(string $normalized, array $commands): bool
