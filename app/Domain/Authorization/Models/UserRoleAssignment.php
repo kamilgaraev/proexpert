@@ -188,11 +188,12 @@ class UserRoleAssignment extends Model
         ?User $assignedBy = null,
         ?\Carbon\Carbon $expiresAt = null
     ): self {
-        return static::create([
+        return static::updateOrCreate([
             'user_id' => $user->id,
             'role_slug' => $roleSlug,
-            'role_type' => $roleType,
             'context_id' => $context->id,
+        ], [
+            'role_type' => $roleType,
             'assigned_by' => $assignedBy?->id,
             'expires_at' => $expiresAt,
             'is_active' => true

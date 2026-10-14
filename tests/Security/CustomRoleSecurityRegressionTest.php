@@ -172,7 +172,7 @@ final class CustomRoleSecurityRegressionTest extends TestCase
         );
     }
 
-    public function test_reactivating_a_preserved_assignment_binds_the_recreated_role_in_its_organization(): void
+    public function test_sync_reactivates_a_preserved_assignment_and_binds_the_recreated_role(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
@@ -186,12 +186,41 @@ final class CustomRoleSecurityRegressionTest extends TestCase
         self::assertFalse($assignment->fresh()->is_active);
         $replacement = $service->createRole($context->organization->id, 'Recreated role', ['organization.view'], createdBy: $context->user);
         self::assertSame($role->slug, $replacement->slug);
-        $reactivated = UserRoleAssignment::updateOrCreate([
-            'user_id' => $member->id, 'role_slug' => $replacement->slug, 'role_type' => UserRoleAssignment::TYPE_CUSTOM,
-            'context_id' => $assignment->context_id,
-        ], ['is_active' => true]);
+        $reactivated = $service->syncUserRoles($member, [$replacement->id],
+            AuthorizationContext::getOrganizationContext($context->organization->id), $context->user)->sole();
         self::assertSame($assignment->id, $reactivated->id);
         self::assertSame($replacement->id, $reactivated->custom_role_id);
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($member, 'organization.view', ['organization_id' => $context->organization->id]));
+    }
+
+    public function test_http_assignment_reactivates_the_preserved_row_without_duplicate_insertions(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $sessionUuid = \App\Models\UserAuthSession::query()->where('user_id', $context->user->id)->value('session_uuid');
+        $tokens = app(\App\Services\Auth\WebAuthTokenService::class)->issue(
+            $context->user, 'lk', $sessionUuid, $context->organization->id, false,
+        );
+        $this->withHeaders(['Authorization' => 'Bearer '.$tokens->accessToken,
+            'Accept' => 'application/json', 'Origin' => 'https://lk.1мост.рф']);
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        $service = app(CustomRoleService::class);
+        $role = $service->createRole($context->organization->id, 'HTTP recreated role', ['organization.view'], createdBy: $context->user);
+        $this->postJson('/api/v1/landing/user-management/organization-users/'.$member->id.'/assign-role/'.$role->id)->assertOk();
+        $assignment = UserRoleAssignment::query()->where('user_id', $member->id)->where('role_slug', $role->slug)->sole();
+        $condition = $assignment->conditions()->create([
+            'condition_type' => 'time', 'condition_data' => ['working_days' => [0, 1, 2, 3, 4, 5, 6]], 'is_active' => true,
+        ]);
+        $service->deleteRole($role, $context->user, $context->organization->id);
+        $replacement = $service->createRole($context->organization->id, 'HTTP recreated role', ['organization.view'], createdBy: $context->user);
+        $url = '/api/v1/landing/user-management/organization-users/'.$member->id.'/assign-role/'.$replacement->id;
+        $this->postJson($url)->assertOk();
+        $this->postJson($url)->assertOk();
+        $reactivated = UserRoleAssignment::query()->where('user_id', $member->id)->where('role_slug', $replacement->slug)->sole();
+        self::assertSame($assignment->id, $reactivated->id);
+        self::assertSame($replacement->id, $reactivated->custom_role_id);
+        self::assertTrue($reactivated->is_active);
+        self::assertSame([$condition->id], $reactivated->conditions->pluck('id')->all());
         self::assertTrue(app(AuthorizationService::class)->canCurrent($member, 'organization.view', ['organization_id' => $context->organization->id]));
     }
 
