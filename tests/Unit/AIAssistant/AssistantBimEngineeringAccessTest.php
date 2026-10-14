@@ -27,6 +27,16 @@ final class AssistantBimEngineeringAccessTest extends TestCase
         Facade::clearResolvedInstances();
         [$this->policy, $this->actor] = AssistantOfflineAclFixture::create();
         $app = Facade::getFacadeApplication();
+        $app->instance('db.schema', new class($app->make('db.schema')) {
+            public function __construct(private object $native) {}
+            public function hasColumn($table, $column) { return $this->native->hasColumn($table, $column); }
+            public function getColumnListing($table): array
+            {
+                $columns = $this->native->getColumnListing($table);
+                return $table === 'design_ifc_model_elements'
+                    ? array_values(array_unique([...$columns, 'source_content_hash', 'source_schema_version', 'source_equipment_kind', 'source_materials'])) : $columns;
+            }
+        });
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'design-management'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
@@ -73,11 +83,20 @@ final class AssistantBimEngineeringAccessTest extends TestCase
         self::assertNotNull($engineering);
         self::assertNotNull($after);
         self::assertSame($before->getQuery()->columns, $after->getQuery()->columns);
+        self::assertSame($before->toSql(), $after->toSql());
+        self::assertSame($before->getBindings(), $after->getBindings());
         self::assertNotContains('design_ifc_model_elements.properties', $before->getQuery()->columns);
         self::assertNotContains('design_ifc_model_elements.classifications', $after->getQuery()->columns);
         self::assertContains('design_ifc_model_elements.properties', $engineering->getQuery()->columns);
         self::assertContains('design_ifc_model_elements.classifications', $engineering->getQuery()->columns);
-        self::assertStringContainsString('"design_ifc_model_elements"."id" in (', $engineering->toSql());
+        self::assertStringNotContainsString('"design_ifc_model_elements"."id" in (', $engineering->toSql());
+        self::assertSame(1, substr_count($engineering->toSql(), 'from "design_ifc_model_elements"'));
+        self::assertStringContainsString('"design_ifc_model_elements"."organization_id" = ?', $engineering->toSql());
+        self::assertStringContainsString('organization_user', $engineering->toSql());
+        foreach (['source_content_hash', 'source_schema_version', 'source_equipment_kind', 'source_materials'] as $field) {
+            self::assertStringContainsString('"design_ifc_model_elements"."'.$field.'"', $engineering->toSql());
+            self::assertStringNotContainsString('"design_ifc_model_elements"."'.$field.'"', $after->toSql());
+        }
         self::assertStringContainsString('design_artifact_versions', $engineering->toSql());
         self::assertStringContainsString('design_model_derivatives', $engineering->toSql());
     }
