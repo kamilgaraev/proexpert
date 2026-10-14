@@ -78,7 +78,12 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
             if ($parent['match_project'] ?? false) { $parentQuery->whereColumn($parentTable.'.project_id', $table.'.project_id'); }
             foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
             $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
-                if ($parent['nullable']) { $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
+                if ($parent['nullable']) {
+                    $parentKey = $parentTable.'.'.($parent['key'] ?? 'id');
+                    $scope->whereNull($table.'.'.$column)->orWhereExists(
+                        $parentQuery->select($parentKey)->whereColumn($parentKey, $table.'.'.$column)
+                    );
+                }
                 else { $scope->whereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
             });
         }

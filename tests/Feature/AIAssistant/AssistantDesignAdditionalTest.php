@@ -174,6 +174,80 @@ final class AssistantDesignAdditionalTest extends TestCase
         self::assertFalse($policy->canReadEntity($fixture->member, $fixture->organization->id, 'design_document_template', $template->id));
     }
 
+    public function test_nullable_ifc_derivative_uses_identity_lookup_and_preserves_scope_across_pages(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $otherProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $package = $this->package($fixture->organization->id, $project->id);
+        $artifact = DesignArtifact::withoutEvents(fn () => DesignArtifact::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'title' => 'Модель', 'artifact_type' => 'model',
+        ]));
+        $version = DesignArtifactVersion::withoutEvents(fn () => DesignArtifactVersion::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'artifact_id' => $artifact->id, 'title' => 'Версия', 'version_number' => '1',
+            'source_file_path' => 'private.ifc', 'source_original_name' => 'model.ifc',
+            'source_mime_type' => 'application/octet-stream', 'source_size_bytes' => 1,
+        ]));
+        $otherVersion = $version->replicate()->forceFill(['version_number' => '2']);
+        DesignArtifactVersion::withoutEvents(fn () => $otherVersion->save());
+        $derivative = DesignModelDerivative::withoutEvents(fn () => DesignModelDerivative::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'version_id' => $version->id,
+        ]));
+        foreach ([
+            ['version_id' => $otherVersion->id],
+            ['project_id' => $otherProject->id],
+            ['organization_id' => $fixture->foreignOrganization->id],
+        ] as $offset => $attributes) {
+            $invalidParent = $derivative->replicate()->forceFill($attributes + ['derivative_format' => 'scope-proof-'.$offset]);
+            DesignModelDerivative::withoutEvents(fn () => $invalidParent->save());
+            DesignIfcModelElement::withoutEvents(fn () => DesignIfcModelElement::query()->create([
+                'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+                'version_id' => $version->id, 'derivative_id' => $invalidParent->id,
+                'express_id' => $offset + 1,
+            ]));
+        }
+        $expected = [];
+        $withoutDerivative = [];
+        for ($offset = 0; $offset < 55; $offset++) {
+            $element = DesignIfcModelElement::withoutEvents(fn () => DesignIfcModelElement::query()->create([
+                'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+                'version_id' => $version->id, 'derivative_id' => $offset % 2 === 0 ? null : $derivative->id,
+                'express_id' => $offset + 10,
+            ]));
+            $expected[] = $element->id;
+            if ($element->derivative_id === null) {
+                $withoutDerivative[] = $element->id;
+            }
+        }
+        $collect = static function () use ($fixture): array {
+            $chunks = [...(new DesignAdditionalRagSource)->collectForOrganization($fixture->organization->id)];
+            return array_values(array_map(
+                static fn ($chunk): int => (int) $chunk->entityId,
+                array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'design_ifc_model_element'),
+            ));
+        };
+        DB::enableQueryLog();
+        try {
+            self::assertSame($expected, $collect());
+            $queries = array_values(array_filter(array_column(DB::getQueryLog(), 'query'),
+                static fn (string $query): bool => str_starts_with($query, 'select "design_ifc_model_elements".')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertCount(2, $queries);
+        foreach ($queries as $query) {
+            self::assertStringContainsString('"design_model_derivatives"."id" = "design_ifc_model_elements"."derivative_id"', $query);
+        }
+        $derivative->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+        self::assertSame($withoutDerivative, $collect());
+        $version->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertSame([], $collect());
+    }
+
     private function package(int $organizationId, int $projectId): DesignPackage
     {
         return DesignPackage::withoutEvents(fn () => DesignPackage::query()->create(['organization_id' => $organizationId, 'project_id' => $projectId, 'title' => 'Комплект', 'status' => 'draft']));
