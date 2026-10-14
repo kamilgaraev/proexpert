@@ -417,4 +417,51 @@ final class EstimateImportLifecycleTest extends TestCase
         (new ProcessEstimateImportJob($session->id, 'current'))->failed(new \RuntimeException('private/source/file'));
         self::assertSame('completed', $session->fresh()->status);
     }
+
+    public function test_cleanup_recovers_newer_overdue_sessions_without_healthy_rows_consuming_limit(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $healthyStates = [
+            ['queued', ['queued_deadline_at' => '10000000000']],
+            ['parsing', ['worker_deadline_at' => now()->addHour()->timestamp]],
+            ['processing', []],
+            ['detecting', ['detection_phase' => 'completed', 'detection_deadline_at' => 9]],
+            ['detecting', ['detection_phase' => 'storage', 'detection_deadline_at' => now()->addHour()->timestamp]],
+            ['enriching', ['worker_deadline_at' => 'not-a-deadline']],
+        ];
+        $healthyIds = [];
+        for ($index = 0; $index < 105; $index++) {
+            [$status, $stats] = $healthyStates[$index % count($healthyStates)];
+            $healthyIds[] = $context->session(['status' => $status, 'stats' => $stats, 'created_at' => now()->subHours(25)])->id;
+        }
+        $futureQueued = $context->session([
+            'status' => 'queued', 'stats' => ['queued_deadline_at' => '10000000000'], 'created_at' => now()->subHours(25),
+            'file_path' => 'org-'.$context->organization->id.'/estimate-imports/healthy-source.xlsx',
+        ]);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldNotReceive('existsCurrent');
+        $files->shouldNotReceive('deleteCurrent');
+        $this->app->instance(FileService::class, $files);
+        $overdueStates = [
+            ['queued', ['queued_deadline_at' => '9']],
+            ['parsing', ['worker_deadline_at' => now()->subMinute()->timestamp]],
+            ['processing', ['worker_deadline_at' => '1e1']],
+            ['enriching', ['worker_deadline_at' => (string) now()->subMinute()->timestamp]],
+            ['detecting', ['detection_phase' => 'storage', 'detection_deadline_at' => (string) now()->subMinute()->timestamp]],
+            ['detecting', ['detection_deadline_at' => '9']],
+        ];
+        $overdue = [];
+        foreach ($overdueStates as [$status, $stats]) {
+            $overdue[] = $context->session(['status' => $status, 'stats' => $stats, 'created_at' => now()->subMinute()]);
+        }
+        $this->artisan('estimates:cleanup-import-sources', ['--limit' => 100])->assertExitCode(0);
+        foreach ($overdue as $session) {
+            self::assertSame('failed', $session->refresh()->status);
+            self::assertNotEmpty($session->stats['correlation_id']);
+        }
+        self::assertSame(0, ImportSession::query()->whereIn('id', $healthyIds)->where('status', 'failed')->count());
+        self::assertSame('queued', $futureQueued->refresh()->status);
+        self::assertNotNull($futureQueued->file_path);
+        self::assertSame(112, ImportSession::query()->count());
+    }
 }

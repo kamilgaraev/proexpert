@@ -584,7 +584,9 @@ class EstimateImportService
             && is_numeric($detectionDeadline) && now()->timestamp > (int) $detectionDeadline) {
             $correlationId = (string) Str::uuid();
             $updated = ImportSession::query()->whereKey($session->id)->where('status', 'detecting')
-                ->where('stats->detection_deadline_at', $detectionDeadline)->where('stats->detection_phase', '!=', 'completed')
+                ->where('stats->detection_deadline_at', $detectionDeadline)->where(function ($phase): void {
+                    $phase->where('stats->detection_phase', '!=', 'completed')->orWhereNull('stats->detection_phase');
+                })
                 ->where('stats->detection_token', $session->stats['detection_token'] ?? null)
                 ->update(['status' => 'failed', 'error_message' => 'estimate.import_detection_interrupted', 'stats' => json_encode(array_merge($session->stats ?? [], [
                     'reason_code' => 'import_detection_interrupted', 'correlation_id' => $correlationId,
