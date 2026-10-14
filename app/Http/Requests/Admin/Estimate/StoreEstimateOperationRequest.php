@@ -27,6 +27,7 @@ final class StoreEstimateOperationRequest extends FormRequest
             'addition_ids' => ['sometimes', 'array', 'max:19'], 'addition_ids.*' => ['integer', 'min:1', 'distinct'],
             'subtraction_ids' => ['sometimes', 'array', 'max:19'], 'subtraction_ids.*' => ['integer', 'min:1', 'distinct'],
             'reprice' => ['sometimes', 'boolean'],
+            'subtraction_quantity_mode' => [Rule::prohibitedIf($reprice), 'sometimes', Rule::in(['positive', 'signed'])],
             'target_date' => [Rule::requiredIf($reprice), 'date_format:Y-m-d'],
             'region_code' => [Rule::requiredIf($reprice), 'string', 'max:30'],
             'currency' => ['sometimes', 'string', 'regex:/^[A-Z]{3}$/'],

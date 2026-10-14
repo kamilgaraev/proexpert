@@ -67,6 +67,7 @@ final class EstimateOperationWriter
                 'contingency_amount' => $reserve,
                 'metadata' => ['currency' => $parameters['currency'], 'operation' => [
                     'id' => $operation->id, 'mode' => $operation->mode, 'reprice' => $operation->mode !== 'adjust' || ($parameters['reprice'] ?? false),
+                    'subtraction_quantity_mode' => $parameters['subtraction_quantity_mode'] ?? 'positive',
                     'source_digest' => $operation->source_snapshot['digest'], 'source_estimate_ids' => array_column($sources, 'id'),
                     'target_date' => $parameters['target_date'] ?? null, 'region_code' => $parameters['region_code'] ?? null,
                 ]],

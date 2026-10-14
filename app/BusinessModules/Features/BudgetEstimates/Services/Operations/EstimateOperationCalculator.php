@@ -22,6 +22,7 @@ final class EstimateOperationCalculator
         }
         $mode = $parameters['mode'];
         $reprice = $mode !== 'adjust' || ($parameters['reprice'] ?? false);
+        $signedSubtraction = $mode === 'adjust' && ! $reprice && ($parameters['subtraction_quantity_mode'] ?? 'positive') === 'signed';
         $rows = [];
         $originalTrees = [];
         $base = [];
@@ -70,12 +71,13 @@ final class EstimateOperationCalculator
             if ($row['role'] !== 'subtract') {
                 continue;
             }
-            if (Decimal::compare($row['quantity'], '0') <= 0) {
+            if (Decimal::compare($row['quantity'], '0') === 0 || (! $signedSubtraction && Decimal::compare($row['quantity'], '0') < 0)) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'quantity_invalid');
                 continue;
             }
             $candidates = $this->candidates($row, $base, $baseIndex);
-            $exact = array_filter($candidates, fn (array $candidate): bool => $this->signature($row) !== null && $this->signature($row) === $this->signature($candidate));
+            $signature = $this->signature($row, includeSection: ! $signedSubtraction);
+            $exact = array_filter($candidates, fn (array $candidate): bool => $signature !== null && $signature === $this->signature($candidate, includeSection: ! $signedSubtraction));
             $decision = $resolutions['match:'.$key] ?? null;
             $target = $decision['target_key'] ?? (count($exact) === 1 ? array_key_first($exact) : null);
             if ($target === null || ! isset($base[$target])) {
@@ -92,18 +94,28 @@ final class EstimateOperationCalculator
                 continue;
             }
             $quantity = Decimal::multiply($row['quantity'], $factor, 8);
-            $excluded[$target] = Decimal::add($excluded[$target] ?? '0', $quantity);
+            if ($signedSubtraction && Decimal::compare($quantity, '0') * Decimal::compare($base[$target]['old_quantity'], '0') !== -1) {
+                $row['conflicts'][] = $this->conflict('match:'.$key, 'subtraction_sign_invalid');
+                continue;
+            }
+            $excluded[$target] = Decimal::add($excluded[$target] ?? '0', $this->magnitude($quantity));
             $row['target_key'] = $target;
+            $remaining = $signedSubtraction && Decimal::compare($base[$target]['old_quantity'], '0') < 0
+                ? Decimal::add($base[$target]['old_quantity'], $excluded[$target])
+                : Decimal::subtract($base[$target]['old_quantity'], $excluded[$target]);
             if ($base[$target]['execution_unknown']) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'execution_unknown');
-            } elseif (Decimal::compare($excluded[$target], Decimal::subtract($base[$target]['old_quantity'], $base[$target]['executed_quantity'])) > 0) {
+            } elseif (Decimal::compare($excluded[$target], Decimal::subtract($this->magnitude($base[$target]['old_quantity']), $base[$target]['executed_quantity'])) > 0
+                || ! $this->preservesExecution($base[$target]['node'], $remaining)) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'execution_exceeded');
             }
             $row['quantity'] = '0';
         }
         unset($row);
         foreach ($excluded as $key => $quantity) {
-            $rows[$key]['quantity'] = Decimal::subtract($rows[$key]['quantity'], $quantity);
+            $rows[$key]['quantity'] = $signedSubtraction && Decimal::compare($rows[$key]['old_quantity'], '0') < 0
+                ? Decimal::add($rows[$key]['quantity'], $quantity)
+                : Decimal::subtract($rows[$key]['quantity'], $quantity);
             foreach ($rows as $excludedRow) {
                 if ($excludedRow['role'] === 'subtract' && $excludedRow['target_key'] === $key) {
                     $rows[$key]['sources'] = array_merge($rows[$key]['sources'], $excludedRow['sources']);
@@ -117,7 +129,8 @@ final class EstimateOperationCalculator
                 $row['total_amount'] = '0.00';
                 continue;
             }
-            if (Decimal::compare($row['quantity'], '0') < 0 || ($row['role'] === 'add' && Decimal::compare($row['quantity'], '0') <= 0)) {
+            $negativeBase = $signedSubtraction && $row['role'] === 'base' && Decimal::compare($row['old_quantity'], '0') < 0;
+            if ((! $negativeBase && Decimal::compare($row['quantity'], '0') < 0) || ($row['role'] === 'add' && Decimal::compare($row['quantity'], '0') <= 0)) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'quantity_invalid');
                 $row['total_amount'] = '0.00';
                 continue;
@@ -131,6 +144,9 @@ final class EstimateOperationCalculator
                 continue;
             }
             $candidates = $this->candidates($row, $output, $outputIndex);
+            if ($signedSubtraction) {
+                $candidates = array_filter($candidates, fn (array $candidate): bool => Decimal::compare($row['quantity'], '0') === Decimal::compare($candidate['quantity'], '0'));
+            }
             $exact = array_filter($candidates, fn (array $candidate): bool => $this->signature($row, true) !== null && $this->signature($row, true) === $this->signature($candidate, true));
             $decision = $resolutions['match:'.$key] ?? null;
             $target = ($decision['action'] ?? null) === 'separate' ? null : ($decision['target_key'] ?? (count($exact) === 1 ? array_key_first($exact) : null));
@@ -162,7 +178,8 @@ final class EstimateOperationCalculator
                     $row['new_price'] = $row['node']['attributes']['current_unit_price'];
                     $row['conversion'] = ['factor' => $factor, 'from' => $row['old_unit'], 'to' => $row['unit']];
                 }
-                if ($row['unit'] !== $output[$target]['unit'] || $this->terms($row['node'], ! $reprice) !== $this->terms($output[$target]['node'], ! $reprice)) {
+                if ($row['unit'] !== $output[$target]['unit'] || $this->terms($row['node'], ! $reprice) !== $this->terms($output[$target]['node'], ! $reprice)
+                    || ($signedSubtraction && Decimal::compare($row['quantity'], '0') !== Decimal::compare($output[$target]['quantity'], '0'))) {
                     $row['conflicts'][] = $this->conflict('match:'.$key, 'match_required', $candidates);
                     $output[$key] = $row;
                     $this->indexRow($outputIndex, $row);
@@ -197,15 +214,37 @@ final class EstimateOperationCalculator
         unset($row);
         $total = '0';
         $groupTotals = [];
+        $groupComponents = [];
+        $groupBaseKnown = [];
+        $componentFields = ['direct_costs', 'equipment_cost', 'overhead_amount', 'profit_amount', 'other_cost',
+            'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount'];
         foreach ($output as $outputRow) {
-            $groupTotals[$outputRow['group']] = Decimal::add($groupTotals[$outputRow['group']] ?? '0', $outputRow['total_amount'] ?? '0');
+            $group = $outputRow['group'];
+            $groupTotals[$group] = Decimal::add($groupTotals[$group] ?? '0', $outputRow['total_amount'] ?? '0');
+            $attrs = $outputRow['node']['attributes'];
+            if (! $attrs['is_not_accounted'] && Decimal::compare($outputRow['quantity'], '0') !== 0) {
+                $groupBaseKnown[$group] = ($groupBaseKnown[$group] ?? true) && ($attrs['base_unit_price'] ?? null) !== null;
+                foreach ($componentFields as $field) {
+                    $groupComponents[$group][$field] = Decimal::add($groupComponents[$group][$field] ?? '0', (string) ($attrs[$field] ?? '0'));
+                }
+                $baseDirect = Decimal::multiply(Decimal::multiply($outputRow['quantity'], (string) ($attrs['base_unit_price'] ?? '0'), 8),
+                    Decimal::multiply((string) ($attrs['price_coefficient'] ?: '1'), (string) ($attrs['coefficient_total'] ?: '1'), 12));
+                $groupComponents[$group]['base_direct_costs'] = Decimal::add($groupComponents[$group]['base_direct_costs'] ?? '0', $baseDirect);
+            }
             if (! $this->fits($outputRow['node'])) {
                 $rows[$outputRow['key']]['conflicts'][] = $this->conflict('match:'.$outputRow['key'], 'numeric_range');
             }
         }
         foreach ($groupTotals as $group => $amount) {
             $amount = Decimal::add($amount, $reserves[$group] ?? '0');
-            if (Decimal::compare($amount, '9999999999999.99') > 0 || Decimal::compare(Decimal::multiply($amount, Decimal::add('1', Decimal::divide((string) $parameters['vat_rate'], '100', 8))), '9999999999999.99') > 0) {
+            $componentOverflow = Decimal::compare($this->magnitude($reserves[$group] ?? '0'), '9999999999999.99') > 0;
+            foreach ($groupComponents[$group] ?? [] as $field => $component) {
+                if (str_starts_with($field, 'base_') && ! ($groupBaseKnown[$group] ?? false) && ! in_array($field, ['base_overhead_amount', 'base_profit_amount'], true)) {
+                    continue;
+                }
+                $componentOverflow = $componentOverflow || Decimal::compare($this->magnitude($component), '9999999999999.99') > 0;
+            }
+            if ($componentOverflow || Decimal::compare($this->magnitude($amount), '9999999999999.99') > 0 || Decimal::compare($this->magnitude(Decimal::multiply($amount, Decimal::add('1', Decimal::divide((string) $parameters['vat_rate'], '100', 8)))), '9999999999999.99') > 0) {
                 foreach ($rows as &$rangeRow) {
                     if ($rangeRow['group'] === $group && $rangeRow['role'] !== 'subtract') {
                         $rangeRow['conflicts'][] = $this->conflict('match:'.$rangeRow['key'], 'numeric_range');
@@ -260,8 +299,14 @@ final class EstimateOperationCalculator
     private function fits(array $node): bool
     {
         $attrs = $node['attributes'];
-        foreach (['quantity' => '999999999999.99999999', 'quantity_total' => '999999999999.99999999', 'unit_price' => '9999999999999999.9999', 'current_unit_price' => '9999999999999999.9999', 'total_amount' => '9999999999999.99', 'current_total_amount' => '9999999999999.99'] as $field => $limit) {
-            if (Decimal::compare((string) ($attrs[$field] ?? '0'), $limit) > 0) {
+        $limits = ['quantity' => '999999999999.99999999', 'quantity_total' => '999999999999.99999999', 'unit_price' => '9999999999999999.9999', 'current_unit_price' => '9999999999999999.9999'];
+        foreach (['direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost',
+            'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'base_machinery_labor_cost',
+            'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
+            $limits[$field] = '9999999999999.99';
+        }
+        foreach ($limits as $field => $limit) {
+            if (Decimal::compare($this->magnitude((string) ($attrs[$field] ?? '0')), $limit) > 0) {
                 return false;
             }
         }
@@ -272,7 +317,7 @@ final class EstimateOperationCalculator
         }
         foreach ($node['resources'] as $resource) {
             foreach (['total_quantity' => '999999999999.99999999', 'unit_price' => '9999999999999999.9999', 'total_amount' => '9999999999999.99'] as $field => $limit) {
-                if (Decimal::compare((string) ($resource[$field] ?? '0'), $limit) > 0) {
+                if (Decimal::compare($this->magnitude((string) ($resource[$field] ?? '0')), $limit) > 0) {
                     return false;
                 }
             }
@@ -299,7 +344,7 @@ final class EstimateOperationCalculator
         }
         $completeResources = $node['children'] !== [] && Decimal::compare($originalDirect, '0') > 0
             && Decimal::compare(Decimal::multiply($oldParts['direct'], $factor), Decimal::value($originalDirect)) === 0;
-        if (Decimal::compare((string) ($attrs['quantity_coefficient'] ?? '1'), '0') <= 0 || (Decimal::compare($oldQuantity, '0') === 0 && ! $attrs['is_not_accounted'] && Decimal::compare((string) ($attrs['total_amount'] ?? '0'), '0') > 0)) {
+        if (Decimal::compare((string) ($attrs['quantity_coefficient'] ?? '1'), '0') <= 0 || (Decimal::compare($oldQuantity, '0') === 0 && ! $attrs['is_not_accounted'] && Decimal::compare((string) ($attrs['total_amount'] ?? '0'), '0') !== 0)) {
             $conflicts[] = $this->conflict('match:'.$node['key'], 'quantity_invalid');
 
             return;
@@ -539,6 +584,9 @@ final class EstimateOperationCalculator
             return null;
         }
         $floor = $node['execution']['quantity'] ?? '0';
+        if (Decimal::compare($floor, '0') < 0) {
+            return null;
+        }
         foreach ($node['children'] as $child) {
             $childFloor = $this->executedFloor($child);
             if ($childFloor === null) {
@@ -548,7 +596,7 @@ final class EstimateOperationCalculator
                 if (Decimal::compare($child['quantity'], '0') === 0) {
                     return null;
                 }
-                $parentFloor = Decimal::divide(Decimal::multiply($childFloor, $node['quantity'], 12), $child['quantity'], 8);
+                $parentFloor = Decimal::divide(Decimal::multiply($childFloor, $this->magnitude($node['quantity']), 12), $this->magnitude($child['quantity']), 8);
                 if (Decimal::compare($parentFloor, $floor) > 0) {
                     $floor = $parentFloor;
                 }
@@ -558,7 +606,28 @@ final class EstimateOperationCalculator
         return $floor;
     }
 
-    private function signature(array $row, bool $includePrice = false): ?string
+    private function preservesExecution(array $node, string $quantity): bool
+    {
+        $executed = $node['execution']['quantity'] ?? '0';
+        if (($node['execution']['unknown'] ?? false) || Decimal::compare($executed, '0') < 0 || Decimal::compare($this->magnitude($quantity), $executed) < 0) {
+            return false;
+        }
+        $ratio = Decimal::compare($node['quantity'], '0') === 0 ? '0' : Decimal::divide($quantity, $node['quantity'], 12);
+        foreach ($node['children'] as $child) {
+            if (! $this->preservesExecution($child, Decimal::multiply($child['quantity'], $ratio, 8))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function magnitude(string $value): string
+    {
+        return Decimal::compare($value, '0') < 0 ? Decimal::subtract('0', $value) : $value;
+    }
+
+    private function signature(array $row, bool $includePrice = false, bool $includeSection = true): ?string
     {
         $attrs = $row['node']['attributes'];
         $code = $attrs['normative_rate_code'] ?: ($attrs['code'] ?? null) ?: ($attrs['material_id'] ? 'material:'.$attrs['material_id'] : ($attrs['catalog_item_id'] ? 'catalog:'.$attrs['catalog_item_id'] : null));
@@ -566,7 +635,7 @@ final class EstimateOperationCalculator
             return null;
         }
 
-        return hash('sha256', json_encode([$attrs['item_type'], $attrs['normative_rate_id'], $this->text((string) $code), $row['unit'], $row['section_path'], $this->terms($row['node'], $includePrice)], JSON_THROW_ON_ERROR));
+        return hash('sha256', json_encode([$attrs['item_type'], $attrs['normative_rate_id'], $this->text((string) $code), $row['unit'], $includeSection ? $row['section_path'] : null, $this->terms($row['node'], $includePrice)], JSON_THROW_ON_ERROR));
     }
 
     private function terms(array $node, bool $includePrice): array
@@ -581,7 +650,7 @@ final class EstimateOperationCalculator
             array_map(fn (array $r): array => [$r['resource_type'], $r['material_id'], $r['measurement_unit_id'], $r['name'], $r['quantity_per_unit'], $includePrice ? $r['unit_price'] : null], $node['resources']),
             $children, $includePrice ? $this->unitPrice($node) : null,
             $includePrice ? array_map(fn (string $field): mixed => $attrs[$field] ?? null, ['base_unit_price', 'price_index', 'materials_index', 'machinery_index', 'labor_index']) : null,
-            $includePrice && Decimal::compare((string) ($attrs['quantity_total'] ?? '0'), '0') > 0
+            $includePrice && Decimal::compare((string) ($attrs['quantity_total'] ?? '0'), '0') !== 0
                 ? array_map(fn (string $field): string => Decimal::divide((string) ($attrs[$field] ?? '0'), (string) $attrs['quantity_total'], 8), ['total_amount', 'overhead_amount', 'profit_amount', 'equipment_cost']) : null,
         ];
     }
@@ -661,7 +730,7 @@ final class EstimateOperationCalculator
         $target['source_items'] = array_merge($target['source_items'], $source['source_items']);
         $quantity = Decimal::add((string) $target['attributes']['quantity_total'], (string) $source['attributes']['quantity_total']);
         $target['attributes']['quantity'] = $this->rawQuantity($target, $quantity);
-        foreach (['quantity_total', 'direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
+        foreach (['quantity_total', 'direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'base_machinery_labor_cost', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
             $target['attributes'][$field] = Decimal::add((string) ($target['attributes'][$field] ?? '0'), (string) ($source['attributes'][$field] ?? '0'));
         }
         $target['quantity'] = $target['attributes']['quantity_total'];
