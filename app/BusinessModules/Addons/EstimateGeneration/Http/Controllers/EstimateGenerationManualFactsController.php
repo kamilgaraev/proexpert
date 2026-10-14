@@ -13,9 +13,26 @@ use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 final class EstimateGenerationManualFactsController extends Controller
 {
+    public function inventory(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory $inventory): JsonResponse
+    {
+        $input = $request->validate(['search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:50'], 'parent_entity_id' => ['required_with:relation', 'string', 'max:160'],
+            'relation' => ['required_with:parent_entity_id', \Illuminate\Validation\Rule::in(array_keys(\App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::RELATIONS))]]);
+        foreach (['page', 'per_page'] as $field) {
+            if (isset($input[$field])) {
+                $input[$field] = (int) $input[$field];
+            }
+        }
+
+        return AdminResponse::success($inventory->handle($request->user(), (int) $project->id, (int) $session->id, $input))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function store(SaveManualProjectFactsRequest $request, Project $project, EstimateGenerationSession $session, SaveManualProjectFacts $save): JsonResponse
     {
         $input = $request->validated();
