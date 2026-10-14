@@ -28,6 +28,8 @@ final readonly class RunEstimateComposerCorrection
     /** @return list<array<string,mixed>> */
     public function run(EstimateComposerCorrectionInput $input): array
     {
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($input->audit->organizationId, $input->audit->projectId, $input->audit->sessionId, $input->audit->wireScope?->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($input->audit->draft, $workLimit);
         $scope = $input->audit;
         $runInput = new AiRoleRunInput(
             $scope->organizationId,
@@ -46,7 +48,10 @@ final readonly class RunEstimateComposerCorrection
         $owner = AiOperationContext::deterministicId('estimate-correction-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
         if ($claim->disposition === 'replay' && $claim->result !== null) {
-            return $this->validate($claim->result->payload['corrections'] ?? null, $input);
+            $corrections = $this->validate($claim->result->payload['corrections'] ?? null, $input);
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCorrections($scope->draft, $corrections, $workLimit);
+
+            return $corrections;
         }
         if ($claim->disposition !== 'owned' || $claim->ownerUuid === null) {
             throw new RuntimeException('estimate_composer_correction_role_run_'.$claim->disposition);
@@ -62,6 +67,7 @@ final readonly class RunEstimateComposerCorrection
                 throw new InvalidArgumentException('estimate_composer_correction_result_invalid');
             }
             $corrections = $this->validate($raw['corrections'], $input);
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCorrections($scope->draft, $corrections, $workLimit);
             $this->runs->complete($claim->runId, $claim->ownerUuid, new AiRoleRunResult([
                 'schema_version' => 1,
                 'corrections' => $corrections,

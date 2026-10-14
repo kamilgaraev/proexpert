@@ -19,6 +19,9 @@ final class EstimatorProcessingPlan
             || $rasterUnits < 0 || $rasterUnits > 500 || $workItems < 0 || $workItems > 2000) {
             throw new DomainException('estimator_processing_plan_limit');
         }
+        if (! in_array($kind, ['documents', 'dialogue'], true) && $workItems > 512) {
+            throw new DomainException('estimator_processing_plan_requires_section_split');
+        }
         $roles = [];
         if (array_diff(array_keys($knownPartLimits), ['composer', 'audit', 'synthesis']) !== []) {
             throw new DomainException('estimator_processing_plan_part_limit_invalid');
@@ -30,7 +33,8 @@ final class EstimatorProcessingPlan
         }
         $baselineParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
         $composerParts = max($baselineParts, $knownPartLimits['composer'] ?? 0);
-        $auditParts = max($baselineParts, $knownPartLimits['audit'] ?? 0);
+        // Runtime can split rich proofs down to a single work, even before a draft exists.
+        $auditParts = max(1, $workItems, $knownPartLimits['audit'] ?? 0);
         $synthesisParts = 0;
         if ($kind === 'dialogue') {
             $roles['estimate_dialogue_interpretation'] = $this->role(3, 80000, 2048, $tariff);
@@ -69,7 +73,7 @@ final class EstimatorProcessingPlan
             throw new DomainException('estimator_processing_plan_empty_or_oversized');
         }
 
-        return ['contract_version' => 'estimator-processing-plan:v1', 'roles' => $roles,
+        return ['contract_version' => 'estimator-processing-plan:v2', 'work_ceiling_policy' => 'global_work_items:v1', 'roles' => $roles,
             'text_payload_policy' => \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture(),
             'maximum_calls' => $calls, 'maximum_provider_cost_micro_rub' => $maximum->toInt(),
             'raster_units' => $rasterUnits, 'work_item_limit' => $workItems, 'complex' => $complex, 'rerank' => $rerank,

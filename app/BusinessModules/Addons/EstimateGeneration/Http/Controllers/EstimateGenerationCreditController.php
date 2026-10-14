@@ -62,8 +62,9 @@ final class EstimateGenerationCreditController extends Controller
                 'estimator_processing_plan_empty_or_oversized' => 'Для этого пакета не требуется отдельное распознавание ИИ либо превышены ограничения обработки. Локальные форматы обрабатываются бесплатно.',
                 'estimator_credit_documents_processing_active' => 'Дождитесь завершения текущего распознавания или остановите его перед новым запуском.',
                 'estimator_credit_quote_expired' => 'Предложение стоимости истекло. Получите новое перед запуском.',
-                'estimator_credit_request_id_conflict' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',
-                'estimator_known_context_changed' => 'Исходные данные или состав изменились. Обновите оценку и получите новое предложение стоимости.',
+                'estimator_credit_request_id_conflict', 'estimator_credit_quote_invalid' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',
+                'estimator_known_context_changed', 'estimator_credit_manifest_changed' => 'Исходные данные или состав изменились. Обновите оценку и получите новое предложение стоимости.',
+                'estimator_processing_plan_requires_section_split' => trans_message('estimate_generation.credit_quote_requires_section_split'),
                 'estimator_known_context_requires_source_split' => 'Объём данных превышает предел одного запуска. Выберите отдельный раздел или разделите документы и повторите расчёт стоимости.',
                 default => 'Не удалось рассчитать стоимость операции для текущих данных.',
             }]);

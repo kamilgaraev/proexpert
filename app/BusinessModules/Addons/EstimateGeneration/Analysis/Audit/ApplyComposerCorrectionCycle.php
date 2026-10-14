@@ -18,7 +18,7 @@ final readonly class ApplyComposerCorrectionCycle
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
     {
-        $limit = null;
+        $limit = $workLimit = null;
         if ($root->wireScope?->creditOperationId !== null) {
             $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
                 ->where('organization_id', $root->organizationId)->where('project_id', $root->projectId)
@@ -27,6 +27,7 @@ final readonly class ApplyComposerCorrectionCycle
                 throw new \InvalidArgumentException('estimate_audit_approved_plan_missing');
             }
             $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+            $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::fromPlan($plan);
             $limit = $plan['audit_part_limit'] ?? (isset($plan['roles']['estimate_audit']) ? 1 : 0);
             if (! is_int($limit) || $limit < 0 || $limit > EstimateAuditBatchPlanner::MAX_PARTS
                 || ($limit > 0 && ! isset($plan['roles']['estimate_audit']))) {
@@ -36,6 +37,10 @@ final readonly class ApplyComposerCorrectionCycle
                 throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
             }
         }
+        $assertDraft = static function (array $draft) use ($workLimit): void {
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($draft, $workLimit);
+        };
+        $assertDraft($root->draft);
         $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
             $root->organizationId, $root->projectId, $root->sessionId, $root->wireScope?->creditOperationId, 'estimate_audit');
         $correctionPolicy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
@@ -48,7 +53,7 @@ final readonly class ApplyComposerCorrectionCycle
             throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
         }
         if (count($parts) === 1) {
-            return $this->applyPart($parts[0]['input']);
+            return $this->applyPart($parts[0]['input'], $assertDraft);
         }
         $draft = $root->draft;
         $findings = $reviews = $history = [];
@@ -57,7 +62,11 @@ final readonly class ApplyComposerCorrectionCycle
         // Validate every serialized part before the first physical audit request.
         $inputs = array_column($parts, 'input');
         foreach ($parts as $partIndex => $part) {
-            $outcome = $this->applyPart($inputs[$partIndex]);
+            $workKeys = $part['work_keys'];
+            $assertPart = static function (array $candidate) use (&$draft, $workKeys, $workLimit): void {
+                \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertReplacement($draft, $candidate, $workKeys, $workLimit);
+            };
+            $outcome = $this->applyPart($inputs[$partIndex], $assertPart);
             $originalKeys = array_fill_keys($part['work_keys'], true);
             $replacements = [];
             foreach ($outcome['draft']['local_estimates'] ?? [] as $localIndex => $local) {
@@ -107,13 +116,14 @@ final readonly class ApplyComposerCorrectionCycle
     }
 
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
-    private function applyPart(EstimateAuditInput $root): array
+    private function applyPart(EstimateAuditInput $root, callable $assertDraft): array
     {
         $draft = $root->draft;
         $history = [];
         $correctionCycles = 0;
         $final = ['accepted' => false, 'findings' => []];
         for ($cycle = 0; $cycle <= 2; $cycle++) {
+            $assertDraft($draft);
             $input = $root->withDraft($draft, $cycle);
             $final = $this->auditor->run($input);
             $history[] = [
@@ -131,10 +141,12 @@ final readonly class ApplyComposerCorrectionCycle
                 static fn (array $finding): bool => ($finding['correction']['operation'] ?? null) !== 'remove_exact_duplicate',
             ));
             if ($remaining !== []) {
-                $corrections = $this->corrector->run(new EstimateComposerCorrectionInput($input, $remaining));
+                $assertDraft($corrected);
+                $corrections = $this->corrector->run(new EstimateComposerCorrectionInput($root->withDraft($corrected, $cycle), $remaining));
                 [$corrected, $composerApplied] = $this->applyComposerCorrections($corrected, $corrections, $input->derivedQuantities, $input->facts);
                 $applied = $applied || $composerApplied;
             }
+            $assertDraft($corrected);
             if (! $applied) {
                 break;
             }

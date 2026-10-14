@@ -141,6 +141,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $this->logProgress($context, 'quantity_evidence_materialized');
         $this->renewAfterProgress($heartbeat);
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         $candidates = $this->compositionProjector->candidates($payload['local_estimates']);
         $composerInput = $this->composerInputs->capture(
             $context->organizationId,
@@ -163,6 +165,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $composerInput->derivedQuantities,
             $composerInput->facts,
         );
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {

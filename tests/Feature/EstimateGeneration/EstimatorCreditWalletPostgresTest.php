@@ -517,7 +517,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 $cycles->apply($input);
                 self::fail('The auditor expanded the approved part plan.');
             } catch (\InvalidArgumentException $exception) {
-                self::assertSame('estimate_audit_parts_exceed_approved_plan', $exception->getMessage());
+                self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
                 self::assertCount(0, $httpHistory);
                 self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
             }
@@ -533,6 +533,156 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
             ->abort($session->fresh(), $operationId, 'fixture_finished'));
+    }
+
+    public function test_global_work_ceiling_blocks_direct_composer_auditor_and_corrector_before_claim_callback_or_http(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:global-work-bound');
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $id = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $history = [];
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler([]));
+        $handler->push(\GuzzleHttp\Middleware::history($history));
+        $wire = new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
+            httpClient: new \GuzzleHttp\Client(['handler' => $handler]));
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class, $wire);
+        $items = array_map(static fn ($i): array => ['key' => 'work:'.$i, 'name' => 'Work '.$i, 'quantity' => null, 'unit' => 'm2'], range(1, 33));
+        $draft = ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]];
+        $wireScope = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $id);
+        $audit = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), 0, [], [], $draft, [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::PROMPT_CONTRACT, $wireScope);
+        $correction = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput($audit, [['finding_id' => 'finding:missing']]);
+        $candidates = array_map(static fn ($i): array => ['candidate_id' => 'candidate:'.$i, 'work_key' => 'work:'.$i,
+            'name' => 'Work '.$i, 'unit' => null, 'quantity' => null, 'quantity_formula' => null,
+            'source_fact_ids' => [], 'technology_package_candidate' => null], range(1, 33));
+        $composer = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), [], [], [], $candidates, [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT, $wireScope);
+        $callback = static fn () => self::fail('A physical attempt callback must not run above the frozen work ceiling.');
+        $calls = [
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::class)->apply($audit),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::class)->run($audit),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel::class)->audit($audit, $callback),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::class)->runDetailed($composer),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel::class)->compose($composer, $callback),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection::class)->run($correction),
+            fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel::class)->correct($correction, $callback),
+        ];
+        foreach ($calls as $call) {
+            try {
+                $call();
+                self::fail('An over-limit role was admitted.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
+            }
+        }
+        self::assertCount(0, $history);
+        self::assertSame(0, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count());
+        try {
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation(
+                (int) $organization->id + 1000, $scope->projectId, $scope->sessionId, $id);
+            self::fail('Another organization resolved the approved work limit.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_work_approved_plan_missing', $exception->getMessage());
+        }
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abort($session->fresh(), $id, 'fixture_finished'));
+    }
+
+    public function test_additions_in_two_audit_parts_share_one_frozen_work_ceiling_and_stop_before_the_next_audit(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:cross-part-work-bound');
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $id = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+        $basis = ['key' => 'floor_area', 'amount' => '12.7500', 'unit' => 'м2', 'formula_key' => 'direct_floor_area',
+            'formula_version' => 'v1', 'source' => 'evidenced', 'model_version' => 'test:v1', 'evidence_ids' => [],
+            'assumptions' => [], 'review_blockers' => [], 'formula_inputs' => ['entity_id' => 'entity:room',
+                'operands' => [['fact_id' => 'fact:floor-area', 'value' => '12.7500', 'unit' => 'm2']]]];
+        $quantity = ['id' => 'quantity:floor', 'value' => '12.7500', 'unit' => 'м2', 'entity_id' => 'entity:room',
+            'operand_fact_ids' => ['fact:floor-area'], 'formula_key' => 'direct_floor_area', 'source' => 'evidenced', 'quantity_basis' => $basis];
+        $items = array_map(static fn ($i): array => ['key' => 'work:'.$i, 'name' => 'Work '.$i, 'entity_id' => 'entity:room',
+            'description' => str_repeat('accepted input ', 10), 'quantity' => null, 'unit' => 'м2'], range(1, 31));
+        $root = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), 0,
+            [['id' => 'fact:floor-area', 'entity_id' => 'entity:room', 'value' => '12.7500', 'unit' => 'm2', 'status' => 'confirmed']], [$quantity],
+            ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]],
+            [['fact_id' => 'fact:floor-area', 'locator' => ['document_id' => 7, 'page' => 2]]],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::PROMPT_CONTRACT,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $id));
+        self::assertGreaterThan(1, count((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditContextPlanner)->prepare($root, 4000)));
+        $auditModel = new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel
+        {
+            public int $calls = 0;
+
+            public function audit(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput $input, callable $onAttemptStarted): array
+            {
+                $this->calls++;
+                if ($this->calls > 3) {
+                    throw new \LogicException('An additional audit ran above the global work ceiling.');
+                }
+                $onAttemptStarted(sprintf('aaaaaaaa-aaaa-4aaa-8aaa-%012d', $this->calls));
+                if ($this->calls === 2) {
+                    return ['accepted' => true, 'findings' => []];
+                }
+
+                return ['accepted' => false, 'findings' => [['finding_id' => 'missing:'.$this->calls, 'type' => 'omission',
+                    'severity' => 'material', 'item_key' => null, 'source_fact_ids' => ['fact:floor-area'],
+                    'source_locator' => ['document_id' => 7, 'page' => 2], 'reason' => 'В выбранном составе отсутствует работа пола.',
+                    'impact' => 'Состав работ по помещению неполный.', 'recommendation' => 'Добавить работу по подтверждённой площади пола.',
+                    'correction' => ['operation' => 'operator_review']]]];
+            }
+        };
+        $correctionModel = new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionModel
+        {
+            public int $calls = 0;
+
+            public function correct(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $key = ['finish.floor', 'warehouse.floor_hardener'][$this->calls++];
+                $onPhysicalAttemptReserved(sprintf('cccccccc-cccc-4ccc-8ccc-%012d', $this->calls));
+
+                return ['corrections' => [['operation' => 'add_work', 'finding_id' => $input->findings[0]['finding_id'],
+                    'work_key' => $key, 'name' => $key === 'finish.floor' ? 'Устройство покрытия пола' : 'Упрочнение покрытия пола',
+                    'derived_quantity_id' => 'quantity:floor', 'source_fact_ids' => ['fact:floor-area']]]];
+            }
+        };
+        $runs = new \Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
+        $cycles = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle(
+            new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit($runs, $auditModel, 'openai/gpt-6-luna'),
+            new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection($runs, $correctionModel, 'openai/gpt-6-luna'), 4000);
+        try {
+            $cycles->apply($root);
+            self::fail('Two parts independently expanded the global work scope above 32.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
+            self::assertSame(3, $auditModel->calls);
+            self::assertSame(2, $correctionModel->calls);
+        }
+        self::assertSame(32, \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, $id));
+        self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abort($session->fresh(), $id, 'fixture_finished'));
     }
 
     public static function auditPartitionApprovals(): array
@@ -864,6 +1014,65 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $reservation = \App\Models\Credits\AICreditReservation::query()->findOrFail($operation->reservation_id);
         $credits->cancel($reservation);
         self::assertSame(1000000, $credits->balance($organization)['available_minor']);
+    }
+
+    public function test_a_valid_saved_v1_quote_replays_its_exact_terms_under_the_new_v2_builder(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $row = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($row->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        $plan['contract_version'] = 'estimator-processing-plan:v1';
+        unset($plan['work_ceiling_policy']);
+        $plan['audit_part_limit'] = 1;
+        $plan['roles']['estimate_audit']['max_calls'] = 9;
+        $plan['roles']['estimate_composer_correction']['max_calls'] = 6;
+        $plan['maximum_calls'] = array_sum(array_column($plan['roles'], 'max_calls'));
+        $plan['maximum_provider_cost_micro_rub'] = array_sum(array_map(static fn ($role): int => $role['maximum_cost_micro_rub'] * $role['max_calls'], $plan['roles']));
+        $identity = json_decode($row->credit_request, true, 64, JSON_THROW_ON_ERROR);
+        $id = (string) Str::uuid();
+        $identity['operation_id'] = $id;
+        $identity['processing_plan_hash'] = hash('sha256', CanonicalPipelineJson::encode($plan));
+        $identity['maximum_calls'] = $plan['maximum_calls'];
+        $identity['maximum_provider_cost_micro_rub'] = $plan['maximum_provider_cost_micro_rub'];
+        $request = new EstimatorCreditRequest($identity['organization_id'], $identity['project_id'], $identity['session_id'],
+            $identity['actor_user_id'], $identity['operation_id'], $identity['operation_kind'], $identity['state_version'],
+            $identity['evaluation_input_hash'], $identity['source_input_version'], $identity['manifest_hash'],
+            $identity['processing_plan_hash'], $identity['maximum_provider_cost_micro_rub'], $identity['maximum_calls'], $identity['supplier_tariff']);
+        $legacyQuote = app(AICreditService::class)->quoteEstimator($organization, $actor, $request);
+        $quote = \App\Models\Credits\AICreditQuote::query()->where('public_id', $legacyQuote['quote_id'])->sole();
+        $legacyRow = (array) $row;
+        unset($legacyRow['id']);
+        DB::table('estimate_generation_credit_operations')->insert([...$legacyRow, 'operation_id' => $id,
+            'processing_plan' => CanonicalPipelineJson::encode($plan), 'credit_request' => CanonicalPipelineJson::encode($identity),
+            'quote_id' => $quote->id, 'plan_hash' => $identity['processing_plan_hash'],
+            'maximum_calls' => $request->maximumCalls, 'maximum_provider_cost_micro_rub' => $request->maximumProviderCostMicroRub,
+        ]);
+        $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $quoteCount = DB::table('ai_credit_quotes')->count();
+        config(['ai-assistant-credits.price_version' => 99]);
+        $replay = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        self::assertSame($legacyQuote['quote_id'], $replay['quote_id']);
+        self::assertSame($legacyQuote['max_units_minor'], $replay['max_units_minor']);
+        self::assertSame($legacyQuote['price_version'], $replay['price_version']);
+        self::assertSame($legacyQuote['expires_at'], $replay['expires_at']);
+        self::assertSame(18, $replay['maximum_calls']);
+        self::assertEquals($before, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame($quoteCount, DB::table('ai_credit_quotes')->count());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        $this->travelTo($quote->expires_at->addSecond());
+        try {
+            $this->expectException(\DomainException::class);
+            $this->expectExceptionMessage('estimator_credit_quote_expired');
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        } finally {
+            $this->travelBack();
+        }
     }
 
     public function test_a_physical_call_is_bound_to_one_reserved_operation_and_a_rollback_does_not_consume_its_slot(): void

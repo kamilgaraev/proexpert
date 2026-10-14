@@ -223,6 +223,40 @@ final class EstimateAuditTest extends TestCase
         self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $result['draft']['artifact_hash']);
     }
 
+    public function test_composer_correction_receives_the_draft_after_duplicate_removal_and_replays_that_same_basis(): void
+    {
+        $retained = $this->item('work:foundation');
+        $duplicate = $this->item('work:foundation-copy');
+        $finding = $this->finding('duplicate', 'duplicate', $this->duplicateCorrection($duplicate, $retained));
+        $auditModel = new RecordedEstimateAuditModel([
+            ['accepted' => false, 'findings' => [$finding, $this->finding('missing', 'coverage_gap')]],
+            ['accepted' => true, 'findings' => []],
+        ]);
+        $correctionModel = new class implements EstimateComposerCorrectionModel
+        {
+            public int $calls = 0;
+
+            public function correct(EstimateComposerCorrectionInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                \PHPUnit\Framework\Assert::assertSame(['work:foundation'], array_column(
+                    $input->audit->draft['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+                $onPhysicalAttemptReserved('cccccccc-cccc-4ccc-8ccc-cccccccccccc');
+
+                return ['corrections' => []];
+            }
+        };
+        $cycles = new ApplyComposerCorrectionCycle(new RunEstimateAudit(new InMemoryAiRoleRunRepository, $auditModel, 'openai/gpt-6-luna'),
+            new RunEstimateComposerCorrection(new InMemoryAiRoleRunRepository, $correctionModel, 'openai/gpt-6-luna'));
+        $input = $this->input($this->draft([$retained, $duplicate]));
+        $result = $cycles->apply($input);
+        self::assertSame('accepted', $result['audit']['status']);
+        self::assertCount(1, $result['draft']['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertSame($result, $cycles->apply($input));
+        self::assertSame(1, $correctionModel->calls);
+        self::assertSame(2, $auditModel->calls);
+    }
+
     public function test_two_corrections_are_the_hard_limit_and_material_remainder_becomes_review_item(): void
     {
         $a = $this->item('work:a');

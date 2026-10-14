@@ -55,6 +55,58 @@ final class RecordedUniversalPipelinePostgresTest extends EstimateGenerationCano
         self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $adapter->lastRun['session_id'])->count());
     }
 
+    public function test_paid_composer_supplementary_overflow_stops_before_auditor_and_refunds_the_operation_without_publishing(): void
+    {
+        $fixture = base_path('tests/Fixtures/EstimateGeneration/universal-replay/text-work-overflow-v1.json');
+        $source = json_decode(file_get_contents($fixture), true, 64, JSON_THROW_ON_ERROR)['description'];
+        $objects = new class($source) implements \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkObjectReader
+        {
+            public function __construct(private readonly string $source) {}
+
+            public function read(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData|BenchmarkPredictionCaseData $case, string $role, int $maxBytes): string
+            {
+                if ($role !== 'input') {
+                    throw new \LogicException('The failure scenario must not read an oracle.');
+                }
+
+                return $this->source;
+            }
+        };
+        $before = (int) DB::table('estimate_generation_sessions')->max('id');
+        $adapter = new RecordedUniversalPipelineAdapter($this->app, $objects, $fixture, hash_file('sha256', $fixture));
+        try {
+            $adapter->run(new BenchmarkPredictionCaseData('supplementary-overflow', BenchmarkDatasetType::Regression,
+                BenchmarkSourceType::TextDescription, 'work-ceiling.txt', hash('sha256', $source), ['current_repair'], []), 300000);
+            self::fail('A paid composer expanded the approved work limit.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
+            // The adapter invokes handle directly. Deliver the remaining queue attempts,
+            // then execute the production terminal callback instead of assuming first-failure refund.
+            $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+            self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, $job);
+            for ($delivery = 1; $delivery < $job->maxExceptions; $delivery++) {
+                try {
+                    $job->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+                    self::fail('An overflowing paid result passed on queue redelivery.');
+                } catch (\InvalidArgumentException $replayedError) {
+                    self::assertSame($exception->getMessage(), $replayedError->getMessage());
+                }
+            }
+            $job->failed($exception);
+        }
+        $session = DB::table('estimate_generation_sessions')->where('id', '>', $before)->sole();
+        $operation = DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->sole();
+        self::assertSame('failed', $operation->status);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $usage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->get();
+        self::assertCount(1, $usage);
+        self::assertSame('estimate_composition', $usage[0]->operation);
+        self::assertGreaterThan(0, $usage[0]->cost_amount);
+        self::assertSame(0, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->where('role', 'estimate_auditor')->count());
+        self::assertSame('cancelled', DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->value('status'));
+    }
+
     public function test_changing_the_oracle_cannot_change_prediction_or_make_the_adapter_read_expected(): void
     {
         $root = base_path('tests/Fixtures/EstimateGeneration/universal-replay');
