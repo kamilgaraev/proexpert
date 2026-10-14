@@ -35,11 +35,25 @@ class StatefulGrandSmetaProcessor
     private bool $modern = false;
     private int $worksheetIndex = 0;
     private string $worksheetName = '';
-    private array $sourceAccountingStates = [];
+
+    public function getModernPositionRows(): array
+    {
+        return array_map(static fn (EstimateImportRowDTO $position): int => $position->rowNumber, $this->modernSourcePositions());
+    }
 
     public function setSourceAccountingStates(array $states): void
     {
-        $this->sourceAccountingStates = $states;
+        foreach ($this->modernSourcePositions() as $position) {
+            if (isset($states[$position->rowNumber])) {
+                $position->isNotAccounted = true;
+                $position->rawData['source_accounting'] = $states[$position->rowNumber];
+            }
+        }
+    }
+
+    private function modernSourcePositions(): array
+    {
+        return $this->currentPosition === null ? $this->modernPositions : [...$this->modernPositions, $this->currentPosition];
     }
 
     public function setWorksheet(int $index, string $name): void
@@ -271,7 +285,6 @@ class StatefulGrandSmetaProcessor
         $this->modernFinalized = false;
         $this->inSectionSummary = false;
         $this->modern = false;
-        $this->sourceAccountingStates = [];
     }
 
     private function processModernRow(array $data, array $mapping, int $rowNumber): void
@@ -420,10 +433,6 @@ class StatefulGrandSmetaProcessor
         $dto->rawData['source_unit_price'] = $this->number($data, $mapping, 'base_unit_price');
         $dto->rawData['total_source'] = $dto->currentTotalAmount !== null ? 'declared_current_total' : null;
         $dto->isNotAccounted = mb_strtoupper(trim((string) ($data[$mapping['position_number']] ?? ''))) === 'Н' && $dto->currentTotalAmount === null;
-        if (isset($this->sourceAccountingStates[$rowNumber])) {
-            $dto->isNotAccounted = true;
-            $dto->rawData['source_accounting'] = $this->sourceAccountingStates[$rowNumber];
-        }
         if (preg_match('/^(?:тц_|тсц|фссц|фсбц|фсрц|01\.)/iu', $dto->code ?? '') === 1) {
             $dto->itemType = 'material';
         }

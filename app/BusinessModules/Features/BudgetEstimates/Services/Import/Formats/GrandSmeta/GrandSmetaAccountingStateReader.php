@@ -11,7 +11,7 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 final class GrandSmetaAccountingStateReader
 {
-    public function detect(string $filePath, Worksheet $sheet, array $mapping, int $headerRow): array
+    public function detect(string $filePath, Worksheet $sheet, array $mapping, int $headerRow, array $positionRows): array
     {
         $mapping = array_filter($mapping, static fn (mixed $column): bool => is_string($column) && trim($column) !== '');
         if (!isset($mapping['position_number'], $mapping['name'])) {
@@ -32,14 +32,17 @@ final class GrandSmetaAccountingStateReader
             return [];
         }
         $lastDataColumn = max(array_map(static fn (string $column): int => Coordinate::columnIndexFromString($column), array_values($mapping)));
+        $positionRows = array_fill_keys($positionRows, true);
         $mirrors = [];
         $identityColumns = [];
         foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
             $rowNumber = $row->getRowIndex();
-            $number = preg_split('/\s+/u', $this->text($sheet->getCell($mapping['position_number'].$rowNumber)->getCalculatedValue()))[0] ?? '';
-            $name = $this->text($sheet->getCell($mapping['name'].$rowNumber)->getCalculatedValue());
-            if (preg_match('/^\d+[а-яa-z-]*$/iu', $number) !== 1 || $name === '') {
+            if (!isset($positionRows[$rowNumber])) {
                 continue;
+            }
+            $name = $this->text($sheet->getCell($mapping['name'].$rowNumber)->getCalculatedValue());
+            if ($name === '') {
+                return [];
             }
             $identityColumns[$rowNumber] = [$mapping['position_number'], $mapping['name']];
             if (isset($mapping['code']) && $this->text($sheet->getCell($mapping['code'].$rowNumber)->getCalculatedValue()) !== '') {

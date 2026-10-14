@@ -382,6 +382,53 @@ final class GrandSmetaModern2020Test extends TestCase
         }
     }
 
+    public function test_accounting_cohorts_only_include_parsed_positions_and_ignore_numbered_sections_and_footers(): void
+    {
+        $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+            $preview = $bridge->preview(new ImportSession, $path, $structure);
+            self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+            self::assertSame(0.11, $preview->totals['total_amount']);
+            $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item'] && !$row['is_section']));
+            self::assertCount(3, $roots);
+            self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+        }, decorate: static function ($sheet): void {
+            $sheet->insertNewRowBefore(4, 1);
+            $sheet->setCellValue('A4', 1);
+            $sheet->setCellValue('C4', 'Раздел 1. Работы');
+            $sheet->setCellValue('A14', 2);
+            $sheet->setCellValue('A18', 3);
+            $sheet->setCellValue('C18', 'Справочная строка в итогах');
+        });
+    }
+
+    public function test_theme_and_indexed_active_font_colors_do_not_break_accounting_detection(): void
+    {
+        $color = new \PhpOffice\PhpSpreadsheet\Style\Color;
+        $color->setARGB(null);
+        self::assertIsString($color->getRGB());
+        foreach (['theme' => '1', 'indexed' => '8'] as $attribute => $value) {
+            $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure) use ($attribute, $value): void {
+                $archive = new \ZipArchive;
+                self::assertTrue($archive->open($path));
+                $styles = new \DOMDocument;
+                self::assertTrue($styles->loadXML($archive->getFromName('xl/styles.xml')));
+                $fontColor = (new \DOMXPath($styles))->query('/*[local-name()="styleSheet"]/*[local-name()="fonts"]/*[local-name()="font"][1]/*[local-name()="color"]')->item(0);
+                self::assertInstanceOf(\DOMElement::class, $fontColor);
+                while ($fontColor->attributes->length > 0) {
+                    $fontColor->removeAttribute($fontColor->attributes->item(0)->nodeName);
+                }
+                $fontColor->setAttribute($attribute, $value);
+                $archive->addFromString('xl/styles.xml', $styles->saveXML());
+                $archive->close();
+                $preview = $bridge->preview(new ImportSession, $path, $structure);
+                self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+                self::assertSame(0.11, $preview->totals['total_amount']);
+                $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item']));
+                self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+            });
+        }
+    }
+
     public function test_gray_font_or_helper_mirror_alone_cannot_exclude_positions(): void
     {
         foreach ([[true, false, true], [false, true, true], ['partial', true, true], [true, true, false]] as [$gray, $mirrors, $producer]) {
@@ -394,7 +441,7 @@ final class GrandSmetaModern2020Test extends TestCase
         }
     }
 
-    private function withInactiveWorkbook(bool|string $gray, bool $mirrors, bool $producer, \Closure $assert, bool $quantityCoefficient = true, array $codeLessRows = []): void
+    private function withInactiveWorkbook(bool|string $gray, bool $mirrors, bool $producer, \Closure $assert, bool $quantityCoefficient = true, array $codeLessRows = [], ?\Closure $decorate = null): void
     {
         $book = new Spreadsheet;
         $sheet = $book->getActiveSheet();
@@ -418,6 +465,9 @@ final class GrandSmetaModern2020Test extends TestCase
         }
         foreach ([13 => ['C' => 'Итоги по смете:'], 14 => ['C' => 'Строительные работы'], 15 => ['C' => 'Эксплуатация машин и механизмов', 'L' => 0.1, 'M' => 1.1, 'N' => 0.11], 16 => ['C' => 'Всего', 'N' => 0.11]] as $row => $values) {
             foreach ($values as $column => $value) $sheet->setCellValue($column.$row, $value);
+        }
+        if ($decorate !== null) {
+            $decorate($sheet);
         }
         $temporary = tempnam(sys_get_temp_dir(), 'grand-accounting-');
         $path = $temporary.'.xlsx';
