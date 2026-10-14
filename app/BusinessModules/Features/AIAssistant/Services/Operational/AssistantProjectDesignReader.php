@@ -17,6 +17,7 @@ use App\Models\User;
 final readonly class AssistantProjectDesignReader extends AssistantProjectOperationalReader
 {
     public const TYPE = 'live_project_design_readiness_projection';
+    public const INTENT_PATTERN = '/(?:проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|пир.*(?:комплект|выпуск)|нормконтрол|(?:раздел[а-яё]*|комплектност[а-яё]*|состав)[\s\S]*(?:(?<![\p{L}\p{N}_])рд(?![\p{L}\p{N}_])|рабоч[а-яё]*\s+документ)|(?:(?<![\p{L}\p{N}_])рд(?![\p{L}\p{N}_])|рабоч[а-яё]*\s+документ)[\s\S]*(?:не\s+хватает|недоста|комплектност|состав|раздел))/iu';
 
     public function __construct(AssistantDataAccessPolicy $access, private DesignCompletenessService $completeness)
     {
@@ -25,7 +26,7 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
 
     public static function matches(string $query): bool
     {
-        return preg_match('/(?:проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|пир.*(?:комплект|выпуск)|нормконтрол)/iu', $query) === 1
+        return preg_match(self::INTENT_PATTERN, $query) === 1
             && preg_match('/создай|измени|удали|выпусти|согласуй|отправь|оплат|оплач|плат[её]ж|сч[её]т|бюджет|потрач|выручк|затрат|при[её]мк|журнал|охран[а-яё]*\s+труд|происшеств|табел|техник|rfi|вопрос[а-яё]*\s+проектировщик|критическ[а-яё]*\s+путь/iu', $query) !== 1;
     }
 
@@ -38,7 +39,7 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
         $counts = self::statusCounts($query);
         $pending = (clone $query)->whereNotIn('status', ['issued', 'archived']);
         $examples = [];
-        $packages = (clone $pending)->select(['id', 'organization_id', 'project_id', 'title', 'status', 'composition_status', 'composition_revision_id', 'planned_issue_date'])
+        $packages = (clone $pending)->select(['id', 'organization_id', 'project_id', 'title', 'project_stage', 'status', 'composition_status', 'composition_revision_id', 'planned_issue_date'])
             ->selectRaw("CASE WHEN octet_length(metadata::text) <= 262144 THEN metadata ELSE '{}'::jsonb END AS metadata,
                 octet_length(metadata::text) <= 262144 AS metadata_bounded")
             ->withOpenBlockingCount()->orderBy('id')->limit(20)->get();
@@ -46,6 +47,7 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
             if (! $package instanceof DesignPackage) { continue; }
             $example = $package->only(['id', 'title', 'status', 'composition_status']);
             $example['status'] = (string) $package->getRawOriginal('status');
+            $example['project_stage'] = (string) $package->getRawOriginal('project_stage');
             $example['open_blocking_comments'] = DesignPackageWorkflow::openBlockingCommentsCount($package);
             $example['readiness_available'] = $this->bounded($package);
             if ($example['readiness_available']) {
@@ -55,6 +57,13 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
                 $example['sections'] = $sections->count();
                 $example['required_empty_sections'] = $sections->filter(static fn ($section): bool => $section->required
                     && ! $activeArtifacts->contains(static fn ($artifact): bool => (int) $artifact->section_id === (int) $section->id))->count();
+                $example['missing_composition'] = $this->access->canCurrentPermission($actor, $organizationId, 'design-management.documents.view')
+                    && (($example['project_stage'] !== 'bim' && ! $package->artifacts->contains(static fn ($artifact): bool => $artifact->getRawOriginal('artifact_type') === 'model'))
+                        || $this->access->canCurrentPermission($actor, $organizationId, 'design-management.models.view'))
+                    ? $this->missingComposition($package) : ['available' => false];
+                if ($example['missing_composition']['available']) {
+                    $example['required_empty_sections'] = $example['missing_composition']['sections_total'];
+                }
                 $example['artifacts'] = $activeArtifacts->count();
                 $example['current_documents'] = $activeArtifacts->filter(static fn ($artifact): bool => $artifact->getRawOriginal('artifact_type') !== 'model' && $artifact->currentVersion !== null)->count();
                 $example['sheets'] = DesignDocumentSheet::query()->where('package_id', $package->id)->count();
@@ -66,6 +75,44 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
             $examples[] = $example;
         }
         return ['available' => true, 'status_counts' => $counts, 'total' => array_sum($counts), 'not_issued' => $pending->count(), 'examples' => $examples];
+    }
+
+    private function missingComposition(DesignPackage $package): array
+    {
+        foreach ([...$package->sections, ...$package->artifacts] as $child) {
+            if ((int) $child->organization_id !== (int) $package->organization_id
+                || (int) $child->project_id !== (int) $package->project_id || (int) $child->package_id !== (int) $package->id) { return ['available' => false]; }
+        }
+        foreach ($package->artifacts as $artifact) {
+            $version = $artifact->currentVersion;
+            if ($version !== null && ((int) $version->organization_id !== (int) $package->organization_id
+                || (int) $version->project_id !== (int) $package->project_id || (int) $version->artifact_id !== (int) $artifact->id)) { return ['available' => false]; }
+            if ($artifact->section_id !== null && ! $package->sections->contains('id', $artifact->section_id)) { return ['available' => false]; }
+        }
+        $revision = null;
+        if ($package->composition_revision_id !== null) {
+            $revision = DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->where('package_id', $package->id)
+                ->where('organization_id', $package->organization_id)->where('project_id', $package->project_id)->where('status', 'approved')->first();
+            if ($revision === null || $revision->exclusions()->where(static fn ($q) => $q->where('organization_id', '!=', $package->organization_id)
+                ->orWhere('project_id', '!=', $package->project_id)->orWhere('package_id', '!=', $package->id))->exists()) { return ['available' => false]; }
+        }
+        foreach ($package->sections as $section) {
+            $section->setRelation('artifacts', $package->artifacts->filter(static fn ($artifact): bool => (int) $artifact->section_id === (int) $section->id));
+        }
+        $scope = new \App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope($package);
+        $selected = collect($scope->selectedItems() ?? [])->keyBy('code');
+        $missingSections = (new \App\BusinessModules\Features\DesignManagement\Support\Rules\RequiredSectionRule)->check($package);
+        $missingDocuments = (new \App\BusinessModules\Features\DesignManagement\Support\Rules\RequiredCurrentArtifactRule)->check($package);
+        $sections = array_map(static function ($result) use ($package, $selected): array {
+            $code = (string) ($result->metadata['section_code'] ?? '');
+            $section = $package->sections->firstWhere('code', $code);
+            return ['code' => $code, 'title' => (string) ($selected->get($code)['title'] ?? $section?->title ?? $code), 'message' => $result->message];
+        }, array_slice($missingSections, 0, 20));
+
+        return ['available' => true, 'approved_revision_id' => $revision?->id, 'sections_total' => count($missingSections),
+            'documents_total' => count($missingDocuments), 'sections' => $sections,
+            'documents' => array_map(static fn ($result): array => ['section_code' => $result->metadata['section_code'] ?? null,
+                'document_code' => $result->metadata['document_code'] ?? null, 'message' => $result->message], array_slice($missingDocuments, 0, 20))];
     }
 
     private function bounded(DesignPackage $package): bool
@@ -96,12 +143,22 @@ final readonly class AssistantProjectDesignReader extends AssistantProjectOperat
         if (! $data['available']) { return implode("\n", [...$lines, trans_message('ai_assistant_operational.design_unavailable')]); }
         $lines[] = trans_message('ai_assistant_operational.design_counts', ['total' => $data['total'], 'pending' => $data['not_issued'],
             'issued' => $data['status_counts']['issued'] ?? 0, 'shown' => count($data['examples'])]);
+        if ($data['total'] === 0) { $lines[] = trans_message('ai_assistant_operational.design_no_expected_composition'); }
         foreach ($data['examples'] as $example) {
             $lines[] = '- #'.$example['id'].' '.self::text($example['title']).'; '.trans_message('design_management.statuses.packages.'.$example['status']);
+            $lines[] = trans_message('ai_assistant_operational.design_stage', ['stage' => trans_message('design_management.project_stages.'.$example['project_stage'])]);
             $lines[] = trans_message('ai_assistant_operational.design_blocking', ['count' => $example['open_blocking_comments'] ?? trans_message('ai_assistant_operational.not_recorded')]);
             if (! $example['readiness_available']) { $lines[] = trans_message('ai_assistant_operational.design_limit'); continue; }
             $lines[] = trans_message('ai_assistant_operational.design_content', ['sections' => $example['sections'], 'empty' => $example['required_empty_sections'], 'artifacts' => $example['artifacts'],
                 'documents' => $example['current_documents'], 'sheets' => $example['sheets']]);
+            $missing = $example['missing_composition'];
+            if (! $missing['available']) { $lines[] = trans_message('ai_assistant_operational.design_composition_unavailable'); }
+            else {
+                $lines[] = trans_message($missing['approved_revision_id'] === null ? 'ai_assistant_operational.design_composition_legacy' : 'ai_assistant_operational.design_composition_approved');
+                $lines[] = trans_message('ai_assistant_operational.design_missing_composition', ['sections' => $missing['sections_total'], 'documents' => $missing['documents_total']]);
+                foreach ($missing['sections'] as $section) { $lines[] = '- '.self::text($section['code']).' '.self::text($section['title']).': '.self::text($section['message']); }
+                foreach ($missing['documents'] as $document) { $lines[] = '- '.self::text((string) $document['section_code']).' / '.self::text((string) $document['document_code']).': '.self::text($document['message']); }
+            }
             $check = $example['check'];
             if ($check === null) { $lines[] = trans_message('ai_assistant_operational.design_not_checked'); }
             elseif (! $check['fresh']) { $lines[] = trans_message('ai_assistant_operational.design_stale'); }

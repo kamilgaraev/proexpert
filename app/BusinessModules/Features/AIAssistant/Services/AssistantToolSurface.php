@@ -59,6 +59,7 @@ final class AssistantToolSurface
             '/безопасност|охран|происшеств|нарушен|safety/iu' => ['get_project_safety_summary'],
             '/изменен|проектировщик|rfi/iu' => ['get_project_change_readiness'],
             '/комплект|нормконтрол|пир|design/iu' => ['get_project_design_readiness'],
+            \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectDesignReader::INTENT_PATTERN => ['get_project_design_readiness'],
             '/коммерческ[а-яё]*\s+предложен/iu' => ['get_project_proposal_readiness'],
             '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu' => ['get_project_executive_readiness'],
             '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu' => ['get_project_production_readiness'],

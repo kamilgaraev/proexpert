@@ -44,6 +44,17 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
         }
     }
 
+    public function test_saved_views_and_favourites_share_the_native_personal_workspace_reader(): void
+    {
+        foreach ([
+            'Какие у меня сохранены представления отчётов текущей организации? Есть ли среди них устаревшие, и где я могу их открыть?',
+            'Какие отчёты у меня в избранном, а какие сохранены отдельными представлениями? Это один и тот же список или разные?',
+        ] as $query) {
+            $plan = ['request' => ['message' => $query, 'context' => []]];
+            self::assertSame(['name' => 'get_own_report_workspace', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan));
+        }
+    }
+
     public function test_mixed_domains_and_writes_do_not_receive_partial_governance_replacement(): void
     {
         foreach ([

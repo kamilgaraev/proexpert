@@ -187,6 +187,41 @@ final class AssistantRequiredProjectReadTest extends TestCase
         return ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
     }
 
+    public function test_payment_readiness_understands_manager_document_wording_without_capturing_other_domains(): void
+    {
+        foreach ([
+            'По нашему объекту какие платежные документы сейчас готовы к оплате, а какие задерживаются? Что проверить перед оплатой?',
+            'Какие платёжные документы нашего объекта просрочены?',
+            'Какие счета по нашему объекту готовы к оплате?',
+        ] as $query) {
+            self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]],
+                AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
+            self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);
+        }
+        foreach ([
+            'Покажи все платежные документы нашего объекта.',
+            'Какие платежные документы готовы к оплате и какие акты требуют согласования?',
+            'Оплати готовые платежные документы нашего объекта.',
+            'Какие платежные документы нашего объекта готовы к оплате и каков бюджет?',
+        ] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($query), $query);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);
+        }
+    }
+
+    public function test_missing_rd_sections_use_the_selected_project_and_design_readiness(): void
+    {
+        foreach (['напиши каких разделов РД не хватает', 'Каких разделов рабочей документации не хватает?',
+            'Проверь комплектность РД нашего объекта.'] as $query) {
+            self::assertSame(['name' => 'get_project_design_readiness', 'arguments' => ['project_id' => 52]],
+                AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
+        }
+        foreach (['Каких разделов РД не хватает и сколько осталось оплатить?', 'Измени состав разделов РД.',
+            'Какие комплекты исполнительной документации не переданы?'] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectDesignReader::matches($query), $query);
+        }
+    }
+
     public function test_report_catalog_answers_availability_without_replacing_actual_report_data(): void
     {
         $query = 'Какие доступные отчёты помогут мне контролировать принятый объём работ по объекту и сверять его с актами? Назови отчёты и где их открыть.';

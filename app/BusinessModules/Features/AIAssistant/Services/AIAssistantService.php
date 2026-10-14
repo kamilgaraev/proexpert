@@ -501,7 +501,10 @@ class AIAssistantService
             $this->activeEstimateSelection = array_intersect_key($selection, array_flip(['estimate_id', 'position_filter', 'position_numbers']));
         }
         $accessContext = $this->measurePhase('access_context', fn (): array => $this->accessContextResolver->resolve($user, $organizationId));
-        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($query, $requestPayload, $accessContext));
+        $routingQuery = ! $imageDiscussion && ! $conversationNumberRequest
+            ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
+            : $query;
+        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($routingQuery, $requestPayload, $accessContext));
         $taskPlan['image_discussion'] = $imageDiscussion;
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
@@ -528,6 +531,8 @@ class AIAssistantService
         if ($this->currentAttachmentIds !== []) {
             app(AssistantChatAttachmentService::class)->linkMessage($this->currentAttachmentIds, $userMessage, $user);
         }
+
+        $query = $routingQuery;
 
         $legacyContext = ['intent' => $taskPlan['request_understanding']['primary_intent'] ?? $taskPlan['task_type'] ?? 'summary'];
         $currentIntent = $legacyContext['intent'];

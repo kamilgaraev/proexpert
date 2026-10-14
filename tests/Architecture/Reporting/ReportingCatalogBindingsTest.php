@@ -45,6 +45,7 @@ final class ReportingCatalogBindingsTest extends TestCase
             ReportDefinitionCandidateValidator::class,
             ReportDefinitionBindingMap::class,
             ReportSavedViewReferenceResolver::class,
+            \App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver::class,
         ] as $contract) {
             self::assertTrue($app->bound($contract), $contract);
             self::assertTrue($app->isShared($contract), $contract);
@@ -61,6 +62,21 @@ final class ReportingCatalogBindingsTest extends TestCase
             ReportSavedViewReferenceResolver::class,
             $app->make(ReportSavedViewReferenceResolver::class),
         );
+    }
+
+    public function test_filter_resolver_is_resolvable_and_rejects_undeclared_reference_contracts(): void
+    {
+        $app = new Application(dirname(__DIR__, 3));
+        (new ReportingCatalogServiceProvider($app))->register();
+        $resolver = $app->make(\App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver::class);
+        self::assertInstanceOf(\App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer::class,
+            $app->make(\App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer::class));
+        try {
+            $resolver->resolve(new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope(1, [1], [5], [], new \DateTimeZone('UTC')), 'unknown_reference', 5);
+            self::fail('Undeclared reference contract must not accept identifiers.');
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_FILTER_UNSUPPORTED, $exception->errorCode);
+        }
     }
 
     public function test_empty_map_resolution_is_same_singleton_instance(): void

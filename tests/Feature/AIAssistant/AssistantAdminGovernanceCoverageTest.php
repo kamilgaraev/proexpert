@@ -128,6 +128,8 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
     public function test_personal_report_workspace_and_subscriptions_follow_native_scope_and_remain_read_only(): void
     {
         $f = $this->fixture(); $org = (int) $f->organization->id; $args = ['scope' => 'organization']; $code = 'budget_plan_fact';
+        self::assertInstanceOf(\App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController::class,
+            app(\App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController::class));
         $workspace = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportWorkspaceReader::class);
         $empty = $workspace->read($f->owner, $org, $args);
         self::assertSame([], $empty['data']['favourites']);
@@ -148,7 +150,8 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         foreach ([[$f->owner, $org], [$f->administrator, $org], [$f->foreignOwner, (int) $f->foreignOrganization->id]] as [$actor, $organization]) {
             $view = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewRecord::query()->create([
                 'id' => (string) Str::ulid(), 'organization_id' => $organization, 'owner_id' => $actor->id, 'report_code' => $subscriptionCode,
-                'contract_version' => $definition->contractVersion, 'name' => 'Personal view', 'filters_json' => [], 'sort_json' => [], 'columns_json' => []]);
+                'contract_version' => $definition->contractVersion, 'name' => 'Personal view', 'filters_json' => [],
+                'sort_json' => ['field' => $definition->sorts[0]['id'], 'direction' => 'asc'], 'columns_json' => [$definition->columns[0]['id']]]);
             $bytes = '{"private_execution_marker":true}';
             $records[] = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSubscriptionRecord::query()->create([
                 'id' => (string) Str::ulid(), 'organization_id' => $organization, 'owner_id' => $actor->id, 'saved_view_id' => $view->id,
@@ -157,6 +160,36 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
                 'period_policy_json' => ['mode' => 'previous_day'], 'format' => $definition->formats[0], 'status' => 'active', 'next_run_at' => now()->addDay(),
                 'execution_input_bytes' => $bytes, 'execution_input_sha256' => hash('sha256', $bytes)]);
         }
+        $shared = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewRecord::query()
+            ->where('organization_id', $org)->where('owner_id', $f->administrator->id)->firstOrFail()->replicate();
+        $shared->fill(['id' => (string) Str::ulid(), 'name' => 'Общее устаревшее представление', 'visibility' => 'organization', 'contract_version' => 'old']);
+        $shared->saveQuietly();
+        $workspaceViews = $workspace->read($f->owner, $org, $args);
+        self::assertSame(2, count($workspaceViews['data']['saved_views']));
+        self::assertSame(['active', 'needs_migration'], array_column($workspaceViews['data']['saved_views'], 'status'));
+        self::assertTrue($workspaceViews['data']['saved_views_complete']);
+        self::assertStringContainsString('это разные списки', $workspaceViews['server_formatted_answer']);
+        self::assertStringContainsString('Общее устаревшее представление', $workspaceViews['server_formatted_answer']);
+        self::assertSame('active', $shared->fresh()->status);
+        self::assertTrue($workspace->matchesReference($f->owner, $org, $workspaceViews['source_refs'][0]));
+        $shared->updateQuietly(['visibility' => 'private']);
+        self::assertFalse($workspace->matchesReference($f->owner, $org, $workspaceViews['source_refs'][0]));
+        self::assertCount(1, $workspace->read($f->owner, $org, $args)['data']['saved_views']);
+        $unavailable = $shared->replicate();
+        $unavailable->fill(['id' => (string) Str::ulid(), 'name' => 'Hidden unavailable report', 'visibility' => 'organization',
+            'report_code' => 'unknown_report_285', 'filters_json' => ['large_private_setting' => str_repeat('x', 1048577)]]);
+        $unavailable->saveQuietly();
+        $viewQueries = [];
+        DB::listen(static function ($query) use (&$viewQueries): void {
+            if (str_contains($query->sql, 'report_saved_views')) { $viewQueries[] = $query->sql; }
+        });
+        $limited = $workspace->read($f->owner, $org, $args);
+        self::assertSame([$code], array_column($limited['data']['favourites'], 'code'));
+        self::assertCount(1, $limited['data']['saved_views']);
+        self::assertTrue($limited['data']['saved_views_unavailable']);
+        self::assertStringNotContainsString('Hidden unavailable report', $limited['server_formatted_answer']);
+        self::assertStringNotContainsString('filters_json', implode(' ', $viewQueries));
+        self::assertStringNotContainsString('select *', implode(' ', $viewQueries));
         $subscriptions = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionsReader::class);
         $result = $subscriptions->read($f->owner, $org, $args);
         self::assertTrue($result['data']['complete']);

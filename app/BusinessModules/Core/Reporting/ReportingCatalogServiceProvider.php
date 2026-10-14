@@ -280,6 +280,10 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
             EloquentReportWorkspacePreferencesStore::class,
         );
         $this->app->singleton(ReportSavedViewStore::class, EloquentReportSavedViewStore::class);
+        $this->app->singleton(
+            \App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver::class,
+            \App\BusinessModules\Core\Reporting\Infrastructure\Execution\UnsupportedReportFilterReferenceResolver::class,
+        );
         $this->app->singleton(ReportSavedViewVersionStore::class, EloquentReportSavedViewVersionStore::class);
         $this->app->singleton(ReportSavedViewVersionHasher::class);
         $this->app->singleton(
