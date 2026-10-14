@@ -62,7 +62,7 @@ final readonly class BindEvaluationWorkEntity
             $draft = $session->draft_payload ?? [];
             $item = $locator->find($draft, $payload, $input['work_item_key']);
             $selected = null;
-            foreach ($this->sources->rows($session) as $row) {
+            foreach ($this->sources->rows($session, true) as $row) {
                 if ($row['source_fact_id'] === $input['source_fact_id'] && $row['source_fact_version'] === $input['source_fact_version']
                     && hash_equals($row['source_value_hash'], $input['source_value_hash']) && $row['status'] === 'confirmed') {
                     $selected = $row;

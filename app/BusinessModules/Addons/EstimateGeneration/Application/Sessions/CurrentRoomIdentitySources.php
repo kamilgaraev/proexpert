@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ManualRoomIdentityFactEligibility;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\RoomIdentityFactEligibility;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
@@ -19,7 +20,7 @@ final readonly class CurrentRoomIdentitySources
         private RoomIdentityFactEligibility $eligibility) {}
 
     /** Caller holds the session lock and authorizes the actor in the same transaction. */
-    public function rows(EstimateGenerationSession $session): array
+    public function rows(EstimateGenerationSession $session, bool $includeManual = false): array
     {
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $snapshot = $this->models->snapshot(...[...$scope, 10001]);
@@ -27,7 +28,10 @@ final readonly class CurrentRoomIdentitySources
             throw ValidationException::withMessages(['source' => trans_message('estimate_generation.room_identity.fact_limit')]);
         }
         $entities = array_column($snapshot->entities, null, 'id');
-        $facts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_name'));
+        $facts = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_name'
+            || ($includeManual && $fact->type === 'entity_identity')));
+        $manualIds = array_column(array_filter($facts, static fn ($fact): bool => $fact->type === 'entity_identity'), 'id');
+        $decisions = $manualIds === [] ? [] : array_column($this->models->decisionsForSelectedFacts(...[...$scope, $manualIds]), null, 'selectedFactId');
         $proofs = array_column($snapshot->evidence, null, 'id');
         $ids = $documentIds = [];
         foreach ($facts as $fact) {
@@ -60,6 +64,21 @@ final readonly class CurrentRoomIdentitySources
         $rows = [];
         foreach ($facts as $fact) {
             $entity = $entities[$fact->entityId] ?? null;
+            if ($entity !== null && $fact->type === 'entity_identity') {
+                $node = (new ManualRoomIdentityFactEligibility)->proof($snapshot, $fact, $entity, $decisions[$fact->id] ?? null, $nodes);
+                $proof = $node === null ? null : ($proofs['evidence:'.$node->id] ?? null);
+                if ($proof !== null) {
+                    $rows[] = ['source_kind' => 'user_input', 'source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
+                        'source_value_hash' => DirectQuantityBinding::valueHash($fact->value), 'source_version' => $fact->sourceVersion,
+                        'entity_id' => $fact->entityId, 'name' => $fact->value['name'], 'status' => 'confirmed',
+                        'identity_only' => true, 'dimensions_confirmed' => false,
+                        'floor' => $entity->attributes['floor_id'] ?? null, 'zone' => $entity->attributes['zone_id'] ?? null,
+                        'evidence' => ['id' => $proof->id, 'source_artifact_id' => $proof->sourceArtifactId, 'document_id' => null,
+                            'document_name' => null, 'page' => null, 'region' => null, 'native_reference' => null, 'source_reference' => $proof->sourceReference]];
+                }
+
+                continue;
+            }
             $node = $entity === null ? null : $this->eligibility->proof($fact, $entity, $nodes);
             $document = $node === null ? null : ($documents[$node->locator['document_id']] ?? null);
             if ($node === null || $document === null || preg_match('/\A[a-f0-9]{64}\z/i', (string) $document->checksum_sha256) !== 1
@@ -70,7 +89,7 @@ final readonly class CurrentRoomIdentitySources
             if ($proof === null) {
                 continue;
             }
-            $rows[] = ['source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
+            $rows[] = ['source_kind' => 'document', 'source_fact_id' => $fact->id, 'source_fact_version' => $fact->version,
                 'source_value_hash' => DirectQuantityBinding::valueHash($fact->value), 'source_version' => $fact->sourceVersion,
                 'entity_id' => $fact->entityId, 'name' => $fact->value, 'status' => $fact->status,
                 'identity_only' => true, 'dimensions_confirmed' => false,

@@ -14,18 +14,18 @@ final readonly class GetRoomIdentitySources
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
         private CurrentRoomIdentitySources $sources) {}
 
-    public function handle(User $actor, int $projectId, int $sessionId, string $search = '', int $page = 1, int $perPage = 25): array
+    public function handle(User $actor, int $projectId, int $sessionId, string $search = '', int $page = 1, int $perPage = 25, bool $includeManual = false): array
     {
         if ($page < 1 || $perPage < 1 || $perPage > 50 || mb_strlen($search) > 100) {
             throw ValidationException::withMessages(['source' => trans_message('estimate_generation.room_identity.search_invalid')]);
         }
 
-        return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $search, $page, $perPage): array {
+        return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $search, $page, $perPage, $includeManual): array {
             $session = EstimateGenerationSession::query()->where('organization_id', $actor->current_organization_id)
                 ->where('project_id', $projectId)->whereKey($sessionId)->lockForUpdate()->firstOrFail();
             $this->authorization->authorize($actor, $session, 'estimate_generation.view');
             $available = config('estimate-generation.universal_enabled', false) && ($session->input_payload['evaluation_mode'] ?? null) === 'universal';
-            $rows = $available ? $this->sources->rows($session) : [];
+            $rows = $available ? $this->sources->rows($session, $includeManual) : [];
             if ($search !== '') {
                 $rows = array_values(array_filter($rows, static fn (array $row): bool => mb_stripos($row['name'].' '.($row['floor'] ?? '').' '.($row['zone'] ?? ''), $search) !== false));
             }
