@@ -211,7 +211,8 @@ final class AssistantRequestExecutionContext
 
             $context = app(self::class);
             if ($context->databaseGuardsActive && $connection->getDriverName() === 'pgsql'
-                && strtoupper(trim($query)) === 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY') {
+                && in_array(strtoupper(trim($query)), ['SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+                    'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'], true)) {
                 $context->remainingMilliseconds();
 
                 return;
