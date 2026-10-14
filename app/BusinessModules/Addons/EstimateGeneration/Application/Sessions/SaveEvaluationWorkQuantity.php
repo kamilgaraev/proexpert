@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NativeQuantityFactEligibility;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
@@ -24,7 +27,9 @@ use Illuminate\Validation\ValidationException;
 final readonly class SaveEvaluationWorkQuantity
 {
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
-        private ProjectModelRepository $models, private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices) {}
+        private ProjectModelRepository $models, private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices,
+        private EvaluationInputFingerprint $inputs, private BuildMostEstimateDraft $artifacts,
+        private UniversalReviewSummaryProjector $reviews) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
     {
@@ -65,6 +70,18 @@ final readonly class SaveEvaluationWorkQuantity
                 throw ValidationException::withMessages(['quantity' => 'Предел подтверждений в этой сессии превышен.']);
             }
             $item = (new EvaluationWorkItemLocator)->find($session->draft_payload ?? [], $payload, $input['work_item_key']);
+            $confirmUnit = ! $native && ($item['unit'] ?? null) === null;
+            if ($confirmUnit && (! config('estimate-generation.universal_enabled', false)
+                || ($payload['evaluation_mode'] ?? null) !== 'universal' || ! in_array($payload['price_policy'] ?? null, ['catalog', 'mixed'], true)
+                || ! in_array('unit_requires_confirmation', $item['validation_flags'] ?? [], true)
+                || isset($item['normative_match']['norm_id'])
+                || ($session->draft_payload['generation_contract'] ?? null) !== UniversalDraftProjector::CONTRACT
+                || ! $this->artifacts->verifyArtifact($session->draft_payload))) {
+                throw ValidationException::withMessages(['unit' => trans_message('estimate_evaluation.work_unit_confirmation_unavailable')]);
+            }
+            if ($confirmUnit) {
+                $item['unit'] = $input['unit'];
+            }
             $scope = [(int) $session->organization_id, $projectId, $sessionId];
             $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
             if (count($snapshot->facts) > 10000) {
@@ -97,7 +114,7 @@ final readonly class SaveEvaluationWorkQuantity
                 if ($normalized === null || ! OrdinaryEstimateDecimal::fitsQuantity($normalized['value'])) {
                     throw ValidationException::withMessages(['quantity' => 'Объём после перевода единицы превышает допустимый предел.']);
                 }
-                $source = $this->numbers->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $input['reason'], $input['request_id'], target: $target);
+                $source = $this->numbers->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $input['reason'], $input['request_id'], assumed: $confirmUnit, target: $target);
             }
             $canonicalUnit = DirectQuantityBinding::canonicalUnit($source->unit);
             if ($canonicalUnit === null || NormativeUnitNormalizer::safeQuantityFactorDecimal($canonicalUnit, (string) ($item['unit'] ?? '')) === null) {
@@ -110,6 +127,9 @@ final readonly class SaveEvaluationWorkQuantity
                 $selection['entered_value'] = $input['value'];
                 $selection['entered_unit'] = $input['unit'];
             }
+            if ($confirmUnit) {
+                $selection['confirmed_work_unit'] = $item['unit'];
+            }
             $proof = $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_answer', $selection, $input['reason'], $input['request_id']);
             $payload['quantity_selections'][$item['key']] = [...$selection, ...$proof];
             $payload['quantity_selection_revision'] = ($payload['quantity_selection_revision'] ?? 0) + 1;
@@ -118,7 +138,34 @@ final readonly class SaveEvaluationWorkQuantity
                 'request_id' => $input['request_id'], 'state_version' => $session->state_version + 1, 'cost_units' => '0', 'recalculation_required' => true];
             $receipts[$input['request_id']] = ['fingerprint' => $fingerprint, 'actor_id' => (int) $actor->id, 'result' => $result];
             $payload['evaluation_quantity_receipts'] = $receipts;
-            $session->update(['input_payload' => $payload, 'state_version' => $result['state_version']]);
+            $changes = ['input_payload' => $payload, 'state_version' => $result['state_version']];
+            if ($confirmUnit) {
+                $item['metadata']['unit_confirmation'] = ['unit' => $item['unit'], ...$proof];
+                $item['validation_flags'] = array_values(array_diff($item['validation_flags'] ?? [], ['unit_requires_confirmation']));
+                $item['flags'] = array_values(array_diff($item['flags'] ?? [], ['unit_requires_confirmation']));
+                foreach (['materials', 'labor', 'machinery', 'other_resources', 'equipment'] as $group) {
+                    $item[$group] = [];
+                }
+                foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
+                    $item[$money] = null;
+                }
+                unset($item['price_snapshot'], $item['commercial_price_snapshot'], $item['evaluation_price_basis_quantity']);
+                if (isset($payload['scenario_selections'])) {
+                    $this->choices->write($actor, $session, 'scenario-set', 'evaluation_scenario',
+                        ['answer_kind' => 'scenario_unit_invalidated', 'work_item_key' => $item['key']], $input['reason'], $input['request_id']);
+                }
+                unset($payload['scenario_selections'], $payload['price_selections'][$item['key']]);
+                $draft = (new EvaluationWorkItemLocator)->replace($session->draft_payload, $payload, $item['key'], $item);
+                unset($draft['evaluation_result'], $draft['evaluation_policy']['scenario_selections']);
+                $session->input_payload = $payload;
+                $draft['source_input_version'] = 'sha256:'.$this->inputs->fromSession($session);
+                $draft['is_complete'] = false;
+                $draft['stage6_status'] = 'scenario_confirmation_required';
+                $changes['input_payload'] = $payload;
+                $changes['draft_payload'] = $this->artifacts->seal($this->reviews->project($draft));
+                $this->authorization->authorize($actor, $session, 'estimate_generation.review');
+            }
+            $session->update($changes);
 
             return $result;
         }, 3);

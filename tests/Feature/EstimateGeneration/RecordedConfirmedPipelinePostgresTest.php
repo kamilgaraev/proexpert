@@ -14,14 +14,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\Recalcula
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationPriceSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\CataloguePriceSnapshotReader;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
@@ -101,6 +102,14 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
                 'state_version' => $session->fresh()->state_version, 'work_item_key' => $position['key'],
                 'source_fact_id' => $source['source_fact_id'], 'source_fact_version' => $source['source_fact_version'],
                 'source_value_hash' => $source['source_value_hash'], 'reason' => 'Подтверждена применимость этой работы к выбранной комнате.']);
+            if ($position['unit'] === null) {
+                $unitReceipt = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+                    'state_version' => $session->fresh()->state_version, 'work_item_key' => $position['key'], 'value' => '1', 'unit' => 'm2',
+                    'reason' => 'Пользователь принимает предварительную единицу площади и предполагаемый объём одной единицы этой работы.']);
+                self::assertSame('0', $unitReceipt['cost_units']);
+                self::assertTrue($signature->verifyArtifact($session->fresh()->draft_payload));
+                $position['unit'] = 'm2';
+            }
             $unit = MeasurementUnit::query()->create(['organization_id' => $scope[0], 'name' => 'Единица позиции '.$position['key'],
                 'short_name' => $position['unit'], 'type' => 'area']);
             $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $scope[0], 'name' => $position['name'],
@@ -110,7 +119,8 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
             $price = app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$catalog->id);
             app(SaveEvaluationPriceSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
                 'state_version' => $session->fresh()->state_version, 'work_item_key' => $position['key'],
-                'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash']]);
+                'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash'],
+                'conditions_confirmation' => ['region' => ['value' => 'Москва', 'basis' => 'Пользователь подтверждает расположение объекта в Москве и применимость выбранной цены.']]]);
             $quantities[] = ['work_item_key' => $position['key'], 'value' => '1', 'unit' => $position['unit']];
         }
         $refreshed = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
@@ -119,9 +129,9 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
         self::assertSame($originalKeys, array_column($refreshed['result']['scenarios'][0]['positions'], 'key'));
         self::assertTrue($signature->verifyArtifact($session->fresh()->draft_payload));
         app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
-            'state_version' => $session->fresh()->state_version, 'definitions' => [['id' => 'base',
+            'state_version' => $session->fresh()->state_version, 'definitions' => array_map(static fn (string $id): array => ['id' => $id,
                 'basis' => 'Пользователь задаёт сценарный объём одной единицы каждой выбранной работы, без утверждения измеренных размеров.',
-                'quantities' => $quantities]]]);
+                'quantities' => $quantities], ['minimum', 'base', 'maximum'])]);
         $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version, (string) Str::uuid());
         self::assertSame($originalKeys, array_column($revision['result']['scenarios'][0]['positions'], 'key'));
         self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode($revision['result']['missing_requirements'], JSON_UNESCAPED_UNICODE));
@@ -140,8 +150,9 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);
         $apply = app(ApplyGeneratedEstimate::class);
         $published = $apply->handle($command);
-        self::assertSame($published, $apply->handle($command));
-        $estimate = Estimate::query()->findOrFail($published['estimate_id']);
+        $replayed = $apply->handle($command);
+        self::assertSame($published->estimateId, $replayed->estimateId);
+        $estimate = Estimate::query()->findOrFail($published->estimateId);
         self::assertSame('analog', $estimate->calculation_method);
         self::assertSame($expected, $estimate->total_amount_with_vat);
         self::assertSame(count($quantities), $estimate->items()->whereNull('parent_work_id')->count());

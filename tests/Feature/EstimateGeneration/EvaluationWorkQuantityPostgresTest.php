@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -115,6 +117,71 @@ final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonic
             self::assertArrayNotHasKey('quantity_selections', $session->fresh()->input_payload);
             self::assertSame([], app(CurrentProjectDerivedQuantityService::class)->previewInput((int) $session->organization_id,
                 (int) $session->project_id, (int) $session->id)['quantities']);
+        }
+    }
+
+    public function test_unknown_commercial_unit_is_confirmed_by_the_bound_user_choice_and_replays_without_duplicate_facts(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $draft = $session->draft_payload;
+        $draft['generation_contract'] = UniversalDraftProjector::CONTRACT;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = null;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['validation_flags'] = ['unit_requires_confirmation'];
+        $artifacts = app(BuildMostEstimateDraft::class);
+        $session->input_payload = [...$session->input_payload, 'price_policy' => 'catalog'];
+        $draft['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
+        $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($draft);
+        $session->update(['input_payload' => $session->input_payload, 'draft_payload' => $artifacts->seal($draft)]);
+        $service = app(SaveEvaluationWorkQuantity::class);
+        $input = [...$this->input(), 'unit' => '100 м2'];
+        $result = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        self::assertSame('0', $result['cost_units']);
+        self::assertEquals($result, $service->handle($actor, (int) $session->project_id, (int) $session->id, $input));
+        $fresh = $session->fresh();
+        $item = $fresh->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('100 м2', $item['unit']);
+        self::assertNotContains('unit_requires_confirmation', $item['validation_flags']);
+        self::assertSame($result['fact_id'], $item['metadata']['unit_confirmation']['fact_id']);
+        self::assertSame('100 м2', $fresh->input_payload['quantity_selections'][$item['key']]['confirmed_work_unit']);
+        self::assertTrue($artifacts->verifyArtifact($fresh->draft_payload));
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $quantity = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'][$result['quantity_key']];
+        self::assertSame('300', $quantity->amount);
+        self::assertSame('m2', $quantity->unit);
+        self::assertNotEmpty($quantity->assumptions);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_unknown_unit_does_not_override_a_selected_normative_or_bypass_an_unsigned_draft(): void
+    {
+        foreach (['normative_policy', 'selected_norm', 'unsigned', 'missing_confirmation_flag'] as $case) {
+            [$actor, $session] = $this->fixture();
+            $draft = $session->draft_payload;
+            $draft['generation_contract'] = UniversalDraftProjector::CONTRACT;
+            $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+            $item['unit'] = null;
+            $item['validation_flags'] = $case === 'missing_confirmation_flag' ? [] : ['unit_requires_confirmation'];
+            if ($case === 'selected_norm') {
+                $item['normative_match']['norm_id'] = 1;
+            }
+            unset($item);
+            $session->input_payload = [...$session->input_payload, 'price_policy' => $case === 'normative_policy' ? 'normative' : 'catalog'];
+            $draft['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
+            $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector::class)->project($draft);
+            $draft = app(BuildMostEstimateDraft::class)->seal($draft);
+            if ($case === 'unsigned') {
+                unset($draft['artifact_hash']);
+            }
+            $session->update(['input_payload' => $session->input_payload,
+                'draft_payload' => $draft]);
+            try {
+                app(SaveEvaluationWorkQuantity::class)->handle($actor, (int) $session->project_id, (int) $session->id, [...$this->input(), 'unit' => 'm2']);
+                self::fail('Invalid unit confirmation was accepted: '.$case);
+            } catch (ValidationException $error) {
+                self::assertArrayHasKey('unit', $error->errors());
+                self::assertSame(0, (int) $session->fresh()->state_version);
+                self::assertArrayNotHasKey('quantity_selections', $session->fresh()->input_payload);
+            }
         }
     }
 
