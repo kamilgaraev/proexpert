@@ -310,11 +310,14 @@ final readonly class RunEstimateComposer
         }
         $quantityBinding = $quantityProvenance->binding($intent->toArray());
         $target = $intent->entityId ?? $quantityBinding['entity_id'] ?? null;
-        $sourceBinding = (new WorkIntentSourceClassifier)->binding([
+        $sourceClassifier = new WorkIntentSourceClassifier;
+        $sourceBinding = $sourceClassifier->binding([
             ...$intent->toArray(), ...($target === null ? [] : ['entity_id' => $target]),
         ], $input->facts);
 
-        return EstimateWorkIntent::fromArray([...$intent->toArray(), 'entity_id' => $sourceBinding['entity_id']]);
+        return EstimateWorkIntent::fromArray([...$intent->toArray(),
+            'entity_id' => $sourceBinding['entity_id'],
+            'name' => $sourceClassifier->canonicalName($intent->workKey) ?? $intent->name]);
     }
 
     private function quarantine(int $index, InvalidArgumentException $exception, mixed $record, array $allowedFactIds): array
