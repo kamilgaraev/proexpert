@@ -363,7 +363,7 @@ final readonly class AssistantBimModelReader
             'equipment_kinds.*' => ['string', 'distinct', 'in:air_conditioner,fan,pump,boiler,chiller,ventilation_unit'],
             'offset' => ['integer', 'min:0', 'max:1000000'], 'limit' => ['integer', 'min:1', 'max:20'],
             'include_estimate_links' => ['boolean'], 'include_quantities' => ['boolean'], 'include_properties' => ['boolean'],
-            'answer_kind' => ['string', 'in:elements,materials,models']])->validate();
+            'answer_kind' => ['string', 'in:elements,materials,materials_and_quantities,models']])->validate();
         if (array_diff(array_keys($filters), ['model_query', 'element_query', 'project_id', 'version_id', 'compare_version_id', 'offset', 'limit', 'include_estimate_links',
             'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'equipment_kinds', 'include_quantities', 'include_properties', 'answer_kind']) !== []) {
             throw new \InvalidArgumentException('unsupported_bim_model_argument');
@@ -389,7 +389,8 @@ final readonly class AssistantBimModelReader
             'equipment_kinds' => $equipmentKinds === [] ? null : $equipmentKinds,
             'offset' => (int) ($filters['offset'] ?? 0), 'limit' => (int) ($filters['limit'] ?? 20),
             'include_estimate_links' => (bool) ($filters['include_estimate_links'] ?? false),
-            'include_quantities' => ($filters['answer_kind'] ?? 'elements') !== 'materials' && (bool) ($filters['include_quantities'] ?? false),
+            'include_quantities' => ($filters['answer_kind'] ?? 'elements') === 'materials_and_quantities'
+                || (($filters['answer_kind'] ?? 'elements') !== 'materials' && (bool) ($filters['include_quantities'] ?? false)),
             'include_properties' => (bool) ($filters['include_properties'] ?? false)];
     }
 
@@ -513,7 +514,9 @@ final readonly class AssistantBimModelReader
 
     private function summary(array $models, array $filters, bool $tooMany): string
     {
-        if (($filters['answer_kind'] ?? 'elements') === 'materials') { return $this->materialAnswer($models, $tooMany); }
+        if (in_array($filters['answer_kind'] ?? 'elements', ['materials', 'materials_and_quantities'], true)) {
+            return $this->materialAnswer($models, $tooMany, $filters['answer_kind'] === 'materials_and_quantities');
+        }
         $complete = $models !== [] && ! $tooMany && ($filters['compare_version_id'] ?? null) === null;
         $sum = 0;
         $projects = [];
@@ -643,6 +646,10 @@ final readonly class AssistantBimModelReader
                     ['name' => $this->text($quantity['name']), 'value' => $quantity['sum'], 'unit' => $this->text($quantity['unit']), 'count' => $quantity['elements']]);
             }
             if ($model['estimate_link_coverage'] !== 'not_requested') {
+                if ($model['estimate_link_coverage'] === 'page_limited' && $model['elements'] !== []
+                    && ! array_filter($model['elements'], static fn (array $element): bool => ($element['estimate_links'] ?? []) !== [])) {
+                    $lines[] = trans_message('ai_assistant_bim.estimate_links_empty_page');
+                }
                 $lines[] = trans_message($model['estimate_link_coverage'] === 'unavailable'
                     ? 'ai_assistant_bim.estimate_links_unavailable' : 'ai_assistant_bim.estimate_links_partial');
             }
@@ -659,7 +666,7 @@ final readonly class AssistantBimModelReader
         return implode("\n\n", $lines);
     }
 
-    private function materialAnswer(array $models, bool $tooMany): string
+    private function materialAnswer(array $models, bool $tooMany, bool $includeQuantities = false): string
     {
         if ($models === []) { return trans_message('ai_assistant_bim.model_not_found'); }
         $lines = [trans_message('ai_assistant_bim.material_summary_intro')];
@@ -668,7 +675,11 @@ final readonly class AssistantBimModelReader
             $summary = $model['material_summary'] ?? null;
             $covered = ! $tooMany && ($model['index_coverage']['status'] ?? null) === 'complete'
                 && ($model['semantic_coverage']['status'] ?? null) === 'complete' && is_array($summary);
-            if (! $covered) { $lines[] = trans_message('ai_assistant_bim.material_summary_unavailable', ['name' => $name]); continue; }
+            if (! $covered) {
+                $lines[] = trans_message('ai_assistant_bim.material_summary_unavailable', ['name' => $name]);
+                if ($includeQuantities) { $lines[] = trans_message('ai_assistant_bim.quantities_unconfirmed'); }
+                continue;
+            }
             $names = $summary['names'];
             $lines[] = trans_message('ai_assistant_bim.material_summary_model', ['name' => $name]);
             foreach ($names as $material) { $lines[] = '• '.$this->text($material); }
@@ -681,7 +692,19 @@ final readonly class AssistantBimModelReader
             } elseif ($names === []) {
                 $lines[] = trans_message('ai_assistant_bim.material_summary_finished', ['total' => $summary['total']]);
             }
+            if ($includeQuantities) {
+                if (! $model['scan_complete']) {
+                    $lines[] = trans_message('ai_assistant_bim.quantities_unconfirmed');
+                } elseif ($model['quantity_totals'] === []) {
+                    $lines[] = trans_message('ai_assistant_bim.quantities_empty_index');
+                }
+                foreach ($model['quantity_totals'] as $quantity) {
+                    $lines[] = trans_message($quantity['sum'] === null ? 'ai_assistant_bim.quantity_unavailable' : 'ai_assistant_bim.quantity_total',
+                        ['name' => $this->text($quantity['name']), 'value' => $quantity['sum'], 'unit' => $this->text($quantity['unit']), 'count' => $quantity['elements']]);
+                }
+            }
         }
+        if ($includeQuantities) { $lines[] = trans_message('ai_assistant_bim.procurement_basis_unconfirmed'); }
 
         return implode("\n", $lines);
     }
