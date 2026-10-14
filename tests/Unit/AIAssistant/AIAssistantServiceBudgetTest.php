@@ -741,6 +741,28 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_explicit_bim_version_keeps_resolved_project(): void
+    {
+        foreach ([['Покажи версию 88', ['version_id' => 88], 100], ['Сравни версии 88 и 89', ['version_id' => 88, 'compare_version_id' => 89], 100],
+            ['Покажи версию 88', ['version_id' => 88], null], ['Сравни версии 88 и 89', ['version_id' => 88, 'compare_version_id' => 89], null]] as [$query, $versions, $projectId]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+                'version_id' => ['type' => ['integer', 'null']], 'compare_version_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $args = ['model_query' => null, 'project_id' => $projectId] + $versions;
+            $tool->expects($this->once())->method('execute')->with($args, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'version_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode($args, JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
     public function test_named_bim_element_is_not_resolved_as_construction_project(): void
     {
         $query = 'Покажи свойства объекта «Насос 1» в BIM-модели';
