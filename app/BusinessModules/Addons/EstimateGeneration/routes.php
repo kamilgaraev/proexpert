@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationAnalysisBasisController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationAnswerReceiptController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
@@ -83,6 +84,7 @@ Route::middleware([
         Route::get('/{session}/review-items', [EstimateGenerationReviewController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('review-items');
         Route::get('/{session}/review-exceptions', [EstimateGenerationReviewController::class, 'exceptions'])->middleware('authorize:estimate_generation.view,project,project')->name('review-exceptions');
         Route::get('/{session}/questions', [EstimateGenerationQuestionController::class, 'index'])->middleware('authorize:estimate_generation.review,project,project')->name('questions.index');
+        Route::get('/{session}/questions/{question}/answer-receipt', [EstimateGenerationAnswerReceiptController::class, 'show'])->where('question', '[a-z][a-z0-9_]{1,79}')->middleware('authorize:estimate_generation.view,project,project')->name('questions.answer-receipt');
         Route::post('/{session}/questions/{question}/answer', [EstimateGenerationQuestionController::class, 'answer'])->where('question', '[a-z][a-z0-9_]{1,79}')->middleware('authorize:estimate_generation.review,project,project')->name('questions.answer');
         Route::post('/{session}/assistant/interpret', [EstimateGenerationDialogueController::class, 'interpret'])->middleware('authorize:estimate_generation.review,project,project')->name('assistant.interpret');
         Route::get('/{session}/assistant/proposals', [EstimateGenerationDialogueController::class, 'history'])->middleware('authorize:estimate_generation.view,project,project')->name('assistant.proposals.index');
