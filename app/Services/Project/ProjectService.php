@@ -469,7 +469,7 @@ class ProjectService
         }
 
         return app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)
-            ->where('projects.status', 'active')->get();
+            ->where('projects.status', 'active')->orderBy('projects.name')->get();
     }
 
     /**
