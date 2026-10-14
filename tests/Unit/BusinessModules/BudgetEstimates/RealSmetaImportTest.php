@@ -4,11 +4,8 @@ namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\Models\Estimate;
-use App\Models\EstimateSection;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
-use App\Models\Organization;
-use App\Models\User;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
@@ -85,6 +82,7 @@ class RealSmetaImportTest extends TestCase
         $options['matching_config'] = $mapping;
         $options['estimate_settings'] = $settings;
         $options['validate_only'] = false;
+        $options['execution_user_id'] = $user->id;
         $session->update([
             'options' => $options,
             'status' => 'queued',

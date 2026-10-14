@@ -201,6 +201,8 @@ class ImportPipelineService
             $this->updateProgress($session, 90, trans_message('estimate.import_recalculating_totals'));
             $this->calculationService->recalculateAll($estimate);
 
+            $this->assertWorkerClaim($session->fresh(), $runToken);
+
             $session->update([
                 'status' => 'completed',
                 'stats' => array_merge($session->fresh()->stats ?? [], [
@@ -277,6 +279,7 @@ class ImportPipelineService
             || (isset($current->stats['worker_deadline_at']) && now()->greaterThanOrEqualTo(\Illuminate\Support\Carbon::parse($current->stats['worker_deadline_at'])))) {
             throw new \RuntimeException('estimate_import_worker_claim_expired');
         }
+        app(EstimateImportService::class)->assertExecutionAccess($current);
     }
 
     private function persistFooterCharges(Estimate $estimate, array $footer): void

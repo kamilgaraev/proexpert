@@ -16,8 +16,6 @@ use App\Models\EstimateSection;
 use App\Models\ImportSession;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
-use App\Models\Project;
-use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -26,6 +24,7 @@ use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 final class EstimateImportFinancialPersistenceTest extends TestCase
 {
@@ -225,9 +224,10 @@ final class EstimateImportFinancialPersistenceTest extends TestCase
     private function import(array $rows, string $mode = 'plain', float $overheadRate = 9, float $profitRate = 4, ?callable $prepareUnits = null): ImportSession
     {
         Queue::fake();
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create();
-        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $context = EstimateImportTestContext::create();
+        $organization = $context->organization;
+        $user = $context->user;
+        $project = $context->project;
         MeasurementUnit::create(['organization_id' => $organization->id, 'name' => 'Сто квадратных метров', 'short_name' => '100 м²', 'type' => 'work']);
         if ($prepareUnits !== null) {
             $prepareUnits($organization);
@@ -260,6 +260,8 @@ final class EstimateImportFinancialPersistenceTest extends TestCase
             'file_size' => filesize($path),
             'file_format' => 'xlsx',
             'options' => [
+                'execution_user_id' => $user->id,
+                'project_id' => $project->id,
                 'format_handler' => 'custom_excel',
                 'structure' => ['header_row' => 1, 'column_mapping' => ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'unit' => 'D', 'quantity' => 'E', 'unit_price' => 'F', 'total_price' => 'G']],
                 'estimate_settings' => ['project_id' => $project->id, 'name' => 'Проверка импорта', 'financial_mode' => $mode, 'overhead_rate' => $overheadRate, 'profit_rate' => $profitRate, 'vat_rate' => 0],

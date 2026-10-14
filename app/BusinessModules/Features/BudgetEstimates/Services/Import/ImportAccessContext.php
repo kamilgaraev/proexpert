@@ -22,6 +22,24 @@ final readonly class ImportAccessContext
             || ! app(UserProjectAccessService::class)->canAccessCurrentOrganizationProject($this->actor, $project)) {
             throw new AuthorizationException;
         }
+        $this->authorizePermission();
+    }
+
+    public function authorizeQueuedExecution(): void
+    {
+        $project = Project::query()->useWritePdo()->accessibleByOrganization($this->organizationId)->findOrFail($this->projectId);
+        if ($project->is_archived
+            || ! $this->actor->organizations()->useWritePdo()->where('organizations.id', $this->organizationId)
+                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()
+            || ! app(UserProjectAccessService::class)->queryAccessibleProjects($this->actor, $this->organizationId)
+                ->useWritePdo()->whereKey($this->projectId)->exists()) {
+            throw new AuthorizationException;
+        }
+        $this->authorizePermission();
+    }
+
+    private function authorizePermission(): void
+    {
         AuthorizationContext::getProjectContext($this->projectId, $this->organizationId);
         if (! app(AuthorizationService::class)->canCurrent($this->actor, 'budget-estimates.import', [
                 'context_type' => 'project', 'organization_id' => $this->organizationId, 'project_id' => $this->projectId,

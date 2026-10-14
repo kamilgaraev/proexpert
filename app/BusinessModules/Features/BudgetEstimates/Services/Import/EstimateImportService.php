@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportF
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\Models\ImportMemory;
 use App\Models\ImportSession;
+use App\Models\User;
 use App\Models\Contract;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\ImportSessionStateException;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -547,6 +548,22 @@ class EstimateImportService
         $context->authorize();
 
         return $context;
+    }
+
+    public function assertExecutionAccess(ImportSession $session): void
+    {
+        $actorId = filter_var($session->options['execution_user_id'] ?? null, FILTER_VALIDATE_INT);
+        $projectId = filter_var($session->options['project_id'] ?? $session->options['estimate_settings']['project_id'] ?? null, FILTER_VALIDATE_INT);
+        if (! $actorId || ! $projectId || $actorId < 1 || $projectId < 1
+            || (isset($session->options['estimate_settings']['project_id']) && (int) $session->options['estimate_settings']['project_id'] !== $projectId)
+            || (isset($session->options['estimate_settings']['organization_id']) && (int) $session->options['estimate_settings']['organization_id'] !== (int) $session->organization_id)) {
+            throw new AuthorizationException;
+        }
+        $actor = User::query()->useWritePdo()->where('is_active', true)->find($actorId);
+        if ($actor === null) {
+            throw new AuthorizationException;
+        }
+        (new ImportAccessContext($actor, (int) $session->organization_id, $projectId))->authorizeQueuedExecution();
     }
 
     public function getSession(string $id, ?ImportAccessContext $context = null, bool $mutable = false): ImportSession

@@ -61,6 +61,6 @@ final readonly class EstimateImportTestContext
             'user_id' => $this->user->id, 'organization_id' => $this->organization->id,
             'status' => 'uploading', 'file_name' => 'estimate.xlsx', 'file_format' => 'xlsx', 'file_size' => 100,
             'options' => ['project_id' => $this->project->id], 'stats' => [],
-        ], $attributes, ['options' => array_merge(['project_id' => $this->project->id], $attributes['options'] ?? [])]));
+        ], $attributes, ['options' => array_merge(['project_id' => $this->project->id, 'execution_user_id' => $this->user->id], $attributes['options'] ?? [])]));
     }
 }

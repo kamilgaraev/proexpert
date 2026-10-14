@@ -14,6 +14,9 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Jobs\ProcessEstimateImportJob;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateImportHistoryResource;
 use App\Models\ImportSession;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\FileService;
@@ -25,6 +28,15 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\RuntimeImportFormatHandlerInterface;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportValidationResult;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\SemanticMatchingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 use Mockery;
 use Tests\Support\EstimateImportTestContext;
 use Tests\TestCase;
@@ -276,6 +288,218 @@ final class EstimateImportLifecycleTest extends TestCase
         self::assertSame('attempt-two', $session->options['run_token']);
         $job->handle($pipeline);
         self::assertSame('queued', $session->fresh()->status);
+    }
+
+    public function test_queued_executor_revocations_block_pipeline_source_io_and_estimate_creation(): void
+    {
+        foreach (['permission', 'membership', 'project'] as $revocation) {
+            $context = EstimateImportTestContext::create();
+            if ($revocation === 'project') {
+                $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+                $context->project->users()->attach($context->user->id, ['role' => 'member', 'is_active' => true]);
+            }
+            $session = $context->session(['status' => 'mapped', 'options' => ['format_handler' => 'custom_excel']]);
+            Bus::fake();
+            app(EstimateImportService::class)->execute($session->id, [], ['name' => 'Queued import'], false, $context->access());
+            self::assertTrue(app(AuthorizationService::class)->can($context->user, 'budget-estimates.import', [
+                'context_type' => 'project', 'project_id' => $context->project->id,
+                'organization_id' => $context->organization->id, 'strict_project_scope' => true,
+            ]));
+            if ($revocation === 'permission') {
+                UserRoleAssignment::query()->where('user_id', $context->user->id)->firstOrFail()->revoke();
+            } elseif ($revocation === 'membership') {
+                $context->organization->users()->updateExistingPivot($context->user->id, ['is_active' => false]);
+            } else {
+                $context->project->users()->updateExistingPivot($context->user->id, ['is_active' => false]);
+            }
+            $files = Mockery::mock(FileService::class);
+            $files->shouldNotReceive('existsCurrent');
+            $files->shouldNotReceive('readCurrent');
+            $this->app->instance(FileService::class, $files);
+            $pipeline = Mockery::mock(ImportPipelineService::class);
+            $pipeline->shouldNotReceive('run');
+            $session->refresh();
+            $options = $session->options;
+            $estimateCount = Estimate::query()->count();
+            Cache::put("import_session_progress_{$session->id}", 45, 60);
+            (new ProcessEstimateImportJob($session->id, $options['run_token']))->handle($pipeline);
+            self::assertSame('failed', $session->refresh()->status);
+            self::assertSame('import_execution_access_denied', $session->stats['reason_code']);
+            self::assertNotEmpty($session->stats['correlation_id']);
+            self::assertSame($options, $session->options);
+            self::assertSame($estimateCount, Estimate::query()->count());
+            self::assertFalse(Cache::has("import_session_progress_{$session->id}"));
+        }
+    }
+
+    public function test_queued_execution_uses_authorized_colleague_and_pinned_organization_after_ui_switch(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $colleague = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($colleague->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        UserRoleAssignment::assignRole($colleague, 'organization_owner', AuthorizationContext::getOrganizationContext($context->organization->id));
+        $session = $context->session(['status' => 'mapped', 'options' => ['format_handler' => 'custom_excel']]);
+        Bus::fake();
+        app(EstimateImportService::class)->execute($session->id, [], ['name' => 'Colleague import'], false,
+            new ImportAccessContext($colleague, $context->organization->id, $context->project->id));
+        $context->organization->users()->updateExistingPivot($context->user->id, ['is_active' => false]);
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->firstOrFail()->revoke();
+        $otherOrganization = Organization::factory()->verified()->create();
+        $otherOrganization->users()->attach($colleague->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $colleague->update(['current_organization_id' => $otherOrganization->id]);
+        $pipeline = Mockery::mock(ImportPipelineService::class);
+        $pipeline->shouldReceive('run')->once()->andReturnUsing(function (ImportSession $claimed) use ($colleague, $context): void {
+            self::assertSame($colleague->id, $claimed->options['execution_user_id']);
+            self::assertSame($context->user->id, $claimed->user_id);
+            self::assertSame($context->organization->id, $claimed->organization_id);
+            $claimed->update(['status' => 'completed', 'stats' => ['progress' => 100]]);
+        });
+        $session->refresh();
+        (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle($pipeline);
+        self::assertSame('completed', $session->refresh()->status);
+    }
+
+    public function test_actorless_deleted_and_inactive_queued_executors_fail_closed(): void
+    {
+        foreach (['missing', 'deleted', 'inactive', 'unknown'] as $state) {
+            $context = EstimateImportTestContext::create();
+            $session = $context->session(['status' => 'mapped', 'options' => ['format_handler' => 'custom_excel']]);
+            Bus::fake();
+            app(EstimateImportService::class)->execute($session->id, [], [], false, $context->access());
+            $session->refresh();
+            if ($state === 'missing' || $state === 'unknown') {
+                $options = $session->options;
+                unset($options['execution_user_id']);
+                if ($state === 'unknown') {
+                    $options['execution_user_id'] = 999999999;
+                }
+                $session->update(['options' => $options]);
+            } elseif ($state === 'deleted') {
+                $context->user->delete();
+            } else {
+                $context->user->update(['is_active' => false]);
+            }
+            $pipeline = Mockery::mock(ImportPipelineService::class);
+            $pipeline->shouldNotReceive('run');
+            (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle($pipeline);
+            self::assertSame('failed', $session->refresh()->status);
+            self::assertSame('import_execution_access_denied', $session->stats['reason_code']);
+            self::assertArrayNotHasKey('estimate_id', $session->stats);
+        }
+    }
+
+    public function test_restored_executor_retry_is_unaffected_by_stale_denied_job(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $session = $context->session(['status' => 'mapped', 'options' => ['format_handler' => 'custom_excel']]);
+        Bus::fake();
+        $service = app(EstimateImportService::class);
+        $service->execute($session->id, [], [], false, $context->access());
+        $session->refresh();
+        $oldJob = new ProcessEstimateImportJob($session->id, $session->options['run_token']);
+        $assignment = UserRoleAssignment::query()->where('user_id', $context->user->id)->firstOrFail();
+        $assignment->revoke();
+        $pipeline = Mockery::mock(ImportPipelineService::class);
+        $pipeline->shouldReceive('run')->once()->andReturnUsing(static fn (ImportSession $claimed) => $claimed->update(['status' => 'completed', 'stats' => ['progress' => 100]]));
+        $oldJob->handle($pipeline);
+        self::assertSame('failed', $session->refresh()->status);
+        $assignment->update(['is_active' => true]);
+        $service->execute($session->id, [], [], false, $context->access(), true);
+        $session->refresh();
+        $newToken = $session->options['run_token'];
+        $oldJob->handle($pipeline);
+        $oldJob->failed(new AuthorizationException);
+        self::assertSame('queued', $session->refresh()->status);
+        self::assertSame($newToken, $session->options['run_token']);
+        (new ProcessEstimateImportJob($session->id, $newToken))->handle($pipeline);
+        self::assertSame('completed', $session->refresh()->status);
+    }
+
+    public function test_permission_expiry_during_pipeline_rolls_back_estimate_before_commit(): void
+    {
+        $context = EstimateImportTestContext::create();
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->delete();
+        UserRoleAssignment::assignRole($context->user, 'project_manager', AuthorizationContext::getProjectContext($context->project->id, $context->organization->id), expiresAt: now()->addMinute());
+        $handler = $this->createMock(RuntimeImportFormatHandlerInterface::class);
+        $handler->method('slug')->willReturn('custom_excel');
+        $handler->method('detectStructure')->willReturn(new ImportStructureResult('custom_excel'));
+        $handler->method('preview')->willReturn(new ImportPreviewResult('custom_excel'));
+        $handler->method('validate')->willReturn(new ImportValidationResult);
+        $handler->method('streamRows')->willReturnCallback(function () use ($context): \Generator {
+            self::assertSame(1, Estimate::query()->where('organization_id', $context->organization->id)->count());
+            yield new EstimateImportRowDTO(rowNumber: 1, itemName: 'Контрольная позиция', unit: 'шт', quantity: 1.0,
+                unitPrice: 10.0, code: 'ГЭСН01-01-001-01', currentTotalAmount: 10.0);
+            $this->travel(2)->minutes();
+        });
+        $this->mock(NormativeMatchingService::class)->shouldReceive('findByCode')->once()->andReturn(null);
+        $this->mock(SemanticMatchingService::class)->shouldReceive('getBestNormativeMatch')->once()->andReturn(null);
+        $this->mock(ItemClassificationService::class)->shouldNotReceive('classifyBatch');
+        $this->app->instance(ImportFormatRegistry::class, new ImportFormatRegistry([$handler]));
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('existsCurrent')->once()->andReturn(true);
+        $files->shouldReceive('readCurrent')->once()->andReturnUsing(static function () {
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, 'test');
+            rewind($stream);
+
+            return $stream;
+        });
+        $this->app->instance(FileService::class, $files);
+        $session = $context->session(['status' => 'mapped', 'file_path' => 'org-'.$context->organization->id.'/estimate-imports/test.xlsx', 'options' => ['format_handler' => 'custom_excel']]);
+        Bus::fake();
+        app(EstimateImportService::class)->execute($session->id, [], ['name' => 'Expired during persistence', 'type' => 'local'], false, $context->access());
+        $session->refresh();
+        try {
+            (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle(app(ImportPipelineService::class));
+            self::assertSame('failed', $session->refresh()->status);
+            self::assertSame('import_execution_access_denied', $session->stats['reason_code']);
+            self::assertSame(0, Estimate::query()->where('organization_id', $context->organization->id)->count());
+            self::assertSame(0, EstimateItem::query()->count());
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_role_revocation_during_parsing_blocks_durable_estimate_persistence(): void
+    {
+        $context = EstimateImportTestContext::create();
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->delete();
+        $role = UserRoleAssignment::assignRole($context->user, 'project_manager', AuthorizationContext::getProjectContext($context->project->id, $context->organization->id));
+        $session = $context->session(['status' => 'mapped', 'file_path' => 'org-'.$context->organization->id.'/estimate-imports/test.xlsx', 'options' => ['format_handler' => 'custom_excel']]);
+        $handler = $this->createMock(RuntimeImportFormatHandlerInterface::class);
+        $handler->method('slug')->willReturn('custom_excel');
+        $handler->method('detectStructure')->willReturn(new ImportStructureResult('custom_excel'));
+        $handler->method('preview')->willReturnCallback(function () use ($role, $session): ImportPreviewResult {
+            self::assertSame('parsing', $session->fresh()->status);
+            $role->revoke();
+
+            return new ImportPreviewResult('custom_excel');
+        });
+        $handler->method('validate')->willReturn(new ImportValidationResult);
+        $handler->method('streamRows')->willReturnCallback(static function (): \Generator {
+            yield from [];
+        });
+        $this->app->instance(ImportFormatRegistry::class, new ImportFormatRegistry([$handler]));
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('existsCurrent')->once()->andReturn(true);
+        $files->shouldReceive('readCurrent')->once()->andReturnUsing(static function () {
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, 'test');
+            rewind($stream);
+
+            return $stream;
+        });
+        $this->app->instance(FileService::class, $files);
+        Bus::fake();
+        app(EstimateImportService::class)->execute($session->id, [], ['name' => 'Revoked during parsing', 'type' => 'local'], false, $context->access());
+        $session->refresh();
+        (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle(app(ImportPipelineService::class));
+        self::assertFalse($role->fresh()->is_active);
+        self::assertSame('failed', $session->refresh()->status);
+        self::assertSame('import_execution_access_denied', $session->stats['reason_code']);
+        self::assertSame(0, Estimate::query()->where('organization_id', $context->organization->id)->count());
+        self::assertSame(0, EstimateItem::query()->count());
+        self::assertArrayNotHasKey('estimate_id', $session->stats);
     }
 
     public function test_old_serialized_queued_job_without_token_fails_safely_before_pipeline(): void
