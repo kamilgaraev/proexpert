@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
+use App\Models\Organization;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -83,13 +84,12 @@ final class WorkforceAttendanceService
             throw new DomainException(trans_message('workforce.errors.attendance_after_dismissal'));
         }
 
-        $this->assertPayrollPeriodOpen($organizationId, $workDate, $projectId);
-
-        if ((string) $payload['status'] === 'at_work' && $this->hasApprovedAbsence($organizationId, $employeeId, $workDate)) {
-            throw new DomainException(trans_message('workforce.errors.attendance_conflicts_with_absence'));
-        }
-
         $id = DB::transaction(function () use ($organizationId, $employeeId, $userId, $projectId, $workDate, $payload): int {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
+            $this->assertPayrollPeriodOpen($organizationId, $workDate, $projectId);
+            if ((string) $payload['status'] === 'at_work' && $this->hasApprovedAbsence($organizationId, $employeeId, $workDate)) {
+                throw new DomainException(trans_message('workforce.errors.attendance_conflicts_with_absence'));
+            }
             $id = DB::table('workforce_attendance_corrections')->insertGetId([
                 'organization_id' => $organizationId,
                 'employee_id' => $employeeId,
@@ -104,6 +104,7 @@ final class WorkforceAttendanceService
             ]);
 
             app(WorkforceRagMutationBridge::class)->changed('workforce_attendance_corrections', $organizationId, $id);
+
             return $id;
         });
 
@@ -196,7 +197,7 @@ final class WorkforceAttendanceService
             ->where('organization_id', $organizationId)
             ->whereIn('employee_id', $employeeIds)
             ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
-            ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))
+            ->when($projectId !== null, fn (Builder $query) => $query->where(fn (Builder $scope) => $scope->where('project_id', $projectId)->orWhereNull('project_id')))
             ->orderBy('created_at')
             ->get()
             ->keyBy(fn (object $record): string => $record->employee_id.':'.$record->work_date.':'.($record->project_id ?? 'all'));
@@ -294,7 +295,7 @@ final class WorkforceAttendanceService
             return $this->presence(
                 'at_work',
                 $date,
-                $this->hours($assignment->hours_per_day ?? 8),
+                null,
                 $this->scanSource($qrScan->metadata ?? null)
             );
         }
@@ -326,7 +327,7 @@ final class WorkforceAttendanceService
         }
 
         if ($scheduleDay !== null) {
-            return $this->presence('at_work', $date, $this->hours($scheduleDay->planned_hours ?? $assignment->hours_per_day ?? 8), 'schedule');
+            return $this->plannedPresence($date, $this->hours($scheduleDay->planned_hours ?? $assignment->hours_per_day ?? 8));
         }
 
         $pattern = WorkforceWeekPattern::hoursByIsoWeekday(
@@ -338,11 +339,16 @@ final class WorkforceAttendanceService
 
         if ($pattern !== []) {
             return $hours > 0
-                ? $this->presence('at_work', $date, $hours, 'schedule')
+                ? $this->plannedPresence($date, $hours)
                 : $this->presence('scheduled_day_off', $date, 0, 'schedule');
         }
 
-        return $this->presence('at_work', $date, $this->hours($assignment->hours_per_day ?? 8), 'schedule');
+        return $this->plannedPresence($date, $this->hours($assignment->hours_per_day ?? 8));
+    }
+
+    private function plannedPresence(string $date, int|float $hours): array
+    {
+        return $this->presence('scheduled_work', $date, null, 'schedule') + ['planned_hours' => $hours];
     }
 
     private function correctionPayload(object $record): array
@@ -437,12 +443,23 @@ final class WorkforceAttendanceService
 
     private function assertPayrollPeriodOpen(int $organizationId, string $workDate, ?int $projectId): void
     {
+        if (DB::getSchemaBuilder()->hasTable('workforce_timekeeping_periods') && DB::table('workforce_timekeeping_periods as period')
+            ->where('period.organization_id', $organizationId)->where('period.month', substr($workDate, 0, 7).'-01')
+            ->whereIn('period.status', ['approved', 'closed'])
+            ->where(fn (Builder $scope) => $projectId === null ? $scope : $scope->whereNull('period.project_id')->orWhere('period.project_id', $projectId))
+            ->whereNotExists(fn (Builder $query) => $query->selectRaw('1')->from('workforce_timekeeping_periods as successor')->whereColumn('successor.supersedes_id', 'period.id'))
+            ->exists()) {
+            throw new DomainException(trans_message('workforce.errors.timekeeping_closed'));
+        }
         $exists = DB::table('workforce_payroll_periods')
             ->where('organization_id', $organizationId)
             ->where('status', 'locked')
             ->whereDate('period_start', '<=', $workDate)
             ->whereDate('period_end', '>=', $workDate)
             ->where(function (Builder $query) use ($projectId): void {
+                if ($projectId === null) {
+                    return;
+                }
                 $query->whereNull('project_id');
 
                 if ($projectId !== null) {

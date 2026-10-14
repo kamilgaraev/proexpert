@@ -35,6 +35,7 @@ final class WorkforceEmployee extends Model
         'phone',
         'email',
         'metadata',
+        'hr_reconciliation_status',
     ];
 
     protected $casts = [

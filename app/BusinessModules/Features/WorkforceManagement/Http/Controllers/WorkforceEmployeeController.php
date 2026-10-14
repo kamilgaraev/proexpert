@@ -23,11 +23,18 @@ final class WorkforceEmployeeController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $request->validate(['search' => ['bail', 'nullable', 'string', 'max:255', static function (string $attribute, mixed $value, \Closure $fail): void {
+            if (! is_string($value) || ! mb_check_encoding($value, 'UTF-8')) {
+                $fail(trans_message('workforce.errors.search_invalid'));
+            }
+        }]], [], ['search' => 'поисковый запрос']);
+
         try {
             return $this->paginated($this->service->paginate(
                 (int) $request->attributes->get('current_organization_id'),
                 min((int) $request->input('per_page', 20), 100),
-                $request->only(['status', 'search'])
+                $request->only(['status', 'search', 'project_id']),
+                $request->user()
             ));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'employees.index');
@@ -41,7 +48,7 @@ final class WorkforceEmployeeController extends Controller
             $validated = $request->validate($this->rules($organizationId));
 
             return AdminResponse::success(
-                new WorkforceEmployeeResource($this->service->create($organizationId, $validated)),
+                new WorkforceEmployeeResource($this->service->create($organizationId, $validated, $request->user())),
                 trans_message('workforce.messages.employee_created'),
                 201
             );
@@ -96,7 +103,7 @@ final class WorkforceEmployeeController extends Controller
             $validated = $request->validate($this->rules($organizationId, $employeeId, partial: true));
 
             return AdminResponse::success(
-                new WorkforceEmployeeResource($this->service->update($organizationId, $employeeId, $validated)),
+                new WorkforceEmployeeResource($this->service->update($organizationId, $employeeId, $validated, $request->user())),
                 trans_message('workforce.messages.employee_updated')
             );
         } catch (ValidationException $exception) {
@@ -112,14 +119,18 @@ final class WorkforceEmployeeController extends Controller
     {
         try {
             $validated = $request->validate([
-                'dismissal_date' => ['nullable', 'date'],
+                'dismissal_date' => ['nullable', 'date', 'before_or_equal:today'],
+                'basis_reference' => ['required', 'string', 'max:255'],
+                'basis_document_id' => ['nullable', 'integer'],
             ]);
 
             return AdminResponse::success(
                 new WorkforceEmployeeResource($this->service->dismiss(
                     (int) $request->attributes->get('current_organization_id'),
                     $employeeId,
-                    $validated['dismissal_date'] ?? null
+                    $validated['dismissal_date'] ?? null,
+                    $request->user(),
+                    $validated
                 )),
                 trans_message('workforce.messages.employee_dismissed')
             );
@@ -161,8 +172,10 @@ final class WorkforceEmployeeController extends Controller
             'middle_name' => ['nullable', 'string', 'max:255'],
             'employment_status' => $partial
                 ? ['prohibited']
-                : ['nullable', Rule::in(['active', 'dismissed', 'inactive'])],
-            'hire_date' => [$required, 'date'],
+                : ['nullable', Rule::in(['active', 'inactive'])],
+            'hire_date' => $partial ? ['prohibited'] : [$required, 'date'],
+            'basis_reference' => ['required', 'string', 'max:255'],
+            'basis_document_id' => ['nullable', 'integer'],
             'dismissal_date' => $partial
                 ? ['prohibited']
                 : ['nullable', 'date', 'after_or_equal:hire_date'],
@@ -182,6 +195,10 @@ final class WorkforceEmployeeController extends Controller
 
     private function failed(Request $request, \Throwable $exception, string $action): JsonResponse
     {
+        if ($exception instanceof \Illuminate\Auth\Access\AuthorizationException) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        }
+
         Log::error('workforce.employees_failed', [
             'action' => $action,
             'organization_id' => $request->attributes->get('current_organization_id'),

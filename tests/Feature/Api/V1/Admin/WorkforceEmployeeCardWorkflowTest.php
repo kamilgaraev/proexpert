@@ -56,8 +56,10 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.full_name', 'Иванов Иван')
             ->assertJsonPath('data.employment_status_label', trans_message('workforce.employee_statuses.active'))
-            ->assertJsonPath('data.presence.status', 'at_work')
-            ->assertJsonPath('data.presence.label', 'На работе')
+            ->assertJsonPath('data.presence.status', 'scheduled_work')
+            ->assertJsonPath('data.presence.label', trans_message('workforce.presence.scheduled_work'))
+            ->assertJsonPath('data.presence.hours', null)
+            ->assertJsonPath('data.presence.planned_hours', 8)
             ->assertJsonPath('data.current_assignment.department_label', 'Строительный участок')
             ->assertJsonPath('data.current_assignment.position_label', 'Монтажник')
             ->assertJsonPath('data.current_schedule.label', 'Пятидневка')
@@ -95,7 +97,7 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
     {
         $departmentId = DB::table('workforce_departments')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'CARD-DEP-' . uniqid(),
+            'code' => 'CARD-DEP-'.uniqid(),
             'name' => 'Строительный участок',
             'is_active' => true,
             'created_at' => now(),
@@ -104,7 +106,7 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
 
         $positionId = DB::table('workforce_positions')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'CARD-POS-' . uniqid(),
+            'code' => 'CARD-POS-'.uniqid(),
             'name' => 'Монтажник',
             'is_active' => true,
             'created_at' => now(),
@@ -115,7 +117,7 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'department_id' => $departmentId,
             'position_id' => $positionId,
-            'code' => 'CARD-UNIT-' . uniqid(),
+            'code' => 'CARD-UNIT-'.uniqid(),
             'headcount' => 1,
             'rate' => 1,
             'valid_from' => '2026-05-01',
@@ -126,7 +128,7 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
 
         $scheduleId = DB::table('workforce_work_schedules')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'CARD-5-2-' . uniqid(),
+            'code' => 'CARD-5-2-'.uniqid(),
             'name' => 'Пятидневка',
             'schedule_type' => 'weekly',
             'hours_per_day' => 8,
@@ -147,6 +149,7 @@ final class WorkforceEmployeeCardWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

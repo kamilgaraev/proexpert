@@ -19,9 +19,45 @@ class TimeTrackingControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_statistics_sum_authoritative_minutes_before_rounding(): void
+    {
+        $context = $this->timeTrackingContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        for ($index = 0; $index < 60; $index++) {
+            TimeEntry::query()->create([
+                'organization_id' => $context->organization->id, 'user_id' => $context->user->id,
+                'worker_type' => 'user', 'project_id' => $project->id, 'work_date' => '2026-01-31',
+                'hours_worked' => 0.02, 'net_minutes' => 1, 'title' => 'Minute '.$index,
+                'status' => 'draft', 'is_billable' => true,
+            ]);
+        }
+        $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/time-tracking/statistics?project_id='.$project->id)->assertOk();
+        self::assertSame(1.0, (float) $response->json('data.total_hours'));
+        self::assertSame(1.0, (float) $response->json('data.billable_hours'));
+        self::assertSame(60, $response->json('data.entries_count'));
+    }
+
+    public function test_statistics_aggregate_microseconds_without_per_entry_minute_rounding(): void
+    {
+        $context = $this->timeTrackingContext();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        for ($index = 0; $index < 120; $index++) {
+            TimeEntry::query()->create([
+                'organization_id' => $context->organization->id, 'user_id' => $context->user->id,
+                'worker_type' => 'user', 'project_id' => $project->id, 'work_date' => '2026-01-31',
+                'hours_worked' => 0, 'net_minutes' => 0.0083333333, 'net_microseconds' => 500_000,
+                'title' => 'Half second '.$index, 'status' => 'draft', 'is_billable' => true,
+            ]);
+        }
+        $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/time-tracking/statistics?project_id='.$project->id)->assertOk();
+        self::assertSame(0.02, (float) $response->json('data.total_hours'));
+        self::assertSame(0.02, (float) $response->json('data.billable_hours'));
+        self::assertSame(120, $response->json('data.entries_count'));
+    }
+
     public function test_admin_time_tracking_contract_supports_registry_calendar_statistics_and_report(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->timeTrackingContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
@@ -65,7 +101,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
         ]);
 
         $indexResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/time-tracking?' . http_build_query([
+            ->getJson('/api/v1/admin/time-tracking?'.http_build_query([
                 'project_id' => $project->id,
                 'per_page' => 15,
             ]));
@@ -77,7 +113,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
             ->assertJsonPath('data.items.0.project_id', $project->id);
 
         $statisticsResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/time-tracking/statistics?' . http_build_query([
+            ->getJson('/api/v1/admin/time-tracking/statistics?'.http_build_query([
                 'project_id' => $project->id,
                 'start_date' => '2026-05-01',
                 'end_date' => '2026-05-31',
@@ -92,7 +128,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
             ->assertJsonPath('data.approved_entries', 1);
 
         $calendarResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/time-tracking/calendar?' . http_build_query([
+            ->getJson('/api/v1/admin/time-tracking/calendar?'.http_build_query([
                 'project_id' => $project->id,
                 'start_date' => '2026-05-01',
                 'end_date' => '2026-05-31',
@@ -105,7 +141,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
             ->assertJsonPath('data.2026-05-13.0.id', $approvedEntry->id);
 
         $reportResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/time-tracking/reports?' . http_build_query([
+            ->getJson('/api/v1/admin/time-tracking/reports?'.http_build_query([
                 'project_id' => $project->id,
                 'start_date' => '2026-05-01',
                 'end_date' => '2026-05-31',
@@ -120,7 +156,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
 
     public function test_reject_requires_business_reason_before_changing_submitted_entry(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->timeTrackingContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $entry = TimeEntry::query()->create([
             'organization_id' => $context->organization->id,
@@ -156,7 +192,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
 
     public function test_pdf_export_uses_time_tracking_template_contract(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->timeTrackingContext();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
 
         TimeEntry::query()->create([
@@ -192,7 +228,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
                     'reports.time-tracking-pdf',
                     Mockery::on(static function (array $payload) use ($project): bool {
                         return isset($payload['data'], $payload['totals'], $payload['filters'], $payload['generated_at'])
-                            && !isset($payload['entries'], $payload['summary'])
+                            && ! isset($payload['entries'], $payload['summary'])
                             && $payload['data']->count() === 1
                             && $payload['data']->first()['project'] === $project->name
                             && $payload['data']->first()['title'] === 'Billable work'
@@ -211,7 +247,7 @@ class TimeTrackingControllerWorkflowTest extends TestCase
         });
 
         $response = $this->withHeaders($context->authHeaders())
-            ->get('/api/v1/admin/time-tracking/export?' . http_build_query([
+            ->get('/api/v1/admin/time-tracking/export?'.http_build_query([
                 'project_id' => $project->id,
                 'start_date' => '2026-05-01',
                 'end_date' => '2026-05-31',
@@ -220,5 +256,30 @@ class TimeTrackingControllerWorkflowTest extends TestCase
             ]));
 
         $response->assertOk();
+    }
+
+    private function timeTrackingContext(): AdminApiTestContext
+    {
+        $context = AdminApiTestContext::create();
+        $definition = json_decode((string) file_get_contents(config_path('ModuleList/features/time-tracking.json')), true, flags: JSON_THROW_ON_ERROR);
+        \App\Models\Module::query()->updateOrCreate(['slug' => 'time-tracking'], [
+            'name' => $definition['name'], 'version' => $definition['version'], 'type' => $definition['type'],
+            'billing_model' => $definition['billing_model'], 'category' => $definition['category'],
+            'permissions' => $definition['permissions'], 'is_active' => true, 'is_system_module' => false, 'can_deactivate' => true,
+        ]);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create([
+            'organization_id' => $context->organization->id, 'responsible_user_id' => $context->user->id,
+            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1,
+            'current_period_start_at' => now(), 'current_period_end_at' => now()->addDays(30),
+        ]);
+        \App\Models\OrganizationPackageSubscription::query()->create([
+            'organization_id' => $context->organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'workforce-output', 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => 7900,
+            'current_period_start_at' => now(), 'current_period_end_at' => now()->addDays(30),
+        ]);
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache((int) $context->organization->id);
+        \Illuminate\Support\Facades\Cache::flush();
+
+        return $context;
     }
 }

@@ -443,3 +443,5 @@ Artisan::command('system:clean-logs', function () {
     $this->info("Logs cleaned! Deleted {$count} files.");
     Log::info("[system:clean-logs] Deleted {$count} log files from {$logPath}");
 })->purpose('Clean up all log files in storage/logs')->weekly();
+
+Schedule::command('workforce:recover-notifications --limit=100')->everyFiveMinutes()->withoutOverlapping(5);

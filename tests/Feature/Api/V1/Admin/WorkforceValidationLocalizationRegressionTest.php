@@ -25,6 +25,16 @@ final class WorkforceValidationLocalizationRegressionTest extends TestCase
         Queue::fake();
     }
 
+    public function test_employee_search_accepts_encoded_cyrillic_and_rejects_invalid_utf8(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess();
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/employees?'.http_build_query(['search' => 'Иванов']))->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/employees?search=%D0_')->assertUnprocessable()->assertJsonValidationErrors('search');
+    }
+
     public function test_workforce_validation_summary_uses_russian_business_field_names(): void
     {
         // Regression: ISSUE-075 — API раскрывал машинные имена полей и английский счётчик ошибок
@@ -47,7 +57,12 @@ final class WorkforceValidationLocalizationRegressionTest extends TestCase
 
         foreach ($cases as $url => $message) {
             $this->withHeaders($context->authHeaders())
-                ->postJson($url)
+                ->postJson($url, match ($url) {
+                    '/api/v1/admin/workforce/employees' => ['basis_reference' => 'Приказ о приёме № 1'],
+                    '/api/v1/admin/workforce/absences' => ['basis_reference' => 'Приказ об отпуске № 2', 'reason_code' => 'vacation'],
+                    '/api/v1/admin/workforce/business-trips' => ['basis_reference' => 'Приказ о командировке № 3', 'reason_code' => 'business_trip'],
+                    default => [],
+                })
                 ->assertUnprocessable()
                 ->assertJsonPath('message', $message);
         }
@@ -62,6 +77,7 @@ final class WorkforceValidationLocalizationRegressionTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

@@ -22,6 +22,7 @@ abstract class TestCase extends BaseTestCase
         $app->make(Kernel::class)->bootstrap();
 
         \Illuminate\Support\Facades\Queue::fake([
+            \App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Jobs\MaterializeWorkforceCapacityCaptureJob::class,
             \App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class,
             \App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class,
             \App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob::class,

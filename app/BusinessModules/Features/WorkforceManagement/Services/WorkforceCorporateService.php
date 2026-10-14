@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Services\HrAccess;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPeriodIdentity;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Services\PayrollReadinessOwnerSnapshotRecorder;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
 use App\Services\Storage\FileService;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -26,8 +28,7 @@ final class WorkforceCorporateService
         private readonly FileService $fileService,
         private readonly WorkforceProService $proService,
         private readonly PayrollReadinessOwnerSnapshotRecorder $payrollReadinessRecorder,
-    ) {
-    }
+    ) {}
 
     public function listAccountingMappings(int $organizationId): Collection
     {
@@ -217,6 +218,72 @@ final class WorkforceCorporateService
             ->through(fn (object $record): array => $this->decorateExportPackage($organizationId, $record));
     }
 
+    public function reopenPayrollPeriod(int $organizationId, int $periodId, ?User $actor, array $payload): array
+    {
+        app(HrAccess::class)->assert($organizationId, $actor, 'workforce.payroll-source.correct');
+        if (trim((string) ($payload['basis_reference'] ?? '')) === '') {
+            throw new DomainException(trans_message('workforce.errors.hr_basis_required'));
+        }
+
+        return DB::transaction(function () use ($organizationId, $periodId, $actor, $payload): array {
+            $this->lockOrganization($organizationId);
+            $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+            if ($period->status !== 'locked') {
+                throw new DomainException(trans_message('workforce.errors.payroll_period_not_locked'));
+            }
+            if (! hash_equals((string) $period->source_hash, (string) ($payload['expected_source_hash'] ?? ''))) {
+                throw new DomainException(trans_message('workforce.errors.payroll_source_changed'));
+            }
+            if (DB::table('workforce_export_packages')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)
+                ->where('payroll_revision', $period->revision)->whereIn('status', ['created', 'sent'])->exists()) {
+                throw new DomainException(trans_message('workforce.errors.payroll_export_pending'));
+            }
+
+            $snapshot = [
+                'period' => (array) $period,
+                'source_rows' => DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->orderBy('id')->get()->toArray(),
+                'statements' => DB::table('workforce_payroll_statements')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->orderBy('id')->get()->toArray(),
+                'statement_rows' => DB::table('workforce_payroll_statement_rows')->where('organization_id', $organizationId)
+                    ->whereIn('payroll_statement_id', DB::table('workforce_payroll_statements')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->select('id'))->orderBy('id')->get()->toArray(),
+                'issues' => DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->orderBy('id')->get()->toArray(),
+            ];
+            $encoded = json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            DB::table('workforce_payroll_revisions')->insert([
+                'organization_id' => $organizationId, 'payroll_period_id' => $periodId, 'revision' => $period->revision,
+                'snapshot_sha256' => \App\BusinessModules\Features\WorkforceManagement\Domain\Timekeeping\Services\TimekeepingSnapshotHash::calculate(json_decode($encoded, true, 512, JSON_THROW_ON_ERROR)), 'snapshot' => $encoded,
+                'basis_reference' => trim((string) $payload['basis_reference']), 'recorded_by' => $actor->id, 'recorded_at' => now(),
+            ]);
+            DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('id', $periodId)->update([
+                'revision' => $period->revision + 1, 'status' => 'draft', 'source_hash' => null, 'locked_at' => null,
+                'locked_by_user_id' => null, 'updated_at' => now(),
+            ]);
+            app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
+
+            return (array) $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+        });
+    }
+
+    public function payrollRevisions(int $organizationId, int $periodId, ?User $actor): array
+    {
+        app(HrAccess::class)->assert($organizationId, $actor, 'workforce.payroll-source.view');
+        $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        return DB::table('workforce_payroll_revisions')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)
+            ->orderByDesc('revision')->get(['revision', 'snapshot_sha256', 'basis_reference', 'recorded_by', 'recorded_at'])->toArray();
+    }
+
+    public function payrollRevision(int $organizationId, int $periodId, int $revision, ?User $actor): array
+    {
+        app(HrAccess::class)->assert($organizationId, $actor, 'workforce.payroll-source.view');
+        $record = DB::table('workforce_payroll_revisions')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->where('revision', $revision)->first();
+        if ($record === null) {
+            throw new DomainException(trans_message('workforce.errors.record_not_found'));
+        }
+        $snapshot = json_decode((string) $record->snapshot, true, 512, JSON_THROW_ON_ERROR);
+
+        return ['revision' => $record->revision, 'basis_reference' => $record->basis_reference, 'snapshot_sha256' => $record->snapshot_sha256, 'snapshot' => $snapshot];
+    }
+
     public function showExportPackage(int $organizationId, int $packageId): array
     {
         $package = $this->decorateExportPackage($organizationId, $this->assertRecord('workforce_export_packages', $organizationId, $packageId));
@@ -257,6 +324,7 @@ final class WorkforceCorporateService
             $packages = DB::table('workforce_export_packages')
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
+                ->where('payroll_revision', $period->revision)
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
@@ -277,7 +345,7 @@ final class WorkforceCorporateService
             return [
                 'rows' => $this->exportRows($organizationId, $periodId),
                 'source_hash' => $this->payrollSnapshotHash($organizationId, $period),
-                'package_key' => now()->format('YmdHis') . '-' . bin2hex(random_bytes(8)),
+                'package_key' => now()->format('YmdHis').'-'.bin2hex(random_bytes(8)),
             ];
         });
 
@@ -321,13 +389,14 @@ final class WorkforceCorporateService
 
                 $currentHash = $this->payrollSnapshotHash($organizationId, $period);
 
-                if (!hash_equals($prepared['source_hash'], $currentHash)) {
+                if (! hash_equals($prepared['source_hash'], $currentHash)) {
                     throw new DomainException(trans_message('workforce.errors.payroll_source_changed'));
                 }
 
                 $packages = DB::table('workforce_export_packages')
                     ->where('organization_id', $organizationId)
                     ->where('payroll_period_id', $periodId)
+                    ->where('payroll_revision', $period->revision)
                     ->orderBy('id')
                     ->lockForUpdate()
                     ->get();
@@ -345,15 +414,14 @@ final class WorkforceCorporateService
                     return ['package_id' => (int) $activePackage->id, 'files_adopted' => false];
                 }
 
-                $rejectedPackage = $packages
-                    ->where('status', 'rejected')
-                    ->sortByDesc('id')
-                    ->first();
+                $rejectedPackage = DB::table('workforce_export_packages')->where('organization_id', $organizationId)
+                    ->where('payroll_period_id', $periodId)->whereIn('status', ['rejected', 'accepted'])->orderByDesc('id')->first();
                 $packageId = DB::table('workforce_export_packages')->insertGetId([
                     'organization_id' => $organizationId,
                     'payroll_period_id' => $periodId,
+                    'payroll_revision' => $period->revision,
                     'supersedes_package_id' => $rejectedPackage?->id,
-                    'package_number' => 'WF-' . $periodId . '-' . $prepared['package_key'],
+                    'package_number' => 'WF-'.$periodId.'-'.$prepared['package_key'],
                     'status' => 'created',
                     'source_hash' => $currentHash,
                     'created_by_user_id' => $userId,
@@ -384,7 +452,7 @@ final class WorkforceCorporateService
             throw $exception;
         }
 
-        if (!$result['files_adopted']) {
+        if (! $result['files_adopted']) {
             $this->deleteFiles($organizationId, $files);
         }
 
@@ -401,7 +469,7 @@ final class WorkforceCorporateService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$package) {
+            if (! $package) {
                 throw new DomainException(trans_message('workforce.errors.record_not_found'));
             }
 
@@ -440,7 +508,7 @@ final class WorkforceCorporateService
             ->where('id', $fileId)
             ->first();
 
-        if (!$file) {
+        if (! $file) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 
@@ -499,7 +567,7 @@ final class WorkforceCorporateService
             foreach ($files as $file) {
                 $path = "{$basePath}/{$file['file_name']}";
 
-                if (!$this->fileService->disk($organization)->put($path, $file['content'])) {
+                if (! $this->fileService->disk($organization)->put($path, $file['content'])) {
                     throw new DomainException(trans_message('workforce.errors.unexpected'));
                 }
 
@@ -573,7 +641,7 @@ final class WorkforceCorporateService
                     'amount' => $row->amount,
                     'cost_category_id' => $mapping?->cost_category_id,
                     'accounting_account' => $mapping?->accounting_account,
-                    'source_document' => 'production-labor:' . $row->work_order_id,
+                    'source_document' => 'production-labor:'.$row->work_order_id,
                 ];
             });
     }
@@ -640,7 +708,7 @@ final class WorkforceCorporateService
                             && ($candidate->valid_to === null || $candidate->valid_to >= $row->work_date));
                     $mapping = $this->resolveMappingFromLookup($row, $assignment, $mappingLookup);
 
-                    if (!$mapping || trim((string) ($mapping->accounting_account ?? '')) === '') {
+                    if (! $mapping || trim((string) ($mapping->accounting_account ?? '')) === '') {
                         $issues[] = [
                             'organization_id' => $organizationId,
                             'payroll_period_id' => $periodId,
@@ -690,7 +758,7 @@ final class WorkforceCorporateService
 
     private function mappingLookupKey(string $scopeType, ?int $scopeId, int $priority): string
     {
-        return "{$scopeType}:" . ($scopeId ?? 'null') . ":{$priority}";
+        return "{$scopeType}:".($scopeId ?? 'null').":{$priority}";
     }
 
     private function resolveMapping(int $organizationId, object $row, ?object $assignment): ?object
@@ -975,8 +1043,8 @@ final class WorkforceCorporateService
             ->orderBy('entry.id')
             ->selectRaw(
                 'entry.id as timesheet_entry_id, entry.employee_id, timesheet.project_id, '
-                . 'timesheet.work_order_id, entry.work_order_line_id, timesheet.shift_date as work_date, '
-                . 'entry.hours, (entry.hours * COALESCE(line.hour_rate, 0)) as amount'
+                .'timesheet.work_order_id, entry.work_order_line_id, timesheet.shift_date as work_date, '
+                .'entry.hours, (entry.hours * COALESCE(line.hour_rate, 0)) as amount'
             );
     }
 
@@ -1055,7 +1123,7 @@ final class WorkforceCorporateService
             'rejected' => [],
         ];
 
-        if (!in_array($nextStatus, $allowed[$currentStatus] ?? [], true)) {
+        if (! in_array($nextStatus, $allowed[$currentStatus] ?? [], true)) {
             throw new DomainException(trans_message('workforce.errors.export_status_transition_forbidden'));
         }
     }
@@ -1091,7 +1159,7 @@ final class WorkforceCorporateService
 
     private function assertMappingScope(int $organizationId, array $payload): void
     {
-        if (!empty($payload['cost_category_id']) && !DB::table('cost_categories')->where('organization_id', $organizationId)->where('id', $payload['cost_category_id'])->exists()) {
+        if (! empty($payload['cost_category_id']) && ! DB::table('cost_categories')->where('organization_id', $organizationId)->where('id', $payload['cost_category_id'])->exists()) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 
@@ -1120,7 +1188,7 @@ final class WorkforceCorporateService
             $payload['scope_id'] = null;
         }
 
-        if (!array_key_exists('priority', $payload) || $payload['priority'] === null) {
+        if (! array_key_exists('priority', $payload) || $payload['priority'] === null) {
             $payload['priority'] = match ($payload['scope_type'] ?? null) {
                 'staff_unit' => 10,
                 'department' => 20,
@@ -1134,7 +1202,7 @@ final class WorkforceCorporateService
 
     private function decorateAccountingMapping(int $organizationId, ?object $record): array
     {
-        if (!$record) {
+        if (! $record) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 
@@ -1197,7 +1265,7 @@ final class WorkforceCorporateService
 
     private function assertProject(int $organizationId, int $projectId): void
     {
-        if (!Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
+        if (! Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->exists()) {
             throw new DomainException(trans_message('workforce.errors.project_not_found'));
         }
     }
@@ -1206,7 +1274,7 @@ final class WorkforceCorporateService
     {
         $record = DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first();
 
-        if (!$record) {
+        if (! $record) {
             throw new DomainException(trans_message('workforce.errors.record_not_found'));
         }
 

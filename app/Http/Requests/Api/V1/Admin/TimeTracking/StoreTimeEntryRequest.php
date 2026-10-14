@@ -29,12 +29,12 @@ class StoreTimeEntryRequest extends FormRequest
             'organization_id' => [
                 'required',
                 'integer',
-                Rule::exists('organizations', 'id')->where('id', $organizationId)
+                Rule::exists('organizations', 'id')->where('id', $organizationId),
             ],
             'worker_type' => [
                 'nullable',
                 'string',
-                Rule::in(['user', 'virtual', 'brigade', 'equipment'])
+                Rule::in(['user', 'virtual', 'brigade', 'equipment']),
             ],
             'user_id' => [
                 'nullable',
@@ -42,10 +42,10 @@ class StoreTimeEntryRequest extends FormRequest
                 Rule::exists('users', 'id'),
                 function ($attribute, $value, $fail) {
                     $workerType = $this->input('worker_type', 'user');
-                    if ($workerType === 'user' && !$value) {
+                    if ($workerType === 'user' && ! $value) {
                         $fail('Для зарегистрированного работника необходимо указать ID пользователя');
                     }
-                }
+                },
             ],
             'worker_name' => [
                 'nullable',
@@ -53,16 +53,16 @@ class StoreTimeEntryRequest extends FormRequest
                 'max:255',
                 function ($attribute, $value, $fail) {
                     $workerType = $this->input('worker_type', 'user');
-                    if (in_array($workerType, ['virtual', 'brigade', 'equipment']) && !$value) {
+                    if (in_array($workerType, ['virtual', 'brigade', 'equipment']) && ! $value) {
                         $fail('Для виртуального работника, бригады или техники необходимо указать имя/наименование');
                     }
-                }
+                },
             ],
             'worker_count' => [
                 'nullable',
                 'integer',
                 'min:1',
-                'max:1000'
+                'max:1000',
             ],
             'equipment_type' => [
                 'nullable',
@@ -70,108 +70,114 @@ class StoreTimeEntryRequest extends FormRequest
                 'max:100',
                 function ($attribute, $value, $fail) {
                     $workerType = $this->input('worker_type', 'user');
-                    if ($workerType === 'equipment' && !$value) {
+                    if ($workerType === 'equipment' && ! $value) {
                         $fail('Для техники необходимо указать тип');
                     }
-                }
+                },
             ],
             'equipment_number' => [
                 'nullable',
                 'string',
-                'max:50'
+                'max:50',
             ],
             'project_id' => [
                 'required',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId)
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
             'work_type_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('work_types', 'id')
+                Rule::exists('work_types', 'id'),
             ],
             'task_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('schedule_tasks', 'id')
+                Rule::exists('schedule_tasks', 'id'),
             ],
             'work_date' => [
                 'required',
                 'date',
-                'before_or_equal:today'
+                'before_or_equal:today',
             ],
+            'employment_contract_id' => ['nullable', 'integer', 'min:1'],
+            'start_at' => ['nullable', 'date'],
+            'end_at' => ['nullable', 'date'],
+            'timezone' => ['nullable', 'timezone'],
+            'break_intervals' => ['nullable', 'array', 'max:24'],
+            'break_intervals.*.start_at' => ['required', 'date'],
+            'break_intervals.*.end_at' => ['required', 'date'],
             'start_time' => [
                 'nullable',
-                'date_format:H:i'
+                'date_format:H:i',
             ],
             'end_time' => [
                 'nullable',
                 'date_format:H:i',
-                'after:start_time'
             ],
             'hours_worked' => [
                 'nullable',
                 'numeric',
                 'min:0.01',
-                'max:24'
+                'max:24',
             ],
             'break_time' => [
                 'nullable',
                 'numeric',
                 'min:0',
-                'max:24'
+                'max:24',
             ],
             'volume_completed' => [
                 'nullable',
                 'numeric',
-                'min:0'
+                'min:0',
             ],
             'title' => [
                 'required',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'description' => [
                 'nullable',
                 'string',
-                'max:1000'
+                'max:1000',
             ],
             'status' => [
                 'nullable',
                 'string',
-                Rule::in(['draft', 'submitted', 'approved', 'rejected'])
+                Rule::in(['draft', 'submitted', 'approved', 'rejected']),
             ],
             'status_label' => [
                 'nullable',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'is_billable' => [
                 'nullable',
-                'boolean'
+                'boolean',
             ],
             'hourly_rate' => [
                 'nullable',
                 'numeric',
-                'min:0'
+                'min:0',
             ],
             'location' => [
                 'nullable',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'custom_fields' => [
                 'nullable',
-                'array'
+                'array',
             ],
             'notes' => [
                 'nullable',
                 'string',
-                'max:1000'
-            ]
+                'max:1000',
+            ],
         ];
 
-        if (!$this->input('start_time') && !$this->input('end_time') && !$this->input('hours_worked')) {
+        if (! $this->input('start_at') && ! $this->input('end_at') && ! $this->input('start_time') && ! $this->input('end_time') && ! $this->input('hours_worked')) {
             $rules['hours_worked'][] = 'required';
         }
 
@@ -221,7 +227,7 @@ class StoreTimeEntryRequest extends FormRequest
             'hourly_rate.numeric' => 'Почасовая ставка должна быть числом',
             'hourly_rate.min' => 'Почасовая ставка не может быть отрицательной',
             'location.max' => 'Местоположение не может превышать 255 символов',
-            'notes.max' => 'Заметки не могут превышать 1000 символов'
+            'notes.max' => 'Заметки не могут превышать 1000 символов',
         ];
     }
 
@@ -230,7 +236,7 @@ class StoreTimeEntryRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
-        if (!$this->has('worker_type')) {
+        if (! $this->has('worker_type')) {
             if ($this->has('user_id') && $this->input('user_id')) {
                 $this->merge(['worker_type' => 'user']);
             } elseif ($this->has('worker_count') && $this->input('worker_count') > 1) {
@@ -242,17 +248,16 @@ class StoreTimeEntryRequest extends FormRequest
             }
         }
 
-        if (!$this->has('status')) {
+        if (! $this->has('status')) {
             $this->merge(['status' => 'draft']);
         }
 
-        if (!$this->has('is_billable')) {
+        if (! $this->has('is_billable')) {
             $this->merge(['is_billable' => true]);
         }
-        
+
         if (auth()->user()) {
             $this->merge(['organization_id' => auth()->user()->current_organization_id]);
         }
     }
-
 }

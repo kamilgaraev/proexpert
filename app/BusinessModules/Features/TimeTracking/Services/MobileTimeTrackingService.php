@@ -5,15 +5,19 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\TimeTracking\Services;
 
 use App\BusinessModules\Features\TimeTracking\DTOs\MobileTimeEntryPage;
+use App\BusinessModules\Features\TimeTracking\Support\WorkingTimezoneResolver;
+use App\BusinessModules\Features\TimeTracking\Support\WorkTimeInterval;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ScheduleTask;
 use App\Models\TimeEntry;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Services\Mobile\MobileProjectAccessResolver;
-use Carbon\CarbonImmutable;
+use App\Services\WorkforcePeriodMutationGuard;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -27,6 +31,7 @@ final class MobileTimeTrackingService
 
     public function paginateEntries(int $organizationId, User $user, array $filters, int $perPage): MobileTimeEntryPage
     {
+        $this->assertActor($user, $organizationId, 'time_tracking.view');
         if (isset($filters['project_id'])) {
             $this->assertProject($user, $organizationId, (int) $filters['project_id']);
         }
@@ -43,6 +48,7 @@ final class MobileTimeTrackingService
 
     public function dailySummary(int $organizationId, User $user, string $date, ?int $projectId): array
     {
+        $this->assertActor($user, $organizationId, 'time_tracking.view');
         $filters = ['date' => $date];
         if ($projectId !== null) {
             $this->assertProject($user, $organizationId, $projectId);
@@ -53,7 +59,9 @@ final class MobileTimeTrackingService
             ->orderByDesc('id')
             ->get();
         $summary = $this->summaryFromEntries($entries);
-        $activeTimer = $entries->first(fn (TimeEntry $entry): bool => $this->isActiveTimer($entry));
+        $activeTimer = $this->withRelations($this->activeTimerQuery($organizationId, (int) $user->id))
+            ->whereIn('project_id', $this->projectAccess->query($user, $organizationId)->select('projects.id'))
+            ->when($projectId !== null, fn (Builder $query) => $query->where('project_id', $projectId))->first();
 
         return [
             'date' => $date,
@@ -65,8 +73,13 @@ final class MobileTimeTrackingService
         ];
     }
 
-    public function findEntry(int $organizationId, int $userId, int $entryId): TimeEntry
+    public function findEntry(int $organizationId, int $userId, int $entryId, string $permission = 'time_tracking.view'): TimeEntry
     {
+        $user = User::query()->find($userId);
+        if (! $user) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.entry_not_found'));
+        }
+        $this->assertActor($user, $organizationId, $permission);
         $entry = $this->withRelations(TimeEntry::query())
             ->where('organization_id', $organizationId)
             ->where('user_id', $userId)
@@ -77,17 +90,28 @@ final class MobileTimeTrackingService
             throw new DomainException(trans_message('time_tracking.mobile.errors.entry_not_found'));
         }
 
+        $this->assertProject($user, $organizationId, (int) $entry->project_id);
+
         return $entry;
     }
 
     public function createManualEntry(int $organizationId, User $user, array $data): TimeEntry
     {
         $userId = (int) $user->id;
+        $this->assertActor($user, $organizationId, 'time_tracking.create');
+        if (isset($data['hours_worked']) && ((float) $data['hours_worked'] <= 0 || (float) $data['hours_worked'] > 24)) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
+        }
+
         $this->assertProject($user, $organizationId, (int) $data['project_id']);
         $this->assertWorkType($organizationId, $data['work_type_id'] ?? null);
         $this->assertTask($organizationId, (int) $data['project_id'], $data['task_id'] ?? null);
 
         return DB::transaction(function () use ($organizationId, $userId, $data): TimeEntry {
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $data = $this->normalizeInterval($this->resolveWorkingTimezone($organizationId, $userId, $data));
+            $guard->assertMutable($organizationId, (int) $data['project_id'], $data + ['user_id' => $userId]);
             $entry = TimeEntry::query()->create([
                 'organization_id' => $organizationId,
                 'user_id' => $userId,
@@ -98,7 +122,7 @@ final class MobileTimeTrackingService
                 'work_date' => $data['work_date'],
                 'start_time' => $data['start_time'] ?? null,
                 'end_time' => $data['end_time'] ?? null,
-                'hours_worked' => (float) $data['hours_worked'],
+                'hours_worked' => (float) ($data['hours_worked'] ?? 0),
                 'break_time' => isset($data['break_time']) ? (float) $data['break_time'] : null,
                 'title' => $data['title'],
                 'description' => $data['description'] ?? null,
@@ -106,10 +130,11 @@ final class MobileTimeTrackingService
                 'is_billable' => (bool) $data['is_billable'],
                 'location' => $data['location'] ?? null,
                 'notes' => $data['notes'] ?? null,
-                'custom_fields' => $this->freshMobileState(active: false),
+                'custom_fields' => array_replace_recursive($this->freshMobileState(active: false), $data['custom_fields'] ?? []),
+                ...array_intersect_key($data, array_flip(['start_at', 'end_at', 'timezone', 'timezone_requires_reconciliation', 'net_minutes', 'net_microseconds', 'break_intervals'])),
             ]);
 
-            return $this->findEntry($organizationId, $userId, (int) $entry->id);
+            return $this->findEntry($organizationId, $userId, (int) $entry->id, 'time_tracking.create');
         });
     }
 
@@ -121,11 +146,23 @@ final class MobileTimeTrackingService
         $this->assertWorkType($organizationId, $data['work_type_id'] ?? null);
         $this->assertTask($organizationId, $projectId, $data['task_id'] ?? null);
 
-        if ($this->activeTimerQuery($organizationId, $userId)->exists()) {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.active_timer_exists'));
-        }
+        $this->assertActor($user, $organizationId, 'time_tracking.create');
 
         return DB::transaction(function () use ($organizationId, $userId, $data, $projectId): TimeEntry {
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $data = $this->resolveWorkingTimezone($organizationId, $userId, $data);
+            try {
+                $data = array_replace($data, WorkTimeInterval::normalizeStart($data, (string) config('app.timezone', 'UTC')));
+            } catch (\Throwable $exception) {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_time'));
+            }
+
+            $guard->assertMutable($organizationId, $projectId, $data + ['user_id' => $userId]);
+            User::query()->whereKey($userId)->lockForUpdate()->firstOrFail();
+            if ($this->activeTimerQuery($organizationId, $userId)->exists()) {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.active_timer_exists'), 409);
+            }
             $entry = TimeEntry::query()->create([
                 'organization_id' => $organizationId,
                 'user_id' => $userId,
@@ -144,73 +181,118 @@ final class MobileTimeTrackingService
                 'is_billable' => (bool) $data['is_billable'],
                 'location' => $data['location'] ?? null,
                 'notes' => $data['notes'] ?? null,
-                'custom_fields' => $this->freshMobileState(active: true, userId: $userId),
+                'custom_fields' => array_replace_recursive($this->freshMobileState(active: true, userId: $userId), $data['custom_fields'] ?? []),
+                'start_at' => $data['start_at'],
+                'timezone' => $data['timezone'],
+                'timezone_requires_reconciliation' => $data['timezone_requires_reconciliation'],
             ]);
 
-            return $this->findEntry($organizationId, $userId, (int) $entry->id);
+            return $this->findEntry($organizationId, $userId, (int) $entry->id, 'time_tracking.create');
         });
     }
 
     public function stopTimer(TimeEntry $entry, int $userId, array $data): TimeEntry
     {
-        if (! $this->isActiveTimer($entry)) {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.no_active_timer'));
-        }
+        $this->assertEntryActor($entry, $userId, 'time_tracking.edit');
 
-        $hours = $this->calculateHours(
-            $this->timeString($entry->getRawOriginal('start_time')),
-            (string) $data['end_time'],
-            (float) $data['break_time']
-        );
+        return DB::transaction(function () use ($entry, $userId, $data): TimeEntry {
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization((int) $entry->organization_id);
+            $entry = TimeEntry::query()->where('organization_id', $entry->organization_id)->where('user_id', $userId)->whereKey($entry->id)->lockForUpdate()->firstOrFail();
+            if (! $this->isActiveTimer($entry)) {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.no_active_timer'), 409);
+            }
+            $interval = $this->normalizeInterval([
+                'work_date' => $entry->work_date->format('Y-m-d'),
+                'start_time' => $this->timeString($entry->getRawOriginal('start_time')),
+                'start_at' => $entry->start_at?->utc()->format('Y-m-d\\TH:i:s.u\\Z'),
+                'timezone' => $entry->timezone ?? config('app.timezone', 'UTC'),
+                'timezone_requires_reconciliation' => $entry->timezone === null || (bool) $entry->timezone_requires_reconciliation,
+                ...$data,
+            ]);
+            $guard->assertMutable((int) $entry->organization_id, (int) $entry->project_id, $guard->entryFacts($entry));
+            $guard->assertMutable((int) $entry->organization_id, (int) $entry->project_id, array_replace($guard->entryFacts($entry), $interval));
+            $state = $this->mobileState($entry);
+            $state['active_timer'] = false;
+            $state['stopped_by_user_id'] = $userId;
+            $state['stopped_at'] = now()->toIso8601String();
+            $entry->forceFill([
+                ...array_intersect_key($interval, array_flip(['start_at', 'end_at', 'timezone', 'timezone_requires_reconciliation', 'net_minutes', 'net_microseconds', 'break_intervals', 'end_time', 'break_time', 'hours_worked'])),
+                'notes' => $data['notes'] ?? $entry->notes,
+                'custom_fields' => $this->withMobileState($entry, $state),
+            ])->save();
 
-        $state = $this->mobileState($entry);
-        $state['active_timer'] = false;
-        $state['stopped_by_user_id'] = $userId;
-        $state['stopped_at'] = now()->toIso8601String();
-
-        $entry->forceFill([
-            'end_time' => $data['end_time'],
-            'break_time' => (float) $data['break_time'],
-            'hours_worked' => $hours,
-            'notes' => $data['notes'] ?? $entry->notes,
-            'custom_fields' => $this->withMobileState($entry, $state),
-        ])->save();
-
-        return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id);
+            return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id, 'time_tracking.edit');
+        });
     }
 
     public function submitEntry(TimeEntry $entry): TimeEntry
     {
-        if ($this->isActiveTimer($entry) || $entry->hours_worked === null || ! in_array($entry->status, ['draft', 'rejected'], true)) {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.submit_forbidden'));
-        }
+        return DB::transaction(function () use ($entry): TimeEntry {
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization((int) $entry->organization_id);
+            $entry = TimeEntry::query()->where('organization_id', $entry->organization_id)->whereKey($entry->id)->lockForUpdate()->firstOrFail();
+            $this->assertEntryActor($entry, (int) Auth::id(), 'time_tracking.submit');
+            if ($this->isActiveTimer($entry) || $entry->hours_worked === null || ! in_array($entry->status, ['draft', 'rejected'], true)) {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.submit_forbidden'));
+            }
+            $guard->assertMutable((int) $entry->organization_id, (int) $entry->project_id, $guard->entryFacts($entry));
+            $entry->submit();
 
-        $entry->submit();
-
-        return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id);
+            return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id, 'time_tracking.submit');
+        });
     }
 
     public function submitCorrection(TimeEntry $entry, int $userId, array $data): TimeEntry
     {
-        if ($entry->status !== 'rejected') {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.correction_forbidden'));
-        }
+        $this->assertEntryActor($entry, $userId, 'time_tracking.edit');
+        $this->assertEntryActor($entry, $userId, 'time_tracking.submit');
 
         return DB::transaction(function () use ($entry, $userId, $data): TimeEntry {
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization((int) $entry->organization_id);
+            $entry = TimeEntry::query()->where('organization_id', $entry->organization_id)->where('user_id', $userId)->whereKey($entry->id)->lockForUpdate()->firstOrFail();
+            if ($entry->status !== 'rejected') {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.correction_forbidden'));
+            }
+            $merged = [
+                'work_date' => $entry->work_date->format('Y-m-d'),
+                'start_time' => $entry->getRawOriginal('start_time'),
+                'end_time' => $entry->getRawOriginal('end_time'),
+                'timezone' => $entry->timezone ?? config('app.timezone', 'UTC'),
+                'timezone_requires_reconciliation' => $entry->timezone === null || (bool) $entry->timezone_requires_reconciliation,
+                'break_time' => $entry->break_time,
+                'break_intervals' => $entry->break_intervals ?? [],
+                ...$data,
+            ];
+            if (! empty($data['timezone'])) {
+                $merged['timezone_requires_reconciliation'] = false;
+            }
+            if (! isset($data['start_time']) && ! isset($data['end_time']) && ! ($entry->timezone_requires_reconciliation && ! empty($data['timezone']) && ($entry->custom_fields['time_tracking_interval']['clock_source'] ?? 'legacy_local') === 'legacy_local')) {
+                $merged['start_at'] = $entry->start_at?->utc()->format('Y-m-d\\TH:i:s.u\\Z');
+                $merged['end_at'] = $entry->end_at?->utc()->format('Y-m-d\\TH:i:s.u\\Z');
+            }
+            $data = $this->normalizeInterval($merged);
+            if ($entry->status !== 'rejected') {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.correction_forbidden'));
+            }
+
+            $guard->assertMutable((int) $entry->organization_id, (int) $entry->project_id, $guard->entryFacts($entry));
+            $guard->assertMutable((int) $entry->organization_id, (int) $entry->project_id, array_replace($guard->entryFacts($entry), $data));
             $state = $this->mobileState($entry);
             $corrections = is_array($state['corrections'] ?? null) ? $state['corrections'] : [];
             $corrections[] = [
                 'id' => (string) Str::uuid(),
                 'reason' => $data['correction_reason'],
                 'previous_hours' => $entry->hours_worked !== null ? (float) $entry->hours_worked : null,
-                'new_hours' => (float) $data['hours_worked'],
+                'new_hours' => (float) ($data['hours_worked'] ?? 0),
                 'submitted_by_user_id' => $userId,
                 'created_at' => now()->toIso8601String(),
             ];
             $state['corrections'] = $corrections;
 
             $entry->forceFill([
-                'hours_worked' => (float) $data['hours_worked'],
+                'hours_worked' => (float) ($data['hours_worked'] ?? 0),
                 'break_time' => array_key_exists('break_time', $data) ? (float) $data['break_time'] : $entry->break_time,
                 'start_time' => $data['start_time'] ?? $entry->getRawOriginal('start_time'),
                 'end_time' => $data['end_time'] ?? $entry->getRawOriginal('end_time'),
@@ -218,13 +300,14 @@ final class MobileTimeTrackingService
                 'description' => $data['description'] ?? $entry->description,
                 'notes' => $data['notes'] ?? $entry->notes,
                 'custom_fields' => $this->withMobileState($entry, $state),
+                ...array_intersect_key($data, array_flip(['start_at', 'end_at', 'timezone', 'timezone_requires_reconciliation', 'net_minutes', 'net_microseconds', 'break_intervals'])),
             ])->save();
 
             if (! $entry->submit()) {
                 throw new DomainException(trans_message('time_tracking.mobile.errors.correction_forbidden'));
             }
 
-            return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id);
+            return $this->findEntry((int) $entry->organization_id, (int) $entry->user_id, (int) $entry->id, 'time_tracking.submit');
         });
     }
 
@@ -233,6 +316,7 @@ final class MobileTimeTrackingService
         return $this->withRelations(TimeEntry::query())
             ->where('organization_id', $organizationId)
             ->where('user_id', $userId)
+            ->whereIn('project_id', $this->projectAccess->query(User::query()->findOrFail($userId), $organizationId)->select('projects.id'))
             ->when(isset($filters['project_id']), static function (Builder $query) use ($filters): void {
                 $query->where('project_id', (int) $filters['project_id']);
             })
@@ -337,24 +421,55 @@ final class MobileTimeTrackingService
         }
     }
 
-    private function calculateHours(string $startTime, string $endTime, float $breakHours): float
+    private function resolveWorkingTimezone(int $organizationId, int $userId, array $data): array
     {
-        $start = CarbonImmutable::createFromFormat('H:i', $startTime);
-        $end = CarbonImmutable::createFromFormat('H:i', $endTime);
+        $explicitId = isset($data['employment_contract_id']) ? (int) $data['employment_contract_id'] : null;
+        $resolved = app(WorkingTimezoneResolver::class)->resolve($organizationId, $userId, (string) $data['work_date'], $explicitId);
+        $custom = $data['custom_fields'] ?? [];
+        if ($explicitId !== null || $resolved['employment_contract_id'] !== null) {
+            $custom['employment_contract_id'] = $explicitId ?? $resolved['employment_contract_id'];
+        }
+        $custom['time_tracking_interval']['clock_source'] = ! empty($data['start_at']) ? 'absolute' : 'legacy_local';
+        if (empty($data['timezone']) && $resolved['timezone'] !== null) {
+            $data['timezone'] = $resolved['timezone'];
+        }
+        $data['custom_fields'] = $custom;
 
-        if (! $start instanceof CarbonImmutable || ! $end instanceof CarbonImmutable) {
+        return $data;
+    }
+
+    private function normalizeInterval(array $data): array
+    {
+        if ((! empty($data['start_at']) || ! empty($data['start_time'])) && (! empty($data['end_at']) || ! empty($data['end_time']))) {
+            try {
+                return array_replace($data, WorkTimeInterval::fromInput($data, (string) config('app.timezone', 'UTC'))->persistence());
+            } catch (\Throwable $exception) {
+                throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
+            }
+        }
+        if (! empty($data['start_time']) || ! empty($data['end_time']) || ! empty($data['start_at']) || ! empty($data['end_at'])) {
             throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_time'));
         }
 
-        $totalMinutes = (int) (($end->timestamp - $start->timestamp) / 60);
-        $breakMinutes = (int) round($breakHours * 60);
-        $workMinutes = $totalMinutes - $breakMinutes;
+        return $data;
+    }
 
-        if ($totalMinutes <= 0 || $workMinutes <= 0) {
-            throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
+    private function assertActor(User $user, int $organizationId, string $permission): void
+    {
+        if ($organizationId <= 0 || ! $user->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()
+            || ! app(AuthorizationService::class)->can($user, $permission, ['organization_id' => $organizationId])) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.permission_denied'), 403);
         }
+    }
 
-        return round($workMinutes / 60, 2);
+    private function assertEntryActor(TimeEntry $entry, int $userId, string $permission): void
+    {
+        $user = User::query()->find($userId);
+        if (! $user || (int) $entry->user_id !== $userId) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.permission_denied'), 403);
+        }
+        $this->assertActor($user, (int) $entry->organization_id, $permission);
+        $this->assertProject($user, (int) $entry->organization_id, (int) $entry->project_id);
     }
 
     private function isActiveTimer(TimeEntry $entry): bool

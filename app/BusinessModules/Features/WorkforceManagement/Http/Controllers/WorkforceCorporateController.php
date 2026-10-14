@@ -17,9 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 final class WorkforceCorporateController extends Controller
 {
-    public function __construct(private readonly WorkforceCorporateService $service)
-    {
-    }
+    public function __construct(private readonly WorkforceCorporateService $service) {}
 
     public function accountingMappings(Request $request): JsonResponse
     {
@@ -64,6 +62,39 @@ final class WorkforceCorporateController extends Controller
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'payroll_periods.lock');
+        }
+    }
+
+    public function reopenPayrollPeriod(Request $request, int $periodId): JsonResponse
+    {
+        try {
+            $payload = $request->validate(['basis_reference' => ['required', 'string', 'max:255'], 'expected_source_hash' => ['required', 'string', 'size:64']]);
+
+            return AdminResponse::success($this->service->reopenPayrollPeriod($this->organizationId($request), $periodId, $request->user(), $payload), trans_message('workforce.messages.record_updated'));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'payroll_periods.reopen');
+        }
+    }
+
+    public function payrollRevisions(Request $request, int $periodId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->payrollRevisions($this->organizationId($request), $periodId, $request->user()));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
+        }
+    }
+
+    public function payrollRevision(Request $request, int $periodId, int $revision): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->service->payrollRevision($this->organizationId($request), $periodId, $revision, $request->user()));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 404);
         }
     }
 

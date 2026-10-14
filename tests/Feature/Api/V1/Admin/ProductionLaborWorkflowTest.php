@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -208,6 +208,42 @@ final class ProductionLaborWorkflowTest extends TestCase
                 ]],
             ]);
         $foreignWorkOrder->assertStatus(422);
+    }
+
+    public function test_employee_interval_overlap_is_rejected_across_project_work_orders(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $employee = WorkforceEmployee::create([
+            'organization_id' => $context->organization->id, 'personnel_number' => 'OVERLAP-1',
+            'last_name' => 'Worker', 'first_name' => 'Overlap', 'employment_status' => 'active', 'hire_date' => '2025-01-01',
+        ]);
+        $service = app(\App\BusinessModules\Features\ProductionLabor\Services\ProductionLaborService::class);
+        $orders = [];
+        foreach ([1, 2] as $number) {
+            $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $order = \App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder::create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'order_number' => 'OVERLAP-'.$number, 'title' => 'Shift', 'assignee_type' => 'worker', 'status' => 'issued',
+            ]);
+            $line = $order->lines()->create(['organization_id' => $context->organization->id, 'name' => 'Work', 'planned_quantity' => 1]);
+            $orders[] = [$order, $line];
+        }
+        $payload = static fn ($order, $line, $start, $end): array => [
+            'work_order_id' => $order->id, 'shift_date' => '2026-01-31', 'entries' => [[
+                'work_order_line_id' => $line->id, 'employee_id' => $employee->id, 'include_in_payroll' => true,
+                'start_at' => $start, 'end_at' => $end, 'timezone' => 'UTC',
+            ]],
+        ];
+        $service->createTimesheet($context->organization->id, $context->user->id, $payload($orders[0][0], $orders[0][1], '2026-01-31T22:00:00Z', '2026-02-01T06:00:00Z'));
+        try {
+            $service->createTimesheet($context->organization->id, $context->user->id, $payload($orders[1][0], $orders[1][1], '2026-01-31T23:00:00Z', '2026-02-01T04:00:00Z'));
+            self::fail('Overlapping employee interval must fail across projects.');
+        } catch (\DomainException $exception) {
+            self::assertSame(409, $exception->getCode());
+        }
+        self::assertDatabaseCount('production_labor_timesheets', 1);
+        self::assertDatabaseCount('production_labor_timesheet_entries', 1);
     }
 
     private function allowAccess(string $role): void

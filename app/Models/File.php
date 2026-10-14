@@ -4,14 +4,23 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
 
 class File extends Model
 {
     use HasFactory, SoftDeletes;
+
+    protected static function booted(): void
+    {
+        static::deleting(function (File $file): void {
+            if ($file->isWorkforcePrivateDocument()) {
+                throw new \DomainException(trans_message('workforce.errors.hr_document_disposal_forbidden'));
+            }
+        });
+    }
 
     protected $fillable = [
         'organization_id',
@@ -63,15 +72,27 @@ class File extends Model
      */
     public function getUrlAttribute(): string
     {
+        if ($this->isWorkforcePrivateDocument()) {
+            return '';
+        }
         /** @var \Illuminate\Contracts\Filesystem\Filesystem|\Illuminate\Filesystem\FilesystemAdapter $storageAdapter */
         $storageAdapter = Storage::disk($this->disk);
+
         return $storageAdapter->url($this->path);
+    }
+
+    public function isWorkforcePrivateDocument(): bool
+    {
+        return str_starts_with((string) $this->category, 'workforce_hr')
+            || str_starts_with((string) $this->category, 'workforce_timekeeping')
+            || in_array($this->fileable_type, [
+                \App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee::class,
+                \App\BusinessModules\Features\WorkforceManagement\Domain\Timekeeping\Models\TimekeepingPeriod::class,
+            ], true);
     }
 
     /**
      * Получить всю информацию о миниатюрах из поля additional_info.
-     *
-     * @return array
      */
     public function getThumbnailsAttribute(): array
     {
@@ -81,7 +102,7 @@ class File extends Model
     /**
      * Получить информацию о конкретной миниатюре по ее суффиксу.
      *
-     * @param string $suffix Суффикс имени миниатюры (ключ в массиве thumbnails, например, '_thumb', '_medium').
+     * @param  string  $suffix  Суффикс имени миниатюры (ключ в массиве thumbnails, например, '_thumb', '_medium').
      * @return array|null Возвращает массив с данными миниатюры [path, url, disk, name, width, height] или null, если не найдено.
      */
     public function getThumbnail(string $suffix): ?array
@@ -92,11 +113,14 @@ class File extends Model
     /**
      * Получить URL конкретной миниатюры по ее суффиксу.
      *
-     * @param string $suffix Суффикс имени миниатюры.
+     * @param  string  $suffix  Суффикс имени миниатюры.
      * @return string|null URL миниатюры или null, если не найдено.
      */
     public function getThumbnailUrl(string $suffix): ?string
     {
+        if ($this->isWorkforcePrivateDocument()) {
+            return null;
+        }
         $thumbnailData = $this->getThumbnail($suffix);
         if (isset($thumbnailData['url'])) {
             return $thumbnailData['url'];
@@ -104,8 +128,10 @@ class File extends Model
         if (isset($thumbnailData['path']) && isset($thumbnailData['disk'])) {
             /** @var \Illuminate\Contracts\Filesystem\Filesystem|\Illuminate\Filesystem\FilesystemAdapter $storageAdapter */
             $storageAdapter = Storage::disk($thumbnailData['disk']);
+
             return $storageAdapter->url($thumbnailData['path']);
         }
+
         return null;
     }
 }

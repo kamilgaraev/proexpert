@@ -38,13 +38,13 @@ final readonly class ReportRunExportSource
         if (
             $run->status !== ReportRunStatus::READY
             || $run->sourceHash === null
-            || !hash_equals($run->definitionHash->value, $query->definition->definitionHash->value)
-            || !hash_equals($run->queryHash->value, $query->queryHash->value)
-            || !hash_equals($run->sourceHash->value, $snapshot->sourceHash->value)
-            || !hash_equals($snapshot->definitionHash->value, $run->definitionHash->value)
-            || !hash_equals($snapshot->sourceHash->value, $resultSnapshot->sourceHash->value)
+            || ! hash_equals($run->definitionHash->value, $query->definition->definitionHash->value)
+            || ! hash_equals($run->queryHash->value, $query->queryHash->value)
+            || ! hash_equals($run->sourceHash->value, $snapshot->sourceHash->value)
+            || ! hash_equals($snapshot->definitionHash->value, $run->definitionHash->value)
+            || ! hash_equals($snapshot->sourceHash->value, $resultSnapshot->sourceHash->value)
             || self::snapshotProjection($snapshot) !== self::snapshotProjection($resultSnapshot)
-            || !hash_equals($resultHash->value, $calculated->value)
+            || ! hash_equals($resultHash->value, $calculated->value)
             || $dataClassification !== $query->definition->outputClassification->defaultClassification
             || self::outputProjection($outputClassification) !== self::outputProjection($query->definition->outputClassification)
             || $contractVersion !== $run->contractVersion
@@ -80,7 +80,8 @@ final readonly class ReportRunExportSource
                     'severity' => $warning->severity->value,
                     'metric' => $warning->metric,
                     'affected_row_count' => $warning->affectedRowCount,
-                ], $result->quality->warnings),
+                ] + (\Illuminate\Support\Facades\Lang::has('reports.warnings.'.$warning->code)
+                    ? ['message' => trans_message('reports.warnings.'.$warning->code)] : []), $result->quality->warnings),
                 'unmatched_count' => $result->quality->unmatchedCount,
                 'reconciliation' => $result->quality->reconciliation->value,
                 'unknown_metrics' => $result->quality->unknownMetrics,

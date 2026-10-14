@@ -217,7 +217,7 @@ final class WorkforceProController extends Controller
         try {
             return AdminResponse::success($this->service->storeAbsence(
                 $this->organizationId($request),
-                $request->validate($this->absenceRules(), $this->dateRangeMessages())
+                $request->validate($this->absenceRules(), $this->dateRangeMessages()), $request->user()
             ), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
@@ -231,7 +231,7 @@ final class WorkforceProController extends Controller
     public function approveAbsence(Request $request, int $absenceId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->approveAbsence($this->organizationId($request), $absenceId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->approveAbsence($this->organizationId($request), $absenceId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -242,7 +242,7 @@ final class WorkforceProController extends Controller
     public function cancelAbsence(Request $request, int $absenceId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->cancelAbsence($this->organizationId($request), $absenceId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->cancelAbsence($this->organizationId($request), $absenceId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -260,7 +260,7 @@ final class WorkforceProController extends Controller
         try {
             return AdminResponse::success($this->service->storeBusinessTrip(
                 $this->organizationId($request),
-                $request->validate($this->businessTripRules(), $this->dateRangeMessages())
+                $request->validate($this->businessTripRules(), $this->dateRangeMessages()), $request->user()
             ), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
@@ -274,7 +274,7 @@ final class WorkforceProController extends Controller
     public function approveBusinessTrip(Request $request, int $tripId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->approveBusinessTrip($this->organizationId($request), $tripId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->approveBusinessTrip($this->organizationId($request), $tripId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -285,7 +285,7 @@ final class WorkforceProController extends Controller
     public function cancelBusinessTrip(Request $request, int $tripId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->cancelBusinessTrip($this->organizationId($request), $tripId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->cancelBusinessTrip($this->organizationId($request), $tripId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -301,7 +301,7 @@ final class WorkforceProController extends Controller
     public function storeOrder(Request $request): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->storeOrder($this->organizationId($request), $request->validate($this->orderRules())), trans_message('workforce.messages.record_created'), 201);
+            return AdminResponse::success($this->service->storeOrder($this->organizationId($request), $request->validate($this->orderRules()), $request->user()), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -314,7 +314,7 @@ final class WorkforceProController extends Controller
     public function approveOrder(Request $request, int $orderId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->approveOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->approveOrder($this->organizationId($request), $orderId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -325,7 +325,7 @@ final class WorkforceProController extends Controller
     public function applyOrder(Request $request, int $orderId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->applyOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->applyOrder($this->organizationId($request), $orderId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -336,7 +336,7 @@ final class WorkforceProController extends Controller
     public function cancelOrder(Request $request, int $orderId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->cancelOrder($this->organizationId($request), $orderId), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->cancelOrder($this->organizationId($request), $orderId, $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
@@ -470,12 +470,22 @@ final class WorkforceProController extends Controller
     private function list(Request $request, string $table): JsonResponse
     {
         try {
-            return $this->paginated($this->service->paginateList(
+            $paginator = $this->service->paginateList(
                 $table,
                 $this->organizationId($request),
                 $this->perPage($request),
                 $request->string('search')->trim()->value() ?: null,
-            ));
+            );
+            if (in_array($table, ['workforce_absences', 'workforce_business_trips'], true)
+                && ! app(\App\BusinessModules\Features\WorkforceManagement\Domain\HR\Services\HrAccess::class)->allows($this->organizationId($request), $request->user(), 'workforce.hr.private.read')) {
+                $paginator->through(function (array $record): array {
+                    unset($record['comment'], $record['purpose'], $record['basis_reference'], $record['basis_document_id'], $record['absence_type_name'], $record['reason_code']);
+
+                    return $record;
+                });
+            }
+
+            return $this->paginated($paginator);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, "{$table}.index");
         }
@@ -499,7 +509,7 @@ final class WorkforceProController extends Controller
     private function store(Request $request, string $table, array $rules): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->store($table, $this->organizationId($request), $request->validate($rules)), trans_message('workforce.messages.record_created'), 201);
+            return AdminResponse::success($this->service->store($table, $this->organizationId($request), $request->validate($rules), $request->user()), trans_message('workforce.messages.record_created'), 201);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -512,7 +522,7 @@ final class WorkforceProController extends Controller
     private function update(Request $request, string $table, int $id, array $rules): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->update($table, $this->organizationId($request), $id, $request->validate($rules)), trans_message('workforce.messages.record_updated'));
+            return AdminResponse::success($this->service->update($table, $this->organizationId($request), $id, $request->validate($rules), $request->user()), trans_message('workforce.messages.record_updated'));
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -525,7 +535,7 @@ final class WorkforceProController extends Controller
     private function assignment(Request $request, ?int $assignmentId = null): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->storeAssignment($this->organizationId($request), $request->validate($this->assignmentRules()), $assignmentId), trans_message('workforce.messages.record_created'), $assignmentId === null ? 201 : 200);
+            return AdminResponse::success($this->service->storeAssignment($this->organizationId($request), $request->validate($this->assignmentRules()), $assignmentId, $request->user()), trans_message('workforce.messages.record_created'), $assignmentId === null ? 201 : 200);
         } catch (ValidationException $exception) {
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (DomainException $exception) {
@@ -556,6 +566,8 @@ final class WorkforceProController extends Controller
             'code' => [$partial ? 'sometimes' : 'required', 'string', 'max:80'],
             'name' => [$partial ? 'sometimes' : 'required', 'string', 'max:255'],
             'category' => ['nullable', 'string', 'max:120'],
+            'safety_work_category' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'safety_work_type_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'is_active' => ['nullable', 'boolean'],
         ];
     }
@@ -578,6 +590,9 @@ final class WorkforceProController extends Controller
     private function assignmentRules(): array
     {
         return [
+            'employment_contract_id' => ['nullable', 'integer', 'min:1'],
+            'basis_reference' => ['required', 'string', 'max:255'],
+            'basis_document_id' => ['nullable', 'integer'],
             'employee_id' => ['required', 'integer'],
             'staff_unit_id' => ['required', 'integer'],
             'department_id' => ['required', 'integer'],
@@ -608,6 +623,9 @@ final class WorkforceProController extends Controller
     private function absenceRules(): array
     {
         return [
+            'reason_code' => ['required', Rule::in(['vacation', 'sick_leave', 'unpaid_leave', 'absence', 'other'])],
+            'basis_reference' => ['required', 'string', 'max:255'],
+            'basis_document_id' => ['nullable', 'integer'],
             'employee_id' => ['required', 'integer'],
             'absence_type_code' => ['nullable', 'string', 'max:80'],
             'absence_type_name' => ['nullable', 'string', 'max:255'],
@@ -621,6 +639,9 @@ final class WorkforceProController extends Controller
     private function businessTripRules(): array
     {
         return [
+            'reason_code' => ['required', Rule::in(['business_trip'])],
+            'basis_reference' => ['required', 'string', 'max:255'],
+            'basis_document_id' => ['nullable', 'integer'],
             'employee_id' => ['required', 'integer'],
             'project_id' => ['nullable', 'integer'],
             'start_date' => ['required', 'date'],

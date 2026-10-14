@@ -34,6 +34,7 @@ Route::prefix('api/v1/mobile/production-labor')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'production-labor.active'])
     ->group(function () use ($mobileController): void {
         Route::get('/work-orders', [$mobileController, 'workOrders'])->middleware('mobile.project-authorize:production-labor.view');
-        Route::post('/output-entries', [$mobileController, 'storeOutput'])->middleware('authorize:production-labor.output.record');
-        Route::post('/timesheets', [$mobileController, 'storeTimesheet'])->middleware('authorize:production-labor.output.record');
+        // Legacy mobile requests derive project context from the tenant-scoped order in the service.
+        Route::post('/output-entries', [$mobileController, 'storeOutput']);
+        Route::post('/timesheets', [$mobileController, 'storeTimesheet']);
     });

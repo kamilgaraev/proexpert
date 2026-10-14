@@ -1030,7 +1030,10 @@ class CustomerPortalService
 
     private function baseDocumentQuery(int $organizationId, ?Project $project = null, ?User $user = null): Builder
     {
-        $query = File::query()->where('organization_id', $organizationId);
+        $query = File::query()->where('organization_id', $organizationId)->whereNotIn('fileable_type', [
+            \App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee::class,
+            \App\BusinessModules\Features\WorkforceManagement\Domain\Timekeeping\Models\TimekeepingPeriod::class,
+        ]);
         $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
 
         if ($project) {

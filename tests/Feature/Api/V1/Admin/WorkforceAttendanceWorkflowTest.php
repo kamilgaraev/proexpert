@@ -57,6 +57,35 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
             ->assertJsonPath('data.0.source_label', 'Ручная корректировка');
     }
 
+    public function test_common_correction_is_fallback_and_project_correction_wins_even_when_common_is_newer(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employeeWithAssignment($context, 'ATT-COMMON', $project->id);
+        $uri = '/api/v1/admin/workforce/employees/'.$employee->id.'/attendance-corrections';
+        $sheet = '/api/v1/admin/workforce/attendance-sheet?project_id='.$project->id.'&date_from=2026-05-18&date_to=2026-05-18';
+        $this->withHeaders($context->authHeaders())->postJson($uri, [
+            'project_id' => null, 'work_date' => '2026-05-18', 'status' => 'at_work', 'hours' => 8, 'reason' => 'Общая подтверждённая явка',
+        ])->assertCreated();
+        $this->withHeaders($context->authHeaders())->getJson($sheet)->assertOk()
+            ->assertJsonPath('data.rows.0.days.2026-05-18.status', 'at_work')
+            ->assertJsonPath('data.rows.0.days.2026-05-18.hours', 8)
+            ->assertJsonPath('data.rows.0.days.2026-05-18.source_label', 'Ручная корректировка');
+        $specific = $this->withHeaders($context->authHeaders())->postJson($uri, [
+            'project_id' => $project->id, 'work_date' => '2026-05-18', 'status' => 'not_at_work', 'hours' => 0, 'reason' => 'Отсутствовал на этом объекте',
+        ])->assertCreated()->json('data.id');
+        $common = $this->withHeaders($context->authHeaders())->postJson($uri, [
+            'project_id' => null, 'work_date' => '2026-05-18', 'status' => 'at_work', 'hours' => 6, 'reason' => 'Уточнена общая явка',
+        ])->assertCreated()->json('data.id');
+        DB::table('workforce_attendance_corrections')->where('id', $specific)->update(['created_at' => now()->subDay()]);
+        DB::table('workforce_attendance_corrections')->where('id', $common)->update(['created_at' => now()]);
+        $this->withHeaders($context->authHeaders())->getJson($sheet)->assertOk()
+            ->assertJsonPath('data.rows.0.days.2026-05-18.status', 'not_at_work')
+            ->assertJsonPath('data.rows.0.days.2026-05-18.hours', 0)
+            ->assertJsonPath('data.rows.0.days.2026-05-18.source_label', 'Ручная корректировка');
+    }
+
     public function test_locked_payroll_period_rejects_manual_attendance_correction(): void
     {
         $context = AdminApiTestContext::create();
@@ -87,6 +116,11 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
             ])
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_locked'));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/employees/{$employee->id}/attendance-corrections", [
+                'project_id' => null, 'work_date' => '2026-05-16', 'status' => 'at_work', 'hours' => 8,
+                'reason' => 'Общая корректировка затрагивает закрытый проектный период',
+            ])->assertStatus(422)->assertJsonPath('message', trans_message('workforce.errors.payroll_period_locked'));
     }
 
     private function employeeWithAssignment(AdminApiTestContext $context, string $personnelNumber, int $projectId): WorkforceEmployee
@@ -102,7 +136,7 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
 
         $departmentId = DB::table('workforce_departments')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'ATT-DEP-' . uniqid(),
+            'code' => 'ATT-DEP-'.uniqid(),
             'name' => 'Строительный участок',
             'created_at' => now(),
             'updated_at' => now(),
@@ -110,7 +144,7 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
 
         $positionId = DB::table('workforce_positions')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'ATT-POS-' . uniqid(),
+            'code' => 'ATT-POS-'.uniqid(),
             'name' => 'Монтажник',
             'created_at' => now(),
             'updated_at' => now(),
@@ -118,7 +152,7 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
 
         $scheduleId = DB::table('workforce_work_schedules')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'ATT-SCH-' . uniqid(),
+            'code' => 'ATT-SCH-'.uniqid(),
             'name' => 'Пятидневка',
             'hours_per_day' => 8,
             'created_at' => now(),
@@ -129,7 +163,7 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'department_id' => $departmentId,
             'position_id' => $positionId,
-            'code' => 'ATT-UNIT-' . uniqid(),
+            'code' => 'ATT-UNIT-'.uniqid(),
             'valid_from' => '2026-05-01',
             'created_at' => now(),
             'updated_at' => now(),
@@ -162,6 +196,7 @@ final class WorkforceAttendanceWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

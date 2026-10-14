@@ -2,11 +2,11 @@
 
 namespace App\Http\Resources\AdvanceTransaction;
 
-use Illuminate\Http\Resources\Json\JsonResource;
-use App\Http\Resources\User\UserResource;
-use App\Http\Resources\Project\ProjectResource;
 use App\Http\Resources\File\FileResource;
+use App\Http\Resources\Project\ProjectResource;
+use App\Http\Resources\User\UserResource;
 use App\Models\File;
+use Illuminate\Http\Resources\Json\JsonResource;
 
 class AdvanceTransactionResource extends JsonResource
 {
@@ -38,11 +38,12 @@ class AdvanceTransactionResource extends JsonResource
             'accounting_data' => $this->accounting_data,
             'attachments' => $this->when($this->attachment_ids, function () {
                 $fileIds = explode(',', $this->attachment_ids);
-                $files = File::whereIn('id', $fileIds)->get();
+                $files = File::where('organization_id', $this->organization_id)->whereIn('id', $fileIds)->get();
+
                 return FileResource::collection($files);
             }),
             'created_at' => $this->created_at->format('Y-m-d H:i:s'),
             'updated_at' => $this->updated_at->format('Y-m-d H:i:s'),
         ];
     }
-} 
+}

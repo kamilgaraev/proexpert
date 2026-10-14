@@ -7,14 +7,20 @@ namespace App\BusinessModules\Features\ProductionLabor\Services;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborOutputEntry;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborPayrollAccrual;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet;
+use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrderLine;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
+use App\BusinessModules\Features\TimeTracking\Support\WorkTimeInterval;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
+use App\Services\WorkforcePeriodMutationGuard;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -79,6 +85,7 @@ final class ProductionLaborService
         $this->assertProject($organizationId, (int) $payload['project_id']);
 
         return DB::transaction(function () use ($organizationId, $userId, $payload): ProductionLaborWorkOrder {
+            $this->lockOrganization($organizationId);
             $workOrder = ProductionLaborWorkOrder::create([
                 'organization_id' => $organizationId,
                 'project_id' => (int) $payload['project_id'],
@@ -119,42 +126,58 @@ final class ProductionLaborService
 
     public function issueWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if ($workOrder->status !== 'draft') {
-            throw new DomainException(trans_message('production_labor.errors.issue_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if ($workOrder->status !== 'draft') {
+                throw new DomainException(trans_message('production_labor.errors.issue_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'issued', 'issued_at' => now()]);
+            $workOrder->update(['status' => 'issued', 'issued_at' => now()]);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function startWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if ($workOrder->status !== 'issued') {
-            throw new DomainException(trans_message('production_labor.errors.start_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if ($workOrder->status !== 'issued') {
+                throw new DomainException(trans_message('production_labor.errors.start_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'in_progress']);
+            $workOrder->update(['status' => 'in_progress']);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function submitWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
-            throw new DomainException(trans_message('production_labor.errors.submit_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+                throw new DomainException(trans_message('production_labor.errors.submit_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'submitted', 'submitted_at' => now()]);
+            $workOrder->update(['status' => 'submitted', 'submitted_at' => now()]);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function acceptWorkOrder(ProductionLaborWorkOrder $workOrder, int $userId): ProductionLaborWorkOrder
     {
         return DB::transaction(function () use ($workOrder, $userId): ProductionLaborWorkOrder {
             $this->lockOrganization((int) $workOrder->organization_id);
-            $workOrder->refresh();
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
 
             if ($workOrder->status !== 'submitted') {
                 throw new DomainException(trans_message('production_labor.errors.accept_invalid_status'));
@@ -187,35 +210,50 @@ final class ProductionLaborService
 
     public function returnWorkOrder(ProductionLaborWorkOrder $workOrder, string $reason): ProductionLaborWorkOrder
     {
-        if ($workOrder->status !== 'submitted') {
-            throw new DomainException(trans_message('production_labor.errors.return_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder, $reason): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if ($workOrder->status !== 'submitted') {
+                throw new DomainException(trans_message('production_labor.errors.return_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'returned', 'return_reason' => $reason]);
+            $workOrder->update(['status' => 'returned', 'return_reason' => $reason]);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function closeWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if ($workOrder->status !== 'accepted') {
-            throw new DomainException(trans_message('production_labor.errors.close_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if ($workOrder->status !== 'accepted') {
+                throw new DomainException(trans_message('production_labor.errors.close_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'closed', 'closed_at' => now()]);
+            $workOrder->update(['status' => 'closed', 'closed_at' => now()]);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function cancelWorkOrder(ProductionLaborWorkOrder $workOrder): ProductionLaborWorkOrder
     {
-        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
-            throw new DomainException(trans_message('production_labor.errors.cancel_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $workOrder->organization_id)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkOrderSourcesMutable($workOrder);
+            if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+                throw new DomainException(trans_message('production_labor.errors.cancel_invalid_status'));
+            }
 
-        $workOrder->update(['status' => 'cancelled']);
+            $workOrder->update(['status' => 'cancelled']);
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function recordOutput(int $organizationId, int $userId, array $payload, bool $allowOverrun = false, ?string $idempotencyKey = null): ProductionLaborOutputEntry
@@ -242,16 +280,21 @@ final class ProductionLaborService
                         throw new DomainException(trans_message('production_labor.errors.idempotency_conflict'), 409);
                     }
 
+                    $this->assertActorProject($organizationId, $userId, (int) $existing->project_id, $payload['project_id'] ?? null);
+
                     return $existing->load(['workOrder:id,order_number,title', 'line:id,name,unit', 'project:id,name']);
                 }
             }
 
             $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
-            $workOrder = $line->workOrder;
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $organizationId)->whereKey($line->work_order_id)->lockForUpdate()->firstOrFail();
+            $line = ProductionLaborWorkOrderLine::query()->where('organization_id', $organizationId)->whereKey($line->id)->lockForUpdate()->firstOrFail();
+            $this->assertActorProject($organizationId, $userId, (int) $workOrder->project_id, $payload['project_id'] ?? null);
             if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
                 throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
             }
 
+            app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $workOrder->project_id, ['work_date' => $payload['work_date'], 'user_id' => $userId]);
             $quantity = (float) $payload['quantity'];
             $planned = (float) $line->planned_quantity;
             if (! $allowOverrun && $planned > 0 && round((float) $line->accepted_quantity + $quantity, 4) > $planned) {
@@ -292,6 +335,7 @@ final class ProductionLaborService
     public function createTimesheet(int $organizationId, int $userId, array $payload): ProductionLaborTimesheet
     {
         $workOrder = $this->findWorkOrder($organizationId, (int) $payload['work_order_id']);
+        $this->assertActorProject($organizationId, $userId, (int) $workOrder->project_id, $payload['project_id'] ?? null);
 
         if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.timesheet_invalid_status'));
@@ -299,6 +343,10 @@ final class ProductionLaborService
 
         return DB::transaction(function () use ($organizationId, $userId, $payload, $workOrder): ProductionLaborTimesheet {
             $this->lockOrganization($organizationId);
+            $workOrder = ProductionLaborWorkOrder::query()->where('organization_id', $organizationId)->whereKey($workOrder->id)->lockForUpdate()->firstOrFail();
+            if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+                throw new DomainException(trans_message('production_labor.errors.timesheet_invalid_status'));
+            }
             $this->assertPayrollPeriodOpenForWorkDate(
                 $organizationId,
                 (int) $workOrder->project_id,
@@ -356,6 +404,31 @@ final class ProductionLaborService
                     );
                 }
 
+                $interval = null;
+                if (! empty($entryPayload['start_at']) || ! empty($entryPayload['end_at'])) {
+                    try {
+                        $interval = WorkTimeInterval::fromInput(['work_date' => $payload['shift_date'], ...$entryPayload], (string) config('app.timezone', 'UTC'));
+                    } catch (\Throwable $exception) {
+                        throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
+                    }
+                }
+                app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $workOrder->project_id, [
+                    ...$entryPayload, ...($interval?->persistence() ?? []), 'work_date' => $payload['shift_date'], 'user_id' => $employee?->user_id ?? ($entryPayload['user_id'] ?? null), 'employee_id' => $employee?->id,
+                ]);
+                $hours = $interval ? $interval->netMinutes() / 60 : (float) $entryPayload['hours'];
+                if (! is_finite($hours) || $hours <= 0 || $hours > 24) {
+                    throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
+                }
+                if ($employee !== null) {
+                    $this->assertEmployeeTimeAvailable($organizationId, (int) $employee->id, $payload['shift_date'], $hours, $interval);
+                }
+                if (! empty($entryPayload['user_id']) && ! User::query()->whereKey($entryPayload['user_id'])->whereHas('organizations', fn ($query) => $query->where('organizations.id', $organizationId)->where('organization_user.is_active', true))->exists()) {
+                    throw new DomainException(trans_message('time_tracking.mobile.errors.permission_denied'));
+                }
+                $metadata = $entryPayload['metadata'] ?? [];
+                unset($metadata['time_interval'], $metadata['requires_reconciliation']);
+                $metadata['time_interval'] = $interval?->persistence();
+                $metadata['requires_reconciliation'] = $interval === null || $interval->requiresReconciliation;
                 $timesheet->entries()->create([
                     'organization_id' => $organizationId,
                     'work_order_line_id' => $line->id,
@@ -363,11 +436,11 @@ final class ProductionLaborService
                     'employee_id' => $employee?->id,
                     'include_in_payroll' => (bool) $includeInPayroll,
                     'worker_name' => $workerName !== '' ? $workerName : null,
-                    'hours' => $entryPayload['hours'],
+                    'hours' => $hours,
                     'safety_permit_reference' => isset($entryPayload['safety_permit_reference'])
                         ? trim((string) $entryPayload['safety_permit_reference'])
                         : null,
-                    'metadata' => $entryPayload['metadata'] ?? null,
+                    'metadata' => $metadata,
                 ]);
             }
 
@@ -424,6 +497,49 @@ final class ProductionLaborService
         return $line;
     }
 
+    private function assertActorProject(int $organizationId, int $userId, int $projectId, mixed $expectedProject = null): void
+    {
+        $user = User::query()->find($userId);
+        if (! $user || ($expectedProject !== null && (int) $expectedProject !== $projectId)
+            || ! $user->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()
+            || ! app(AuthorizationService::class)->can($user, 'production-labor.output.record', ['organization_id' => $organizationId, 'project_id' => $projectId])
+            || ! app(UserProjectAccessService::class)->queryAccessibleProjects($user, $organizationId)->whereKey($projectId)->exists()) {
+            throw new DomainException(trans_message('production_labor.errors.project_not_found'), 403);
+        }
+    }
+
+    /** Organization lock held by caller; checks span all work orders and projects. */
+    private function assertEmployeeTimeAvailable(int $organizationId, int $employeeId, string $date, float $hours, ?WorkTimeInterval $interval): void
+    {
+        $entries = ProductionLaborTimesheetEntry::query()->with('timesheet')
+            ->where('organization_id', $organizationId)->where('employee_id', $employeeId)
+            ->whereHas('timesheet', fn ($query) => $query->where('status', '!=', 'cancelled')->whereBetween('shift_date', [
+                CarbonImmutable::parse($date)->subDays(2)->toDateString(), CarbonImmutable::parse($date)->addDays(2)->toDateString(),
+            ]))
+            ->get();
+        $dailyHours = $hours;
+        foreach ($entries as $entry) {
+            if ($entry->timesheet?->shift_date?->format('Y-m-d') === substr($date, 0, 10)) {
+                $dailyHours += (float) $entry->hours;
+            }
+            $existing = $entry->metadata['time_interval'] ?? null;
+            if ($interval === null || ! is_array($existing)) {
+                continue;
+            }
+            try {
+                $other = WorkTimeInterval::fromInput($existing, (string) config('app.timezone', 'UTC'));
+            } catch (\Throwable $exception) {
+                throw new DomainException(trans_message('production_labor.errors.employee_time_reconciliation_required'));
+            }
+            if ($interval->overlaps($other)) {
+                throw new DomainException(trans_message('production_labor.errors.employee_time_overlap'), 409);
+            }
+        }
+        if ($dailyHours > 24.000001) {
+            throw new DomainException(trans_message('production_labor.errors.employee_time_overlap'), 409);
+        }
+    }
+
     private function assertProject(int $organizationId, int $projectId): void
     {
         $exists = Project::query()
@@ -433,6 +549,23 @@ final class ProductionLaborService
 
         if (! $exists) {
             throw new DomainException(trans_message('production_labor.errors.project_not_found'));
+        }
+    }
+
+    private function assertWorkOrderSourcesMutable(ProductionLaborWorkOrder $workOrder): void
+    {
+        $guard = app(WorkforcePeriodMutationGuard::class);
+        foreach (ProductionLaborOutputEntry::query()->where('organization_id', $workOrder->organization_id)->where('work_order_id', $workOrder->id)->get() as $output) {
+            $guard->assertMutable((int) $workOrder->organization_id, (int) $workOrder->project_id, [
+                'work_date' => $output->work_date->format('Y-m-d'), 'user_id' => $output->recorded_by_user_id,
+            ]);
+        }
+        foreach (ProductionLaborTimesheet::query()->where('organization_id', $workOrder->organization_id)->where('work_order_id', $workOrder->id)->with('entries.employee')->get() as $timesheet) {
+            foreach ($timesheet->entries as $entry) {
+                $guard->assertMutable((int) $workOrder->organization_id, (int) $workOrder->project_id, [
+                    ...($entry->metadata['time_interval'] ?? []), 'work_date' => $timesheet->shift_date->format('Y-m-d'), 'user_id' => $entry->employee?->user_id ?? $entry->user_id, 'employee_id' => $entry->employee_id,
+                ]);
+            }
         }
     }
 

@@ -24,6 +24,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employees', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'personnel_number' => 'VIEW-001',
                 'last_name' => 'Иванов',
                 'first_name' => 'Иван',
@@ -38,10 +39,12 @@ final class WorkforceProductionReadinessTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $user = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $user->organizations()->attach($context->organization->id, ['is_active' => true]);
         $this->allowAccess('web_admin');
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employees', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'user_id' => $user->id,
                 'personnel_number' => 'USR-001',
                 'last_name' => 'Иванов',
@@ -52,6 +55,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employees', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'user_id' => $user->id,
                 'personnel_number' => 'USR-002',
                 'last_name' => 'Петров',
@@ -83,6 +87,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/employees/{$employee->id}/dismiss", [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'dismissal_date' => '2026-05-20',
             ])
             ->assertOk()
@@ -103,6 +108,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/employees/{$employee->id}/dismiss", [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'dismissal_date' => '2026-04-30',
             ])
             ->assertStatus(422)
@@ -145,6 +151,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/employees/{$employee->id}/dismiss", [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'dismissal_date' => '2026-05-20',
             ])
             ->assertStatus(422)
@@ -175,41 +182,77 @@ final class WorkforceProductionReadinessTest extends TestCase
     public function test_locked_payroll_period_rejects_stale_source_before_export(): void
     {
         $context = AdminApiTestContext::create();
+        $this->enableProductionLabor($context);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $employee = $this->employee($context, 'SRC-001');
         $this->allowAccess('web_admin');
-
-        $periodId = DB::table('workforce_payroll_periods')->insertGetId([
-            'organization_id' => $context->organization->id,
-            'project_id' => $project->id,
-            'period_start' => '2026-05-01',
-            'period_end' => '2026-05-31',
-            'status' => 'locked',
-            'source_hash' => 'stale-source-hash',
-            'created_by_user_id' => $context->user->id,
-            'locked_by_user_id' => $context->user->id,
-            'locked_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        DB::table('workforce_payroll_source_rows')->insert([
-            'organization_id' => $context->organization->id,
-            'payroll_period_id' => $periodId,
-            'employee_id' => $employee->id,
-            'project_id' => $project->id,
-            'work_date' => '2026-05-16',
-            'source_type' => 'timesheet_hours',
-            'hours' => 8,
-            'amount' => 4000,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
+        [$departmentId, $positionId, $staffUnitId] = $this->structure($context);
+        $scheduleId = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/work-schedules', [
+                'code' => 'STALE-SOURCE', 'name' => 'График проверяемого источника', 'hours_per_day' => 8,
+                'week_pattern' => ['work_days' => [1, 2, 3, 4, 5]],
+            ])->assertCreated()->json('data.id');
         $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/export-packages")
-            ->assertStatus(422)
-            ->assertJsonPath('message', trans_message('workforce.errors.payroll_source_changed'));
+            ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Приказ о назначении № 10',
+                'employee_id' => $employee->id, 'staff_unit_id' => $staffUnitId,
+                'department_id' => $departmentId, 'position_id' => $positionId,
+                'project_id' => $project->id, 'work_schedule_id' => $scheduleId, 'valid_from' => '2026-05-01',
+            ])->assertCreated();
+        $workOrder = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders', [
+                'project_id' => $project->id, 'order_number' => 'STALE-SOURCE-001',
+                'title' => 'Подтверждённые работы', 'assignee_type' => 'brigade',
+                'lines' => [['name' => 'Монтаж', 'planned_quantity' => 10, 'planned_hours' => 8, 'hour_rate' => 500, 'pay_basis' => 'hours']],
+            ]);
+        $workOrder->assertCreated();
+        $workOrderId = $workOrder->json('data.id');
+        $lineId = $workOrder->json('data.lines.0.id');
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders/'.$workOrderId.'/issue')->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'project_id' => $project->id, 'work_order_line_id' => $lineId,
+                'work_date' => '2026-05-15', 'quantity' => 10, 'hours' => 8,
+            ])->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/timesheets', [
+                'project_id' => $project->id, 'work_order_id' => $workOrderId, 'shift_date' => '2026-05-15',
+                'entries' => [[
+                    'work_order_line_id' => $lineId, 'employee_id' => $employee->id,
+                    'start_at' => '2026-05-15T08:00:00+03:00', 'end_at' => '2026-05-15T16:00:00+03:00',
+                    'timezone' => 'Europe/Moscow', 'break_intervals' => [],
+                ]],
+            ])->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders/'.$workOrderId.'/submit')->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders/'.$workOrderId.'/accept')->assertOk();
+        $periodId = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods', [
+                'project_id' => $project->id, 'period_start' => '2026-05-01', 'period_end' => '2026-05-31',
+            ])->assertCreated()->json('data.id');
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods/'.$periodId.'/build-source')
+            ->assertOk()->assertJsonPath('data.rows_count', 1);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods/'.$periodId.'/validate')
+            ->assertOk()->assertJsonPath('data.status', 'validated')->assertJsonPath('data.blocking_count', 0);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/accounting-mappings', [
+                'scope_type' => 'project', 'scope_id' => $project->id, 'accounting_account' => '20.01',
+            ])->assertCreated();
+        $locked = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods/'.$periodId.'/lock')
+            ->assertOk()->assertJsonPath('data.status', 'locked');
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $locked->json('data.source_hash'));
+
+        // An external synchronization changed a field covered by the locked snapshot.
+        $employee->update(['last_name' => 'Петров']);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods/'.$periodId.'/export-packages')
+            ->assertStatus(422)->assertJsonPath('message', trans_message('workforce.errors.payroll_source_changed'));
+        $this->assertDatabaseCount('workforce_export_packages', 0);
     }
 
     public function test_export_package_status_has_guarded_transitions(): void
@@ -255,6 +298,8 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $absence = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-10',
@@ -279,6 +324,8 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $first = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-10',
@@ -288,6 +335,8 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $second = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-11',
@@ -296,12 +345,12 @@ final class WorkforceProductionReadinessTest extends TestCase
         $second->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/absences/' . (int) $first->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/absences/'.(int) $first->json('data.id').'/approve')
             ->assertOk()
             ->assertJsonPath('data.status', 'approved');
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/absences/' . (int) $second->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/absences/'.(int) $second->json('data.id').'/approve')
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.absence_overlap'));
     }
@@ -314,6 +363,8 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $absence = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-10',
@@ -322,11 +373,13 @@ final class WorkforceProductionReadinessTest extends TestCase
         $absence->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/absences/' . (int) $absence->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/absences/'.(int) $absence->json('data.id').'/approve')
             ->assertOk();
 
         $trip = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/business-trips', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'business_trip',
                 'employee_id' => $employee->id,
                 'start_date' => '2026-05-11',
                 'end_date' => '2026-05-13',
@@ -336,7 +389,7 @@ final class WorkforceProductionReadinessTest extends TestCase
             ->assertJsonPath('data.status', 'draft');
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/business-trips/' . (int) $trip->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/business-trips/'.(int) $trip->json('data.id').'/approve')
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.business_trip_absence_overlap'));
     }
@@ -350,6 +403,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -370,6 +424,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $firstEmployee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -381,6 +436,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $secondEmployee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -427,6 +483,8 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $absence = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-10',
@@ -504,7 +562,7 @@ final class WorkforceProductionReadinessTest extends TestCase
         $order = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/orders', [
                 'employee_id' => $employee->id,
-                'order_number' => 'ORD-' . uniqid(),
+                'order_number' => 'ORD-'.uniqid(),
                 'order_date' => '2026-05-18',
                 'order_type' => 'dismissal',
                 'status' => 'approved',
@@ -553,7 +611,7 @@ final class WorkforceProductionReadinessTest extends TestCase
     {
         $departmentId = DB::table('workforce_departments')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'DEP-' . uniqid(),
+            'code' => 'DEP-'.uniqid(),
             'name' => 'Строительный участок',
             'is_active' => true,
             'created_at' => now(),
@@ -562,7 +620,7 @@ final class WorkforceProductionReadinessTest extends TestCase
 
         $positionId = DB::table('workforce_positions')->insertGetId([
             'organization_id' => $context->organization->id,
-            'code' => 'POS-' . uniqid(),
+            'code' => 'POS-'.uniqid(),
             'name' => 'Монтажник',
             'is_active' => true,
             'created_at' => now(),
@@ -573,7 +631,7 @@ final class WorkforceProductionReadinessTest extends TestCase
             'organization_id' => $context->organization->id,
             'department_id' => $departmentId,
             'position_id' => $positionId,
-            'code' => 'UNIT-' . uniqid(),
+            'code' => 'UNIT-'.uniqid(),
             'headcount' => $headcount,
             'rate' => 1,
             'valid_from' => '2026-05-01',
@@ -585,11 +643,38 @@ final class WorkforceProductionReadinessTest extends TestCase
         return [$departmentId, $positionId, $staffUnitId];
     }
 
+    private function enableProductionLabor(AdminApiTestContext $context): void
+    {
+        foreach (['production-labor', 'project-management'] as $slug) {
+            $definition = json_decode((string) file_get_contents(config_path('ModuleList/features/'.$slug.'.json')), true, flags: JSON_THROW_ON_ERROR);
+            \App\Models\Module::query()->updateOrCreate(['slug' => $slug], [
+                'name' => $definition['name'], 'version' => $definition['version'], 'type' => $definition['type'],
+                'billing_model' => $definition['billing_model'], 'category' => $definition['category'],
+                'permissions' => $definition['permissions'], 'is_active' => true,
+                'is_system_module' => $definition['is_system_module'] ?? false,
+                'can_deactivate' => $definition['can_deactivate'] ?? true,
+            ]);
+        }
+        $account = \App\Models\OrganizationCommercialAccount::query()->create([
+            'organization_id' => $context->organization->id, 'responsible_user_id' => $context->user->id,
+            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1,
+            'current_period_start_at' => now(), 'current_period_end_at' => now()->addDays(30),
+        ]);
+        \App\Models\OrganizationPackageSubscription::query()->create([
+            'organization_id' => $context->organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'workforce-output', 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => 7900,
+            'current_period_start_at' => now(), 'current_period_end_at' => now()->addDays(30),
+        ]);
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache((int) $context->organization->id);
+        \Illuminate\Support\Facades\Cache::flush();
+    }
+
     private function allowAccess(string $roleSlug): void
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($roleSlug): void {
-            $mock->shouldReceive('can')
-                ->andReturn($roleSlug === 'web_admin');
+            $mock->shouldReceive('can')->andReturn($roleSlug === 'web_admin');
+            $mock->shouldReceive('canCurrent')->andReturn($roleSlug === 'web_admin');
+            $mock->shouldReceive('canAccessInterface')->andReturn($roleSlug === 'web_admin');
         });
     }
 }

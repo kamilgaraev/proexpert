@@ -6,6 +6,7 @@ use App\Http\Resources\ModelJsonResource;
 use App\Models\File;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\App as AppFacade;
+
 // Storage не используется напрямую, если модель сама генерирует URL
 
 class FileResource extends ModelJsonResource
@@ -14,11 +15,13 @@ class FileResource extends ModelJsonResource
      * Преобразовать ресурс в массив.
      *
      * @param  \Illuminate\Http\Request  $request
-     * @return array
      */
     public function toArray($request): array
     {
         $file = $this->typedResource(File::class);
+        if ($file->isWorkforcePrivateDocument()) {
+            return ['id' => $file->id, 'private' => true];
+        }
         $thumbnails = [];
         // Доступ к "raw" данным миниатюр через аксессор getThumbnailsAttribute (->thumbnails)
         foreach ($this->thumbnails as $suffix => $thumbData) {
@@ -61,9 +64,10 @@ class FileResource extends ModelJsonResource
         if ($this->storage_disk === 's3') {
             /** @var FileService $fs */
             $fs = AppFacade::make(FileService::class);
+
             return $fs->url($this->filepath ?? $this->path, $this->organization ?? null);
         }
 
-        return asset('storage/' . $this->filepath);
+        return asset('storage/'.$this->filepath);
     }
 }

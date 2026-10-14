@@ -78,6 +78,8 @@ final class WorkforceAbsenceTypeContractRegressionTest extends TestCase
     {
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-09-02',
@@ -95,6 +97,7 @@ final class WorkforceAbsenceTypeContractRegressionTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

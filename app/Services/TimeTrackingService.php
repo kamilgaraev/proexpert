@@ -1,19 +1,27 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\BusinessModules\Features\TimeTracking\Reporting\ApprovedTimeEntryReportingFactRecorder;
-use App\Models\Project;
+use App\BusinessModules\Features\TimeTracking\Support\WorkingTimezoneResolver;
+use App\BusinessModules\Features\TimeTracking\Support\WorkTimeInterval;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\ScheduleTask;
 use App\Models\TimeEntry;
 use App\Models\User;
+use App\Models\WorkType;
 use App\Services\Logging\LoggingService;
-use Carbon\Carbon;
+use App\Services\Project\UserProjectAccessService;
+use DomainException;
 use Exception;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class TimeTrackingService
 {
@@ -41,7 +49,8 @@ class TimeTrackingService
         ?string $workerType = null,
         ?string $workerName = null
     ): LengthAwarePaginator {
-        $query = TimeEntry::with(['user', 'project', 'workType', 'task', 'approvedBy'])
+        $organizationId = $this->readOrganization($organizationId);
+        $query = $this->readQuery($organizationId)->with(['user', 'project', 'workType', 'task', 'approvedBy'])
             ->orderBy('work_date', 'desc')
             ->orderBy('created_at', 'desc');
 
@@ -85,6 +94,7 @@ class TimeTrackingService
      */
     public function getWorkers(int $organizationId): Collection
     {
+        $this->assertActor($organizationId, 'time_tracking.view');
         // 1. Реальные пользователи организации
         $users = User::whereHas('organizations', function ($query) use ($organizationId) {
             $query->where('organizations.id', $organizationId);
@@ -95,7 +105,7 @@ class TimeTrackingService
         ]);
 
         // 2. Виртуальные работники из записей времени
-        $virtuals = TimeEntry::where('organization_id', $organizationId)
+        $virtuals = $this->readQuery($organizationId)
             ->where('worker_type', 'virtual')
             ->whereNotNull('worker_name')
             ->distinct()
@@ -107,7 +117,7 @@ class TimeTrackingService
             ]);
 
         // 3. Бригады из записей времени
-        $brigades = TimeEntry::where('organization_id', $organizationId)
+        $brigades = $this->readQuery($organizationId)
             ->where('worker_type', 'brigade')
             ->whereNotNull('worker_name')
             ->distinct()
@@ -127,7 +137,9 @@ class TimeTrackingService
     public function createTimeEntry(array $data): TimeEntry
     {
         $startTime = microtime(true);
-        $organizationId = $data['organization_id'] ?? Auth::user()?->current_organization_id;
+        $organizationId = (int) ($data['organization_id'] ?? Auth::user()?->current_organization_id);
+        $this->assertActor($organizationId, 'time_tracking.create');
+        $data['organization_id'] = $organizationId;
         $userId = $data['user_id'] ?? null;
         $workerType = $data['worker_type'] ?? 'user';
 
@@ -145,8 +157,12 @@ class TimeTrackingService
         DB::beginTransaction();
 
         try {
+            app(WorkforcePeriodMutationGuard::class)->lockOrganization($organizationId);
+            $data = $this->resolveWorkingTimezone($organizationId, $data);
+            $data = $this->normalizeInterval($data);
             $validationStart = microtime(true);
             $this->validateTimeEntryData($data);
+            app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $data['project_id'], $data);
             $validationDuration = (microtime(true) - $validationStart) * 1000;
 
             $this->logging->technical('time_tracking.validation.completed', [
@@ -178,6 +194,13 @@ class TimeTrackingService
                 'location' => $data['location'] ?? null,
                 'custom_fields' => $data['custom_fields'] ?? null,
                 'notes' => $data['notes'] ?? null,
+                'start_at' => $data['start_at'] ?? null,
+                'end_at' => $data['end_at'] ?? null,
+                'timezone' => $data['timezone'] ?? null,
+                'timezone_requires_reconciliation' => $data['timezone_requires_reconciliation'] ?? empty($data['timezone']),
+                'net_minutes' => $data['net_minutes'] ?? null,
+                'net_microseconds' => $data['net_microseconds'] ?? null,
+                'break_intervals' => $data['break_intervals'] ?? null,
             ]);
 
             if (! isset($data['hours_worked']) && isset($data['start_time']) && isset($data['end_time'])) {
@@ -251,15 +274,48 @@ class TimeTrackingService
         DB::beginTransaction();
 
         try {
-            $timeEntry = TimeEntry::find($id);
+            $organizationId = (int) Auth::user()?->current_organization_id;
+            app(WorkforcePeriodMutationGuard::class)->lockOrganization($organizationId);
+            $timeEntry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
 
             if (! $timeEntry || ! $timeEntry->canBeEdited()) {
+                DB::rollBack();
+
                 return null;
             }
 
-            // Валидация данных
-            $this->validateTimeEntryData($data, $timeEntry);
+            $this->assertEntryActor($timeEntry, 'time_tracking.edit');
+            unset($data['organization_id']);
+            $wasTimezoneUnconfirmed = (bool) $timeEntry->timezone_requires_reconciliation;
+            $merged = array_replace($timeEntry->getAttributes(), $data);
+            $merged['custom_fields'] = $data['custom_fields'] ?? $timeEntry->custom_fields ?? [];
+            if (isset($data['employment_contract_id']) || isset($merged['custom_fields']['employment_contract_id'])) {
+                $resolved = $this->resolveWorkingTimezone((int) $timeEntry->organization_id, $merged);
+                $merged['custom_fields'] = $resolved['custom_fields'];
+                $data['custom_fields'] = $resolved['custom_fields'];
+            }
+            if (! empty($data['timezone'])) {
+                $merged['timezone_requires_reconciliation'] = false;
+            }
+            $merged['work_date'] = $data['work_date'] ?? $timeEntry->work_date->format('Y-m-d');
+            $merged['break_intervals'] = $data['break_intervals'] ?? $timeEntry->break_intervals ?? [];
+            foreach (['start', 'end'] as $boundary) {
+                $key = $boundary.'_at';
+                if ((array_key_exists($boundary.'_time', $data) || ($wasTimezoneUnconfirmed && ! empty($data['timezone']) && ($timeEntry->custom_fields['time_tracking_interval']['clock_source'] ?? 'legacy_local') === 'legacy_local')) && ! array_key_exists($key, $data)) {
+                    $merged[$key] = null;
+                } elseif (! array_key_exists($key, $data) && $timeEntry->{$key}) {
+                    $merged[$key] = $timeEntry->{$key}->utc()->format('Y-m-d\\TH:i:s.u\\Z');
+                }
+            }
+            if (! array_key_exists('status', $data)) {
+                unset($merged['status']);
+            }
+            $this->validateTimeEntryData($merged, $timeEntry);
+            $data = array_replace($data, array_intersect_key($this->normalizeInterval($merged), array_flip(['start_at', 'end_at', 'timezone', 'timezone_requires_reconciliation', 'start_time', 'end_time', 'work_date', 'net_minutes', 'net_microseconds', 'break_intervals', 'hours_worked', 'break_time'])));
 
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->assertMutable($organizationId, (int) $timeEntry->project_id, $guard->entryFacts($timeEntry));
+            $guard->assertMutable($organizationId, (int) ($data['project_id'] ?? $timeEntry->project_id), array_replace($guard->entryFacts($timeEntry), $data));
             $timeEntry->update($data);
 
             // Автоматический расчет часов, если указано время начала и окончания
@@ -283,13 +339,19 @@ class TimeTrackingService
      */
     public function deleteTimeEntry(int $id): bool
     {
-        $timeEntry = TimeEntry::find($id);
+        return DB::transaction(function () use ($id): bool {
+            $organizationId = (int) Auth::user()?->current_organization_id;
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
+            if (! $entry || ! $entry->canBeEdited()) {
+                return false;
+            }
+            $this->assertEntryActor($entry, 'time_tracking.edit');
+            $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
 
-        if (! $timeEntry || ! $timeEntry->canBeEdited()) {
-            return false;
-        }
-
-        return $timeEntry->delete();
+            return (bool) $entry->delete();
+        });
     }
 
     /**
@@ -297,81 +359,25 @@ class TimeTrackingService
      */
     public function approveTimeEntry(int $id, User $approver): bool
     {
-        $this->logging->business('time_tracking.entry.approval.started', [
-            'time_entry_id' => $id,
-            'approver_id' => $approver->id,
-        ]);
-
-        try {
-            $timeEntry = TimeEntry::find($id);
-
-            if (! $timeEntry) {
-                $this->logging->business('time_tracking.entry.approval.not_found', [
-                    'time_entry_id' => $id,
-                    'approver_id' => $approver->id,
-                ], 'warning');
-
+        return DB::transaction(function () use ($id, $approver): bool {
+            $organizationId = (int) $approver->current_organization_id;
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
+            if (! $entry) {
                 return false;
             }
-
-            $previousStatus = $timeEntry->status;
-            $result = DB::transaction(function () use ($timeEntry, $approver): bool {
-                $approved = $timeEntry->approve($approver);
-                if ($approved) {
-                    $this->reportingFacts->record($timeEntry->refresh());
-                }
-
-                return $approved;
-            });
-            if ($result) {
-                $this->logging->business('time_tracking.entry.approved', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'user_id' => $timeEntry->user_id,
-                    'project_id' => $timeEntry->project_id,
-                    'hours_worked' => $timeEntry->hours_worked,
-                    'is_billable' => $timeEntry->is_billable,
-                    'approver_id' => $approver->id,
-                    'previous_status' => $previousStatus,
-                ]);
-
-                $this->logging->audit('time_tracking.entry.approved', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'user_id' => $timeEntry->user_id,
-                    'hours_worked' => $timeEntry->hours_worked,
-                    'performed_by' => $approver->id,
-                    'previous_status' => $previousStatus,
-                ]);
-
-                $this->logging->security('time_tracking.entry.status_change', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'changed_by' => $approver->id,
-                    'from_status' => $previousStatus,
-                    'to_status' => 'approved',
-                    'action' => 'approve',
-                ]);
-            } else {
-                $this->logging->business('time_tracking.entry.approval.failed', [
-                    'time_entry_id' => $timeEntry->id,
-                    'approver_id' => $approver->id,
-                    'current_status' => $timeEntry->status,
-                ], 'warning');
+            $this->assertEntryActor($entry, 'time_tracking.approve', $approver);
+            $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
+            $previousStatus = $entry->status;
+            $approved = $entry->approve($approver);
+            if ($approved) {
+                $this->reportingFacts->record($entry->refresh());
+                $this->logging->audit('time_tracking.entry.approved', ['time_entry_id' => $id, 'organization_id' => $organizationId, 'performed_by' => $approver->id, 'previous_status' => $previousStatus]);
             }
 
-            return $result;
-
-        } catch (\Throwable $e) {
-            $this->logging->technical('time_tracking.entry.approval.error', [
-                'time_entry_id' => $id,
-                'approver_id' => $approver->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ], 'error');
-
-            return false;
-        }
+            return $approved;
+        });
     }
 
     /**
@@ -379,77 +385,24 @@ class TimeTrackingService
      */
     public function rejectTimeEntry(int $id, User $rejector, string $reason): bool
     {
-        $this->logging->business('time_tracking.entry.rejection.started', [
-            'time_entry_id' => $id,
-            'rejector_id' => $rejector->id,
-            'rejection_reason_provided' => ! empty($reason),
-        ]);
-
-        try {
-            $timeEntry = TimeEntry::find($id);
-
-            if (! $timeEntry) {
-                $this->logging->business('time_tracking.entry.rejection.not_found', [
-                    'time_entry_id' => $id,
-                    'rejector_id' => $rejector->id,
-                ], 'warning');
-
+        return DB::transaction(function () use ($id, $rejector, $reason): bool {
+            $organizationId = (int) $rejector->current_organization_id;
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
+            if (! $entry) {
                 return false;
             }
-
-            $previousStatus = $timeEntry->status;
-            $result = $timeEntry->reject($rejector, $reason);
-
-            if ($result) {
-                $this->logging->business('time_tracking.entry.rejected', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'user_id' => $timeEntry->user_id,
-                    'project_id' => $timeEntry->project_id,
-                    'hours_worked' => $timeEntry->hours_worked,
-                    'rejector_id' => $rejector->id,
-                    'rejection_reason' => $reason,
-                    'previous_status' => $previousStatus,
-                ]);
-
-                $this->logging->audit('time_tracking.entry.rejected', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'user_id' => $timeEntry->user_id,
-                    'hours_worked' => $timeEntry->hours_worked,
-                    'performed_by' => $rejector->id,
-                    'rejection_reason' => $reason,
-                    'previous_status' => $previousStatus,
-                ]);
-
-                $this->logging->security('time_tracking.entry.status_change', [
-                    'time_entry_id' => $timeEntry->id,
-                    'organization_id' => $timeEntry->organization_id,
-                    'changed_by' => $rejector->id,
-                    'from_status' => $previousStatus,
-                    'to_status' => 'rejected',
-                    'action' => 'reject',
-                    'reason' => $reason,
-                ]);
-            } else {
-                $this->logging->business('time_tracking.entry.rejection.failed', [
-                    'time_entry_id' => $timeEntry->id,
-                    'rejector_id' => $rejector->id,
-                    'current_status' => $timeEntry->status,
-                ], 'warning');
+            $this->assertEntryActor($entry, 'time_tracking.reject', $rejector);
+            $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
+            $previousStatus = $entry->status;
+            $rejected = $entry->reject($rejector, $reason);
+            if ($rejected) {
+                $this->logging->audit('time_tracking.entry.rejected', ['time_entry_id' => $id, 'organization_id' => $organizationId, 'performed_by' => $rejector->id, 'previous_status' => $previousStatus, 'rejection_reason' => $reason]);
             }
 
-            return $result;
-
-        } catch (Exception $e) {
-            $this->logging->technical('time_tracking.entry.rejection.error', [
-                'time_entry_id' => $id,
-                'rejector_id' => $rejector->id,
-                'error' => $e->getMessage(),
-            ], 'error');
-
-            return false;
-        }
+            return $rejected;
+        });
     }
 
     /**
@@ -457,13 +410,19 @@ class TimeTrackingService
      */
     public function submitTimeEntry(int $id): bool
     {
-        $timeEntry = TimeEntry::find($id);
+        return DB::transaction(function () use ($id): bool {
+            $organizationId = (int) Auth::user()?->current_organization_id;
+            $guard = app(WorkforcePeriodMutationGuard::class);
+            $guard->lockOrganization($organizationId);
+            $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
+            if (! $entry) {
+                return false;
+            }
+            $this->assertEntryActor($entry, 'time_tracking.submit');
+            $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
 
-        if (! $timeEntry) {
-            return false;
-        }
-
-        return $timeEntry->submit();
+            return $entry->submit();
+        });
     }
 
     /**
@@ -487,7 +446,8 @@ class TimeTrackingService
         ]);
 
         try {
-            $baseQuery = TimeEntry::query();
+            $organizationId = $this->readOrganization($organizationId);
+            $baseQuery = $this->readQuery($organizationId);
 
             if ($organizationId) {
                 $baseQuery->forOrganization($organizationId);
@@ -508,15 +468,15 @@ class TimeTrackingService
             $queryTimes = [];
 
             $queryStart = microtime(true);
-            $totalHours = (clone $baseQuery)->sum('hours_worked');
+            $totalHours = $this->sumExactHours(clone $baseQuery);
             $queryTimes['total_hours'] = (microtime(true) - $queryStart) * 1000;
 
             $queryStart = microtime(true);
-            $billableHours = (clone $baseQuery)->billable(true)->sum('hours_worked');
+            $billableHours = $this->sumExactHours((clone $baseQuery)->billable(true));
             $queryTimes['billable_hours'] = (microtime(true) - $queryStart) * 1000;
 
             $queryStart = microtime(true);
-            $nonBillableHours = (clone $baseQuery)->billable(false)->sum('hours_worked');
+            $nonBillableHours = $this->sumExactHours((clone $baseQuery)->billable(false));
             $queryTimes['non_billable_hours'] = (microtime(true) - $queryStart) * 1000;
 
             $queryStart = microtime(true);
@@ -601,7 +561,8 @@ class TimeTrackingService
         ?int $userId = null,
         ?int $projectId = null
     ): array {
-        $query = TimeEntry::with(['user', 'project', 'workType'])
+        $organizationId = $this->readOrganization($organizationId);
+        $query = $this->readQuery($organizationId)->with(['user', 'project', 'workType'])
             ->forOrganization($organizationId)
             ->forDateRange($startDate, $endDate)
             ->orderBy('work_date')
@@ -633,7 +594,8 @@ class TimeTrackingService
         ?int $projectId = null,
         string $groupBy = 'user'
     ): array {
-        $query = TimeEntry::with(['user', 'project', 'workType'])
+        $organizationId = $this->readOrganization($organizationId);
+        $query = $this->readQuery($organizationId)->with(['user', 'project', 'workType'])
             ->forOrganization($organizationId)
             ->forDateRange($startDate, $endDate)
             ->byStatus('approved');
@@ -662,35 +624,121 @@ class TimeTrackingService
      */
     private function validateTimeEntryData(array $data, ?TimeEntry $existingEntry = null): void
     {
-        // Проверка существования проекта
-        if (isset($data['project_id'])) {
-            $project = Project::find($data['project_id']);
-            if (! $project) {
-                throw new Exception('Проект не найден');
+        $organizationId = (int) ($data['organization_id'] ?? $existingEntry?->organization_id ?? Auth::user()?->current_organization_id);
+        $this->assertActor($organizationId, $existingEntry ? 'time_tracking.edit' : 'time_tracking.create');
+        $projectId = (int) ($data['project_id'] ?? $existingEntry?->project_id);
+        $actor = Auth::user();
+        if (! $actor instanceof User || ! app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)->whereKey($projectId)->exists()) {
+            throw ValidationException::withMessages(['project_id' => trans_message('time_tracking.mobile.errors.project_not_found')]);
+        }
+        if (! empty($data['work_type_id']) && ! WorkType::query()->where('organization_id', $organizationId)->whereKey($data['work_type_id'])->exists()) {
+            throw ValidationException::withMessages(['work_type_id' => trans_message('time_tracking.mobile.errors.work_type_not_found')]);
+        }
+        if (! empty($data['task_id']) && ! ScheduleTask::query()->where('organization_id', $organizationId)
+            ->whereHas('schedule', fn ($query) => $query->where('project_id', $projectId))->whereKey($data['task_id'])->exists()) {
+            throw ValidationException::withMessages(['task_id' => trans_message('time_tracking.mobile.errors.task_not_found')]);
+        }
+        if (($data['worker_type'] ?? 'user') === 'user' && (empty($data['user_id']) || ! User::query()->whereKey($data['user_id'])
+            ->whereHas('organizations', fn ($query) => $query->where('organizations.id', $organizationId)->where('organization_user.is_active', true))->exists())) {
+            throw ValidationException::withMessages(['user_id' => trans_message('time_tracking.mobile.errors.permission_denied')]);
+        }
+        if (isset($data['status']) && ! in_array($data['status'], ['draft', 'submitted'], true)) {
+            throw ValidationException::withMessages(['status' => trans_message('time_tracking.already_approved')]);
+        }
+        $this->normalizeInterval($data);
+        if (isset($data['hours_worked']) && ((float) $data['hours_worked'] <= 0 || (float) $data['hours_worked'] > 24)) {
+            throw ValidationException::withMessages(['hours_worked' => trans_message('time_tracking.mobile.errors.invalid_duration')]);
+        }
+        if (isset($data['work_date']) && substr((string) $data['work_date'], 0, 10) > now()->format('Y-m-d')) {
+            throw ValidationException::withMessages(['work_date' => trans_message('time_tracking.mobile.validation.work_date_future')]);
+        }
+    }
+
+    private function resolveWorkingTimezone(int $organizationId, array $data): array
+    {
+        $custom = is_array($data['custom_fields'] ?? null) ? $data['custom_fields'] : [];
+        $explicitId = isset($data['employment_contract_id']) ? (int) $data['employment_contract_id'] : (isset($custom['employment_contract_id']) ? (int) $custom['employment_contract_id'] : null);
+        $userId = ($data['worker_type'] ?? 'user') === 'user' ? (int) ($data['user_id'] ?? 0) : 0;
+        $resolved = app(WorkingTimezoneResolver::class)->resolve($organizationId, $userId, (string) $data['work_date'], $explicitId);
+        if ($explicitId !== null || $resolved['employment_contract_id'] !== null) {
+            $custom['employment_contract_id'] = $explicitId ?? $resolved['employment_contract_id'];
+        }
+        if (! array_key_exists('timezone_requires_reconciliation', $data) || ! isset($custom['time_tracking_interval']['clock_source'])) {
+            $custom['time_tracking_interval']['clock_source'] = ! empty($data['start_at']) ? 'absolute' : 'legacy_local';
+        }
+        if (empty($data['timezone']) && $resolved['timezone'] !== null) {
+            $data['timezone'] = $resolved['timezone'];
+        }
+        $data['custom_fields'] = $custom;
+
+        return $data;
+    }
+
+    private function sumExactHours(\Illuminate\Database\Eloquent\Builder $query): float
+    {
+        return (float) $query->selectRaw('COALESCE(SUM(net_microseconds), 0) / 3600000000.0 + COALESCE(SUM(CASE WHEN net_microseconds IS NULL THEN COALESCE(net_minutes / 60.0, hours_worked) ELSE 0 END), 0) AS aggregate')->value('aggregate');
+    }
+
+    public function authorizeImport(int $organizationId, User $actor): void
+    {
+        $this->assertActor($organizationId, 'time_tracking.create', $actor);
+    }
+
+    public function validateImportRow(array $data): array
+    {
+        $data = $this->resolveWorkingTimezone((int) $data['organization_id'], $data);
+        $data = $this->normalizeInterval($data);
+        $this->validateTimeEntryData($data);
+        app(WorkforcePeriodMutationGuard::class)->assertMutable((int) $data['organization_id'], (int) $data['project_id'], $data);
+
+        return $data;
+    }
+
+    public function normalizeInterval(array $data): array
+    {
+        if ((! empty($data['start_at']) || ! empty($data['start_time'])) && (! empty($data['end_at']) || ! empty($data['end_time']))) {
+            try {
+                return array_replace($data, WorkTimeInterval::fromInput($data, (string) config('app.timezone', 'UTC'))->persistence());
+            } catch (\Throwable $exception) {
+                throw ValidationException::withMessages(['end_time' => trans_message('time_tracking.mobile.errors.invalid_duration')]);
             }
         }
-
-        // Проверка корректности времени
-        if (isset($data['start_time']) && isset($data['end_time'])) {
-            $start = Carbon::parse($data['start_time']);
-            $end = Carbon::parse($data['end_time']);
-
-            if ($end->lte($start)) {
-                throw new Exception('Время окончания должно быть больше времени начала');
-            }
+        if (! empty($data['start_at']) || ! empty($data['end_at']) || ! empty($data['start_time']) || ! empty($data['end_time'])) {
+            throw ValidationException::withMessages(['end_time' => trans_message('time_tracking.mobile.errors.invalid_time')]);
         }
 
-        // Проверка количества часов
-        if (isset($data['hours_worked']) && $data['hours_worked'] <= 0) {
-            throw new Exception('Количество часов должно быть больше нуля');
-        }
+        return $data;
+    }
 
-        // Проверка даты (не в будущем)
-        if (isset($data['work_date'])) {
-            $workDate = Carbon::parse($data['work_date']);
-            if ($workDate->isFuture()) {
-                throw new Exception('Дата работы не может быть в будущем');
-            }
+    private function readOrganization(?int $organizationId): int
+    {
+        $organizationId ??= (int) Auth::user()?->current_organization_id;
+        $this->assertActor($organizationId, 'time_tracking.view');
+
+        return $organizationId;
+    }
+
+    private function readQuery(int $organizationId): \Illuminate\Database\Eloquent\Builder
+    {
+        return TimeEntry::query()->where('organization_id', $organizationId)->whereIn('project_id',
+            app(UserProjectAccessService::class)->queryAccessibleProjects(Auth::user(), $organizationId)->select('projects.id'));
+    }
+
+    private function assertActor(int $organizationId, string $permission, ?User $actor = null): void
+    {
+        $actor ??= Auth::user();
+        if (! $actor instanceof User || $organizationId <= 0 || (int) $actor->current_organization_id !== $organizationId
+            || ! app(AuthorizationService::class)->can($actor, $permission, ['organization_id' => $organizationId])) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.permission_denied'), 403);
+        }
+    }
+
+    private function assertEntryActor(TimeEntry $entry, string $permission, ?User $actor = null): void
+    {
+        $actor ??= Auth::user();
+        $this->assertActor((int) $entry->organization_id, $permission, $actor);
+        if (! app(UserProjectAccessService::class)->queryAccessibleProjects($actor, (int) $entry->organization_id)->whereKey($entry->project_id)->exists()) {
+            throw new DomainException(trans_message('time_tracking.mobile.errors.project_not_found'), 403);
         }
     }
 

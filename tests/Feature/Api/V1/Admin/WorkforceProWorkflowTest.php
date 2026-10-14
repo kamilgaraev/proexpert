@@ -55,6 +55,7 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $assignment = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -69,6 +70,7 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $overlap = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -107,6 +109,8 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $draftAbsence = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-16',
@@ -152,6 +156,7 @@ final class WorkforceProWorkflowTest extends TestCase
         [$departmentId, $positionId, $staffUnitId] = $this->createStructure($context, createSchedule: false);
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employeeWithoutSchedule->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -241,6 +246,7 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -281,6 +287,32 @@ final class WorkforceProWorkflowTest extends TestCase
             ->assertJsonPath('data.0.issue_code', 'work_schedule_conflict');
     }
 
+    public function test_week_pattern_blocks_saturday_payroll_validation_without_explicit_schedule_day(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = $this->employee($context, 'EMP-WEEK-PATTERN');
+        $this->allowAccess('web_admin');
+        [$departmentId, $positionId, $staffUnitId, $scheduleId] = $this->createStructure($context, scheduleOverrides: [
+            'schedule_type' => 'weekly', 'week_pattern' => ['work_days' => [1, 2, 3, 4, 5]],
+        ]);
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/employee-assignments', [
+            'basis_reference' => 'Приказ о назначении по пятидневному графику',
+            'employee_id' => $employee->id, 'staff_unit_id' => $staffUnitId, 'department_id' => $departmentId,
+            'position_id' => $positionId, 'project_id' => $project->id, 'work_schedule_id' => $scheduleId, 'valid_from' => '2026-05-01',
+        ])->assertCreated();
+        $this->createAcceptedWorkOrderWithTimesheet($context, $project->id, $employee->id, 'PL-WEEK-PATTERN');
+        $period = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/payroll-periods', [
+            'period_start' => '2026-05-01', 'period_end' => '2026-05-31', 'project_id' => $project->id,
+        ])->assertCreated()->json('data.id');
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/payroll-periods/'.$period.'/build-source')
+            ->assertOk()->assertJsonPath('data.rows_count', 1)->assertJsonPath('data.total_hours', '8.00');
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/payroll-periods/'.$period.'/validate')
+            ->assertOk()->assertJsonPath('data.status', 'draft')->assertJsonPath('data.blocking_count', 1);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/workforce/payroll-periods/'.$period.'/validation-issues?search=work_schedule')
+            ->assertOk()->assertJsonPath('data.0.issue_code', 'work_schedule_conflict');
+    }
+
     private function employee(AdminApiTestContext $context, string $personnelNumber): WorkforceEmployee
     {
         return WorkforceEmployee::create([
@@ -293,11 +325,11 @@ final class WorkforceProWorkflowTest extends TestCase
         ]);
     }
 
-    private function createStructure(AdminApiTestContext $context, bool $createSchedule = true): array
+    private function createStructure(AdminApiTestContext $context, bool $createSchedule = true, array $scheduleOverrides = []): array
     {
         $department = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/departments', [
-                'code' => 'STR-' . uniqid(),
+                'code' => 'STR-'.uniqid(),
                 'name' => 'Строительный участок',
             ]);
         $department->assertCreated();
@@ -305,7 +337,7 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $position = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/positions', [
-                'code' => 'MON-' . uniqid(),
+                'code' => 'MON-'.uniqid(),
                 'name' => 'Монтажник',
             ]);
         $position->assertCreated();
@@ -315,21 +347,23 @@ final class WorkforceProWorkflowTest extends TestCase
             ->postJson('/api/v1/admin/workforce/staff-units', [
                 'department_id' => $departmentId,
                 'position_id' => $positionId,
-                'code' => 'STR-MON-' . uniqid(),
+                'code' => 'STR-MON-'.uniqid(),
                 'valid_from' => '2026-05-01',
             ]);
         $staffUnit->assertCreated();
         $staffUnitId = (int) $staffUnit->json('data.id');
 
-        if (!$createSchedule) {
+        if (! $createSchedule) {
             return [$departmentId, $positionId, $staffUnitId];
         }
 
         $schedule = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/work-schedules', [
-                'code' => '5-2-' . uniqid(),
+                'code' => '5-2-'.uniqid(),
                 'name' => '5/2',
                 'hours_per_day' => 8,
+                'week_pattern' => ['work_days' => [1, 2, 3, 4, 5, 6, 7]],
+                ...$scheduleOverrides,
             ]);
         $schedule->assertCreated();
 
@@ -355,7 +389,7 @@ final class WorkforceProWorkflowTest extends TestCase
         $workOrder = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/work-orders', [
                 'project_id' => $projectId,
-                'order_number' => $number ?? ('PL-' . uniqid()),
+                'order_number' => $number ?? ('PL-'.uniqid()),
                 'title' => 'Монтаж',
                 'assignee_type' => 'brigade',
                 'assignee_name' => 'Бригада',
@@ -377,13 +411,27 @@ final class WorkforceProWorkflowTest extends TestCase
             ->assertOk();
 
         $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'project_id' => $projectId,
+                'work_order_line_id' => $lineId,
+                'work_date' => '2026-05-16',
+                'quantity' => 10,
+                'hours' => 8,
+            ])->assertCreated()->assertJsonPath('data.hours', 8);
+
+        $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/timesheets', [
+                'project_id' => $projectId,
                 'work_order_id' => $workOrderId,
                 'shift_date' => '2026-05-16',
                 'entries' => [[
                     'work_order_line_id' => $lineId,
                     'employee_id' => $employeeId,
                     'hours' => 8,
+                    'start_at' => '2026-05-16T08:00:00+03:00',
+                    'end_at' => '2026-05-16T16:00:00+03:00',
+                    'timezone' => 'Europe/Moscow',
+                    'break_intervals' => [],
                 ]],
             ])
             ->assertCreated();
@@ -400,6 +448,7 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

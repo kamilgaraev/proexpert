@@ -65,7 +65,9 @@ final class ReportRunResource extends JsonResource
 
     private function warning(ReportWarning $warning): array
     {
-        return ['code' => $warning->code, 'severity' => $warning->severity->value, 'metric' => $warning->metric, 'affected_row_count' => $warning->affectedRowCount];
+        return ['code' => $warning->code, 'severity' => $warning->severity->value, 'metric' => $warning->metric, 'affected_row_count' => $warning->affectedRowCount]
+            + (\Illuminate\Support\Facades\Lang::has('reports.warnings.'.$warning->code)
+                ? ['message' => trans_message('reports.warnings.'.$warning->code)] : []);
     }
 
     private function provenance(ReportProvenance $provenance): array
