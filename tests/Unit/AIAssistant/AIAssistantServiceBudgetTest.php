@@ -699,13 +699,15 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_explicit_named_model_keeps_resolved_project_instead_of_context(): void
     {
-        foreach (['Покажи элементы модели «Гаражная»', 'Покажи элементы модели Гаражная', 'Покажи элементы garage.ifc'] as $query) {
+        foreach ([['Покажи элементы модели «Гаражная»', 'Гаражная'], ['Покажи элементы модели Гаражная', 'Гаражная'],
+            ['Покажи элементы garage.ifc', 'Гаражная'], ['Покажи элементы Гаражной BIM-модели', 'Гаражной'],
+            ['Покажи элементы «Гаражного» комплекта', 'Гаражного']] as [$query, $selector]) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
                 'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
             ], 'additionalProperties' => false]);
-            $tool->expects($this->once())->method('execute')->with(['model_query' => 'Гаражная', 'project_id' => 100], $this->anything(), $this->anything())
+            $tool->expects($this->once())->method('execute')->with(['model_query' => $selector, 'project_id' => 100], $this->anything(), $this->anything())
                 ->willReturn(['status' => 'success']);
             $registry = new AIToolRegistry;
             $registry->registerTool($tool);
@@ -714,7 +716,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             $failures = [];
             $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'named_model', 'name' => 'get_bim_model_elements',
-                'arguments' => '{"model_query":"Гаражная","project_id":100}'], $plan, $failures);
+                'arguments' => json_encode(['model_query' => $selector, 'project_id' => 100], JSON_THROW_ON_ERROR)], $plan, $failures);
             self::assertSame('success', $result['status']);
         }
         self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasExplicitModelScope('Покажи элементы моделей в формате .ifc', null));
@@ -834,6 +836,9 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Количество разных материалов в BIM-модели', 'elements', true],
             ['Количество всех материалов в BIM-модели', 'elements', true],
             ['Количество видов материалов в BIM-модели', 'elements', true],
+            ['Покажи материалы и количество элементов в BIM-модели', 'elements', true],
+            ['Покажи материалы и количество дверей', 'elements', true],
+            ['Покажи материалы и количества элементов в BIM-модели', 'elements', true],
             ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, но не показывай свойства', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, свойства не нужны', 'materials_and_quantities', false],

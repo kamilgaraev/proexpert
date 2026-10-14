@@ -13,8 +13,10 @@ final class AssistantBimModelSelector
             return true;
         }
 
-        return $selector !== null && trim($selector) !== ''
-            && preg_match('/'.$prefix.'[«"“\x27‘]?'.preg_quote(trim($selector), '/').'(?![\pL\pN])/iu', $question) === 1;
+        if ($selector === null || trim($selector) === '') { return false; }
+        $literal = preg_quote(trim($selector), '/');
+
+        return preg_match('/'.$prefix.'[«"“\x27‘]?'.$literal.'(?![\pL\pN])|(?<![\pL\pN])[«"“\x27‘]?'.$literal.'[»"”\x27’]?\s+(?:(?:ifc|bim|бим)[\s-]+)?(?:модел|файл|комплект)[а-яё]*(?!\pL)/iu', $question) === 1;
     }
 
     public static function withoutProjectAlias(?string $modelQuery, string $projectName, string $question): ?string
