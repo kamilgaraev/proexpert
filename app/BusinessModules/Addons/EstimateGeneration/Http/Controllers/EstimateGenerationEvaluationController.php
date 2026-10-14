@@ -21,6 +21,16 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationEvaluationController extends Controller
 {
+    public function scenarioParameters(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationScenarioParameters $parameters): JsonResponse
+    {
+        $input = $request->validate(['state_version' => ['required', 'integer', 'min:0'],
+            'page' => ['sometimes', 'integer', 'min:1', 'max:100000'], 'search' => ['sometimes', 'string', 'max:100']]);
+
+        return AdminResponse::success($parameters->handle($request->user(), (int) $project->id, (int) $session->id,
+            (int) $input['state_version'], (int) ($input['page'] ?? 1), $input['search'] ?? ''))->header('Cache-Control', 'private, no-store');
+    }
+
     public function requirementSources(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources $sources): JsonResponse
     {
@@ -69,11 +79,21 @@ final class EstimateGenerationEvaluationController extends Controller
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet $scenarios): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'definitions' => ['required', 'array', 'size:3'], 'definitions.*.id' => ['required', 'distinct', 'in:minimum,base,maximum'],
+            'definitions' => ['required_without:parameter_cases', 'prohibited_with:parameter_cases', 'array', 'size:3'], 'definitions.*.id' => ['required', 'distinct', 'in:minimum,base,maximum'],
             'definitions.*.basis' => ['required', 'string', 'max:1000'], 'definitions.*.quantities' => ['required', 'array', 'min:1', 'max:10000'],
             'definitions.*.quantities.*.work_item_key' => ['required', 'string', 'max:160'],
             'definitions.*.quantities.*.value' => ['required', 'string', 'max:17'],
-            'definitions.*.quantities.*.unit' => ['required', 'string', 'max:30']]);
+            'definitions.*.quantities.*.unit' => ['required', 'string', 'max:30'],
+            'parameter_cases' => ['required_without:definitions', 'prohibited_with:definitions', 'array', 'size:3'],
+            'parameter_cases.*.id' => ['required', 'distinct', 'in:minimum,base,maximum'],
+            'parameter_cases.*.basis' => ['required', 'string', 'max:1000'],
+            'parameter_cases.*.parameters' => ['required', 'array', 'min:1', 'max:64'],
+            'parameter_cases.*.parameters.*.source_fact_id' => ['required', 'string', 'max:191'],
+            'parameter_cases.*.parameters.*.source_fact_version' => ['required', 'integer', 'min:1'],
+            'parameter_cases.*.parameters.*.source_value_hash' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'parameter_cases.*.parameters.*.entity_id' => ['required', 'string', 'max:191'],
+            'parameter_cases.*.parameters.*.unit' => ['required', 'string', 'max:30'],
+            'parameter_cases.*.parameters.*.value' => ['required', 'string', 'max:17']]);
 
         return AdminResponse::success($scenarios->handle($request->user(), (int) $project->id, (int) $session->id, $input))
             ->header('Cache-Control', 'private, no-store');

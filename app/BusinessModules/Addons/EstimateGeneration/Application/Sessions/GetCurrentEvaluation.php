@@ -10,7 +10,8 @@ use Illuminate\Database\Connection;
 
 final readonly class GetCurrentEvaluation
 {
-    public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization, private EvaluationInputFingerprint $inputs) {}
+    public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization, private EvaluationInputFingerprint $inputs,
+        private \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository $models) {}
 
     public function handle(User $actor, int $projectId, int $sessionId): array
     {
@@ -33,6 +34,17 @@ final readonly class GetCurrentEvaluation
             }
             $recalculationPending = in_array($session->status->value, ['generating', 'processing_documents'], true);
             $inputHash = $this->inputs->fromSession($session);
+            $parameterStale = false;
+            if (isset($session->input_payload['scenario_selections']['parameter_projection'])) {
+                $scope = [(int) $session->organization_id, $projectId, $sessionId];
+                $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                $parameterStale = count($snapshot->facts) > 10000;
+                if (! $parameterStale) {
+                    $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+                    $parameterStale = ! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding)
+                        ->current($session->input_payload['scenario_selections'], $snapshot, $decisions);
+                }
+            }
             $result = json_decode($row->result, true, 64, JSON_THROW_ON_ERROR);
             $confirmation = null;
             if (! $recalculationPending && isset($session->input_payload['confirmed_evaluation'])) {
@@ -41,7 +53,7 @@ final readonly class GetCurrentEvaluation
 
             return [...$policy, 'revision_id' => $row->public_id, 'revision' => (int) $row->revision, 'content_hash' => $row->content_hash,
                 'operation_id' => $row->operation_id, 'input_hash' => $row->input_hash, 'state_version' => (int) $session->state_version,
-                'result_stale' => $recalculationPending || ! hash_equals($row->input_hash, $inputHash)
+                'result_stale' => $recalculationPending || $parameterStale || ! hash_equals($row->input_hash, $inputHash)
                     || (isset($session->input_payload['confirmed_evaluation']) && $confirmation === null),
                 'recalculation_pending' => $recalculationPending,
                 'confirmed_scenario' => $confirmation, 'result' => $result];

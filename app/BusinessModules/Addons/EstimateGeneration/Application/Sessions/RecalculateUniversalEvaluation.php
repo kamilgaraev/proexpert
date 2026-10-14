@@ -80,6 +80,10 @@ final readonly class RecalculateUniversalEvaluation
                 throw ValidationException::withMessages(['evaluation' => 'Разделите состав: предел фактов сессии превышен.']);
             }
             $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+            if (! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding)
+                ->current($payload['scenario_selections'] ?? null, $snapshot, $decisions)) {
+                throw ValidationException::withMessages(['evaluation' => 'Исходные параметры сценариев изменились. Выберите актуальные параметры и сохраните сценарии заново.']);
+            }
             $hash = $this->inputs->fromSession($session);
             $version = 'sha256:'.$hash;
             $context = new PipelineContext($sessionId, $scope[0], $projectId, $stateVersion, $version, $session->status->value,

@@ -139,6 +139,20 @@ final readonly class CurrentProjectDerivedQuantityService
         return ['quantities' => $result['quantities'], 'warnings' => $result['warnings']];
     }
 
+    /** Basic formula simulation from user inputs; does not attest technology/completeness or persist a projection. */
+    public function simulateInput(ProjectModelSnapshot $snapshot, string $token, array $decisions): array
+    {
+        if (count($snapshot->facts) > self::MAX_FACTS || count($decisions) > 256) {
+            return ['quantities' => [], 'warnings' => [['code' => 'quantity_input_simulation_budget_exceeded']]];
+        }
+        $technology = ['catalog_version' => 'input-preview:v1', 'catalog_hash' => hash('sha256', 'input-preview:v1')];
+        $completeness = ['rule_catalog_version' => 'input-preview:v1', 'rule_catalog_hash' => hash('sha256', 'input-preview:v1'),
+            'geometry_preview' => true, 'findings' => []];
+        $result = $this->calculateProjection($snapshot, $token, $technology, $completeness, $this->uniqueDecisions($decisions));
+
+        return ['quantities' => $result['quantities'], 'warnings' => $result['warnings']];
+    }
+
     /**
      * @param  list<Decision>  $decisions
      * @return array{derived:list<DerivedQuantity>,inactive_logical_ids:list<string>,quantities:array<string,QuantityData>,warnings:list<array<string,mixed>>,context:array<string,mixed>}

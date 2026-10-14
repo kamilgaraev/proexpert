@@ -83,6 +83,12 @@ final class EvaluationScenarioSet
         }
         $definitions = $this->validate($selection['definitions'], $positions);
         $expected = ['version' => self::VERSION, 'definitions' => $definitions];
+        if (array_key_exists('parameter_projection', $selection)) {
+            $expected['parameter_projection'] = $selection['parameter_projection'];
+            if (! (new EvaluationScenarioSourceBinding)->current($selection, $snapshot, $decisions)) {
+                throw new InvalidArgumentException('evaluation_scenario_parameter_stale');
+            }
+        }
         if (! (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $selection, 'evaluation_scenario', $expected)) {
             throw new InvalidArgumentException('evaluation_scenario_selection_not_proven');
         }
@@ -103,6 +109,11 @@ final class EvaluationScenarioSet
                         'fact_id' => $selection['fact_id'], 'decision_id' => $selection['decision_id'], 'reason' => $definition['basis']];
                     // Actual-size evidence remains on the source work; it cannot certify a hypothetical size.
                     $position['quantity_evidence_details'] = [];
+                    $recipe = $selection['parameter_projection']['recipes'][$definition['id']][$position['key']] ?? null;
+                    if (is_array($recipe)) {
+                        $position['quantity_formula'] = $recipe['formula_key'];
+                        $position['quantity_parameter_recipe'] = $recipe;
+                    }
                     $price = $position['price_snapshot'];
                     if (isset($price['calculation_basis']) && ! BigDecimal::of($override['value'])->isEqualTo($price['calculation_basis']['quantity'] ?? '-1')) {
                         $position['price_snapshot'] = null;
