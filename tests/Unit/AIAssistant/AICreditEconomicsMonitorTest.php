@@ -13,6 +13,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AICreditEconomicsMonitorTest extends TestCase
 {
+    public function test_pending_physical_attempts_have_unknown_cost_and_scope_deduplication_without_guessing_a_model(): void
+    {
+        $physical = ['organization_id' => 7, 'attempt_id' => 'pending-physical'];
+        $monitor = new AICreditEconomicsMonitor;
+        $report = $monitor->evaluate([], [], [], [], physical: [$physical, $physical]);
+        self::assertSame(0, $report['provider_call_count']);
+        self::assertSame(1, $report['possible_provider_call_count']);
+        self::assertSame(1, $report['pending_estimator_physical_attempt_count']);
+        self::assertSame(1, $report['unknown_cost_count']);
+        self::assertSame(1, $report['deduplicated_usage_count']);
+        self::assertSame('coverage_incomplete', $report['state']);
+        $recorded = ['organization_id' => 7, 'provider' => 'timeweb', 'requested_model' => 'openai/gpt-6-luna',
+            'attempt_id' => 'pending-physical', 'operation' => 'estimate_composition', 'currency' => 'RUB',
+            'usage_status' => 'measured', 'pricing_status' => 'available', 'cost_amount' => '0.00607500'];
+        $report = $monitor->evaluate([], [], [], [], estimator: [$recorded], physical: [$physical]);
+        self::assertSame(1, $report['provider_call_count']);
+        self::assertSame(1, $report['possible_provider_call_count']);
+        self::assertSame(0, $report['pending_estimator_physical_attempt_count']);
+        self::assertSame(0, $report['unknown_cost_count']);
+        $report = $monitor->evaluate([], [], [], [], estimator: [[...$recorded, 'organization_id' => 8]], physical: [$physical]);
+        self::assertSame(2, $report['possible_provider_call_count']);
+        self::assertSame(1, $report['pending_estimator_physical_attempt_count']);
+        self::assertSame(6075, $report['external_cost_micro_rub']);
+        $assistant = [...$this->cost('pending-physical', 10000, 'assistant_chat'), 'organization_id' => 7];
+        $report = $monitor->evaluate([$assistant], [], [], [], physical: [$physical]);
+        self::assertSame(2, $report['possible_provider_call_count']);
+        self::assertSame(1, $report['pending_estimator_physical_attempt_count']);
+    }
+
     public function test_estimator_source_journal_deduplicates_wallet_transfer_and_counts_failed_supplier_cost_with_eight_decimal_precision(): void
     {
         $first = ['organization_id' => 7, 'provider' => 'timeweb', 'requested_model' => 'openai/gpt-6-luna',

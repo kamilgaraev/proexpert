@@ -18,19 +18,36 @@ final class AICreditEconomicsMonitor
         if ($from->greaterThanOrEqualTo($until)) {
             throw new InvalidArgumentException('economics_period_invalid');
         }
+        $connection = DB::connection();
+        $ownsSnapshot = $connection->transactionLevel() === 0 && $connection->getDriverName() === 'pgsql';
+
+        return $connection->transaction(function () use ($connection, $ownsSnapshot, $from, $until): array {
+            if ($ownsSnapshot) {
+                $connection->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+            }
+
+            return $this->reportSnapshot($from, $until) + ['snapshot_consistency' => $ownsSnapshot ? 'repeatable_read' : 'caller_transaction'];
+        });
+    }
+
+    private function reportSnapshot(CarbonImmutable $from, CarbonImmutable $until): array
+    {
+        $hasPhysical = Schema::hasTable('estimate_generation_vision_physical_attempts')
+            && Schema::hasColumn('estimate_generation_vision_physical_attempts', 'wire_started_at');
+        $hasEstimator = Schema::hasTable('estimate_generation_ai_usage');
+        $physical = $hasPhysical ? $this->pendingEstimatorAttempts($from, $until, $hasEstimator) : [];
+        $physicalMissing = $hasEstimator && ! $hasPhysical ? 1 : 0;
         $required = ['ai_credit_provider_usages', 'ai_usage_records', 'commercial_orders', 'commercial_payments', 'commercial_refunds', 'ai_credit_lots'];
         $missing = array_values(array_filter($required, static fn (string $table): bool => ! Schema::hasTable($table)));
         if ($missing !== []) {
             $canonical = Schema::hasTable('ai_credit_provider_usages')
-                ? DB::table('ai_credit_provider_usages')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)->orderBy('id')->cursor() : [];
+                ? $this->canonicalUsages($from, $until, $hasEstimator) : [];
             $legacy = Schema::hasTable('ai_usage_records')
                 ? DB::table('ai_usage_records')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)->orderBy('id')->cursor() : [];
-            $estimator = Schema::hasTable('estimate_generation_ai_usage')
-                ? DB::table('estimate_generation_ai_usage')->where('created_at', '>=', $from)->where('created_at', '<', $until)->orderBy('attempt_id')->cursor() : [];
-            $report = $this->evaluate($canonical, $legacy, [], [], count($missing), $estimator);
+            $estimator = $hasEstimator ? $this->estimatorUsages($from, $until, $hasPhysical) : [];
+            $report = $this->evaluate($canonical, $legacy, [], [], count($missing) + $physicalMissing, $estimator, $physical);
         } else {
-            $canonical = DB::table('ai_credit_provider_usages')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
-                ->orderBy('id')->cursor();
+            $canonical = $this->canonicalUsages($from, $until, $hasEstimator);
             $legacy = DB::table('ai_usage_records')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
                 ->select(['id', 'organization_id', 'provider', 'model', 'operation', 'total_cost_rub', 'currency', 'metadata'])
                 ->lazyById(1000);
@@ -64,10 +81,8 @@ final class AICreditEconomicsMonitor
                 ->orderBy('p.id')->get()->map(static fn ($row): array => (array) $row)->all();
             $refunds = DB::table('commercial_refunds')->whereIn('commercial_payment_id', array_column($payments, 'id'))
                 ->where('provider_status', 'succeeded')->orderBy('id')->cursor();
-            $estimator = Schema::hasTable('estimate_generation_ai_usage')
-                ? DB::table('estimate_generation_ai_usage')->where('created_at', '>=', $from)->where('created_at', '<', $until)->orderBy('attempt_id')->cursor()
-                : [];
-            $report = $this->evaluate($canonical, $legacy, $payments, $refunds, estimator: $estimator);
+            $estimator = $hasEstimator ? $this->estimatorUsages($from, $until, $hasPhysical) : [];
+            $report = $this->evaluate($canonical, $legacy, $payments, $refunds, $physicalMissing, $estimator, $physical);
         }
 
         return $report + ['period' => ['from' => $from->toAtomString(), 'until' => $until->toAtomString()],
@@ -75,10 +90,57 @@ final class AICreditEconomicsMonitor
             'revenue_basis' => 'settled_payment_cohort_net_of_current_refunds',
             'subscription_attribution_basis' => 'declared_internal_allocation',
             'subscription_refund_basis' => 'proportional_confirmed_payment_refund',
+            'estimator_time_basis' => $hasPhysical ? 'wire_started_at_else_usage_created_at' : 'usage_created_at',
+            'pending_attempt_basis' => 'possible_dispatch_with_unknown_cost',
             'automatic_paid_approval' => false];
     }
 
-    public function evaluate(iterable $canonical, iterable $legacy, iterable $payments, iterable $refunds, int $missingSources = 0, iterable $estimator = []): array
+    private function estimatorUsages(CarbonImmutable $from, CarbonImmutable $until, bool $hasPhysical): iterable
+    {
+        $query = DB::table('estimate_generation_ai_usage as u')->select('u.*');
+        $time = 'u.created_at';
+        if ($hasPhysical) {
+            $query->leftJoin('estimate_generation_vision_physical_attempts as p', function ($join): void {
+                $join->on('p.attempt_id', '=', 'u.attempt_id')->on('p.organization_id', '=', 'u.organization_id')
+                    ->on('p.project_id', '=', 'u.project_id')->on('p.session_id', '=', 'u.session_id');
+            });
+            $time = 'COALESCE(p.wire_started_at, u.created_at)';
+        }
+
+        return $query->whereRaw($time.' >= ? AND '.$time.' < ?', [$from, $until])->orderBy('u.attempt_id')->cursor();
+    }
+
+    /** A late wallet transfer remains a duplicate even when the source call belongs to an earlier period. */
+    private function canonicalUsages(CarbonImmutable $from, CarbonImmutable $until, bool $hasEstimator): iterable
+    {
+        $query = DB::table('ai_credit_provider_usages as c')->select('c.*')
+            ->where('c.occurred_at', '>=', $from)->where('c.occurred_at', '<', $until);
+        if ($hasEstimator) {
+            $query->leftJoin('estimate_generation_ai_usage as u', function ($join): void {
+                $join->on('u.organization_id', '=', 'c.organization_id')->on('u.provider', '=', 'c.provider')
+                    ->on('u.requested_model', '=', 'c.model')->on('u.operation', '=', 'c.operation')
+                    ->whereRaw('CAST(u.attempt_id AS VARCHAR) = c.usage_key');
+            })->addSelect('u.attempt_id as estimator_source_attempt_id');
+        }
+
+        return $query->orderBy('c.id')->cursor();
+    }
+
+    private function pendingEstimatorAttempts(CarbonImmutable $from, CarbonImmutable $until, bool $hasEstimator): iterable
+    {
+        $query = DB::table('estimate_generation_vision_physical_attempts as p')->select(['p.organization_id', 'p.attempt_id'])
+            ->whereNotNull('p.wire_started_at')->where('p.wire_started_at', '>=', $from)->where('p.wire_started_at', '<', $until);
+        if ($hasEstimator) {
+            $query->whereNotExists(function ($usage): void {
+                $usage->selectRaw('1')->from('estimate_generation_ai_usage as u')->whereColumn('u.attempt_id', 'p.attempt_id')
+                    ->whereColumn('u.organization_id', 'p.organization_id')->whereColumn('u.project_id', 'p.project_id')->whereColumn('u.session_id', 'p.session_id');
+            });
+        }
+
+        return $query->orderBy('p.attempt_id')->cursor();
+    }
+
+    public function evaluate(iterable $canonical, iterable $legacy, iterable $payments, iterable $refunds, int $missingSources = 0, iterable $estimator = [], iterable $physical = []): array
     {
         $cost = 0;
         $unknown = 0;
@@ -87,6 +149,8 @@ final class AICreditEconomicsMonitor
         $duplicates = 0;
         $excluded = 0;
         $calls = [];
+        $attempts = [];
+        $pending = 0;
         foreach ([$canonical, $legacy, $estimator] as $journal => $rows) {
             foreach ($rows as $value) {
                 $row = (array) $value;
@@ -94,12 +158,21 @@ final class AICreditEconomicsMonitor
                     $row = $this->estimatorUsage($row);
                 }
                 $operation = (string) ($row['operation'] ?? '');
+                if ($journal === 0 && is_string($row['estimator_source_attempt_id'] ?? null)) {
+                    $duplicates++;
+
+                    continue;
+                }
                 if ($journal !== 2 && str_starts_with($operation, 'estimate_generation')) {
                     $excluded++;
 
                     continue;
                 }
                 $metadata = $this->metadata($row['metadata'] ?? []);
+                $attemptKey = $this->attemptKey($row, $metadata);
+                if ($journal === 2 && $attemptKey !== null) {
+                    $attempts[$attemptKey] = true;
+                }
                 $key = $this->callKey($row, $metadata);
                 if ($key !== null && isset($calls[$key])) {
                     $duplicates++;
@@ -127,6 +200,20 @@ final class AICreditEconomicsMonitor
                 }
                 $cost = $this->add($cost, $amount);
             }
+        }
+        foreach ($physical as $value) {
+            $row = (array) $value;
+            $key = $this->attemptKey(['organization_id' => $row['organization_id'] ?? 0, 'usage_key' => $row['attempt_id'] ?? null], []);
+            if ($key !== null && isset($attempts[$key])) {
+                $duplicates++;
+
+                continue;
+            }
+            if ($key !== null) {
+                $attempts[$key] = true;
+            }
+            $pending++;
+            $unknown++;
         }
         $refundTotals = [];
         $refundKeys = [];
@@ -241,6 +328,7 @@ final class AICreditEconomicsMonitor
             'excluded_zero_ai_allocation_count' => $excludedZeroAllocation,
             'external_cost_revenue_ratio' => $ratio, 'unknown_cost_count' => $unknown, 'unknown_allocation_count' => $unknownAllocation,
             'provider_call_count' => $count, 'deduplicated_usage_count' => $duplicates, 'excluded_estimate_generation_count' => $excluded,
+            'pending_estimator_physical_attempt_count' => $pending, 'possible_provider_call_count' => $count + $pending,
             'settled_assistant_payment_count' => $settled, 'missing_source_count' => max(0, $missingSources)];
     }
 
@@ -259,6 +347,14 @@ final class AICreditEconomicsMonitor
         $id = $metadata['provider_call_id'] ?? $row['usage_key'] ?? $metadata['usage_key'] ?? $metadata['credit_usage_key'] ?? null;
 
         return is_string($id) && $id !== '' ? hash('sha256', implode('|', [(string) ($row['organization_id'] ?? 0), (string) ($row['provider'] ?? ''), (string) ($row['model'] ?? ''), (string) ($row['operation'] ?? ''), $id])) : null;
+    }
+
+    private function attemptKey(array $row, array $metadata): ?string
+    {
+        $id = $metadata['provider_call_id'] ?? $row['usage_key'] ?? $metadata['usage_key'] ?? $metadata['credit_usage_key'] ?? null;
+        $organization = $this->integer($row['organization_id'] ?? null);
+
+        return $organization !== null && $organization > 0 && is_string($id) && $id !== '' ? $organization.'|'.$id : null;
     }
 
     /** Source journal supplements missing transfers and grandfathered operations; physical attempt IDs deduplicate it. */
