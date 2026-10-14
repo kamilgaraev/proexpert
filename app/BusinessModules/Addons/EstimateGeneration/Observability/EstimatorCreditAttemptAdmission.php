@@ -57,6 +57,7 @@ final readonly class EstimatorCreditAttemptAdmission
             throw new SessionAiCostLimitReached('estimator_credit_reservation_not_active');
         }
         $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorDocumentCostAllocation::class)->validate($session, $plan);
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         if ($operation->kind === 'rebuild'
             && ($plan['operation_parameters']['local_estimate_key'] ?? null) !== ($session->input_payload['rebuild_section_key'] ?? null)) {
@@ -97,7 +98,7 @@ final readonly class EstimatorCreditAttemptAdmission
             throw new SessionAiCostLimitReached('estimator_credit_call_limit_reached');
         }
         // Keep unresolved upper exposure. Completed calls contribute their measured supplier cost, including failures.
-        $exposure = BigDecimal::zero();
+        $exposure = BigDecimal::of((string) ($plan['document_costs']['cost_micro_rub'] ?? 0));
         $usages = $this->database->table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $reservation->id)
             ->whereIn('usage_key', $attempts->pluck('attempt_id')->all())->get(['usage_key', 'cost_micro_rub'])->keyBy('usage_key');
         foreach ($attempts as $attempt) {

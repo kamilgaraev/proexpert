@@ -6,6 +6,7 @@ namespace App\Services\Credits;
 
 use App\Models\Credits\AICreditLedgerEntry;
 use App\Models\Credits\AICreditLot;
+use App\Models\Credits\AICreditProviderCostAllocation;
 use App\Models\Credits\AICreditProviderUsage;
 use App\Models\Credits\AICreditQuote;
 use App\Models\Credits\AICreditReservation;
@@ -567,6 +568,39 @@ final class AICreditService
         return (int) AICreditProviderUsage::query()->where('ai_credit_reservation_id', $reservation->getKey())->where('is_successful', true)->sum('cost_micro_rub');
     }
 
+    /** Called by a publishing transaction; PostgreSQL verifies the frozen source pins. */
+    public function allocateEstimatorDocumentCost(AICreditReservation $destination, string $operationId, array $pin, ?string $revisionId, string $contentHash): void
+    {
+        if (DB::transactionLevel() < 1) {
+            throw new DomainException('estimator_credit_allocation_requires_transaction');
+        }
+        $source = AICreditProviderUsage::query()->whereKey($pin['source_provider_usage_id'] ?? null)
+            ->where('organization_id', $destination->organization_id)->where('is_successful', true)->lockForUpdate()->firstOrFail();
+        if ($source->ai_credit_reservation_id === $destination->id || (int) $source->cost_micro_rub < 1
+            || (int) $source->cost_micro_rub !== ($pin['cost_micro_rub'] ?? null)
+            || $source->usage_key !== ($pin['source_attempt_id'] ?? null)
+            || ($source->metadata['estimator_usage_fingerprint'] ?? null) !== ($pin['usage_fingerprint'] ?? null)) {
+            throw new DomainException('estimator_credit_document_costs_changed');
+        }
+        $identity = $this->reservationPricing($destination)['estimator_identity'] ?? [];
+        AICreditProviderCostAllocation::query()->create(['source_provider_usage_id' => $source->id,
+            'source_attempt_id' => $source->usage_key, 'organization_id' => (int) $destination->organization_id,
+            'project_id' => $identity['project_id'] ?? null, 'session_id' => $identity['session_id'] ?? null,
+            'destination_reservation_id' => $destination->id, 'destination_operation_id' => $operationId,
+            'result_revision_id' => $revisionId, 'result_content_hash' => $contentHash, 'cost_micro_rub' => (int) $source->cost_micro_rub,
+            'source_pin' => $pin, 'created_at' => now()]);
+    }
+
+    public function allocatedCostMicroRub(AICreditReservation $reservation): int
+    {
+        if (AICreditQuote::query()->whereKey($reservation->ai_credit_quote_id)->value('profile') !== EstimatorCreditRequest::PROFILE) {
+            return 0;
+        }
+
+        return (int) AICreditProviderCostAllocation::query()->where('organization_id', $reservation->organization_id)
+            ->where('destination_reservation_id', $reservation->id)->sum('cost_micro_rub');
+    }
+
     public function canPurchase(Organization $organization, User $user): bool
     {
         $organizationId = (int) $organization->getKey();
@@ -706,7 +740,7 @@ final class AICreditService
             return 0;
         }
 
-        $cost = $this->successfulCostMicroRub($reservation);
+        $cost = \Brick\Math\BigInteger::of($this->successfulCostMicroRub($reservation))->plus($this->allocatedCostMicroRub($reservation))->toInt();
         if ($cost === 0 && AICreditQuote::query()->whereKey($reservation->ai_credit_quote_id)->value('profile') === EstimatorCreditRequest::PROFILE) {
             return 0;
         }
