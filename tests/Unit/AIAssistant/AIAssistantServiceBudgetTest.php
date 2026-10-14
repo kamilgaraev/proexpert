@@ -697,6 +697,28 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject('В нашем объекте есть насосы и вентиляционные установки?'));
     }
 
+    public function test_named_bim_element_is_not_resolved_as_construction_project(): void
+    {
+        $query = 'Покажи свойства объекта «Насос 1» в BIM-модели';
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+            'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            'element_query' => ['type' => ['string', 'null']], 'include_properties' => ['type' => 'boolean'],
+        ], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => 52,
+            'element_query' => 'Насос 1', 'include_properties' => true], $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_element', 'name' => 'get_bim_model_elements',
+            'arguments' => '{"model_query":null,"project_id":null,"element_query":"Насос 1","include_properties":true}'], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject($query));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasProjectScope($query));
+    }
+
     public function test_equipment_count_parser_preserves_explicit_exclusion(): void
     {
         $service = $this->makeService(new AIToolRegistry, true);

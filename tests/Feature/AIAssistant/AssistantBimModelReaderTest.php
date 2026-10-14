@@ -377,6 +377,37 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
     }
 
+    public function test_quantity_summary_overflow_is_explicit_without_losing_complete_retained_group_sums(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 102, [['type' => 'IFCSIUNIT', 'unit_type' => 'VOLUMEUNIT', 'name' => 'CUBIC_METRE', 'prefix' => null]]);
+        for ($index = 0; $index < 102; $index++) {
+            $name = sprintf('Qto_Custom%03d', $index === 101 ? 0 : $index);
+            $this->element($version, 'IFCSLAB', 'Плита '.$index)->updateQuietly(['derivative_id' => $derivative->id,
+                'properties' => ['_ifc' => ['schema_version' => 2], 'materials' => ['Бетон'],
+                    'quantities' => [$name => ['GrossVolume' => $index === 101 ? 2.0 : 1.0]]]]);
+        }
+        foreach (['elements', 'materials_and_quantities'] as $kind) {
+            $result = $this->read(['answer_kind' => $kind, 'include_quantities' => true]);
+            $model = $result['models'][0];
+            self::assertTrue($model['scan_complete']);
+            self::assertTrue($model['quantity_summary_truncated']);
+            self::assertCount(100, $model['quantity_totals']);
+            self::assertSame(3.0, $model['quantity_totals'][0]['sum']);
+            self::assertSame(2, $model['quantity_totals'][0]['elements']);
+            self::assertSame('full_matching_index', $model['quantity_totals'][0]['coverage']);
+            self::assertStringContainsString('Часть показателей не показана; полнота сводки не подтверждена', $result['server_formatted_answer']);
+            self::assertStringNotContainsString('Qto_Custom100', $result['server_formatted_answer']);
+            self::assertNotNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+            $result['models'][0]['quantity_summary_truncated'] = false;
+            $replayed = $this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id);
+            self::assertNotNull($replayed);
+            self::assertStringContainsString('Часть показателей не показана', $replayed['text']);
+            $result['bim_evidence']['models'][0]['quantity_summary_truncated'] = false;
+            self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        }
+    }
+
     public function test_material_summary_reads_all_associations_beyond_page_and_changes_invalidate_receipt(): void
     {
         $version = $this->model('Гаражная', 'гаражная.ifc');

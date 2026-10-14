@@ -647,6 +647,9 @@ final readonly class AssistantBimModelReader
                 $lines[] = trans_message($quantity['sum'] === null ? 'ai_assistant_bim.quantity_unavailable' : 'ai_assistant_bim.quantity_total',
                     ['name' => $this->text($quantity['name']), 'value' => $quantity['sum'], 'unit' => $this->text($quantity['unit']), 'count' => $quantity['elements']]);
             }
+            if ($model['quantity_summary_truncated'] ?? false) {
+                $lines[] = trans_message('ai_assistant_bim.quantities_truncated');
+            }
             if ($model['estimate_link_coverage'] !== 'not_requested') {
                 if ($model['estimate_link_coverage'] === 'page_limited' && $model['elements'] !== []
                     && ! array_filter($model['elements'], static fn (array $element): bool => ($element['estimate_links'] ?? []) !== [])) {
@@ -695,7 +698,9 @@ final readonly class AssistantBimModelReader
                 $lines[] = trans_message('ai_assistant_bim.material_summary_finished', ['total' => $summary['total']]);
             }
             if ($includeQuantities) {
-                if (! $model['scan_complete']) {
+                if ($model['quantity_summary_truncated'] ?? false) {
+                    $lines[] = trans_message('ai_assistant_bim.quantities_truncated');
+                } elseif (! $model['scan_complete']) {
                     $lines[] = trans_message('ai_assistant_bim.quantities_unconfirmed');
                 } elseif ($model['quantity_totals'] === []) {
                     $lines[] = trans_message('ai_assistant_bim.quantities_empty_index');
