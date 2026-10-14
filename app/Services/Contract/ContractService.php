@@ -94,9 +94,8 @@ class ContractService
         $contract->load([
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description,organization_id',
-            'project.organization:id,name,inn,kpp,legal_address,contact_email,contact_phone',
+            'project.organization:id,name,tax_number,registration_number,address,email,phone',
             'project.organizations:id,name,tax_number,email,phone',
-            'parentContract:id,number,total_amount,status',
             // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
@@ -112,47 +111,21 @@ class ContractService
                 $query->where('project_id', $projectId)
                     ->select('id', 'contract_id', 'project_id', 'act_document_number', 'act_date', 'amount', 'description', 'is_approved', 'approval_date');
             },
-                'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
+                'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date,additional_info',
                 'performanceActs.completedWorks.workType:id,name',
-                'performanceActs.completedWorks.user:id,name']);
+                'performanceActs.completedWorks.user:id,name',
+                'performanceActs.lines.completedWork:id,additional_info']);
         } else {
             $contract->load([
                 'performanceActs:id,contract_id,project_id,act_document_number,act_date,amount,description,is_approved,approval_date',
-                'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
+                'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date,additional_info',
                 'performanceActs.completedWorks.workType:id,name',
                 'performanceActs.completedWorks.user:id,name',
+                'performanceActs.lines.completedWork:id,additional_info',
             ]);
         }
 
-        // Принудительно загружаем дочерние контракты отдельно
-        $contract->setRelation('childContracts',
-            Contract::where('parent_contract_id', $contract->id)
-                ->where('organization_id', $contract->organization_id)
-                ->select('id', 'number', 'total_amount', 'status')
-                ->get()
-        );
-
-        // TECHNICAL: Диагностика дочерних контрактов для управленческих отчетов
-        $dbChildren = \App\Models\Contract::where('parent_contract_id', $contract->id)->get();
-        $this->logging->technical('contract.child_contracts.diagnostic', [
-            'contract_id' => $contract->id,
-            'contract_number' => $contract->number,
-            'contract_org_id' => $contract->organization_id,
-            'childContracts_loaded' => $contract->relationLoaded('childContracts'),
-            'childContracts_count' => $contract->childContracts->count(),
-            'childContracts_ids' => $contract->childContracts->pluck('id')->toArray(),
-            'db_children_count' => $dbChildren->count(),
-            'db_children_details' => $dbChildren->map(function ($child) {
-                return [
-                    'id' => $child->id,
-                    'number' => $child->number,
-                    'organization_id' => $child->organization_id,
-                    'parent_contract_id' => $child->parent_contract_id,
-                    'deleted_at' => $child->deleted_at,
-                ];
-            })->toArray(),
-            'user_id' => Auth::id(),
-        ]);
+        $contract->setRelation('childContracts', $contract->newCollection());
 
         // Аналитика на основе загруженных связей (не новых запросов!)
         $analytics = $this->buildContractAnalyticsFromLoaded($contract);

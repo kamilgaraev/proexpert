@@ -10,8 +10,12 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class ContractAccessService
 {
-    public function findAccessible(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
-    {
+    public function findAccessible(
+        int $contractId,
+        int $organizationId,
+        ?int $projectId = null,
+        bool $withActDetails = false,
+    ): ?Contract {
         $query = Contract::query()->whereKey($contractId);
         $this->applyAccessibleScope($query, $organizationId);
 
@@ -45,10 +49,17 @@ class ContractAccessService
             'specifications',
         ]);
 
+        $actDetailRelations = $withActDetails ? [
+            'performanceActs.completedWorks.workType',
+            'performanceActs.completedWorks.user',
+            'performanceActs.lines.completedWork:id,additional_info',
+        ] : [];
+
         if ($projectId !== null) {
             $contract->load([
                 'performanceActs' => fn ($query) => $query->where('project_id', $projectId),
                 'performanceActs.completedWorks',
+                ...$actDetailRelations,
                 'payments' => fn ($query) => $query->where('project_id', $projectId),
                 'payments.transactions',
             ]);
@@ -56,6 +67,7 @@ class ContractAccessService
             $contract->load([
                 'performanceActs',
                 'performanceActs.completedWorks',
+                ...$actDetailRelations,
                 'payments.transactions',
             ]);
         }
@@ -63,9 +75,13 @@ class ContractAccessService
         return $contract;
     }
 
-    public function findAccessibleOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
-    {
-        $contract = $this->findAccessible($contractId, $organizationId, $projectId);
+    public function findAccessibleOrFail(
+        int $contractId,
+        int $organizationId,
+        ?int $projectId = null,
+        bool $withActDetails = false,
+    ): Contract {
+        $contract = $this->findAccessible($contractId, $organizationId, $projectId, $withActDetails);
 
         if ($contract === null) {
             throw (new ModelNotFoundException)->setModel(Contract::class, [$contractId]);

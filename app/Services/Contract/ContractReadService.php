@@ -23,7 +23,12 @@ class ContractReadService
 
     public function show(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
-        return $this->contractAccessService->findAccessibleOrFail($contractId, $organizationId, $projectId);
+        return $this->contractAccessService->findAccessibleOrFail(
+            $contractId,
+            $organizationId,
+            $projectId,
+            withActDetails: true,
+        );
     }
 
     public function analytics(int $contractId, int $organizationId, ?int $projectId = null): array

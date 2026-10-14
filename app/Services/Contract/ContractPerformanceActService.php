@@ -87,7 +87,7 @@ class ContractPerformanceActService
         $acts = $this->actRepository->getActsForContract($contractId, $filters);
 
         // Загружаем связи для каждого акта
-        $acts->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+        $acts->load(['completedWorks.workType', 'completedWorks.user', 'lines.completedWork:id,additional_info', 'files.user']);
 
         return $acts;
     }
@@ -185,7 +185,7 @@ class ContractPerformanceActService
         }
 
         // Загружаем связи для возврата полных данных
-        $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+        $act->load(['completedWorks.workType', 'completedWorks.user', 'lines.completedWork:id,additional_info', 'files.user']);
 
         // BUSINESS: Акт выполненных работ создан
         $this->logging->business('performance_act.created', [
@@ -227,7 +227,7 @@ class ContractPerformanceActService
             }
 
             // Загружаем связи для возврата полных данных
-            $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+            $act->load(['completedWorks.workType', 'completedWorks.user', 'lines.completedWork:id,additional_info', 'files.user']);
 
             return $act;
         }
@@ -322,7 +322,7 @@ class ContractPerformanceActService
         $act = $this->actRepository->find($actId);
 
         // Загружаем связи для возврата полных данных
-        $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+        $act->load(['completedWorks.workType', 'completedWorks.user', 'lines.completedWork:id,additional_info', 'files.user']);
 
         // BUSINESS: Акт успешно обновлен
         $this->logging->business('performance_act.updated', [
