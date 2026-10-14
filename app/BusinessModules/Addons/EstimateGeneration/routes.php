@@ -71,6 +71,7 @@ Route::middleware([
         Route::post('/{session}/evaluation/work-entity', [EstimateGenerationRoomIdentityController::class, 'bindWork'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.work-entity');
         Route::post('/{session}/evaluation/pricing-source', [EstimateGenerationEvaluationController::class, 'pricingSource'])->middleware('authorize:estimate_generation.generate,project,project')->name('evaluation.pricing-source');
         Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
+        Route::get('/{session}/evidence-sources', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvidenceController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('evidence-sources.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');
         Route::post('/{session}/archive', [EstimateGenerationActionController::class, 'archive'])->middleware('authorize:estimate_generation.generate,project,project')->name('archive');
