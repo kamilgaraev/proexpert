@@ -83,7 +83,7 @@ final class AssistantBimIndexProjection
             preg_match('/кондиционер|сплит[ -]?систем|air[ -]?condition|split[ -]?system/u', $term) === 1 => 'air_conditioner',
             preg_match('/вентилятор|\bfans?\b/u', $term) === 1 => 'fan',
             preg_match('/насос|\bpumps?\b/u', $term) === 1 => 'pump',
-            preg_match('/кот[её]л|котлы|\bboilers?\b/u', $term) === 1 => 'boiler',
+            preg_match('/кот[её]л|котлы|котлов|\bboilers?\b/u', $term) === 1 => 'boiler',
             preg_match('/чиллер|\bchillers?\b/u', $term) === 1 => 'chiller',
             default => null,
         };

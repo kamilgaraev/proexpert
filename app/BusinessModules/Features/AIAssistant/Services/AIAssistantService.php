@@ -2153,10 +2153,13 @@ class AIAssistantService
                 }
                 $args['offset'] = 0;
                 $args['limit'] = 1;
-                if (preg_match('/связ[а-яё]*\s+со?\s+сметн|сметн[а-яё]*\s+позици/iu', $requestQuery) === 1) {
+            }
+            if ($requestedKinds !== [] && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)
+                && $this->bimEstimateLinksRequested($requestQuery)) {
+                if (isset($bimSchema['include_estimate_links'])) {
                     $args['include_estimate_links'] = true;
-                    $args['limit'] = 20;
                 }
+                if (isset($bimSchema['limit'])) { $args['limit'] = 20; }
             }
             $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
             if ($projectScopeRequested && $namedProject === null) {
@@ -3926,7 +3929,8 @@ class AIAssistantService
         $kind = (new AssistantBimIndexProjection)->queryEquipment($question);
         if ($kind === null || ! $this->simpleBimEquipmentQuestion($question, $alias)) { return null; }
         $arguments = ['model_query' => $alias, 'project_id' => $projectId, 'equipment_kind' => $kind,
-            'include_properties' => false, 'include_quantities' => false, 'include_estimate_links' => false];
+            'include_properties' => false, 'include_quantities' => false,
+            'include_estimate_links' => $this->bimEstimateLinksRequested($question)];
         try {
             if (! $this->permissionChecker->canExecuteTool($actor, 'get_bim_model_elements', $arguments, true)
                 || ! $this->scopedBimAliasMatches($actor, $organizationId, $projectId, $alias)) { return null; }
@@ -3949,6 +3953,11 @@ class AIAssistantService
     {
         return ['status' => 'unavailable', 'reason' => 'read_timed_out', 'text' => trans_message('ai_assistant.data_read_timed_out'),
             'replaced' => true, 'validation_status' => 'partial', 'needs_clarification' => true, 'source_refs' => []];
+    }
+
+    private function bimEstimateLinksRequested(string $question): bool
+    {
+        return preg_match('/связ[а-яё]*\s+со?\s+сметн|сметн[а-яё]*\s+позици/iu', $question) === 1;
     }
 
     private function simpleBimEquipmentQuestion(string $question, string $alias): bool
