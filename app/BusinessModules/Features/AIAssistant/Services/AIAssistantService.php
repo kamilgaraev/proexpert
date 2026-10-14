@@ -2098,7 +2098,9 @@ class AIAssistantService
             $contextProjectId = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($organizationWide) {
                 $args['project_id'] = null;
-            } elseif ($contextProjectId !== null && (($args['project_id'] ?? null) === null || $namedProject === null)) {
+            } elseif ($contextProjectId !== null && (($args['project_id'] ?? null) === null
+                || ($namedProject === null && ! AssistantBimModelSelector::hasExplicitModelScope($requestQuery,
+                    is_string($args['model_query'] ?? null) ? $args['model_query'] : null)))) {
                 $args['project_id'] = $contextProjectId;
             }
             $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);

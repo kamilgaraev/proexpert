@@ -6,6 +6,17 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 final class AssistantBimModelSelector
 {
+    public static function hasExplicitModelScope(string $question, ?string $selector): bool
+    {
+        $prefix = '(?:модел[а-яё]*|файл[а-яё]*|комплект[а-яё]*)\s+(?:(?:ifc|bim|с\s+названием|под\s+названием)\s+)*';
+        if (preg_match('/'.$prefix.'[«"“\x27‘][^»"”\x27’]+[»"”\x27’]|(?<![\pL\pN])[\pL\pN][\pL\pN_.()\-]*\.ifc(?![\pL\pN])/iu', $question) === 1) {
+            return true;
+        }
+
+        return $selector !== null && trim($selector) !== ''
+            && preg_match('/'.$prefix.'[«"“\x27‘]?'.preg_quote(trim($selector), '/').'(?![\pL\pN])/iu', $question) === 1;
+    }
+
     public static function withoutProjectAlias(?string $modelQuery, string $projectName, string $question): ?string
     {
         if ($modelQuery === null || trim($modelQuery) === '') {

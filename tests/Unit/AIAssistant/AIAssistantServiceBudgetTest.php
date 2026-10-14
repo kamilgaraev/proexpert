@@ -697,6 +697,50 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::namedProject('В нашем объекте есть насосы и вентиляционные установки?'));
     }
 
+    public function test_explicit_named_model_keeps_resolved_project_instead_of_context(): void
+    {
+        foreach (['Покажи элементы модели «Гаражная»', 'Покажи элементы модели Гаражная', 'Покажи элементы garage.ifc'] as $query) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with(['model_query' => 'Гаражная', 'project_id' => 100], $this->anything(), $this->anything())
+                ->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $service->canonicalBimProjects = [100 => 'Другой разрешённый проект'];
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'named_model', 'name' => 'get_bim_model_elements',
+                'arguments' => '{"model_query":"Гаражная","project_id":100}'], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasExplicitModelScope('Покажи элементы моделей в формате .ifc', null));
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::hasExplicitModelScope('Покажи элементы garage.ifc', null));
+    }
+
+    public function test_file_name_and_file_format_apply_different_project_scopes(): void
+    {
+        foreach ([['Покажи элементы garage.ifc', 100], ['Покажи элементы моделей в формате .ifc', 52]] as [$query, $expectedProjectId]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with(['model_query' => null, 'project_id' => $expectedProjectId], $this->anything(), $this->anything())
+                ->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'file_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => '{"model_query":null,"project_id":100}'], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
     public function test_named_bim_element_is_not_resolved_as_construction_project(): void
     {
         $query = 'Покажи свойства объекта «Насос 1» в BIM-модели';
