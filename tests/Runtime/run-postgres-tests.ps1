@@ -64,67 +64,119 @@ if ($env:COMPOSE_PROJECT_NAME -and $env:COMPOSE_PROJECT_NAME -cne $selectedProje
     throw 'postgres_test_project_unsafe'
 }
 $mutexName = if ($IsolatedAiAssistant) { 'Local\MostAIAssistantPostgresTests' } else { 'Local\MostPostgresTests' }
-$pirTestsMutex = [System.Threading.Mutex]::new($false, $mutexName)
-$pirTestsLockAcquired = $false
-try {
-    while (-not $pirTestsLockAcquired) {
-        try {
-            $pirTestsLockAcquired = $pirTestsMutex.WaitOne([TimeSpan]::FromSeconds(30))
-        } catch [System.Threading.AbandonedMutexException] {
-            $pirTestsLockAcquired = $true
-        }
-        if (-not $pirTestsLockAcquired) {
-            Write-Host 'Ожидание завершения другого запуска PostgreSQL-тестов...'
-        }
-    }
-
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw 'docker_command_unavailable'
-}
-
-$dockerReady = $false
-for ($attempt = 1; $attempt -le 30; $attempt++) {
-    $dockerServerVersion = (& docker info --format '{{.ServerVersion}}' 2>&1 | Out-String).Trim()
-    if ($LASTEXITCODE -eq 0 -and $dockerServerVersion -match '^\d+\.\d+') {
-        $dockerReady = $true
-        break
-    }
-
-    Start-Sleep -Seconds 2
-}
-
-if (-not $dockerReady) {
-    throw 'docker_daemon_unavailable'
-}
-
+$testsMutex = [System.Threading.Mutex]::new($false, $mutexName)
+$lockAcquired = $false
 $composePath = Join-Path $root 'compose.testing.yml'
 $projectName = $selectedProject
-if ($IsolatedAiAssistant) {
+$temporaryDirectory = $null
+$cleanupRequired = $false
+$cleanupSucceeded = $true
+$locationPushed = $false
+$environmentNames = @('MOST_POSTGRES_TEST_PROFILE', 'MOST_POSTGRES_TEST_PORT', 'MOST_POSTGRES_TEST_PROJECT')
+$previousEnvironment = @{}
+foreach ($name in $environmentNames) {
+    $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+if ($env:MOST_POSTGRES_TEST_PORT -or $env:MOST_POSTGRES_TEST_PROJECT) {
+    $testsMutex.Dispose()
+    throw 'postgres_test_runtime_environment_unsafe'
+}
+try {
+    try {
+        $lockAcquired = $testsMutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+        $lockAcquired = $true
+    }
+
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw 'docker_command_unavailable'
+    }
+
+    $dockerReady = $false
+    for ($attempt = 1; $attempt -le 30; $attempt++) {
+        $dockerServerVersion = (& docker info --format '{{.ServerVersion}}' 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0 -and $dockerServerVersion -match '^\d+\.\d+') {
+            $dockerReady = $true
+            break
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    if (-not $dockerReady) {
+        throw 'docker_daemon_unavailable'
+    }
+
+    $defaultPort = if ($IsolatedAiAssistant) { 55443 } else { 55433 }
+    $usePrivateContainer = -not $lockAcquired
+    if ($lockAcquired) {
+        $existingContainers = @(& docker ps -aq --filter "label=com.docker.compose.project=$selectedProject")
+        if ($LASTEXITCODE -ne 0) {
+            throw 'postgres_test_container_inventory_failed'
+        }
+        $usePrivateContainer = $existingContainers.Count -gt 0
+        if (-not $usePrivateContainer) {
+            $portProbe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $defaultPort)
+            $portProbe.Server.ExclusiveAddressUse = $true
+            try {
+                $portProbe.Start()
+            } catch [Net.Sockets.SocketException] {
+                $usePrivateContainer = $true
+            } finally {
+                $portProbe.Stop()
+            }
+        }
+    }
+
+    if ($usePrivateContainer) {
+        $projectName = $selectedProject + '-' + [guid]::NewGuid().ToString('N')
+        if ($lockAcquired) {
+            $testsMutex.ReleaseMutex()
+            $lockAcquired = $false
+        }
+    }
+
     $composeContents = Get-Content -LiteralPath $composePath -Raw -Encoding UTF8
     if ([regex]::Matches($composeContents, '127\.0\.0\.1:55433:5432').Count -ne 1 -or
         $composeContents -notmatch 'image:\s*pgvector/pgvector:0\.8\.5-pg16-bookworm') {
         throw 'postgres_test_isolated_compose_source_unsafe'
     }
-    $privateComposeDirectory = Join-Path $root 'storage/app/private/postgres-ai-assistant'
-    New-Item -ItemType Directory -Path $privateComposeDirectory -Force | Out-Null
-    $composePath = Join-Path $privateComposeDirectory 'compose.testing.yml'
-    [IO.File]::WriteAllText($composePath, $composeContents.Replace('127.0.0.1:55433:5432', '127.0.0.1:55443:5432'), [Text.UTF8Encoding]::new($false))
-}
-$previousProfile = $env:MOST_POSTGRES_TEST_PROFILE
+    $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ('most-postgres-tests-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
+    if ($IsolatedAiAssistant -or $usePrivateContainer) {
+        $binding = if ($usePrivateContainer) { '127.0.0.1::5432' } else { "127.0.0.1:${defaultPort}:5432" }
+        $composePath = Join-Path $temporaryDirectory 'compose.testing.yml'
+        [IO.File]::WriteAllText($composePath, $composeContents.Replace('127.0.0.1:55433:5432', $binding), [Text.UTF8Encoding]::new($false))
+    }
 
-Push-Location $root
-try {
-    if (-not $IsolatedAiAssistant) {
-        & docker compose -p $projectName -f $composePath down --volumes --remove-orphans
+    Push-Location $root
+    $locationPushed = $true
+    if (-not $usePrivateContainer) {
+        & docker compose --project-directory $root -p $projectName -f $composePath down --volumes --remove-orphans
         if ($LASTEXITCODE -ne 0) {
             throw 'postgres_test_container_reset_failed'
         }
     }
 
+    $cleanupRequired = $true
     & docker compose --project-directory $root -p $projectName -f $composePath up -d --wait --wait-timeout 60
     if ($LASTEXITCODE -ne 0) {
         throw 'postgres_test_container_start_failed'
     }
+
+    $publishedAddress = (& docker compose --project-directory $root -p $projectName -f $composePath port postgres-testing 5432 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $publishedAddress -notmatch '^127\.0\.0\.1:(\d+)$') {
+        throw 'postgres_test_container_port_unsafe'
+    }
+    $publishedPort = [int] $Matches[1]
+    if ($publishedPort -lt 1024 -or $publishedPort -gt 65535 -or $publishedPort -eq 5432 -or
+        (-not $usePrivateContainer -and $publishedPort -ne $defaultPort)) {
+        throw 'postgres_test_container_port_unsafe'
+    }
+    $env:MOST_POSTGRES_TEST_PROFILE = $selectedProfile
+    $env:MOST_POSTGRES_TEST_PORT = [string] $publishedPort
+    $env:MOST_POSTGRES_TEST_PROJECT = $projectName
+    Write-Host ("PostgreSQL tests: ${projectName}, 127.0.0.1:${publishedPort}")
 
     $phpunitArguments = @("vendor/bin/$Runner", '-c', $phpunitConfigurationPath)
     if (-not [string]::IsNullOrWhiteSpace($TestSuite)) {
@@ -137,26 +189,38 @@ try {
     }
 
     if ($LogProgressEvents) {
-        $eventsDirectory = [IO.Path]::GetFullPath((Join-Path $root 'storage/app/private/assistant-audit'))
-        New-Item -ItemType Directory -Path $eventsDirectory -Force | Out-Null
-        $eventsLogPath = Join-Path $eventsDirectory ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N')+'.events.log')
+        $eventsLogPath = Join-Path $temporaryDirectory 'phpunit.events.log'
         $phpunitArguments += @('--log-events-text', $eventsLogPath)
         Write-Host ('PHPUnit events: '+$eventsLogPath)
     }
 
-    if ($IsolatedAiAssistant) { $env:MOST_POSTGRES_TEST_PROFILE = 'ai-assistant' }
     & php @phpunitArguments
     $testExitCode = $LASTEXITCODE
 } finally {
-    if ($null -eq $previousProfile) { Remove-Item Env:MOST_POSTGRES_TEST_PROFILE -ErrorAction SilentlyContinue }
-    else { $env:MOST_POSTGRES_TEST_PROFILE = $previousProfile }
-    Pop-Location
+    try {
+        if ($cleanupRequired) {
+            $cleanupSucceeded = $false
+            & docker compose --project-directory $root -p $projectName -f $composePath down --volumes --remove-orphans
+            if ($LASTEXITCODE -ne 0) {
+                throw "postgres_test_container_cleanup_failed: $projectName ($composePath)"
+            }
+            $cleanupSucceeded = $true
+        }
+    } finally {
+        foreach ($name in $environmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
+        }
+        if ($locationPushed) { Pop-Location }
+        if ($lockAcquired) { $testsMutex.ReleaseMutex() }
+        $testsMutex.Dispose()
+        if ($temporaryDirectory -and $cleanupSucceeded) {
+            $temporaryCompose = Join-Path $temporaryDirectory 'compose.testing.yml'
+            if (Test-Path -LiteralPath $temporaryCompose) { Remove-Item -LiteralPath $temporaryCompose }
+            if (@(Get-ChildItem -LiteralPath $temporaryDirectory -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $temporaryDirectory
+            }
+        }
+    }
 }
 
 exit $testExitCode
-} finally {
-    if ($pirTestsLockAcquired) {
-        $pirTestsMutex.ReleaseMutex()
-    }
-    $pirTestsMutex.Dispose()
-}

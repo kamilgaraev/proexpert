@@ -12,35 +12,103 @@ final class PhpUnitPostgresProfileTest extends TestCase
 {
     public function test_profile_guard_accepts_only_matching_loopback_ports(): void
     {
-        self::assertSame(55433, IsolatedPostgresTestDatabase::profilePort(''));
-        self::assertSame(55443, IsolatedPostgresTestDatabase::profilePort('ai-assistant'));
-        foreach (['' => 55433, 'ai-assistant' => 55443] as $profile => $port) {
-            IsolatedPostgresTestDatabase::assertSafeConfiguration([
-                'driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => $port,
-                'database' => 'most_phpunit_'.str_repeat('a', 24).'_testing',
-            ], $profile);
-        }
+        $this->withRuntimeEnvironment([], static function (): void {
+            self::assertSame(55433, IsolatedPostgresTestDatabase::profilePort(''));
+            self::assertSame(55443, IsolatedPostgresTestDatabase::profilePort('ai-assistant'));
+            foreach (['' => 55433, 'ai-assistant' => 55443] as $profile => $port) {
+                IsolatedPostgresTestDatabase::assertSafeConfiguration([
+                    'driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => $port,
+                    'database' => 'most_phpunit_'.str_repeat('a', 24).'_testing',
+                ], $profile);
+            }
+        });
     }
 
     public function test_profile_guard_rejects_foreign_endpoints_and_missing_opt_in(): void
     {
-        $safe = ['driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => 55433, 'database' => 'most_backend_testing'];
-        $cases = [[$safe, 'foreign-project'], [$safe, 'ai-assistant'],
-            [array_replace($safe, ['port' => 55443]), ''],
-            [array_replace($safe, ['port' => 5432]), ''],
-            [array_replace($safe, ['port' => 55444]), 'ai-assistant'],
-            [array_replace($safe, ['host' => 'localhost']), ''],
-            [array_replace($safe, ['host' => '192.0.2.1']), ''],
-            [array_replace($safe, ['driver' => 'mysql']), ''],
-            [array_replace($safe, ['database' => 'most_production']), ''],
-            [array_replace($safe, ['database' => 'bad/testing']), ''],
-            [array_replace($safe, ['url' => 'postgres://unsafe']), '']];
-        foreach ($cases as [$configuration, $profile]) {
-            try {
-                IsolatedPostgresTestDatabase::assertSafeConfiguration($configuration, $profile);
-                self::fail('Unsafe PostgreSQL profile was accepted.');
-            } catch (\RuntimeException $exception) {
-                self::assertContains($exception->getMessage(), ['postgres_test_profile_unsafe', 'postgres_test_database_configuration_unsafe']);
+        $this->withRuntimeEnvironment([], static function (): void {
+            $safe = ['driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => 55433, 'database' => 'most_backend_testing'];
+            $cases = [[$safe, 'foreign-project'], [$safe, 'ai-assistant'],
+                [array_replace($safe, ['port' => 55443]), ''],
+                [array_replace($safe, ['port' => 5432]), ''],
+                [array_replace($safe, ['port' => 55444]), 'ai-assistant'],
+                [array_replace($safe, ['host' => 'localhost']), ''],
+                [array_replace($safe, ['host' => '192.0.2.1']), ''],
+                [array_replace($safe, ['driver' => 'mysql']), ''],
+                [array_replace($safe, ['database' => 'most_production']), ''],
+                [array_replace($safe, ['database' => 'bad/testing']), ''],
+                [array_replace($safe, ['url' => 'postgres://unsafe']), '']];
+            foreach ($cases as [$configuration, $profile]) {
+                try {
+                    IsolatedPostgresTestDatabase::assertSafeConfiguration($configuration, $profile);
+                    self::fail('Unsafe PostgreSQL profile was accepted.');
+                } catch (\RuntimeException $exception) {
+                    self::assertContains($exception->getMessage(), ['postgres_test_profile_unsafe', 'postgres_test_database_configuration_unsafe']);
+                }
+            }
+        });
+    }
+
+    public function test_runtime_port_requires_matching_owned_project(): void
+    {
+        foreach (['' => 'most-postgres-tests', 'ai-assistant' => 'most-ai-assistant-tests'] as $profile => $project) {
+            $this->withRuntimeEnvironment([
+                'MOST_POSTGRES_TEST_PROFILE' => $profile,
+                'MOST_POSTGRES_TEST_PORT' => '41321',
+                'MOST_POSTGRES_TEST_PROJECT' => $project.'-'.str_repeat('a', 32),
+            ], static function () use ($profile): void {
+                self::assertSame(41321, IsolatedPostgresTestDatabase::profilePort());
+                self::assertSame(41321, IsolatedPostgresTestDatabase::profilePort($profile));
+                IsolatedPostgresTestDatabase::assertSafeConfiguration([
+                    'driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => 41321,
+                    'database' => 'most_backend_testing',
+                ], $profile);
+            });
+        }
+    }
+
+    public function test_runtime_port_rejects_invalid_ports_and_foreign_projects(): void
+    {
+        foreach ([
+            ['41321', ''], ['', 'most-postgres-tests-'.str_repeat('a', 32)],
+            ['5432', 'most-postgres-tests-'.str_repeat('a', 32)],
+            ['65536', 'most-postgres-tests-'.str_repeat('a', 32)],
+            ['1023', 'most-postgres-tests-'.str_repeat('a', 32)],
+            ['41321', 'most-postgres-tests'], ['41321', 'most-production'],
+            ['41321', 'most-ai-assistant-tests-'.str_repeat('a', 32)],
+            ['41321', 'most-postgres-tests-invalid'],
+        ] as [$port, $project]) {
+            $this->withRuntimeEnvironment([
+                'MOST_POSTGRES_TEST_PORT' => $port,
+                'MOST_POSTGRES_TEST_PROJECT' => $project,
+            ], static function (): void {
+                try {
+                    IsolatedPostgresTestDatabase::profilePort();
+                    self::fail('Unsafe runtime endpoint was accepted.');
+                } catch (\RuntimeException $exception) {
+                    self::assertSame('postgres_test_runtime_environment_unsafe', $exception->getMessage());
+                }
+            });
+        }
+    }
+
+    private function withRuntimeEnvironment(array $values, callable $callback): void
+    {
+        $previousEnv = $_ENV;
+        $previousServer = $_SERVER;
+        $previous = [];
+        foreach (['MOST_POSTGRES_TEST_PROFILE', 'MOST_POSTGRES_TEST_PORT', 'MOST_POSTGRES_TEST_PROJECT'] as $name) {
+            $previous[$name] = getenv($name);
+            unset($_ENV[$name], $_SERVER[$name]);
+            putenv($name.'='.($values[$name] ?? ''));
+        }
+        try {
+            $callback();
+        } finally {
+            $_ENV = $previousEnv;
+            $_SERVER = $previousServer;
+            foreach ($previous as $name => $value) {
+                putenv($value === false ? $name : $name.'='.$value);
             }
         }
     }
