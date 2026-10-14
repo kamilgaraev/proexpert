@@ -200,7 +200,23 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         self::assertStringNotContainsString('next_cursor', json_encode($result));
         self::assertTrue($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
         self::assertFalse($subscriptions->matchesReference($f->foreignOwner, $org, $result['source_refs'][0]));
+        $project = \App\Models\Project::withoutEvents(fn () => \App\Models\Project::factory()->create(['organization_id' => $org]));
+        $delivery = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportDeliverySummaryReader::class);
+        $deliveryResult = $delivery->read($f->owner, $org, ['project_id' => $project->id]);
+        self::assertSame($result['data'], $deliveryResult['data']['sections']['subscriptions']['data']);
+        self::assertTrue($deliveryResult['data']['sections']['exports']['available']);
+        self::assertStringContainsString('Личные регулярные отчёты', $deliveryResult['server_formatted_answer']);
+        self::assertStringContainsString('Выгрузки выбранного проекта', $deliveryResult['server_formatted_answer']);
+        self::assertTrue($delivery->matchesReference($f->owner, $org, $deliveryResult['source_refs'][0]));
+        self::assertFalse($delivery->matchesReference($f->foreignOwner, $org, $deliveryResult['source_refs'][0]));
+        $reportMember = $f->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']]);
+        $reportMember->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $limitedDelivery = $delivery->read($reportMember, $org, ['project_id' => $project->id]);
+        self::assertFalse($limitedDelivery['data']['sections']['subscriptions']['available']);
+        self::assertArrayNotHasKey('data', $limitedDelivery['data']['sections']['subscriptions']);
+        self::assertTrue($limitedDelivery['data']['sections']['exports']['available']);
         $records[0]->updateQuietly(['status' => 'paused']);
+        self::assertFalse($delivery->matchesReference($f->owner, $org, $deliveryResult['source_refs'][0]));
         self::assertFalse($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
         self::assertSame('paused', $subscriptions->read($f->owner, $org, $args)['data']['items'][0]['status']);
         try { $subscriptions->read($f->member, $org, $args); self::fail('Report manage permission missing'); }

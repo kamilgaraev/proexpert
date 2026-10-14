@@ -258,6 +258,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_project_production_readiness' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectProductionReadinessTool::class,
                 'get_project_crm_readiness' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectCrmReadinessTool::class,
                 'get_project_export_history' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectExportHistoryTool::class,
+                'get_project_report_delivery_summary' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectReportDeliverySummaryTool::class,
                 'get_project_report_catalog' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectReportCatalogTool::class,
                 'get_project_camera_roster' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectCameraRosterTool::class,
                 'get_organization_access_review_summary' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationAccessReviewSummaryTool::class,

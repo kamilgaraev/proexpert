@@ -11,6 +11,17 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_overdue_manager_question_requires_full_schedule_read(): void
+    {
+        foreach (['Какие просроченные задачи нашего объекта сейчас задерживают этапы и что руководителю проверить в первую очередь?',
+            'Какие задачи нашего объекта задерживают работы?'] as $query) {
+            self::assertSame(['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => 52, 'focus' => 'overdue_impact']], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        foreach (['Перенеси просроченные задачи нашего объекта.', 'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
+        }
+    }
+
     public function test_operational_director_reads_bind_project_and_do_not_replace_mixed_answers(): void
     {
         $queries = [

@@ -19,6 +19,7 @@ final class AssistantOperationalReaderRegistry
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
+        'get_project_report_delivery_summary' => AssistantReportDeliverySummaryReader::class,
         'get_project_camera_roster' => AssistantProjectCameraReader::class,
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
@@ -80,6 +81,9 @@ final class AssistantOperationalReaderRegistry
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
             return null;
         }
+        if (AssistantReportDeliverySummaryReader::matches($query)) {
+            return ['name' => 'get_project_report_delivery_summary', 'reader' => AssistantReportDeliverySummaryReader::class];
+        }
         foreach (self::NAMED_TOOLS as $name => $class) {
             if (! $class::hasIntent($query)) {
                 continue;
@@ -126,6 +130,7 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
             if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {

@@ -7,15 +7,17 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\Models\User;
 use Brick\Math\BigDecimal;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 final readonly class AssistantProjectPaymentReader
 {
     public const TYPE = 'live_project_payment_readiness_projection';
-    public function __construct(private AssistantDataAccessPolicy $access) {}
+    public function __construct(private AssistantDataAccessPolicy $access, private PaymentBudgetLimitService $budgetLimits) {}
 
     public static function matches(string $query): bool
     {
@@ -55,8 +57,12 @@ final readonly class AssistantProjectPaymentReader
                 }
             }
             $window = array_slice($items, 0, 20);
+            $budgetChecks = $this->budgetChecks($actor, $organizationId, $projectId, array_column($window, 'id'));
             $approvals = $this->pendingApprovals($actor, $organizationId, array_column($window, 'id'));
-            foreach ($window as &$item) { $item['approvals'] = $approvals['documents'][$item['id']] ?? ['total' => $approvals['available'] ? 0 : null, 'unnamed' => $approvals['available'] ? 0 : null, 'examples' => []]; }
+            foreach ($window as &$item) {
+                $item['budget_limit_check'] = $budgetChecks[$item['id']] ?? null;
+                $item['approvals'] = $approvals['documents'][$item['id']] ?? ['total' => $approvals['available'] ? 0 : null, 'unnamed' => $approvals['available'] ? 0 : null, 'examples' => []];
+            }
             unset($item);
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => today()->toDateString(), 'complete' => count($rows) <= 10000,
                 'total' => count($rows) <= 10000 ? count($items) : null, 'unknown_balance_count' => count($rows) <= 10000 ? $unknown : null, 'items' => $window,
@@ -98,6 +104,17 @@ final readonly class AssistantProjectPaymentReader
                 ['amount' => $item['amount'], 'paid' => $item['paid_amount'], 'remaining' => $item['remaining_amount'], 'currency' => self::text((string) $item['currency'])]);
             $lines[] = self::text((string) $item['direction_label']).'; '.self::text((string) $item['status_label']).'. '.trans_message('ai_assistant_decisions.payment_due', ['date' => $item['due_date'] ?? '—']);
             if ($item['is_overdue']) { $lines[] = trans_message('ai_assistant_decisions.payment_overdue'); }
+            $budget = $item['budget_limit_check'];
+            if ($budget === null) { $lines[] = trans_message('ai_assistant_decisions.payment_budget_unknown'); }
+            else {
+                $lines[] = trans_message('ai_assistant_decisions.payment_budget_result', ['message' => self::text($budget['message'])]);
+                if ($budget['excess_amount'] !== null) {
+                    $lines[] = trans_message('ai_assistant_decisions.payment_budget_excess', ['amount' => $budget['excess_amount'], 'currency' => self::text($budget['currency'])]);
+                }
+                if ($budget['decision'] === 'require_exception') {
+                    $lines[] = trans_message($budget['override_applied'] ? 'ai_assistant_decisions.payment_budget_override_recorded' : 'ai_assistant_decisions.payment_budget_exception_required');
+                } elseif ($budget['decision'] === 'block') { $lines[] = trans_message('ai_assistant_decisions.payment_budget_blocked'); }
+            }
             if (! $data['approval_read_available']) { $lines[] = trans_message('ai_assistant_decisions.payment_approvals_unavailable'); }
             elseif ($item['approvals']['total'] === 0) { $lines[] = trans_message('ai_assistant_decisions.payment_no_pending_approver'); }
             else {
@@ -108,6 +125,36 @@ final readonly class AssistantProjectPaymentReader
         }
         $lines[] = trans_message('ai_assistant_decisions.payment_basis');
         return implode("\n", $lines);
+    }
+
+    private function budgetChecks(User $actor, int $organizationId, int $projectId, array $ids): array
+    {
+        if ($ids === []) { return []; }
+        $documents = $this->access->entityQuery($actor, $organizationId, 'payment_document')
+            ?->where('project_id', $projectId)->where('document_type', 'invoice')->whereIn('id', $ids)
+            ->select(['id', 'organization_id', 'project_id', 'document_type', 'direction', 'status', 'amount', 'remaining_amount',
+                'currency', 'scheduled_at', 'due_date', 'document_date', 'budget_article_id', 'responsibility_center_id',
+                'invoiceable_type', 'invoiceable_id', 'source_type', 'source_id', 'contractor_id', 'payee_contractor_id', 'payer_contractor_id'])
+            ->selectRaw("jsonb_build_object('contract_id', CASE WHEN length(metadata->>'contract_id') <= 32 THEN metadata->>'contract_id' END) AS metadata")
+            ->selectRaw("CASE WHEN length(trim(budget_limit_override_reason)) > 0 THEN 'recorded' ELSE NULL END AS budget_limit_override_reason")
+            ->limit(20)->get();
+        $checks = [];
+        foreach ($documents ?? [] as $document) {
+            try {
+                $result = $this->budgetLimits->check($document, $actor);
+                $excess = $result['summary']['excess_amount'] ?? null;
+                $checks[(int) $document->id] = ['status' => $result['status'], 'decision' => $result['decision'],
+                    'message' => mb_substr((string) $result['message'], 0, 500),
+                    'excess_amount' => self::money($excess) ? $excess : null,
+                    'currency' => (string) ($result['limit']['currency'] ?? $document->currency),
+                    'override_applied' => ($result['override_applied'] ?? false) === true];
+            } catch (\Throwable $exception) {
+                Log::error('assistant.payment_budget_read_unavailable', ['organization_id' => $organizationId,
+                    'project_id' => $projectId, 'document_id' => (int) $document->id, 'exception_class' => $exception::class]);
+                $checks[(int) $document->id] = null;
+            }
+        }
+        return $checks;
     }
 
     private function pendingApprovals(User $actor, int $organizationId, array $ids): array
