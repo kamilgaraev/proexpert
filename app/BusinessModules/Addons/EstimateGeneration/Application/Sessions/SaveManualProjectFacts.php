@@ -66,6 +66,8 @@ final readonly class SaveManualProjectFacts
                 throw ValidationException::withMessages(['entities' => 'Разделите состав: предел фактов сессии превышен.']);
             }
             $activeEntities = array_column($active->entities, null, 'id');
+            $descriptionProposals = null;
+            $descriptionReasons = [];
             $inventoryDocumentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($active);
             $inventorySnapshot = $active;
             $relationFactIds = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($active);
@@ -192,17 +194,50 @@ final readonly class SaveManualProjectFacts
                         throw ValidationException::withMessages(['entities.'.$index.'.parameters' => 'Проверьте единицу и значение: количество оборудования должно быть целым.']);
                     }
                     $basis = $entry['basis'];
+                    $descriptionProposal = null;
+                    if (isset($entry['description_proposal'])) {
+                        if (! config('estimate-generation.universal_enabled', false) || ($payload['evaluation_mode'] ?? null) !== 'universal'
+                            || ! in_array($basis, ['input', 'assumption'], true) || ! is_array($entry['description_proposal'])) {
+                            throw ValidationException::withMessages(['entities' => 'Предложение из описания требует отдельного подтверждения введённого значения или допущения.']);
+                        }
+                        if ($descriptionProposals === null) {
+                            $description = (string) ($payload['description'] ?? '');
+                            $descriptionSources = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DescriptionNumericProposals::sourceFacts($active, $description);
+                            $descriptionDecisions = $descriptionSources === [] ? [] : $this->models->decisionsForSelectedFacts(...[...$scope, array_column($descriptionSources, 'id')]);
+                            $descriptionProposals = array_column(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DescriptionNumericProposals::fromSnapshot($active, $description, $descriptionDecisions), null, 'proposal_id');
+                        }
+                        $reference = $entry['description_proposal'];
+                        $descriptionProposal = $descriptionProposals[$reference['proposal_id'] ?? ''] ?? null;
+                        if ($descriptionProposal === null || count($reference) !== 4 || $descriptionProposal['parameter'] !== $parameter
+                            || $descriptionProposal['unit'] !== $entry['unit'] || ! BigDecimal::of($descriptionProposal['value'])->isEqualTo($number)
+                            || ($reference['source_fact_id'] ?? null) !== $descriptionProposal['source_fact_id']
+                            || ($reference['source_fact_version'] ?? null) !== $descriptionProposal['source_fact_version']
+                            || ($reference['source_value_hash'] ?? null) !== $descriptionProposal['source_value_hash']) {
+                            throw ValidationException::withMessages(['entities' => 'Предложение или описание изменились. Загрузите актуальный источник; изменённое число введите отдельно.']);
+                        }
+                    }
                     $measurement = $basis === 'measurement';
+                    $nativeReference = $descriptionProposal === null ? 'input_payload.manual_facts' : 'input_payload.description';
                     $node = $this->evidence->insertOrGet(new EvidenceData(...[
                         ...$scope, $measurement ? EvidenceType::Measured : EvidenceType::SourceFact, EvidenceSourceType::UserInput, 'input:'.$sessionId, $sourceVersion,
-                        ['source_key' => 'source:'.hash('sha256', $requestId.'|'.$entity->id.'|'.$parameter.'|'.$basis), 'native_reference' => 'input_payload.manual_facts'],
+                        ['source_key' => 'source:'.hash('sha256', $requestId.'|'.$entity->id.'|'.$parameter.'|'.$basis), 'native_reference' => $nativeReference],
                         $measurement ? ['quantity' => BigDecimal::of($number)->multipliedBy($factor)->toFloat(), 'unit' => $group === 'count' ? 'pcs' : ($group === 'area' ? 'm2' : 'm'), 'method' => 'user_confirmed']
                             : ['fact_key' => 'quantity', 'fact_value' => $number], 0.0, EvidenceProducer::UserInputNormalizer->value,
                         'sha256:'.hash('sha256', 'manual-facts:v1:'.$basis),
                     ]));
                     $evidenceId = 'evidence:'.$node->id;
-                    $proofs[$evidenceId] = new Evidence($evidenceId, ...[...$scope, $sourceVersion, 'input:'.$sessionId, 'user_input', null, null, 'input_payload.manual_facts']);
-                    $facts[] = $this->fact($scope, $sourceVersion, $entity, $parameter, $number, $entry['unit'], $basis === 'assumption' ? 'user_assumption' : 'user_input', [$evidenceId], $requestId);
+                    $proofs[$evidenceId] = new Evidence($evidenceId, ...[...$scope, $sourceVersion, 'input:'.$sessionId, 'user_input', null, null, $nativeReference]);
+                    $newFact = $this->fact($scope, $sourceVersion, $entity, $parameter, $number, $entry['unit'], $basis === 'assumption' ? 'user_assumption' : 'user_input', [$evidenceId], $requestId);
+                    $facts[] = $newFact;
+                    if ($descriptionProposal !== null) {
+                        $descriptionReasons[$newFact->id] = 'Пользователь проверил число из описания и выбрал объект: '
+                            .\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
+                                ...$descriptionProposal, 'target_entity_id' => $entity->id, 'basis' => $basis,
+                            ]);
+                        if (strlen($descriptionReasons[$newFact->id]) > 1000) {
+                            throw ValidationException::withMessages(['entities' => 'Основание слишком длинное для истории решений. Введите размер отдельно.']);
+                        }
+                    }
                 }
                 foreach ($row['coverage'] ?? [] as $relation => $status) {
                     $inventory = null;
@@ -266,7 +301,7 @@ final readonly class SaveManualProjectFacts
             foreach ($facts as $fact) {
                 $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $fact->sourceVersion,
                     'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id,
-                    str_starts_with($fact->type, 'geometry_parent_') ? $fact->value['reason'] : 'Пользователь подтвердил ручные исходные данные', $fact->version, $fact->evidenceIds]), $fact);
+                    str_starts_with($fact->type, 'geometry_parent_') ? $fact->value['reason'] : ($descriptionReasons[$fact->id] ?? 'Пользователь подтвердил ручные исходные данные'), $fact->version, $fact->evidenceIds]), $fact);
             }
             $preview = $this->quantities->previewInput(...$scope);
             $result = ['request_id' => $requestId, 'state_version' => $expectedVersion + 1, 'fact_ids' => array_column($facts, 'id'),

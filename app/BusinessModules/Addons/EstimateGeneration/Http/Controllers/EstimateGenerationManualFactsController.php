@@ -17,6 +17,13 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationManualFactsController extends Controller
 {
+    public function descriptionProposals(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetDescriptionNumericProposals $proposals): JsonResponse
+    {
+        return AdminResponse::success($proposals->handle($request->user(), (int) $project->id, (int) $session->id))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function inventory(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory $inventory): JsonResponse
     {
