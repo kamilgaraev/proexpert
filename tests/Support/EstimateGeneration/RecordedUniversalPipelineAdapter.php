@@ -112,8 +112,8 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $facts = $this->app->make(ProjectModelRepository::class)->snapshot((int) $session->organization_id, (int) $project->id, (int) $session->id)->facts;
         $descriptionFacts = array_values(array_filter($facts, static fn ($fact): bool => $fact->type === 'evaluation_answer'
             && is_array($fact->value) && ($fact->value['kind'] ?? null) === 'initial_description'
-            && ($fact->value['description'] ?? null) === trim($description)));
-        if (count($descriptionFacts) !== 1) {
+            && is_string($description) && ($fact->value['description'] ?? null) === trim($description)));
+        if (count($descriptionFacts) !== ($description === null ? 0 : 1)) {
             throw new BenchmarkContractException('recorded_replay_description_fact_missing');
         }
         $historyStart = count($this->history);
@@ -125,7 +125,12 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             }
             $body = json_encode($entry['response'], JSON_THROW_ON_ERROR);
             // The one explicit fixture binding follows the current canonical input Fact ID.
-            $body = str_replace('__description_fact_id__', $descriptionFacts[0]->id, $body);
+            if (str_contains($body, '__description_fact_id__')) {
+                if ($descriptionFacts === []) {
+                    throw new BenchmarkContractException('recorded_replay_description_binding_missing');
+                }
+                $body = str_replace('__description_fact_id__', $descriptionFacts[0]->id, $body);
+            }
             $responses[] = new Response(200, ['Content-Type' => 'application/json'], $body);
         }
         if ($this->transport === null) {
@@ -196,6 +201,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             'areas' => $areas, 'quantities' => $quantities, 'work_ids' => $workIds, 'normative_rankings' => [], 'costs' => $costs,
             'applicable_item_ids' => [], 'evidence_ids_by_item' => [], 'model_schema_version' => 'recorded-universal-test:v1'];
         $this->lastRun = ['session_id' => (int) $session->id, 'evaluation' => $evaluation, 'usage' => $usage->all(),
+            'description_fact_count' => count($descriptionFacts),
             'provider_requests' => count($this->history) - $historyStart, 'consumed_units_minor' => (int) $operation->consumed_units_minor,
             'available_minor' => $credits->balance($rights->organization)['available_minor'], 'recording_sha256' => $this->recordingSha256];
         $this->lastRun['document_run'] = $documentRun;
