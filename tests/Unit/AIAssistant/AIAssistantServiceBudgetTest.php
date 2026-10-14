@@ -835,6 +835,9 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Количество всех материалов в BIM-модели', 'elements', true],
             ['Количество видов материалов в BIM-модели', 'elements', true],
             ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
+            ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
         ] as [$query, $expectedKind, $expectedProperties]) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');
@@ -856,7 +859,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             self::assertSame('success', $result['status']);
             self::assertSame($expectedKind, $seen['answer_kind']);
             self::assertSame($expectedProperties, $seen['include_properties']);
-            self::assertTrue($seen['include_quantities']);
+            self::assertSame($expectedKind !== 'materials', $seen['include_quantities']);
             self::assertSame(52, $seen['project_id']);
         }
     }
@@ -864,7 +867,8 @@ class AIAssistantServiceBudgetTest extends TestCase
     public function test_negated_organization_scope_keeps_selected_bim_project(): void
     {
         foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
-            'Покажи вентиляторы, не во всей организации'] as $query) {
+            'Покажи вентиляторы, не во всей организации', 'Не ищи по всем проектам, покажи только текущий',
+            'Не надо искать по всем проектам, покажи текущий проект'] as $query) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
