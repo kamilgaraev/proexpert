@@ -97,11 +97,18 @@ final class LegalWorkflowActorResolver
 
     public function recipientsFor(LegalWorkflowStep $step, LegalArchiveDocument $document): LazyCollection
     {
+        if ((int) $step->organization_id !== (int) $document->organization_id || $step->status !== 'active') {
+            return new LazyCollection;
+        }
+
+        return $this->recipientsForAssignment($document, (string) $step->actor_type, (string) $step->actor_reference);
+    }
+
+    public function recipientsForAssignment(LegalArchiveDocument $document, string $actorType, string $reference): LazyCollection
+    {
         $organizationId = (int) $document->organization_id;
-        $reference = trim((string) $step->actor_reference);
-        if ($organizationId < 1 || (int) $step->organization_id !== $organizationId
-            || $step->status !== 'active' || $reference === ''
-            || ! in_array($step->actor_type, ['user', 'role'], true)) {
+        $reference = trim($reference);
+        if ($organizationId < 1 || $reference === '' || ! in_array($actorType, ['user', 'role'], true)) {
             return new LazyCollection;
         }
 
@@ -124,7 +131,7 @@ final class LegalWorkflowActorResolver
                 }
             });
 
-        if ($step->actor_type === 'user') {
+        if ($actorType === 'user') {
             if (! ctype_digit($reference) || (int) $reference < 1) {
                 return new LazyCollection;
             }

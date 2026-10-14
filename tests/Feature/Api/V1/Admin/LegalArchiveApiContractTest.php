@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
@@ -15,6 +17,7 @@ use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Profiles\LegalDocumentTypeProfileService;
+use App\Services\LegalArchive\Workflow\LegalWorkflowTemplateService;
 use App\Services\Project\UserProjectAccessService;
 use DomainException;
 use Illuminate\Database\Schema\Blueprint;
@@ -22,6 +25,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -32,6 +36,8 @@ final class LegalArchiveApiContractTest extends TestCase
     private string $originalConnection;
 
     private AuthorizationService $authorization;
+
+    private ?AssistantIndexingState $indexingState = null;
 
     private bool $permissionAllowed = true;
 
@@ -44,6 +50,8 @@ final class LegalArchiveApiContractTest extends TestCase
     {
         parent::setUp();
         $this->originalConnection = DB::getDefaultConnection();
+        $this->indexingState = app(AssistantIndexingState::class);
+        $this->indexingState->beginMigration();
         config()->set(
             'database.connections.legal_api_contract',
             \Tests\Support\IsolatedPostgresTestDatabase::configuration(),
@@ -78,11 +86,15 @@ final class LegalArchiveApiContractTest extends TestCase
 
     protected function tearDown(): void
     {
-        LegalArchiveApiContractActorMiddleware::$actor = null;
-        LegalArchiveApiContractAuthorizeMiddleware::$authorization = null;
-        DB::setDefaultConnection($this->originalConnection);
-        DB::purge('legal_api_contract');
-        parent::tearDown();
+        try {
+            LegalArchiveApiContractActorMiddleware::$actor = null;
+            LegalArchiveApiContractAuthorizeMiddleware::$authorization = null;
+            DB::setDefaultConnection($this->originalConnection);
+            DB::purge('legal_api_contract');
+        } finally {
+            $this->indexingState?->endMigration();
+            parent::tearDown();
+        }
     }
 
     public function test_canonical_routes_use_real_admin_stack_and_exact_permissions(): void
@@ -91,6 +103,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'admin.legal-archive.documents.store' => 'authorize:legal_archive.create',
             'admin.legal-archive.documents.files.store' => 'authorize:legal_archive.files.upload',
             'admin.legal-archive.workflow.submit' => 'authorize:legal_archive.workflow.submit',
+            'admin.legal-archive.workflow.submit-preview' => 'authorize:legal_archive.workflow.submit',
             'admin.legal-archive.documents.available-actions' => 'authorize:legal_archive.workflow.view',
             'admin.legal-archive.documents.timeline' => 'authorize:legal_archive.audit.view',
             'admin.legal-archive.signatures.requests.store' => 'authorize:legal_archive.signatures.request',
@@ -109,6 +122,109 @@ final class LegalArchiveApiContractTest extends TestCase
             self::assertContains('admin.response', $route->gatherMiddleware());
             self::assertContains($permission, $route->gatherMiddleware());
         }
+    }
+
+    public function test_workflow_submit_preview_reads_parallel_route_and_first_recipients_without_mutations(): void
+    {
+        $url = '/api/v1/admin/legal-archive/documents/42/workflow/submit-preview';
+        $this->isolateKernelAuthentication([['GET', $url]]);
+        $headers = $this->kernelHeaders();
+        $document = $this->documentRow(42, 7, 'Учебный договор');
+        $document['primary_project_id'] = 11;
+        $document['current_primary_version_id'] = 60;
+        DB::table('legal_archive_documents')->insert($document);
+        DB::table('projects')->insert(['id' => 11, 'organization_id' => 7, 'name' => 'Проект', 'status' => 'active']);
+        DB::table('legal_archive_document_versions')->insert([
+            'id' => 60, 'organization_id' => 7, 'document_id' => 42,
+            'version_number' => 1, 'processing_status' => 'ready', 'is_current' => true,
+            'content_hash' => str_repeat('a', 64), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        foreach ([6 => 'Согласующий проекта', 7 => 'Следующий согласующий'] as $id => $name) {
+            DB::table('users')->insert([
+                'id' => $id, 'name' => $name, 'email' => "private-{$id}@example.test", 'is_active' => true,
+            ]);
+            DB::table('organization_user')->insert([
+                'user_id' => $id, 'organization_id' => 7, 'is_active' => true, 'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
+            ]);
+        }
+        $template = $this->app->make(LegalWorkflowTemplateService::class)->createVersion(7, 'contract', 'Проверка договора', [
+            ['key' => 'owner', 'label' => 'Проверка владельцем', 'sequence' => 10, 'parallel_group' => 'first', 'required' => true, 'policy_key' => 'legal_review', 'actor_type' => 'user', 'actor_reference' => '5', 'due_in_hours' => 24],
+            ['key' => 'project', 'label' => 'Проверка проекта', 'sequence' => 10, 'parallel_group' => 'first', 'required' => true, 'actor_type' => 'user', 'actor_reference' => '6'],
+            ['key' => 'final', 'label' => 'Следующий этап', 'sequence' => 20, 'parallel_group' => 'last', 'required' => true, 'actor_type' => 'user', 'actor_reference' => '7'],
+        ], $this->actor());
+        $tables = ['legal_archive_documents', 'legal_archive_document_versions', 'legal_workflow_templates',
+            'legal_workflow_template_heads', 'legal_workflow_template_steps', 'legal_workflow_instances', 'legal_workflow_steps'];
+        $before = [];
+        foreach ($tables as $table) {
+            $before[$table] = DB::table($table)->get()->toJson();
+        }
+        Notification::fake();
+
+        $response = $this->getJson($url, $headers);
+        $response->assertOk()->assertJsonPath('data.document_id', 42)
+            ->assertJsonPath('data.document_version_id', 60)
+            ->assertJsonPath('data.document_lock_version', 3)
+            ->assertJsonPath('data.template.id', $template->id)
+            ->assertJsonPath('data.template.name', 'Проверка договора')
+            ->assertJsonPath('data.template.version', 1)
+            ->assertJsonCount(3, 'data.steps');
+        $steps = collect($response->json('data.steps'))->keyBy('key');
+        foreach ([
+            'template_id' => (int) $template->id + 1,
+            'step_overrides' => ['owner' => ['actor_type' => 'user', 'actor_reference' => '7']],
+            'additional_steps' => [['key' => 'extra', 'label' => 'Дополнительная проверка', 'sequence' => 30, 'actor_type' => 'user', 'actor_reference' => '7', 'required' => false]],
+        ] as $parameter => $value) {
+            foreach ([$value, ''] as $input) {
+                $invalid = $this->getJson($url.'?'.http_build_query([$parameter => $input]), $headers)->assertStatus(422);
+                self::assertStringContainsString(
+                    trans_message('legal_archive.messages.workflow_preview_default_route_only'),
+                    json_encode($invalid->json(), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                );
+            }
+        }
+        self::assertTrue($steps['owner']['starts_immediately']);
+        self::assertTrue($steps['project']['starts_immediately']);
+        self::assertFalse($steps['final']['starts_immediately']);
+        self::assertSame(24, $steps['owner']['due_in_hours']);
+        self::assertSame([['id' => 5, 'name' => 'Администратор архива']], $steps['owner']['recipients']);
+        self::assertSame([['id' => 6, 'name' => 'Согласующий проекта']], $steps['project']['recipients']);
+        self::assertSame([], $steps['final']['recipients']);
+        self::assertFalse($steps['owner']['recipients_truncated']);
+        self::assertStringNotContainsString('private-6@example.test', $response->getContent());
+        self::assertStringNotContainsString('private-7@example.test', $response->getContent());
+        Notification::assertNothingSent();
+        self::assertSame([], $this->app->make(LegalDocumentAudit::class)->events);
+        foreach ($tables as $table) {
+            self::assertSame($before[$table], DB::table($table)->get()->toJson(), $table);
+        }
+
+        DB::table('legal_workflow_template_steps')->where('template_id', $template->id)->where('step_key', 'owner')->update(['label' => 'Повреждённое определение']);
+        $this->getJson($url, $headers)->assertConflict();
+        self::assertSame(0, DB::table('legal_workflow_instances')->count());
+    }
+
+    public function test_workflow_submit_preview_keeps_submit_permission_document_access_and_organization_scope(): void
+    {
+        $url = '/api/v1/admin/legal-archive/documents/42/workflow/submit-preview';
+        $foreignUrl = '/api/v1/admin/legal-archive/documents/43/workflow/submit-preview';
+        $this->isolateKernelAuthentication([['GET', $url], ['GET', $foreignUrl]]);
+        $headers = $this->kernelHeaders();
+        DB::table('legal_archive_documents')->insert([
+            $this->documentRow(42, 7, 'Внутренний договор'),
+            $this->documentRow(43, 8, 'Чужой договор'),
+        ]);
+        $authorizer = Mockery::mock(LegalDocumentAuthorizer::class);
+        $authorizer->shouldReceive('authorize')->once()->with(
+            Mockery::type(User::class), Mockery::on(static fn (LegalArchiveDocument $document): bool => (int) $document->id === 42), 'view',
+        )->andThrow(new \Illuminate\Auth\Access\AuthorizationException);
+        $this->app->instance(LegalDocumentAuthorizer::class, $authorizer);
+
+        $this->deniedPermissions = ['legal_archive.workflow.submit'];
+        $this->getJson($url, $headers)->assertForbidden();
+        $this->deniedPermissions = [];
+        $this->getJson($foreignUrl, $headers)->assertNotFound();
+        $this->getJson($url, $headers)->assertNotFound();
+        self::assertSame(0, DB::table('legal_workflow_instances')->count());
     }
 
     public function test_document_timeline_uses_recorded_domain_and_exposes_only_readable_scoped_history(): void
@@ -256,6 +372,12 @@ final class LegalArchiveApiContractTest extends TestCase
             'organization_id' => 7,
             'name' => 'Тестовый проект',
             'status' => 'active',
+        ]);
+        DB::table('organization_user')->insert([
+            'user_id' => 5,
+            'organization_id' => 7,
+            'is_active' => true,
+            'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
         ]);
         DB::table('contracts')->insert([
             'id' => 9,
@@ -726,7 +848,7 @@ final class LegalArchiveApiContractTest extends TestCase
             'is_owner' => true,
             'is_active' => true,
             'settings' => json_encode([], JSON_THROW_ON_ERROR),
-            'project_access_mode' => 'all',
+            'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -833,6 +955,11 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
+        $schema->create('project_organization', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->boolean('is_active')->default(true);
+        });
         $schema->create('users', static function (Blueprint $table): void {
             $table->id();
             $table->string('name')->nullable();
@@ -855,6 +982,11 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->json('settings')->nullable();
             $table->string('project_access_mode')->nullable();
             $table->timestamps();
+        });
+        $schema->create('project_user', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('user_id');
+            $table->unsignedBigInteger('project_id');
+            $table->boolean('is_active')->default(true);
         });
         $schema->create('authorization_contexts', static function (Blueprint $table): void {
             $table->id();
@@ -1061,6 +1193,7 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->string('code');
             $table->unsignedBigInteger('template_id');
+            $table->timestamps();
         });
         $schema->create('legal_workflow_templates', static function (Blueprint $table): void {
             $table->id();
@@ -1138,9 +1271,20 @@ final class LegalArchiveApiContractAuthorizeMiddleware
 
 final class LegalArchiveApiContractAudit implements LegalDocumentAudit
 {
-    public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void {}
+    public array $events = [];
 
-    public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void {}
+    public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void
+    {
+        $this->events[] = $event;
+    }
 
-    public function recordContractForActorId(string $event, Contract $contract, ?int $actorId, array $context = []): void {}
+    public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void
+    {
+        $this->events[] = $event;
+    }
+
+    public function recordContractForActorId(string $event, Contract $contract, ?int $actorId, array $context = []): void
+    {
+        $this->events[] = $event;
+    }
 }
