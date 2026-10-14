@@ -25,6 +25,16 @@ final class AssistantExportHistoryIntentTest extends TestCase
             $query.' И сколько расходов?', $query.' И какие долги?', 'Создай регулярные отчёты и скачай готовые выгрузки.'] as $mixed) {
             self::assertNull(AssistantOperationalReaderRegistry::intent($mixed));
         }
+        foreach (['какова текущая стоимость проекта', 'какие цены', 'что с финансами', 'сколько денег', 'в какой валюте бюджет',
+            'какой НДС', 'какие накладные расходы', 'есть ли кредит', 'какие сроки задач', 'какие контакты организации',
+            'есть ли непрочитанные уведомления', 'какие камеры объекта', 'какие вопросы проектировщикам без ответа',
+            'какие отчёты есть в каталоге'] as $topic) {
+            $mixed = $query.' И '.$topic.'?';
+            $mixedPlan = ['request' => ['message' => $mixed, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            self::assertNull(AssistantOperationalReaderRegistry::intent($mixed), $topic);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($mixedPlan), $topic);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_report_delivery_summary', $mixed), $topic);
+        }
     }
 
     public function test_manager_history_questions_select_a_read_only_source_and_mixed_actions_do_not(): void

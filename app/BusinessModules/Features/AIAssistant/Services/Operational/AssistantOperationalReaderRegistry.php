@@ -82,6 +82,17 @@ final class AssistantOperationalReaderRegistry
             return null;
         }
         if (AssistantReportDeliverySummaryReader::matches($query)) {
+            foreach (self::TOPICS as $pattern) {
+                if (in_array($pattern, [AssistantProjectExportHistoryReader::INTENT_PATTERN, AssistantProjectReportCatalogReader::INTENT_PATTERN], true)) { continue; }
+                if (preg_match($pattern, $query) === 1) { return null; }
+            }
+            foreach (self::ORGANIZATION_TOOLS as $reader) {
+                if ($reader !== AssistantReportSubscriptionsReader::class && $reader::hasIntent($query)) { return null; }
+            }
+            foreach (self::NAMED_TOOLS as $reader) {
+                if ($reader::hasIntent($query)) { return null; }
+            }
+            if (preg_match('/каталог|шаблон/iu', $query) === 1) { return null; }
             return ['name' => 'get_project_report_delivery_summary', 'reader' => AssistantReportDeliverySummaryReader::class];
         }
         foreach (self::NAMED_TOOLS as $name => $class) {
