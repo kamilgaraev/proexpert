@@ -9,8 +9,8 @@ final readonly class AssistantBimAnswerIntent
     public static function materialsAndQuantities(string $query): bool
     {
         return preg_match('/(?<!\pL)материал[а-яё]*(?!\pL)/iu', $query) === 1
-            && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*)(?!\pL)/iu', $query) === 1
-            && preg_match('/(?<!\pL)(?:не|без)\s+(?:материал|объ[её]м|количеств|единиц)|связ[а-яё]*|сметн[а-яё]*/iu', $query) !== 1;
+            && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*|количеств[а-яё]*(?!\pL)(?!\s+материал))(?!\pL)/iu', $query) === 1
+            && preg_match('/(?<!\pL)(?:не|без)\s+(?:материал|объ[её]м|количеств|единиц)|связ[а-яё]*|сметн[а-яё]*|свойств[а-яё]*/iu', $query) !== 1;
     }
 
     public static function materialList(string $query): bool

@@ -802,6 +802,39 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimAnswerIntent::materialsAndQuantities('Покажи перечень материалов для всех единиц оборудования в BIM-модели'));
     }
 
+    public function test_material_quantity_wording_routes_without_losing_explicit_properties(): void
+    {
+        foreach ([
+            ['Покажи материалы и количественные показатели в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы и их количества в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы, объёмы и свойства элементов BIM-модели', 'elements', true],
+            ['Количество материалов в BIM-модели', 'elements', true],
+        ] as [$query, $expectedKind, $expectedProperties]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+            $seen = [];
+            $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+                $seen = $args;
+                return ['status' => 'success'];
+            });
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'materials_wording', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['model_query' => null, 'project_id' => null, 'answer_kind' => 'elements',
+                    'include_quantities' => true, 'include_properties' => true], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+            self::assertSame($expectedKind, $seen['answer_kind']);
+            self::assertSame($expectedProperties, $seen['include_properties']);
+            self::assertTrue($seen['include_quantities']);
+            self::assertSame(52, $seen['project_id']);
+        }
+    }
+
     public function test_negated_organization_scope_keeps_selected_bim_project(): void
     {
         foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
