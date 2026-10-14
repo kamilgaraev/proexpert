@@ -113,6 +113,11 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
                 'source_reference' => $price['source_reference'], 'source_hash' => $price['source_hash']]);
             $quantities[] = ['work_item_key' => $position['key'], 'value' => '1', 'unit' => $position['unit']];
         }
+        $refreshed = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2],
+            (int) $session->fresh()->state_version, (string) Str::uuid());
+        self::assertSame('0', $refreshed['cost_units']);
+        self::assertSame($originalKeys, array_column($refreshed['result']['scenarios'][0]['positions'], 'key'));
+        self::assertTrue($signature->verifyArtifact($session->fresh()->draft_payload));
         app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
             'state_version' => $session->fresh()->state_version, 'definitions' => [['id' => 'base',
                 'basis' => 'Пользователь задаёт сценарный объём одной единицы каждой выбранной работы, без утверждения измеренных размеров.',
