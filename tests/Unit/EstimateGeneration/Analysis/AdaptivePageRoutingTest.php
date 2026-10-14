@@ -9,11 +9,63 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisP
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoute;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisRoutingDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Routing\PageAnalysisServerSignals;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class AdaptivePageRoutingTest extends TestCase
 {
+    #[Test]
+    public function explicit_low_risk_photo_context_needs_only_the_first_observer(): void
+    {
+        $decision = $this->decision('photo_scene', 'simple_context');
+        $signals = PageAnalysisServerSignals::fromLiteralObservation([
+            'sheet_type' => 'photo', 'elements' => [], 'raw_facts' => [], 'warnings' => ['scale_missing'],
+        ]);
+        $plan = PageAnalysisPlan::fromDecision($decision, serverSignals: $signals);
+
+        self::assertSame(PageAnalysisRoute::SimpleContext, $plan->route);
+        self::assertSame([ObserverProfile::Literal], $plan->observers);
+        self::assertSame(1, $plan->providerCallCount());
+        self::assertFalse($plan->requiresArbitration);
+    }
+
+    #[Test]
+    #[DataProvider('photoEscalationCases')]
+    public function photo_context_cannot_bypass_consistency_or_unknown_data(array $routing, array $observation): void
+    {
+        $payload = array_replace($this->decision('photo_scene', 'simple_context')->toArray(), $routing);
+        // toArray also exposes server-derived fields; provider contract has only these nine keys.
+        $payload = array_intersect_key($payload, array_flip(['page_kind', 'requested_depth', 'information_density',
+            'readability', 'confidence', 'ambiguous', 'material_risk', 'reasons', 'semantic_regions']));
+        $decision = PageAnalysisRoutingDecision::fromProviderArray($payload);
+        $signals = PageAnalysisServerSignals::fromLiteralObservation(array_replace([
+            'sheet_type' => 'photo', 'elements' => [], 'raw_facts' => [], 'warnings' => ['scale_missing'],
+        ], $observation));
+        self::assertSame(3, PageAnalysisPlan::fromDecision($decision, serverSignals: $signals)->providerCallCount());
+    }
+
+    public static function photoEscalationCases(): iterable
+    {
+        yield 'missing server photo signal' => [[], ['sheet_type' => 'unknown']];
+        yield 'geometry' => [[], ['elements' => [['type' => 'dimension']]]];
+        yield 'engineering' => [[], ['raw_facts' => [['factType' => 'equipment']]]];
+        yield 'generic proposed fact' => [[], ['raw_facts' => [['factType' => 'risk']]]];
+        yield 'secondary facts cannot hide behind empty raw list' => [[], ['project_sheet_analysis' => ['facts' => [['factType' => 'material']]]]];
+        yield 'known roof form' => [[], ['visual_attributes' => ['roof_type' => ['value' => 'pitched']]]];
+        yield 'scale candidate' => [[], ['scale_candidates' => [['source' => 'known_object']]]];
+        yield 'low confidence warning' => [[], ['warnings' => ['low_confidence']]];
+        yield 'missing warnings' => [[], ['warnings' => null]];
+        yield 'density' => [['information_density' => 'high'], []];
+        yield 'material risk' => [['material_risk' => 'medium'], []];
+        yield 'uncertainty' => [['ambiguous' => true], []];
+        yield 'confidence threshold' => [['confidence' => 0.94], []];
+        yield 'readability' => [['readability' => 'medium'], []];
+        yield 'unknown kind' => [['page_kind' => 'unknown'], []];
+        yield 'regions' => [['semantic_regions' => [['label' => 'Detail', 'purpose' => 'drawing', 'box' => [0, 0, 1, 1]]]], []];
+        yield 'model asks for more' => [['requested_depth' => 'dense_ambiguous'], []];
+    }
+
     #[Test]
     public function server_page_kind_signal_can_only_increase_requested_depth(): void
     {

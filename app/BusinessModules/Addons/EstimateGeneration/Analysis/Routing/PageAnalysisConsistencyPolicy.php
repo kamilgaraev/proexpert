@@ -14,7 +14,13 @@ final readonly class PageAnalysisConsistencyPolicy
             return $decision->effectiveRoute;
         }
 
-        $consistentSimplePage = in_array($decision->pageKind, ['title', 'divider', 'empty', 'cover'], true)
+        $simpleKind = in_array($decision->pageKind, ['title', 'divider', 'empty', 'cover'], true)
+            || ($decision->pageKind === 'photo_scene'
+                && $signals->explicitPhotoContext
+                && $decision->confidence >= 0.95
+                && $decision->readability === 'high'
+                && $decision->semanticRegions === []);
+        $consistentSimplePage = $simpleKind
             && $decision->informationDensity !== 'high'
             && $decision->materialRisk === AnalysisMaterialRisk::Low
             && ! $signals->meaningfulGeometryOrEngineering;

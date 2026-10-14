@@ -35,7 +35,10 @@ final readonly class PageAnalysisServerSignals
         'quantity',
     ];
 
-    private function __construct(public bool $meaningfulGeometryOrEngineering) {}
+    private function __construct(
+        public bool $meaningfulGeometryOrEngineering,
+        public bool $explicitPhotoContext = false,
+    ) {}
 
     /** @param array<string, mixed> $observation */
     public static function fromLiteralObservation(array $observation): self
@@ -55,7 +58,19 @@ final readonly class PageAnalysisServerSignals
             }
         }
 
-        return new self(false);
+        $photoFacts = $observation['project_sheet_analysis']['facts'] ?? [];
+        $roof = $observation['visual_attributes']['roof_type']['value'] ?? null;
+        // A photograph may take the cheap context path only when it supplied no
+        // takeoff/material claims. This does not confirm measurements or accuracy.
+        $photoContext = ($observation['sheet_type'] ?? null) === 'photo'
+            && ($observation['elements'] ?? []) === []
+            && $facts === [] && $photoFacts === []
+            && ($observation['scale_candidates'] ?? []) === []
+            && ($roof === null || $roof === 'unknown')
+            && is_array($observation['warnings'] ?? null)
+            && array_diff($observation['warnings'], ['scale_missing']) === [];
+
+        return new self(false, $photoContext);
     }
 
     public static function none(): self

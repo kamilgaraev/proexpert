@@ -10,7 +10,7 @@ final readonly class PageAnalysisRoutingDecision
 {
     private const PAGE_KINDS = [
         'title', 'divider', 'empty', 'cover', 'narrative', 'specification', 'schedule',
-        'explication', 'legend', 'index', 'drawing', 'combined', 'unknown',
+        'explication', 'legend', 'index', 'drawing', 'combined', 'photo_scene', 'unknown',
     ];
 
     private const DENSITIES = ['low', 'medium', 'high'];
@@ -88,7 +88,7 @@ final readonly class PageAnalysisRoutingDecision
             || (float) $confidence < 0.8
             || $payload['ambiguous'] === true;
         $minimumRoute = match ($payload['page_kind']) {
-            'title', 'divider', 'empty', 'cover' => PageAnalysisRoute::SimpleContext,
+            'title', 'divider', 'empty', 'cover', 'photo_scene' => PageAnalysisRoute::SimpleContext,
             'narrative', 'specification', 'schedule', 'explication', 'legend', 'index' => PageAnalysisRoute::StructuredTextual,
             default => PageAnalysisRoute::DenseAmbiguous,
         };

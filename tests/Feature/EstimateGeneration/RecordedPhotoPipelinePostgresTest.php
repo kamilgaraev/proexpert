@@ -25,7 +25,12 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         $this->replayPhoto('photo-only-empty-context-v1.json', 0);
     }
 
-    private function replayPhoto(string $recording, int $descriptionFacts): void
+    public function test_explicit_simple_context_photo_runs_one_observer_and_preserves_unknowns_and_replay_accounting(): void
+    {
+        $this->replayPhoto('photo-simple-context-v1.json', 0, 1);
+    }
+
+    private function replayPhoto(string $recording, int $descriptionFacts, ?int $expectedVisionCalls = null): void
     {
         $image = imagecreatetruecolor(32, 24);
         imagefill($image, 0, 0, imagecolorallocate($image, 235, 235, 235));
@@ -62,7 +67,7 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         self::assertSame([], $result->prediction['costs']);
         $run = $adapter->lastRun['document_run'];
         self::assertSame(['completed'], $run['units']);
-        self::assertSame(count(ObserverProfile::cases()), $run['vision_requests']);
+        self::assertSame($expectedVisionCalls ?? count(ObserverProfile::cases()), $run['vision_requests']);
         self::assertSame(array_fill(0, $run['vision_requests'], true), $run['provider_ownership_preserved']);
         self::assertSame($run['vision_requests'], $run['vision_requests_after_replay']);
         self::assertSame(0, $run['receipt']['consumed_units_minor']);
