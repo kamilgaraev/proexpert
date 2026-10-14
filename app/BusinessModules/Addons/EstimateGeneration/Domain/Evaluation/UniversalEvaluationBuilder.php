@@ -89,6 +89,7 @@ final readonly class UniversalEvaluationBuilder
         }
         $coverage = $this->completeness->evaluate($snapshot, $policy['profile_id'] ?? 'construction',
             $policy['construction_type'] ?? 'new_construction', $entityScope, $positions, $decisions, $technologies);
+        $coverage = (new EvaluationCoverageEvidenceProjector)->project($coverage, $snapshot);
         $requirements = $coverage['missing_requirements'];
         if (($policy['required_technology_revision'] ?? 0) > ($policy['technology_revision'] ?? 0)) {
             $requirements[] = ['section' => 'roofing', 'entity_id' => null, 'requirement' => 'technology_composition_refresh',
