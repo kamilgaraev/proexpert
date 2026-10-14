@@ -27,6 +27,7 @@ final class SpreadsheetCostBlockParser
         $indexedPrecisions = [];
         $sectionControls = [];
         $sectionStart = $headerRow + 1;
+        $sectionFrames = [];
         $positionControls = [];
         $globalChargeRow = null;
 
@@ -88,9 +89,27 @@ final class SpreadsheetCostBlockParser
                 continue;
             }
 
-            if (str_starts_with($label, 'раздел') || ($position === '1' && $code === '2' && $name === '3')) {
+            if ($position === '1' && $code === '2' && $name === '3') {
+                $current = null;
+
+                continue;
+            }
+
+            if (str_starts_with($label, 'раздел')) {
                 $current = null;
                 $sectionStart = (int) $rowNumber + 1;
+                $sectionNumber = $this->sectionNumber($label);
+                if ($sectionNumber === null && preg_match('/^\d+(?:\.\d+)*\.?$/u', $position) === 1) {
+                    $sectionNumber = rtrim($position, '.');
+                }
+                if ($sectionNumber === null) {
+                    $sectionFrames = [];
+                } else {
+                    while ($sectionFrames !== [] && !str_starts_with($sectionNumber, $sectionFrames[array_key_last($sectionFrames)]['number'].'.')) {
+                        array_pop($sectionFrames);
+                    }
+                    $sectionFrames[] = ['number' => $sectionNumber, 'from' => $sectionStart];
+                }
 
                 continue;
             }
@@ -153,7 +172,25 @@ final class SpreadsheetCostBlockParser
                         $footer['total_with_vat'] = $amount;
                     }
                 } elseif ($isSectionSummary && $amount !== null) {
-                    $sectionControls[] = ['amount' => $amount, 'from' => $sectionStart, 'to' => (int) $rowNumber];
+                    $sectionNumber = $this->sectionNumber($label, true);
+                    $frameIndex = $sectionNumber === null ? array_key_last($sectionFrames) : null;
+                    if ($sectionNumber !== null) {
+                        for ($index = count($sectionFrames) - 1; $index >= 0; $index--) {
+                            if ($sectionFrames[$index]['number'] === $sectionNumber) {
+                                $frameIndex = $index;
+                                break;
+                            }
+                        }
+                    }
+                    $sectionControls[] = [
+                        'amount' => $amount,
+                        'from' => $frameIndex !== null ? $sectionFrames[$frameIndex]['from'] : $sectionStart,
+                        'to' => (int) $rowNumber,
+                        'unresolved_scope' => $frameIndex === null && $sectionFrames !== [],
+                    ];
+                    if ($frameIndex !== null) {
+                        $sectionFrames = array_slice($sectionFrames, 0, $frameIndex);
+                    }
                     $sectionStart = (int) $rowNumber + 1;
                 }
 
@@ -386,6 +423,13 @@ final class SpreadsheetCostBlockParser
         return preg_match('/^(?:итого|всего)\s+(?:по\s+)?раздел(?:у|а)?(?:\s|:|$)/u', $label) === 1;
     }
 
+    private function sectionNumber(string $label, bool $summary = false): ?string
+    {
+        $prefix = $summary ? '(?:итого|всего)\s+(?:по\s+)?раздел(?:у|а)?' : 'раздел';
+
+        return preg_match('/^'.$prefix.'\s*(?:№|no\.?|n)?\s*(\d+(?:\.\d+)*)\.?(?=\s|[:–—-]|$)/u', $label, $match) === 1 ? $match[1] : null;
+    }
+
     private function controlsMismatch(array $positions, array $sectionControls, array $positionControls): bool
     {
         foreach ($positionControls as $control) {
@@ -394,6 +438,9 @@ final class SpreadsheetCostBlockParser
             }
         }
         foreach ($sectionControls as $control) {
+            if ($control['unresolved_scope'] ?? false) {
+                return true;
+            }
             $total = BigDecimal::zero();
             foreach ($positions as $rowNumber => $position) {
                 if ($rowNumber >= $control['from'] && $rowNumber < $control['to'] && $position['total'] !== null) {

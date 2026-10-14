@@ -254,6 +254,105 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertTrue($this->analyze($rows)['total_mismatch']);
     }
 
+    public function test_nested_section_controls_keep_parent_work_before_and_after_child(): void
+    {
+        foreach ([0, 20, -20] as $afterChild) {
+            $rows = [
+                1 => ['Раздел 1. Родитель'],
+                2 => ['1', 'RATE-1', 'Работа родителя', null, null, 1, 100, null, 100],
+                3 => ['Раздел 1.1. Дочерний'],
+                4 => ['2', 'RATE-2', 'Работа дочернего раздела', null, null, 1, 50, null, 50],
+                5 => [null, null, 'Итого по разделу 1.1', null, null, null, null, null, 50],
+                6 => ['3', 'RATE-3', 'Корректировка родителя', null, null, 1, $afterChild, null, $afterChild],
+                7 => [null, null, 'Итого по разделу 1', null, null, null, null, null, 150 + $afterChild],
+            ];
+            $analysis = $this->analyze($rows);
+            self::assertFalse($analysis['total_mismatch']);
+            self::assertSame([100.0, 50.0, (float) $afterChild], array_column($analysis['positions'], 'total'));
+            $rows[7][8]++;
+            $invalid = $this->analyze($rows);
+            self::assertTrue($invalid['total_mismatch']);
+            self::assertSame($analysis['positions'], $invalid['positions']);
+        }
+    }
+
+    public function test_nested_sibling_sections_and_consecutive_generic_controls_use_header_order(): void
+    {
+        $rows = [
+            1 => ['Раздел №1. Родитель'],
+            2 => ['1', 'RATE-1', 'Работа родителя', null, null, 1, 100, null, 100],
+            3 => ['Раздел №1.1. Первый дочерний'],
+            4 => ['2', 'RATE-2', 'Первая работа', null, null, 1, 50, null, 50],
+            5 => [null, null, 'Итого по разделу', null, null, null, null, null, 50],
+            6 => ['Раздел №1.2. Второй дочерний'],
+            7 => ['3', 'RATE-3', 'Вторая работа', null, null, 1, -20, null, -20],
+            8 => [null, null, 'Итого по разделу', null, null, null, null, null, -20],
+            9 => [null, null, 'Итого по разделу', null, null, null, null, null, 130],
+        ];
+        $analysis = $this->analyze($rows);
+        self::assertFalse($analysis['total_mismatch']);
+        foreach ([5 => 49, 8 => -19, 9 => 129] as $rowNumber => $wrongAmount) {
+            $invalidRows = $rows;
+            $invalidRows[$rowNumber][8] = $wrongAmount;
+            $invalid = $this->analyze($invalidRows);
+            self::assertTrue($invalid['total_mismatch']);
+            self::assertSame($analysis['positions'], $invalid['positions']);
+        }
+    }
+
+    public function test_unknown_numbered_section_control_is_rejected_without_fitting_positions(): void
+    {
+        $rows = [
+            1 => ['Раздел 1. Родитель'],
+            2 => ['1', 'RATE-1', 'Работа', null, null, 1, 100, null, 100],
+            3 => [null, null, 'Итого по разделу 9', null, null, null, null, null, 100],
+        ];
+        $analysis = $this->analyze($rows);
+        self::assertTrue($analysis['total_mismatch']);
+        self::assertSame(100.0, $analysis['positions'][2]['total']);
+    }
+
+    public function test_repeated_table_header_does_not_truncate_nested_section_ranges(): void
+    {
+        $analysis = $this->analyze([
+            1 => ['Раздел 1. Родитель'],
+            2 => ['1', 'RATE-1', 'Работа родителя', null, null, 1, 100, null, 100],
+            3 => ['Раздел 1.1. Дочерний'],
+            4 => ['2', 'RATE-2', 'Работа дочернего раздела', null, null, 1, 50, null, 50],
+            5 => ['1', '2', '3'],
+            6 => [null, null, 'Итого по разделу 1.1', null, null, null, null, null, 50],
+            7 => [null, null, 'Итого по разделу 1', null, null, null, null, null, 150],
+        ]);
+        self::assertFalse($analysis['total_mismatch']);
+        self::assertSame([100.0, 50.0], array_column($analysis['positions'], 'total'));
+    }
+
+    public function test_flat_section_controls_and_reused_parser_keep_independent_sheet_scopes(): void
+    {
+        $mapping = ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'quantity' => 'F', 'unit_price' => 'G', 'total_price' => 'I'];
+        $parser = new SpreadsheetCostBlockParser;
+        foreach ([100, -20, 0] as $amount) {
+            $rows = [
+                1 => ['Раздел 1. Первый'],
+                2 => ['1', 'RATE-1', 'Работа', null, null, 1, $amount, null, $amount],
+                3 => [null, null, 'Итого по разделу 1', null, null, null, null, null, $amount],
+                4 => ['Раздел 2. Второй'],
+                5 => ['2', 'RATE-2', 'Работа', null, null, 1, 10, null, 10],
+                6 => [null, null, 'Итого по разделу', null, null, null, null, null, 10],
+            ];
+            $analysis = $parser->analyze($rows, $mapping, 0);
+            self::assertFalse($analysis['total_mismatch']);
+            $rows[3][8]++;
+            $invalid = $parser->analyze($rows, $mapping, 0);
+            self::assertTrue($invalid['total_mismatch']);
+            self::assertSame($analysis['positions'], $invalid['positions']);
+        }
+        self::assertFalse($parser->analyze([
+            1 => ['1', 'RATE-1', 'Работа без заголовка', null, null, 1, 50, null, 50],
+            2 => [null, null, 'Итого по разделу 1', null, null, null, null, null, 50],
+        ], $mapping, 0)['total_mismatch']);
+    }
+
     public function test_local_and_explicit_global_charges_keep_their_scopes(): void
     {
         $analysis = $this->analyze([
