@@ -153,4 +153,20 @@ final class ImportedFinancialStructureTest extends TestCase
         self::assertSame('1000 м', $normalizer->normalize('1000 м'));
         self::assertSame('1000 м³', $normalizer->normalize('1000м3'));
     }
+
+    public function test_estimate_import_preserves_running_meter_aliases_and_source_multipliers(): void
+    {
+        $normalizer = new UnitNormalizationService;
+        foreach (['пог.м', 'погон.м', 'пог. м', ' Погон.М '] as $unit) {
+            self::assertSame('пог. м', $normalizer->normalizeForEstimateImport($unit));
+        }
+        foreach (['100пог.м', '100 погон.м', '100 пог. м'] as $unit) {
+            self::assertSame('100 пог. м', $normalizer->normalizeForEstimateImport($unit));
+        }
+        self::assertSame('1000 пог. м', $normalizer->normalizeForEstimateImport('1000погон.м'));
+        self::assertSame('м', $normalizer->normalizeForEstimateImport('м.'));
+        self::assertSame('м', $normalizer->normalize('пог.м'));
+        self::assertSame('погон.м', $normalizer->normalize('погон.м'));
+        self::assertSame('100 м²', $normalizer->normalizeForEstimateImport('100m2'));
+    }
 }

@@ -75,94 +75,113 @@ class EstimateImportService
 
     public function detectEstimateType(string $sessionId, ?ImportAccessContext $context = null): EstimateTypeDetectionDTO
     {
-        $result = DB::transaction(function () use ($sessionId, $context): EstimateTypeDetectionDTO|Throwable {
-            try {
-                return $this->detectEstimateTypeLocked($sessionId, $context);
-            } catch (Throwable $exception) {
-                return $exception;
-            }
-        });
-        if ($result instanceof Throwable) {
-            throw $result;
-        }
-
-        return $result;
-    }
-
-    private function detectEstimateTypeLocked(string $sessionId, ?ImportAccessContext $context): EstimateTypeDetectionDTO
-    {
-        $session = $this->getSession($sessionId, $context, true);
-
         $startedAt = microtime(true);
         $phase = 'storage';
-        $stats = $session->stats ?? [];
-        $stats['detection_started_at'] = $startedAt;
-        $stats['detection_phase'] = $phase;
-        $timeout = (int) config('octane.max_request_timeout', 30);
-        $stats['detection_deadline_at'] = $timeout > 0 ? time() + $timeout + 15 : null;
-        $session->update(['status' => 'detecting', 'error_message' => null, 'stats' => $stats]);
+        $token = (string) Str::uuid();
+        $session = DB::transaction(function () use ($sessionId, $context, $startedAt, $token): ImportSession {
+            $session = $this->getSession($sessionId, $context, true);
+            $timeout = (int) config('octane.max_request_timeout', 30);
+            $stats = $session->stats ?? [];
+            unset($stats['reason_code'], $stats['correlation_id']);
+            $session->update(['status' => 'detecting', 'error_message' => null, 'stats' => array_merge($stats, [
+                'detection_started_at' => $startedAt, 'detection_phase' => 'storage',
+                'detection_token' => $token, 'detection_deadline_at' => time() + ($timeout > 0 ? $timeout : 30) + 15,
+            ])]);
+
+            return $session;
+        });
         Log::info('[EstimateImport] Type detection started', ['session_id' => $sessionId, 'phase' => $phase]);
 
         try {
-            return $this->fileStorage->withLocalCopy(
-                $session,
-                function (string $fullPath) use ($session, $sessionId, $startedAt, &$phase): EstimateTypeDetectionDTO {
-                    $phase = 'recognizing';
-                    $session->update(['stats' => array_merge($session->stats ?? [], ['detection_phase' => $phase])]);
-                    $detection = $this->runtimeDetector->detect($session, $fullPath, function (string $handler) use ($sessionId, &$phase): void {
-                        $phase = $handler;
-                        Log::info('[EstimateImport] Format detector started', ['session_id' => $sessionId, 'handler' => $handler]);
-                    });
-                    if ($detection === null || $detection->confidence <= 0.0) {
-                        throw UnsupportedEstimateImportFormatException::create();
-                    }
+            $detection = $this->fileStorage->withLocalCopy($session, function (string $fullPath) use ($session, $token, &$phase) {
+                $phase = 'recognizing';
+                $this->updateDetectionPhase($session, $token, $phase);
+                $detection = $this->runtimeDetector->detect($session, $fullPath, function (string $handler) use ($session, $token, &$phase): void {
+                    $phase = $handler;
+                    $this->updateDetectionPhase($session, $token, $phase);
+                    Log::info('[EstimateImport] Format detector started', ['session_id' => $session->id, 'handler' => $handler]);
+                });
+                if ($detection === null || $detection->confidence <= 0.0) {
+                    throw UnsupportedEstimateImportFormatException::create();
+                }
 
-                    $options = $session->options ?? [];
-                    $options['format_handler'] = $detection->formatSlug;
-                    $options['runtime_detection'] = $detection->toArray();
-
-                    $session->update([
-                        'status' => 'detecting',
-                        'options' => $options,
-                        'stats' => array_merge($session->stats ?? [], ['detection_phase' => 'completed']),
-                    ]);
-                    Log::info('[EstimateImport] Type detection completed', [
-                        'session_id' => $sessionId,
-                        'format' => $detection->formatSlug,
-                        'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
-                    ]);
-
-                    return new EstimateTypeDetectionDTO(
-                        detectedType: $detection->detectedType,
-                        confidence: $detection->confidence,
-                        indicators: $detection->indicators,
-                        candidates: $detection->candidates,
-                        metadata: $detection->metadata + [
-                            'format_slug' => $detection->formatSlug,
-                            'label' => $detection->label,
-                            'requires_confirmation' => $detection->requiresConfirmation,
-                            'warnings' => $detection->warnings,
-                        ],
-                    );
-                },
-            );
-        } catch (Throwable $e) {
-            $session->update([
-                'status' => 'failed',
-                'error_message' => $e instanceof UnsupportedEstimateImportFormatException
-                    ? 'estimate.import_unsupported_format'
-                    : 'estimate.import_detect_type_error',
-                'stats' => array_merge($session->stats ?? [], ['detection_phase' => $phase]),
-            ]);
-            Log::error('[EstimateImport] Type detection failed', [
-                'session_id' => $sessionId,
-                'phase' => $phase,
-                'exception_class' => $e::class,
+                return $detection;
+            });
+            DB::transaction(function () use ($session, $token, $detection): void {
+                $current = $this->lockedDetectionSession($session);
+                $this->assertCurrentDetection($current, $token);
+                $current->update([
+                    'options' => array_merge($current->options ?? [], [
+                        'format_handler' => $detection->formatSlug, 'runtime_detection' => $detection->toArray(),
+                    ]),
+                    'stats' => array_merge($current->stats ?? [], ['detection_phase' => 'completed']),
+                ]);
+            });
+            Log::info('[EstimateImport] Type detection completed', [
+                'session_id' => $sessionId, 'format' => $detection->formatSlug,
                 'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
             ]);
 
-            throw $e;
+            return new EstimateTypeDetectionDTO(
+                detectedType: $detection->detectedType,
+                confidence: $detection->confidence,
+                indicators: $detection->indicators,
+                candidates: $detection->candidates,
+                metadata: $detection->metadata + [
+                    'format_slug' => $detection->formatSlug, 'label' => $detection->label,
+                    'requires_confirmation' => $detection->requiresConfirmation, 'warnings' => $detection->warnings,
+                ],
+            );
+        } catch (Throwable $exception) {
+            DB::transaction(function () use ($session, $token, $phase, $exception): void {
+                $current = $this->lockedDetectionSession($session);
+                if ($current->status !== 'detecting' || ($current->stats['detection_token'] ?? null) !== $token) {
+                    return;
+                }
+                $current->update([
+                    'status' => 'failed',
+                    'error_message' => $exception instanceof UnsupportedEstimateImportFormatException
+                        ? 'estimate.import_unsupported_format'
+                        : ($exception instanceof ImportSessionStateException ? $exception->translationKey : 'estimate.import_detect_type_error'),
+                    'stats' => array_merge($current->stats ?? [], ['detection_phase' => $phase]),
+                ]);
+            });
+            Log::error('[EstimateImport] Type detection failed', [
+                'session_id' => $sessionId, 'phase' => $phase, 'exception_class' => $exception::class,
+                'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
+            ]);
+
+            throw $exception;
         }
+    }
+
+    private function lockedDetectionSession(ImportSession $session): ImportSession
+    {
+        $projectId = (int) ($session->options['project_id'] ?? $session->options['estimate_settings']['project_id'] ?? 0);
+
+        return ImportSession::query()->where('organization_id', $session->organization_id)
+            ->where(function ($query) use ($projectId): void {
+                $query->where('options->project_id', $projectId)->orWhere(function ($legacy) use ($projectId): void {
+                    $legacy->whereNull('options->project_id')->where('options->estimate_settings->project_id', $projectId);
+                });
+            })->whereKey($session->id)->lockForUpdate()->firstOrFail();
+    }
+
+    private function assertCurrentDetection(ImportSession $session, string $token): void
+    {
+        if ($session->status !== 'detecting' || ($session->stats['detection_token'] ?? null) !== $token
+            || now()->timestamp > (int) ($session->stats['detection_deadline_at'] ?? 0)) {
+            throw new ImportSessionStateException('import_detection_interrupted', 'estimate.import_detection_interrupted');
+        }
+    }
+
+    private function updateDetectionPhase(ImportSession $session, string $token, string $phase): void
+    {
+        DB::transaction(function () use ($session, $token, $phase): void {
+            $current = $this->lockedDetectionSession($session);
+            $this->assertCurrentDetection($current, $token);
+            $current->update(['stats' => array_merge($current->stats ?? [], ['detection_phase' => $phase])]);
+        });
     }
 
     public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null, ?ImportAccessContext $context = null, array $worksheetOptions = []): array
@@ -420,6 +439,12 @@ class EstimateImportService
 
         return DB::transaction(function () use ($sessionId, $matchingConfig, $estimateSettings, $validateOnly, $context, $retry): array {
             $session = ImportSession::query()->whereKey($sessionId)->lockForUpdate()->firstOrFail();
+            if ($session->status === 'detecting' && ($session->stats['detection_phase'] ?? null) !== 'completed') {
+                $this->recoverInterruptedSession($session);
+                if ($session->status === 'detecting') {
+                    throw new ImportSessionStateException('import_session_locked', 'estimate.import_session_locked');
+                }
+            }
             if ($session->isActive() || $session->isCompleted() || ($session->status === 'validated' && $validateOnly)) {
                 return $this->getImportStatus($sessionId, $context) + ['session_id' => $sessionId];
             }
@@ -534,8 +559,10 @@ class EstimateImportService
                 });
             })->when($mutable, static fn ($query) => $query->lockForUpdate())->findOrFail($id);
         if ($mutable) {
+            $this->recoverInterruptedSession($session);
             $this->ensureUnexpired($session);
-            if ($session->isActive() || $session->isCompleted()) {
+            if ($session->isActive() || $session->isCompleted()
+                || ($session->status === 'detecting' && ($session->stats['detection_phase'] ?? null) !== 'completed')) {
                 throw new ImportSessionStateException('import_session_locked', 'estimate.import_session_locked');
             }
         }
@@ -558,6 +585,7 @@ class EstimateImportService
             $correlationId = (string) Str::uuid();
             $updated = ImportSession::query()->whereKey($session->id)->where('status', 'detecting')
                 ->where('stats->detection_deadline_at', $detectionDeadline)->where('stats->detection_phase', '!=', 'completed')
+                ->where('stats->detection_token', $session->stats['detection_token'] ?? null)
                 ->update(['status' => 'failed', 'error_message' => 'estimate.import_detection_interrupted', 'stats' => json_encode(array_merge($session->stats ?? [], [
                     'reason_code' => 'import_detection_interrupted', 'correlation_id' => $correlationId,
                 ]), JSON_THROW_ON_ERROR)]);

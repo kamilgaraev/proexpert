@@ -183,13 +183,55 @@ final class EstimateImportFinancialPersistenceTest extends TestCase
         self::assertEquals(150, $estimate->fresh()->total_amount);
     }
 
-    private function import(array $rows, string $mode = 'plain', float $overheadRate = 9, float $profitRate = 4): ImportSession
+    public function test_running_meter_aliases_reuse_existing_units_without_rescaling(): void
+    {
+        $unitIds = [];
+        $foreignUnitId = null;
+        $unitCountBeforeImport = 0;
+        $session = $this->import([
+            ['1', 'ГЭСН01-01', 'Первая работа', 'пог.м', 2, 10, 20],
+            ['2', 'ГЭСН01-02', 'Вторая работа', 'погон.м', 3, 10, 30],
+            ['3', 'ГЭСН01-03', 'Третья работа', '100пог.м', 0.5, 100, 50],
+            ['4', 'ГЭСН01-04', 'Четвёртая работа', '100 погон.м', 0.25, 200, 50],
+            ['5', 'ГЭСН01-05', 'Пятая работа', 'м', 1, 10, 10],
+            [null, 'Итого по смете', null, null, null, null, 160],
+        ], prepareUnits: static function (Organization $organization) use (&$unitIds, &$foreignUnitId, &$unitCountBeforeImport): void {
+            $foreign = Organization::factory()->create();
+            $foreignUnitId = MeasurementUnit::query()->where('organization_id', $foreign->id)->where('short_name', 'пог. м')->firstOrFail()->id;
+            foreach (['м', 'пог. м'] as $shortName) {
+                $unitIds[$shortName] = MeasurementUnit::query()->where('organization_id', $organization->id)->where('short_name', $shortName)->firstOrFail()->id;
+            }
+            $unitIds['100 пог. м'] = MeasurementUnit::query()->firstOrCreate(
+                ['organization_id' => $organization->id, 'short_name' => '100 пог. м'],
+                ['name' => 'Сто погонных метров', 'type' => 'material', 'is_system' => false],
+            )->id;
+            $unitCountBeforeImport = MeasurementUnit::query()->where('organization_id', $organization->id)->count();
+        });
+        $items = EstimateItem::query()->where('estimate_id', $session->stats['estimate_id'])->orderBy('id')->get();
+        self::assertCount(5, $items);
+        self::assertSame($unitIds['пог. м'], $items[0]->measurement_unit_id);
+        self::assertSame($unitIds['пог. м'], $items[1]->measurement_unit_id);
+        self::assertNotSame($foreignUnitId, $items[0]->measurement_unit_id);
+        self::assertSame($unitIds['100 пог. м'], $items[2]->measurement_unit_id);
+        self::assertSame($unitIds['100 пог. м'], $items[3]->measurement_unit_id);
+        self::assertSame($unitIds['м'], $items[4]->measurement_unit_id);
+        self::assertEquals(0.5, $items[2]->quantity);
+        self::assertEquals(0.25, $items[3]->quantity);
+        self::assertEquals(50, $items[2]->total_amount);
+        self::assertEquals(50, $items[3]->total_amount);
+        self::assertSame($unitCountBeforeImport, MeasurementUnit::query()->where('organization_id', $session->organization_id)->count());
+    }
+
+    private function import(array $rows, string $mode = 'plain', float $overheadRate = 9, float $profitRate = 4, ?callable $prepareUnits = null): ImportSession
     {
         Queue::fake();
         $organization = Organization::factory()->create();
         $user = User::factory()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         MeasurementUnit::create(['organization_id' => $organization->id, 'name' => 'Сто квадратных метров', 'short_name' => '100 м²', 'type' => 'work']);
+        if ($prepareUnits !== null) {
+            $prepareUnits($organization);
+        }
         $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->fromArray(['№', 'Код', 'Наименование', 'Единица', 'Количество', 'Цена', 'Стоимость'], null, 'A1');

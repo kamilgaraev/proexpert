@@ -20,6 +20,9 @@ use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Requests\Admin\Estimate\DetectEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\MapEstimateImportRequest;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Bus;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\ImportSessionStateException;
 use App\Services\Storage\FileService;
 use Mockery;
 use Tests\TestCase;
@@ -55,6 +58,97 @@ final class ImportDetectionStateTest extends TestCase
         self::assertSame('failed', $session->status);
         self::assertSame('estimate.import_detect_type_error', $session->error_message);
         self::assertSame('storage', $session->stats['detection_phase']);
+    }
+
+    public function test_detection_claim_and_deadline_are_persisted_before_storage_io(): void
+    {
+        $session = $this->createImportSession();
+        $transactionLevel = DB::transactionLevel();
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('existsCurrent')->once()->andReturnUsing(function () use ($session, $transactionLevel): bool {
+            self::assertSame($transactionLevel, DB::transactionLevel());
+            $durable = $session->fresh();
+            self::assertSame('detecting', $durable->status);
+            self::assertSame('storage', $durable->stats['detection_phase']);
+            self::assertTrue(\Illuminate\Support\Str::isUuid($durable->stats['detection_token']));
+            self::assertGreaterThan(now()->timestamp, $durable->stats['detection_deadline_at']);
+            throw new RuntimeException('storage unavailable');
+        });
+        try {
+            $this->service($files)->detectEstimateType($session->id, $this->context->access());
+            self::fail('Expected storage failure after published claim');
+        } catch (RuntimeException $exception) {
+            self::assertSame('storage unavailable', $exception->getMessage());
+        }
+        self::assertSame('failed', $session->refresh()->status);
+    }
+
+    public function test_active_detection_locks_settings_and_execution_during_storage_io(): void
+    {
+        $session = $this->createImportSession();
+        $session->update(['options' => array_merge($session->options, ['format_handler' => 'test'])]);
+        Bus::fake();
+        $files = Mockery::mock(FileService::class);
+        $service = $this->service($files);
+        $files->shouldReceive('existsCurrent')->once()->andReturnUsing(function () use ($session, $service): bool {
+            $options = $session->fresh()->options;
+            $blocked = 0;
+            foreach (['detectFormat', 'preview', 'execute'] as $operation) {
+                try {
+                    if ($operation === 'execute') {
+                        $service->execute($session->id, [], ['name' => 'Concurrent request'], false, $this->context->access());
+                    } else {
+                        $service->$operation($session->id, null, $this->context->access());
+                    }
+                } catch (ImportSessionStateException $exception) {
+                    self::assertSame('import_session_locked', $exception->reasonCode);
+                    $blocked++;
+                }
+            }
+            self::assertSame(3, $blocked);
+            self::assertSame($options, $session->fresh()->options);
+            Bus::assertNothingDispatched();
+            throw new RuntimeException('storage unavailable');
+        });
+        try {
+            $service->detectEstimateType($session->id, $this->context->access());
+            self::fail('Expected storage failure after concurrent requests');
+        } catch (RuntimeException $exception) {
+            self::assertSame('storage unavailable', $exception->getMessage());
+        }
+    }
+
+    public function test_recovered_detection_retry_rejects_stale_completion_and_preserves_current_result(): void
+    {
+        $session = $this->createImportSession();
+        $handler = $this->createMock(RuntimeImportFormatHandlerInterface::class);
+        $handler->method('slug')->willReturn('test');
+        $handler->method('supportedExtensions')->willReturn(['xlsx']);
+        $service = $this->service($this->readableFiles(), [$handler]);
+        $attempts = 0;
+        $handler->method('detect')->willReturnCallback(function () use (&$attempts, $session, $service): ImportDetectionResult {
+            if (++$attempts === 1) {
+                $current = $session->fresh();
+                $current->update(['stats' => array_merge($current->stats, ['detection_deadline_at' => now()->subMinute()->timestamp])]);
+                self::assertSame('failed', $service->getImportStatus($session->id, $this->context->access())['status']);
+                self::assertSame('current', $service->detectEstimateType($session->id, $this->context->access())->detectedType);
+
+                return new ImportDetectionResult('stale', 'test', 'Test', 1.0);
+            }
+
+            return new ImportDetectionResult('current', 'test', 'Test', 1.0);
+        });
+        try {
+            $service->detectEstimateType($session->id, $this->context->access());
+            self::fail('Stale detection cannot complete over a newer claim');
+        } catch (ImportSessionStateException $exception) {
+            self::assertSame('import_detection_interrupted', $exception->reasonCode);
+        }
+        self::assertSame(2, $attempts);
+        self::assertSame('detecting', $session->refresh()->status);
+        self::assertSame('completed', $session->stats['detection_phase']);
+        self::assertSame('current', $session->options['runtime_detection']['detected_type']);
+        self::assertNull($session->error_message);
     }
 
     public function test_implicit_detection_storage_failure_persists_for_detect_and_map_preview(): void

@@ -943,7 +943,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         }
 
         $label = trim(implode(' ', $textParts));
-        if ($label === '' || $amount === null || $amount <= 0.0) {
+        if ($label === '' || $amount === null) {
             return null;
         }
 
@@ -1089,7 +1089,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             }
 
             $amount = isset($row['amount']) ? (float) $row['amount'] : null;
-            if ($amount === null || $amount <= 0.0) {
+            if ($amount === null) {
                 continue;
             }
 

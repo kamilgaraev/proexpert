@@ -903,7 +903,7 @@ class ImportPipelineService
 
     private function normalizeUnitName(string $unitName): string
     {
-        return mb_strtolower((new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation\UnitNormalizationService)->normalize($unitName) ?? '');
+        return mb_strtolower((new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation\UnitNormalizationService)->normalizeForEstimateImport($unitName) ?? '');
     }
 
     private function resolveUnitId(?string $unitName, int $organizationId): ?int

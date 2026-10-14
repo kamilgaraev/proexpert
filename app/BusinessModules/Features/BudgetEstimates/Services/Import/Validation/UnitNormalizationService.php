@@ -129,4 +129,14 @@ class UnitNormalizationService
 
         return $original;
     }
+
+    public function normalizeForEstimateImport(?string $unit): ?string
+    {
+        $lowerUnit = mb_strtolower(trim((string) $unit));
+        if (preg_match('/^(?:(\d+)\s*)?пог(?:он)?[.\s]*м\.?$/u', $lowerUnit, $matches) === 1) {
+            return isset($matches[1]) && $matches[1] !== '' ? $matches[1].' пог. м' : 'пог. м';
+        }
+
+        return $this->normalize($unit);
+    }
 }

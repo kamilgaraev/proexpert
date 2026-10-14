@@ -21,6 +21,9 @@ use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
 use Psr\Log\NullLogger;
+use App\Models\ImportSession;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 final class CustomExcelNumericImportTest extends TestCase
 {
@@ -337,6 +340,64 @@ final class CustomExcelNumericImportTest extends TestCase
                 self::assertArrayNotHasKey('total_estimate_cost', $partialOnly['footer']);
                 self::assertFalse($partialOnly['total_mismatch']);
             }
+        }
+    }
+
+    public function test_signed_title_adjustments_and_explicit_zero_import_once_with_all_sheets(): void
+    {
+        $book = new Spreadsheet;
+        $book->getActiveSheet()->setTitle('Cover')->fromArray([
+            ['Synthetic estimate'],
+            ['Main works', 70],
+            ['Other returns', -40],
+            ['Discount', -10],
+            ['Refund', -5],
+            ['Zero adjustment', 0],
+            ['No amount', null],
+            ['Total', 15],
+        ], null, 'A1', true);
+        $book->createSheet()->setTitle('Main works')->fromArray([
+            ['No', 'Code', 'Name', 'Unit', 'Qty', 'Price', 'Total'],
+            [1, 'RATE-1', 'Installation', 'm3', 1, 100, 100],
+            [2, 'RETURN-1', 'Position return', 'm3', -1, 30, -30],
+            [3, 'ZERO-1', 'Zero position', 'm3', 1, 0, 0],
+        ], null, 'A1', true);
+        $book->createSheet()->setTitle('Other returns')->fromArray([
+            ['No', 'Code', 'Name', 'Unit', 'Qty', 'Price', 'Total'],
+            [1, 'RETURN-2', 'Other position return', 'm3', -1, 40, -40],
+        ], null, 'A1', true);
+        $path = tempnam(sys_get_temp_dir(), 'estimate-signed-extras-');
+        (new Xlsx($book))->save($path);
+        $book->disconnectWorksheets();
+        try {
+            $handler = new CustomExcelHandler(new SpreadsheetTableReader, new SpreadsheetHeaderDetector);
+            $session = new ImportSession;
+            $structure = $handler->detectStructure($session, $path);
+            self::assertCount(3, $structure->metadata['additional_cost_rows']);
+            $allPreview = $handler->preview($session, $path, $structure);
+            self::assertSame([1, 2], $structure->metadata['worksheet_indices']);
+            self::assertCount(7, $allPreview->items);
+            self::assertSame(15.0, $allPreview->totals['total_amount']);
+            self::assertSame(15.0, $allPreview->metadata['positions_total_amount']);
+            self::assertSame([], $allPreview->validation['errors']);
+            self::assertSame([-10.0, -5.0, 0.0], array_column($structure->metadata['additional_cost_rows'], 'amount'));
+            $allRows = array_values(array_filter(iterator_to_array($handler->streamRows($session, $path, $structure), false), static fn ($row): bool => !$row->isSection));
+            self::assertSame(15.0, array_sum(array_map(static fn ($row) => $row->currentTotalAmount, $allRows)));
+            self::assertSame(7, count(array_unique(array_map(static fn ($row): string => $row->worksheetIndex.':'.$row->rowNumber, $allRows))));
+            self::assertNotContains('Main works', array_column($allPreview->items, 'item_name'));
+            self::assertNotContains('Other returns', array_column($allPreview->items, 'item_name'));
+            self::assertNotContains('Total', array_column($allPreview->items, 'item_name'));
+            self::assertNotContains('No amount', array_column($allPreview->items, 'item_name'));
+            $session->options = ['worksheet_index' => 1];
+            $singleStructure = $handler->detectStructure($session, $path);
+            $singlePreview = $handler->preview($session, $path, $singleStructure);
+            self::assertCount(3, $singlePreview->items);
+            self::assertSame(70.0, $singlePreview->totals['total_amount']);
+            $singleRows = array_values(array_filter(iterator_to_array($handler->streamRows($session, $path, $singleStructure), false), static fn ($row): bool => !$row->isSection));
+            self::assertSame([100.0, -30.0, 0.0], array_map(static fn ($row) => $row->currentTotalAmount, $singleRows));
+            self::assertSame([1, 1, 1], array_map(static fn ($row) => $row->worksheetIndex, $singleRows));
+        } finally {
+            unlink($path);
         }
     }
 
