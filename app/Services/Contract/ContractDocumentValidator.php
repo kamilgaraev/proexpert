@@ -51,7 +51,11 @@ final class ContractDocumentValidator
             $this->invalid();
         }
         $type = $node['type'];
-        $keys = $type === 'text' ? ['type', 'text', 'marks'] : ['type', 'attrs', 'content'];
+        $keys = match ($type) {
+            'text' => ['type', 'text', 'marks'],
+            'variable' => ['type', 'attrs', 'content', 'marks'],
+            default => ['type', 'attrs', 'content'],
+        };
         if (array_diff(array_keys($node), $keys) !== []) {
             $this->invalid();
         }
@@ -62,6 +66,9 @@ final class ContractDocumentValidator
             $this->marks($node['marks'] ?? []);
 
             return;
+        }
+        if ($type === 'variable') {
+            $this->marks($node['marks'] ?? []);
         }
         $attrs = $node['attrs'] ?? [];
         if (! is_array($attrs)) {
