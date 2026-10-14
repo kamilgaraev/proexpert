@@ -10,6 +10,26 @@ use PHPUnit\Framework\TestCase;
 
 final class ScenarioEstimateCalculatorTest extends TestCase
 {
+    public function test_worklist_with_no_known_quantity_is_preliminary_even_when_unit_prices_are_available(): void
+    {
+        $result = (new ScenarioEstimateCalculator)->calculate([['id' => 'base',
+            'positions' => [$this->position('wall', null, '200')], 'assumptions' => []]], ['finishing'], []);
+        self::assertSame('scenario_estimate', $result['result_class']);
+        self::assertNull($result['scenarios'][0]['positions'][0]['quantity']);
+        self::assertSame('200', $result['scenarios'][0]['positions'][0]['unit_price']);
+        self::assertNull($result['scenarios'][0]['positions'][0]['total_cost']);
+        self::assertNull($result['scenarios'][0]['total_by_currency']);
+        self::assertNull($result['scenario_range']);
+        self::assertFalse($result['can_confirm_for_apply']);
+    }
+
+    public function test_empty_composition_remains_preliminary_and_cannot_be_confirmed(): void
+    {
+        $result = (new ScenarioEstimateCalculator)->calculate([['id' => 'base', 'positions' => [], 'assumptions' => []]], ['finishing'], [], true);
+        self::assertSame('scenario_estimate', $result['result_class']);
+        self::assertFalse($result['can_confirm_for_apply']);
+    }
+
     public function test_unknown_quantities_and_prices_keep_a_known_subtotal_without_a_false_total_or_range(): void
     {
         $known = $this->position('floor', '20', '105.55');

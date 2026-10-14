@@ -21,6 +21,7 @@ final class ScenarioEstimateCalculator
         $ids = [];
         $results = [];
         $assumed = false;
+        $hasKnownQuantity = false;
         $complete = $requirements === [];
         $scenarioCostsComplete = true;
         $currencyConversionRequired = false;
@@ -56,6 +57,7 @@ final class ScenarioEstimateCalculator
                     $groups[$group] = true;
                 }
                 $quantity = $this->number($position['quantity'] ?? null);
+                $hasKnownQuantity = $hasKnownQuantity || $quantity !== null;
                 $price = is_array($position['price_snapshot'] ?? null) ? $position['price_snapshot'] : null;
                 if ($quantity !== null && is_array($price['currency_conversion'] ?? null)) {
                     // Scenario volumes are evaluated from the original source, not from a previously rounded tuple.
@@ -167,11 +169,11 @@ final class ScenarioEstimateCalculator
             }
         }
 
-        return ['result_class' => ($assumed || count($results) > 1 ? EstimateResultClass::Scenario
+        return ['result_class' => ($assumed || ! $hasKnownQuantity || count($results) > 1 ? EstimateResultClass::Scenario
             : ($complete && $scopeConfirmed && ! $currencyConversionRequired ? EstimateResultClass::VerifiedScope : EstimateResultClass::Refined))->value,
             'selected_scope' => array_values($scope), 'missing_requirements' => $requirements, 'scenarios' => $results,
             'scenario_range' => $range, 'range_kind' => $range === null ? null : 'scenario', 'accuracy_calibrated' => false,
-            'can_confirm_for_apply' => $complete && ! $currencyConversionRequired, 'currency_conversion_required' => $currencyConversionRequired, 'scope_confirmed' => $scopeConfirmed];
+            'can_confirm_for_apply' => $complete && $hasKnownQuantity && ! $currencyConversionRequired, 'currency_conversion_required' => $currencyConversionRequired, 'scope_confirmed' => $scopeConfirmed];
     }
 
     private function number(mixed $value): ?BigDecimal
