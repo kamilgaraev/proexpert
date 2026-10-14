@@ -96,6 +96,33 @@ final class AssistantDomainSearchCountEvidenceTest extends TestCase
         self::assertFalse(AssistantDomainSearchCountEvidence::trusted($first));
     }
 
+    public function test_historical_count_remains_readable_after_ttl_only_when_current_signed_scope_and_count_match(): void
+    {
+        $old = $this->evidence(24, '-11 minutes');
+        $current = $this->evidence(24);
+        $service = new class($current) {
+            public function __construct(public array $current) {}
+            public function execute(string $action, array $arguments, User $actor, int $organizationId): array
+            {
+                return ['domain_search_count_evidence' => $this->current];
+            }
+        };
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class, $service);
+        $actor = new User; $actor->setAttribute('id', 3);
+        $helper = new AssistantDomainSearchCountEvidence;
+        self::assertFalse(AssistantDomainSearchCountEvidence::trusted($old));
+        self::assertFalse($helper->matchesReference($actor, 1, $old['source_ref']));
+        self::assertTrue($helper->canReadReference($actor, 1, $old['source_ref']));
+        $service->current = $this->evidence(23);
+        self::assertFalse($helper->canReadReference($actor, 1, $old['source_ref']));
+        $service->current = $current;
+        self::assertFalse($helper->canReadReference($actor, 2, $old['source_ref']));
+        $other = new User; $other->setAttribute('id', 4);
+        self::assertFalse($helper->canReadReference($other, 1, $old['source_ref']));
+        $tampered = $old['source_ref']; $tampered['record_count'] = 23;
+        self::assertFalse($helper->canReadReference($actor, 1, $tampered));
+    }
+
     public function test_money_or_quantity_requests_do_not_use_record_count_as_money_or_stock(): void
     {
         foreach (['Сколько стоят договоры?', 'Сколько денег по договорам?', 'Количество материала на складе',
@@ -159,7 +186,7 @@ final class AssistantDomainSearchCountEvidenceTest extends TestCase
                 $checked[$type] = true;
             }
         }
-        self::assertCount(556, $checked);
+        self::assertCount(557, $checked);
     }
 
     public function test_requested_catalogue_label_and_context_scope_do_not_accept_other_signed_entity_counts(): void

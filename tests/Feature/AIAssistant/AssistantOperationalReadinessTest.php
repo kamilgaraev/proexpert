@@ -27,6 +27,51 @@ use Tests\TestCase;
 
 final class AssistantOperationalReadinessTest extends TestCase
 {
+    public function test_rd_missing_sections_follow_approved_composition_and_current_document_versions(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $org = (int) $fixture->organization->id;
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
+        $package = Model::withoutEvents(fn () => DesignPackage::query()->create(['organization_id' => $org, 'project_id' => $project->id,
+            'created_by' => $fixture->owner->id, 'title' => 'Комплект РД', 'project_stage' => 'rd', 'status' => 'draft']));
+        $revision = Model::withoutEvents(fn () => \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->create([
+            'organization_id' => $org, 'project_id' => $project->id, 'package_id' => $package->id, 'revision_number' => 1, 'state_version' => 1,
+            'status' => 'approved', 'fingerprint' => str_repeat('a', 64), 'created_by' => $fixture->owner->id,
+            'composition' => ['document_groups' => [
+                ['code' => 'АР', 'title' => 'Архитектурные решения', 'required' => true, 'documents' => [['document_code' => 'АР-1', 'document_title' => 'Планы', 'required' => true]]],
+                ['code' => 'ОВ', 'title' => 'Отопление и вентиляция', 'required' => true, 'documents' => [['document_code' => 'ОВ-1', 'document_title' => 'Схемы', 'required' => true]]],
+            ]],
+        ]));
+        $package->updateQuietly(['composition_revision_id' => $revision->id]);
+        $section = Model::withoutEvents(fn () => DesignPackageSection::query()->create(['organization_id' => $org, 'project_id' => $project->id,
+            'package_id' => $package->id, 'code' => 'АР', 'title' => 'Архитектурные решения', 'project_stage' => 'rd', 'required' => true]));
+        $artifact = Model::withoutEvents(fn () => \App\BusinessModules\Features\DesignManagement\Models\DesignArtifact::query()->create([
+            'organization_id' => $org, 'project_id' => $project->id, 'package_id' => $package->id, 'section_id' => $section->id,
+            'created_by' => $fixture->owner->id, 'title' => 'Документ без версии', 'document_code' => 'АР-1', 'artifact_type' => 'text_document',
+        ]));
+        $reader = app(AssistantProjectDesignReader::class);
+        $result = $reader->read($fixture->owner, $org, ['project_id' => (int) $project->id]);
+        self::assertSame(['АР', 'ОВ'], array_column($result['data']['examples'][0]['missing_composition']['sections'], 'code'));
+        self::assertSame(2, $result['data']['examples'][0]['required_empty_sections']);
+        self::assertStringContainsString('Отопление и вентиляция', $result['server_formatted_answer']);
+        self::assertSame('rd', $result['data']['examples'][0]['project_stage']);
+        self::assertTrue($reader->matchesReference($fixture->owner, $org, $result['source_refs'][0]));
+        Model::withoutEvents(fn () => \App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion::query()->create([
+            'organization_id' => $org, 'project_id' => $project->id, 'artifact_id' => $artifact->id, 'uploaded_by' => $fixture->owner->id,
+            'title' => 'Планы', 'version_number' => '1', 'source_file_path' => 'org-'.$org.'/test/rd.pdf', 'source_original_name' => 'rd.pdf',
+            'source_mime_type' => 'application/pdf', 'source_size_bytes' => 1, 'file_format' => 'pdf', 'is_current' => true,
+        ]));
+        self::assertSame(['ОВ'], array_column($reader->read($fixture->owner, $org, ['project_id' => (int) $project->id])['data']['examples'][0]['missing_composition']['sections'], 'code'));
+        Model::withoutEvents(fn () => \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionExclusion::query()->create([
+            'organization_id' => $org, 'project_id' => $project->id, 'package_id' => $package->id, 'revision_id' => $revision->id,
+            'item_key' => 'ОВ', 'reason' => 'Исключён из текущего состава', 'created_by' => $fixture->owner->id,
+        ]));
+        self::assertSame([], $reader->read($fixture->owner, $org, ['project_id' => (int) $project->id])['data']['examples'][0]['missing_composition']['sections']);
+        $revision->updateQuietly(['status' => 'draft']);
+        self::assertFalse($reader->matchesReference($fixture->owner, $org, $result['source_refs'][0]));
+        self::assertFalse($reader->read($fixture->owner, $org, ['project_id' => (int) $project->id])['data']['examples'][0]['missing_composition']['available']);
+    }
     public function test_journal_authors_follow_native_entry_visibility_without_user_directory_access(): void
     {
         Queue::fake(); config(['cache.default' => 'array']);

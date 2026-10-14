@@ -55,6 +55,26 @@ final class AssistantConversationPrivacyTest extends TestCase
 
     private int $moduleReads = 0;
 
+    public function test_completed_history_count_does_not_disappear_after_ttl_but_still_rechecks_current_project_access(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $project = Project::factory()->create(['organization_id' => $this->organization->id]);
+        $conversation = $this->conversation();
+        $definition = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::class)->definition('projects');
+        self::assertNotNull($definition);
+        $evidence = \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence::payload(
+            $this->owner, (int) $this->organization->id, $definition, 'project', ['query' => '', 'project_id' => (int) $project->id],
+            ['name'], 1, (new \DateTimeImmutable('-11 minutes'))->format(DATE_ATOM));
+        $this->manager->addMessage($conversation, 'user', 'Сколько проектов?', 0, 'test');
+        $reply = $this->manager->addMessage($conversation, 'assistant', 'Один проект', 0, 'test',
+            ['request_state' => 'completed', 'validation_status' => 'partial', 'source_refs' => [$evidence['source_ref']]]);
+        $visible = $this->manager->getHistoryPage($conversation, $this->owner)->getCollection();
+        self::assertContains((int) $reply->id, $visible->pluck('id')->all());
+        $this->denied[] = $this->owner->id.':'.$project->id;
+        $hidden = $this->manager->getHistoryPage($conversation, $this->owner)->getCollection();
+        self::assertNotContains((int) $reply->id, $hidden->pluck('id')->all());
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

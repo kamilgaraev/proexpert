@@ -52,6 +52,11 @@ final class AssistantDomainSearchCountEvidence
 
     public static function trusted(array $evidence): bool
     {
+        return self::validReceipt($evidence, true);
+    }
+
+    private static function validReceipt(array $evidence, bool $requireFresh): bool
+    {
         $reference = $evidence['source_ref'] ?? null;
         if (($evidence['field'] ?? null) !== 'record_count' || ! is_int($evidence['value'] ?? null) || $evidence['value'] < 0
             || ! is_array($reference) || $evidence['value'] !== ($reference['record_count'] ?? null)
@@ -73,7 +78,7 @@ final class AssistantDomainSearchCountEvidence
             $proof = $reference['_search_count_proof'];
             unset($reference['_search_count_proof']);
 
-            return $age >= -30 && $age <= 600 && hash_equals(self::sign($reference), $proof);
+            return $age >= -30 && (! $requireFresh || $age <= 600) && hash_equals(self::sign($reference), $proof);
         } catch (Throwable) {
             return false;
         }
@@ -81,7 +86,12 @@ final class AssistantDomainSearchCountEvidence
 
     public function matchesReference(User $actor, int $organizationId, array $reference): bool
     {
-        if (! self::trusted(['field' => 'record_count', 'value' => $reference['record_count'] ?? null, 'source_ref' => $reference])
+        return $this->matchesReadableReference($actor, $organizationId, $reference, true);
+    }
+
+    private function matchesReadableReference(User $actor, int $organizationId, array $reference, bool $requireFresh): bool
+    {
+        if (! self::validReceipt(['field' => 'record_count', 'value' => $reference['record_count'] ?? null, 'source_ref' => $reference], $requireFresh)
             || ($reference['organization_id'] ?? null) !== $organizationId
             || ($reference['_search_count_actor'] ?? null) !== (string) $actor->getKey()) {
             return false;
@@ -89,7 +99,7 @@ final class AssistantDomainSearchCountEvidence
         try {
             $current = app(AssistantDomainReadService::class)->execute('search', $reference['_search_count_query'] + ['limit' => 1], $actor, $organizationId);
 
-            return self::matchesCurrentEvidence($reference, $current['domain_search_count_evidence'] ?? []);
+            return self::matchesEvidence($reference, $current['domain_search_count_evidence'] ?? [], $requireFresh);
         } catch (Throwable) {
             return false;
         }
@@ -97,12 +107,17 @@ final class AssistantDomainSearchCountEvidence
 
     public function canReadReference(User $actor, int $organizationId, array $reference): bool
     {
-        return $this->matchesReference($actor, $organizationId, $reference);
+        return $this->matchesReadableReference($actor, $organizationId, $reference, false);
     }
 
     public static function matchesCurrentEvidence(array $reference, array $current): bool
     {
-        return self::trusted(['field' => 'record_count', 'value' => $reference['record_count'] ?? null, 'source_ref' => $reference])
+        return self::matchesEvidence($reference, $current, true);
+    }
+
+    private static function matchesEvidence(array $reference, array $current, bool $requireFresh): bool
+    {
+        return self::validReceipt(['field' => 'record_count', 'value' => $reference['record_count'] ?? null, 'source_ref' => $reference], $requireFresh)
             && self::trusted($current) && ($current['source_ref']['entity_id'] ?? null) === ($reference['entity_id'] ?? null)
             && ($current['source_ref']['source_version'] ?? null) === ($reference['source_version'] ?? null)
             && ($current['source_ref']['required_permissions'] ?? null) === ($reference['required_permissions'] ?? null);
