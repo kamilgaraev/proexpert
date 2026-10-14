@@ -21,7 +21,8 @@ final class AssistantExportHistoryIntentTest extends TestCase
         self::assertContains('get_project_report_delivery_summary', AssistantToolSurface::names(['get_project_report_delivery_summary'], $plan));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_report_delivery_summary', ['project_id' => 999]));
         foreach ([$query.' И какие у меня права?', $query.' И что с бюджетом?', $query.' И сколько насосов в BIM?',
-            $query.' И какие сделки CRM?', $query.' И что с охраной труда?', 'Создай регулярные отчёты и скачай готовые выгрузки.'] as $mixed) {
+            $query.' И какие сделки CRM?', $query.' И что с охраной труда?', $query.' И какие платежи нужно оплатить?',
+            $query.' И сколько расходов?', $query.' И какие долги?', 'Создай регулярные отчёты и скачай готовые выгрузки.'] as $mixed) {
             self::assertNull(AssistantOperationalReaderRegistry::intent($mixed));
         }
     }
