@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic_transport_fixture",
+  "accuracy_calibrated": false,
+  "tags": [
+    "industrial",
+    "reconstruction",
+    "equipment",
+    "commissioning"
+  ],
+  "description": "Реконструкция насосного узла: требуется купить оборудование по спецификации, доставить и смонтировать насос, выполнить пусконаладку и испытания автоматики. Модель насоса, количество, спецификация, технологические требования, программы испытаний и предложения поставщиков пока отсутствуют.",
+  "profile_id": "industrial",
+  "construction_type": "reconstruction",
+  "selected_sections": [
+    "equipment",
+    "automation"
+  ],
+  "recordings": [
+    {
+      "role": "estimate_composition",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"work_intents\":[{\"kind\":\"supplementary\",\"work_key\":\"equipment.purchase\",\"name\":\"Покупка оборудования по спецификации\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"count\",\"work_section\":\"equipment\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"equipment-delivery-description\",\"name\":\"Доставка оборудования\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"count\",\"work_section\":\"equipment\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"equipment.install\",\"name\":\"Монтаж оборудования\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"count\",\"work_section\":\"equipment\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"equipment-commissioning-description\",\"name\":\"Пусконаладка оборудования\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"count\",\"work_section\":\"equipment\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]},{\"kind\":\"supplementary\",\"work_key\":\"automation-testing-description\",\"name\":\"Испытания автоматики\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"count\",\"work_section\":\"automation\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]}]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    }
+  ]
+}
