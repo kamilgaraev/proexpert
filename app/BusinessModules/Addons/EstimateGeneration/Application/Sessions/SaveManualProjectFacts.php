@@ -66,6 +66,7 @@ final readonly class SaveManualProjectFacts
                 throw ValidationException::withMessages(['entities' => 'Разделите состав: предел фактов сессии превышен.']);
             }
             $activeEntities = array_column($active->entities, null, 'id');
+            $inventoryDocumentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($active);
             $entities = [];
             $byKey = [];
             $seenIds = [];
@@ -78,9 +79,9 @@ final readonly class SaveManualProjectFacts
                 if (isset($row['existing_entity_id'])) {
                     $existing = $activeEntities[$row['existing_entity_id']] ?? null;
                     if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->attributes['properties']['semantic_type'] ?? $existing->type) !== $row['type']
-                        || ($row['parameters'] ?? []) === []
-                        || array_intersect(['name', 'floor', 'zone', 'parent_key', 'coverage'], array_keys($row)) !== []) {
-                        throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => 'Выберите доступный объект текущей сессии. Для ответа изменяются только его числовые параметры.']);
+                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [])
+                        || array_intersect(['name', 'floor', 'zone', 'parent_key'], array_keys($row)) !== []) {
+                        throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
                     }
                     $id = $existing->id;
                     $entities[$id] = $existing;
@@ -188,6 +189,21 @@ final readonly class SaveManualProjectFacts
                     $facts[] = $this->fact($scope, $sourceVersion, $entity, $parameter, $number, $entry['unit'], $basis === 'assumption' ? 'user_assumption' : 'user_input', [$evidenceId], $requestId);
                 }
                 foreach ($row['coverage'] ?? [] as $relation => $status) {
+                    $inventory = null;
+                    if (isset($row['existing_entity_id'])) {
+                        try {
+                            $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($active, $entity->id, $relation, $inventoryDocumentVersions);
+                        } catch (\InvalidArgumentException) {
+                            throw ValidationException::withMessages(['entities.'.$index.'.coverage' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
+                        }
+                        $pin = $row['coverage_fingerprints'][$relation] ?? null;
+                        if (! is_string($pin) || ! hash_equals($inventory['fingerprint'], $pin)) {
+                            throw ValidationException::withMessages(['entities.'.$index.'.coverage' => trans_message('estimate_generation.geometry_inventory.changed')]);
+                        }
+                        if (in_array($status, ['covered_empty', 'covered_with_entities'], true) && $inventory['unassigned_ids'] !== []) {
+                            throw ValidationException::withMessages(['entities.'.$index.'.coverage' => trans_message('estimate_generation.geometry_inventory.unassigned')]);
+                        }
+                    }
                     $expected = match ($relation) {
                         'room_walls' => ['room', 'wall', 'room_id'], 'wall_openings' => ['wall', 'opening', 'wall_id'], 'roof_facets' => ['roof', 'roof_facet', 'roof_id'], 'roof_openings' => ['roof', 'roof_opening', 'roof_id'], default => null
                     };
@@ -199,6 +215,9 @@ final readonly class SaveManualProjectFacts
                         $coverageEntities[$previous->id] ??= $previous;
                     }
                     $count = count(array_filter($coverageEntities, static fn (Entity $child): bool => ($child->attributes['semantic_type'] ?? null) === $expected[1] && ($child->attributes[$expected[2]] ?? null) === $entity->id));
+                    if ($inventory !== null) {
+                        $count = count($inventory['member_ids']);
+                    }
                     if (($status === 'covered_empty' && $count !== 0) || ($status === 'covered_with_entities' && $count === 0)) {
                         throw ValidationException::withMessages(['entities.'.$index.'.coverage' => 'Подтверждение не соответствует указанным элементам.']);
                     }
@@ -209,7 +228,9 @@ final readonly class SaveManualProjectFacts
                     $proofs[$evidenceId] = new Evidence($evidenceId, ...[...$scope, $sourceVersion, 'input:'.$sessionId, 'user_input', null, null, 'input_payload.manual_facts']);
                     $facts[] = $this->fact($scope, $sourceVersion, $entity, 'geometry_coverage_'.$relation,
                         ['relation' => $relation, 'status' => $status, 'entity_count' => $count, 'representation' => ['type' => 'manual', 'id' => $entity->id,
-                            'source_artifact_id' => 'input:'.$sessionId, 'source_version' => $sourceVersion]], null, 'user_input', [$evidenceId], $requestId);
+                            'source_artifact_id' => 'input:'.$sessionId, 'source_version' => $sourceVersion,
+                            ...($inventory === null ? [] : ['inventory_contract' => 'geometry-inventory:v1', 'inventory_fingerprint' => $inventory['fingerprint'],
+                                'member_ids' => $inventory['member_ids']])]], null, 'user_input', [$evidenceId], $requestId);
                 }
             }
             // Document objects retain their source version; each repository batch has one exact version.

@@ -223,17 +223,31 @@ final readonly class CurrentProjectDerivedQuantityService
         foreach ($snapshot->facts as $fact) {
             $facts[$fact->entityId][mb_strtolower(trim($fact->type))][] = $fact;
         }
+        $reviewedRelations = [];
+        foreach ($snapshot->facts as $fact) {
+            if (is_array($fact->value) && isset($fact->value['representation']['inventory_contract'])
+                && is_string($fact->value['relation'] ?? null)) {
+                $reviewedRelations[$fact->entityId][$fact->value['relation']] = true;
+            }
+        }
+        $inventoryDocumentVersions = $reviewedRelations === [] ? null : GeometryInventory::currentDocumentVersions($snapshot);
+        $currentInventoryEntities = $reviewedRelations === [] ? [] : GeometryInventory::entities($snapshot, $inventoryDocumentVersions);
         $openingsByWall = [];
         $roofChildrenByRoof = [];
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
             $wallId = $entity->attributes['wall_id'] ?? null;
             if ($semanticType === 'opening' && is_string($wallId)) {
-                $openingsByWall[$wallId][] = $entity;
+                if (! isset($reviewedRelations[$wallId]['wall_openings']) || isset($currentInventoryEntities[$entity->id])) {
+                    $openingsByWall[$wallId][] = $entity;
+                }
             }
             $roofId = $entity->attributes['roof_id'] ?? null;
             if (in_array($semanticType, ['roof_facet', 'roof_opening'], true) && is_string($roofId)) {
-                $roofChildrenByRoof[$roofId][] = $entity;
+                $relation = $semanticType === 'roof_facet' ? 'roof_facets' : 'roof_openings';
+                if (! isset($reviewedRelations[$roofId][$relation]) || isset($currentInventoryEntities[$entity->id])) {
+                    $roofChildrenByRoof[$roofId][] = $entity;
+                }
             }
         }
         foreach ([&$openingsByWall, &$roofChildrenByRoof] as &$childrenByParent) {
@@ -278,7 +292,7 @@ final readonly class CurrentProjectDerivedQuantityService
                     $technology,
                     $completeness,
                 );
-                $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions);
+                $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions, $inventoryDocumentVersions);
             } elseif ($semanticType === 'roof') {
                 $roofChildren = $roofChildrenByRoof[$entity->id] ?? [];
                 $request = $this->roofRequest(
@@ -293,8 +307,8 @@ final readonly class CurrentProjectDerivedQuantityService
                 ));
                 $openingCount = count(array_filter($roofChildren, static fn (Entity $child): bool => ($child->attributes['semantic_type'] ?? $child->type) === 'roof_opening'
                 ));
-                $this->applyCoverage($request, $facts, $entity, 'roof_facets', $facetCount, $snapshot, $decisions);
-                $this->applyCoverage($request, $facts, $entity, 'roof_openings', $openingCount, $snapshot, $decisions);
+                $this->applyCoverage($request, $facts, $entity, 'roof_facets', $facetCount, $snapshot, $decisions, $inventoryDocumentVersions);
+                $this->applyCoverage($request, $facts, $entity, 'roof_openings', $openingCount, $snapshot, $decisions, $inventoryDocumentVersions);
             } elseif ($semanticType === 'site' && $this->requiresSitePreparation($completeness)) {
                 $request = $this->binaryRequest($entity, $facts, 'earthwork_volume', 'area', 'depth', $token, $technology, $completeness, 'm3', 3);
             } else {
@@ -464,7 +478,7 @@ final readonly class CurrentProjectDerivedQuantityService
     }
 
     /** @param array<string, array<string, list<Fact>>> $facts */
-    private function applyCoverage(array &$request, array $facts, Entity $entity, string $relation, int $entityCount, ProjectModelSnapshot $snapshot, array $decisions): void
+    private function applyCoverage(array &$request, array $facts, Entity $entity, string $relation, int $entityCount, ProjectModelSnapshot $snapshot, array $decisions, ?array $inventoryDocumentVersions = null): void
     {
         $coverageFacts = array_values(array_filter(
             [
@@ -494,6 +508,22 @@ final readonly class CurrentProjectDerivedQuantityService
             ];
 
             return;
+        }
+        if (isset($coverage->representation['inventory_contract'])) {
+            try {
+                $inventory = GeometryInventory::capture($snapshot, $entity->id, $relation, $inventoryDocumentVersions);
+                $current = $coverage->representation['inventory_contract'] === 'geometry-inventory:v1'
+                    && is_string($coverage->representation['inventory_fingerprint'] ?? null)
+                    && hash_equals($inventory['fingerprint'], $coverage->representation['inventory_fingerprint']);
+            } catch (\InvalidArgumentException) {
+                $current = false;
+            }
+            if (! $current) {
+                $request['preflight_issues'][] = ['code' => 'geometry_coverage_blocked', 'operand' => 'geometry_coverage',
+                    'entity_id' => $entity->id, 'relation' => $relation, 'fact_id' => $fact->id, 'coverage_status' => 'stale'];
+
+                return;
+            }
         }
         $issue = $coverage->issue($fact->status, $entityCount);
         if ($issue !== null) {

@@ -20,6 +20,195 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_geometry_inventory_keeps_native_document_versions_and_locators_separate(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $documents = [];
+        foreach (['d', 'f'] as $checksum) {
+            $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+                'session_id' => $scope[2], 'organization_id' => $scope[0], 'project_id' => $scope[1], 'user_id' => $actor->id,
+                'filename' => 'wall-'.$checksum.'.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'storage_path' => 'org-'.$scope[0].'/wall-'.$checksum.'.xlsx', 'file_size_bytes' => 100,
+                'checksum_sha256' => str_repeat($checksum, 64), 'status' => 'ready', 'page_count' => 1,
+            ]);
+            $documents[] = $document;
+            $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+                1, ...[...$scope, (int) $document->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                    1, 'sha256:'.str_repeat($checksum, 64), [], $document->storage_path, $document->mime_type, $document->filename, 'fixture-claim', 1, 0, 'draft']);
+            $native = ['sheet' => 'Стены', 'header_cells' => [
+                ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+                ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.'],
+            ], 'cells' => []];
+            foreach ([['wall.w1', 'length', '3', 'm'], ['wall.w1', 'height', '2', 'm']] as $index => $row) {
+                foreach ($row as $column => $value) {
+                    $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+                }
+            }
+            $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+            app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+                ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
+        }
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertCount(2, $snapshot->entities);
+        foreach ($snapshot->entities as $wall) {
+            $document = array_values(array_filter($documents, static fn ($source): bool => 'sha256:'.$source->checksum_sha256 === $wall->sourceVersion))[0];
+            $listing = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class)
+                ->handle($actor, $scope[1], $scope[2], ['parent_entity_id' => $wall->id, 'relation' => 'wall_openings']);
+            self::assertCount(1, $listing['entities']);
+            self::assertCount(2, $listing['entities'][0]['evidence']);
+            foreach ($listing['entities'][0]['evidence'] as $proof) {
+                self::assertSame($wall->sourceVersion, $proof['source_version']);
+                self::assertSame((int) $document->id, $proof['document_id']);
+            }
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
+    public function test_native_wall_inventory_can_be_confirmed_without_recreating_the_document_entity(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+            'session_id' => $scope[2], 'organization_id' => $scope[0], 'project_id' => $scope[1], 'user_id' => $actor->id,
+            'filename' => 'walls.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'storage_path' => 'org-'.$scope[0].'/fixture-walls.xlsx', 'file_size_bytes' => 100,
+            'checksum_sha256' => str_repeat('d', 64), 'status' => 'ready', 'page_count' => 1,
+        ]);
+        $version = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+            1, ...[...$scope, (int) $document->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                1, $version, [], $document->storage_path, $document->mime_type, $document->filename, 'fixture-claim', 1, 0, 'draft']);
+        $native = ['sheet' => 'Стены', 'header_cells' => [
+            ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+            ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.'],
+        ], 'cells' => []];
+        foreach ([['wall.w1', 'length', '3', 'm'], ['wall.w1', 'height', '2', 'm']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertCount(1, $snapshot->entities);
+        self::assertCount(2, $snapshot->facts);
+        $wall = $snapshot->entities[0];
+        $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($snapshot, $wall->id, 'wall_openings',
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot));
+        $sources = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class);
+        $listing = $sources->handle($actor, $scope[1], $scope[2], ['parent_entity_id' => $wall->id, 'relation' => 'wall_openings']);
+        self::assertSame($inventory, $listing['inventory']);
+        self::assertFalse($listing['inventory']['completeness_confirmed']);
+        self::assertSame($wall->id, $listing['entities'][0]['entity_id']);
+        self::assertSame($version, $listing['entities'][0]['source_version']);
+        self::assertCount(2, $listing['entities'][0]['evidence']);
+        self::assertSame((int) $document->id, $listing['entities'][0]['evidence'][0]['document_id']);
+        self::assertStringContainsString('xlsx:sheet:Стены!', $listing['entities'][0]['evidence'][0]['native_reference']);
+        self::assertSame(1, $listing['pagination']['total']);
+        $input = ['entities' => [['key' => 'review-wall', 'type' => 'wall', 'existing_entity_id' => $wall->id,
+            'coverage' => ['wall_openings' => 'covered_empty'], 'coverage_fingerprints' => ['wall_openings' => $inventory['fingerprint']]]]];
+        $save = app(SaveManualProjectFacts::class);
+        foreach ([[], ['wall_openings' => str_repeat('f', 64)]] as $invalidPin) {
+            $invalid = $input;
+            $invalid['entities'][0]['coverage_fingerprints'] = $invalidPin;
+            try {
+                $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), $invalid);
+                self::fail('Unpinned or stale inventory was accepted.');
+            } catch (ValidationException) {
+                self::assertSame(0, $session->fresh()->state_version);
+                self::assertCount(2, $models->snapshot(...$scope)->facts);
+            }
+        }
+        $requestId = (string) Str::uuid();
+        $result = $save->handle($actor, $scope[1], $scope[2], 0, $requestId, $input);
+        self::assertSame('6', $result['quantities']['net_wall_area']['amount']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertCount(1, $models->snapshot(...$scope)->entities);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        self::assertEquals($result, $save->handle($actor, $scope[1], $scope[2], 0, $requestId, $input));
+        self::assertSame(1, $session->fresh()->state_version);
+        foreach ([['opening.o1', 'width', '1', 'm'], ['opening.o1', 'height', '2', 'm']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 4), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $more = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($more->claims, $more->decisions, (int) $document->id, 1, $more->numericSources);
+        $current = $models->snapshot(...$scope);
+        $opening = array_values(array_filter($current->entities, static fn ($entity): bool => $entity->type === 'opening'))[0];
+        $corrected = $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [
+            ['key' => 'wall-correction', 'type' => 'wall', 'existing_entity_id' => $wall->id, 'parameters' => [
+                'length' => ['value' => '3', 'unit' => 'm', 'basis' => 'measurement'], 'height' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement']]],
+            ['key' => 'opening-correction', 'type' => 'opening', 'existing_entity_id' => $opening->id, 'parameters' => [
+                'width' => ['value' => '1', 'unit' => 'm', 'basis' => 'measurement'], 'height' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement']]],
+        ]]);
+        self::assertArrayNotHasKey('net_wall_area', $corrected['quantities']);
+        $correctedFacts = $models->snapshot(...$scope)->facts;
+        self::assertSame([], array_values(array_filter($correctedFacts, static fn ($fact): bool => $fact->origin === 'document')));
+        $ambiguous = $sources->handle($actor, $scope[1], $scope[2], ['parent_entity_id' => $wall->id, 'relation' => 'wall_openings']);
+        self::assertCount(1, $ambiguous['inventory']['unassigned_ids']);
+        self::assertSame([$opening->id], $ambiguous['inventory']['unassigned_ids']);
+        self::assertContains($wall->id, array_column($ambiguous['entities'], 'entity_id'));
+        self::assertCount(2, $ambiguous['entities'][0]['evidence'], 'Original document locators survive user corrections.');
+        self::assertNotSame($inventory['fingerprint'], $ambiguous['inventory']['fingerprint']);
+        $input['entities'][0]['coverage_fingerprints']['wall_openings'] = $ambiguous['inventory']['fingerprint'];
+        try {
+            $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $input);
+            self::fail('Unassigned openings were declared absent.');
+        } catch (ValidationException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        $input['entities'][0]['coverage']['wall_openings'] = 'incomplete';
+        $incomplete = $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $input);
+        self::assertArrayNotHasKey('net_wall_area', $incomplete['quantities']);
+        $save->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), ['entities' => [['key' => 'manual-room', 'type' => 'room', 'name' => 'Помещение ручного ввода']]]);
+        $document->update(['checksum_sha256' => str_repeat('e', 64)]);
+        $hidden = $sources->handle($actor, $scope[1], $scope[2]);
+        self::assertNotContains($wall->id, array_column($hidden['entities'], 'entity_id'));
+        self::assertSame(1, $hidden['pagination']['total'], 'Independent manual input must remain available.');
+        $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope);
+        self::assertArrayNotHasKey('net_wall_area', $preview['quantities']);
+        $duplicate = $document->replicate();
+        $duplicate->status = 'queued';
+        $duplicate->checksum_sha256 = str_repeat('d', 64);
+        $duplicate->save();
+        self::assertNotContains($wall->id, array_column($sources->handle($actor, $scope[1], $scope[2])['entities'], 'entity_id'),
+            'An unprocessed duplicate checksum must not revive the replaced document entity.');
+        $document->update(['checksum_sha256' => str_repeat('d', 64), 'status' => 'ignored', 'ignored_at' => now()]);
+        $excluded = array_column($sources->handle($actor, $scope[1], $scope[2])['entities'], 'entity_id');
+        self::assertNotContains($wall->id, $excluded, 'An equal queued document cannot replace the excluded source identity.');
+        self::assertNotContains($opening->id, $excluded);
+        try {
+            $save->handle($actor, $scope[1], $scope[2], 4, (string) Str::uuid(), $input);
+            self::fail('Old source inventory was accepted after its checksum changed.');
+        } catch (ValidationException) {
+            self::assertSame(4, $session->fresh()->state_version);
+        }
+    }
+
+    public function test_inventory_is_free_and_hidden_for_legacy_and_rejects_foreign_organization_access(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $getter = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class);
+        $result = $getter->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertFalse($result['available']);
+        self::assertSame([], $result['entities']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame(0, $session->fresh()->state_version);
+        $actor->update(['current_organization_id' => Organization::factory()->create()->id]);
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        $getter->handle($actor, (int) $session->project_id, (int) $session->id);
+    }
+
     public function test_manual_engineering_count_replays_and_rejects_fractional_units_without_ai(): void
     {
         [$actor, $session] = $this->fixture();
