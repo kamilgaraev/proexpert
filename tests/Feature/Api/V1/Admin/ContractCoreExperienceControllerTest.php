@@ -275,6 +275,16 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->assertContains($contract->id, $contractIds);
         $this->assertNotContains($otherProjectContract->id, $contractIds);
 
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
+                'actual_advance_amount' => 75000,
+            ])
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', trans_message('contracts.financial_history_conflict'));
+        self::assertSame(25000.0, (float) $contract->fresh()->actual_advance_amount);
+        self::assertSame(500000.0, (float) $contract->fresh()->total_amount);
+
         $updateResponse = $this->withHeaders($context->authHeaders())
             ->putJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", [
                 'number' => 'CON-001-UPD',
@@ -283,7 +293,7 @@ class ContractCoreExperienceControllerTest extends TestCase
                 'base_amount' => 650000,
                 'total_amount' => 650000,
                 'planned_advance_amount' => 150000,
-                'actual_advance_amount' => 75000,
+                'actual_advance_amount' => 25000,
                 'status' => ContractStatusEnum::ON_HOLD->value,
                 'notes' => null,
             ]);
@@ -293,14 +303,16 @@ class ContractCoreExperienceControllerTest extends TestCase
         $updateResponse->assertJsonPath('data.number', 'CON-001-UPD');
         $contract->refresh();
         $this->assertSame(650000.0, (float) $contract->total_amount);
-        $this->assertSame(75000.0, (float) $contract->actual_advance_amount);
+        $this->assertSame(25000.0, (float) $contract->actual_advance_amount);
         $this->assertNull($contract->notes);
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/archive");
 
         $deleteResponse->assertOk();
-        self::assertSame('archived', $contract->fresh()->status->value);
+        self::assertSame(ContractStatusEnum::ON_HOLD->value, $contract->fresh()->status->value);
+        self::assertSame('archived', $contract->organizationViews()
+            ->where('organization_id', $context->organization->id)->firstOrFail()->visibility);
     }
 
     public static function contractSideInputs(): array
