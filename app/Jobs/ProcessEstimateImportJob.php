@@ -28,8 +28,11 @@ class ProcessEstimateImportJob implements ShouldQueue
 
     public bool $failOnTimeout = true;
 
-    public function __construct(public string $sessionId, public ?string $runToken = null)
+    public ?string $runToken = null;
+
+    public function __construct(public string $sessionId, ?string $runToken = null)
     {
+        $this->runToken = $runToken;
         $this->queue = 'imports';
         $this->connection = 'redis_estimate_imports';
     }
@@ -40,6 +43,11 @@ class ProcessEstimateImportJob implements ShouldQueue
             $session = ImportSession::query()->whereKey($this->sessionId)->lockForUpdate()->first();
             if (! $session || $session->status !== 'queued'
                 || ($session->options['run_token'] ?? null) !== $this->runToken) {
+                return null;
+            }
+            if ($this->runToken === null) {
+                $this->failed(null);
+
                 return null;
             }
             $session->update(['status' => 'parsing', 'stats' => array_merge($session->stats ?? [], [

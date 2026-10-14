@@ -278,6 +278,63 @@ final class EstimateImportLifecycleTest extends TestCase
         self::assertSame('queued', $session->fresh()->status);
     }
 
+    public function test_old_serialized_queued_job_without_token_fails_safely_before_pipeline(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $session = $context->session(['status' => 'queued', 'stats' => ['progress' => 10]]);
+        $pipeline = Mockery::mock(ImportPipelineService::class);
+        $pipeline->shouldNotReceive('run');
+        Cache::put("import_session_progress_{$session->id}", 45, 60);
+        $this->deserializeLegacyJob($session->id)->handle($pipeline);
+        self::assertSame('failed', $session->refresh()->status);
+        self::assertSame(trans_message('estimate.import_worker_interrupted'), $session->error_message);
+        self::assertSame('import_processing_failed', $session->stats['reason_code']);
+        self::assertNotEmpty($session->stats['correlation_id']);
+        self::assertFalse(Cache::has("import_session_progress_{$session->id}"));
+    }
+
+    public function test_old_serialized_job_preserves_completed_and_active_sessions(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $pipeline = Mockery::mock(ImportPipelineService::class);
+        $pipeline->shouldNotReceive('run');
+        foreach (['completed', 'parsing', 'processing'] as $status) {
+            $session = $context->session(['status' => $status, 'stats' => ['progress' => 50]]);
+            Cache::put("import_session_progress_{$session->id}", 60, 60);
+            $this->deserializeLegacyJob($session->id)->handle($pipeline);
+            self::assertSame($status, $session->refresh()->status);
+            self::assertSame(['progress' => 50], $session->stats);
+            self::assertNull($session->error_message);
+            self::assertSame(60, Cache::get("import_session_progress_{$session->id}"));
+        }
+    }
+
+    public function test_old_serialized_job_cannot_overwrite_newer_queued_attempt(): void
+    {
+        $context = EstimateImportTestContext::create();
+        $session = $context->session(['status' => 'queued', 'options' => ['run_token' => 'new-attempt'], 'stats' => ['progress' => 0]]);
+        $pipeline = Mockery::mock(ImportPipelineService::class);
+        $pipeline->shouldNotReceive('run');
+        Cache::put("import_session_progress_{$session->id}", 5, 60);
+        $this->deserializeLegacyJob($session->id)->handle($pipeline);
+        self::assertSame('queued', $session->refresh()->status);
+        self::assertSame('new-attempt', $session->options['run_token']);
+        self::assertSame(['progress' => 0], $session->stats);
+        self::assertNull($session->error_message);
+        self::assertSame(5, Cache::get("import_session_progress_{$session->id}"));
+    }
+
+    private function deserializeLegacyJob(string $sessionId): ProcessEstimateImportJob
+    {
+        $class = ProcessEstimateImportJob::class;
+        $payload = sprintf('O:%d:"%s":1:{s:9:"sessionId";s:%d:"%s";}', strlen($class), $class, strlen($sessionId), $sessionId);
+        $job = unserialize($payload, ['allowed_classes' => [$class]]);
+        self::assertInstanceOf(ProcessEstimateImportJob::class, $job);
+        self::assertNull($job->runToken);
+
+        return $job;
+    }
+
     public function test_terminal_success_returns_existing_result_and_database_progress_over_stale_cache(): void
     {
         $context = EstimateImportTestContext::create();

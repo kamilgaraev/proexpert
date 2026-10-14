@@ -28,11 +28,12 @@ final class EstimateImportSafeErrorTest extends TestCase
     public function test_database_failure_is_logged_but_not_returned_to_client(): void
     {
         $session = $this->createImportSession();
+        $session->update(['options' => array_merge($session->options, ['run_token' => 'test-attempt'])]);
         $exception = new QueryException('pgsql', 'insert into estimate_items values (?)', ['private-value'], new PDOException('SQLSTATE[22001]: value too long'));
         $pipeline = Mockery::mock(ImportPipelineService::class);
         $pipeline->shouldReceive('run')->once()->andThrow($exception);
 
-        (new ProcessEstimateImportJob($session->id))->handle($pipeline);
+        (new ProcessEstimateImportJob($session->id, 'test-attempt'))->handle($pipeline);
 
         $session->refresh();
         self::assertSame('failed', $session->status);

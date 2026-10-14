@@ -48,6 +48,9 @@ final class EstimateRagIndexObserver
         if (app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused()) {
             return;
         }
+        if (app(\App\BusinessModules\Features\AIAssistant\Services\Rag\EstimateRagMutationBatch::class)->capture($model)) {
+            return;
+        }
         [$organizationId, $projectId, $entityType] = match (true) {
             $model instanceof Estimate => [$model->organization_id, $model->project_id, 'estimate'],
             $model instanceof EstimateSection => [...$this->sectionScope($model), 'estimate_section'],

@@ -167,12 +167,14 @@ class EstimateImportService
 
     public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null, ?ImportAccessContext $context = null, array $worksheetOptions = []): array
     {
+        $this->sessionWithDetectedHandler($sessionId, $context);
+
         return DB::transaction(fn (): array => $this->detectFormatLocked($sessionId, $suggestedHeaderRow, $context, $worksheetOptions));
     }
 
     private function detectFormatLocked(string $sessionId, ?int $suggestedHeaderRow, ?ImportAccessContext $context, array $worksheetOptions): array
     {
-        $session = $this->sessionWithDetectedHandler($sessionId, $context);
+        $session = $this->getSession($sessionId, $context, true);
         if (array_key_exists('worksheet_index', $worksheetOptions)) {
             $options = array_merge($session->options ?? [], ['worksheet_index' => $worksheetOptions['worksheet_index']]);
             unset($options['structure']);
@@ -215,12 +217,14 @@ class EstimateImportService
 
     public function preview(string $sessionId, ?array $columnMapping = null, ?ImportAccessContext $context = null, array $worksheetOptions = []): EstimateImportDTO
     {
+        $this->sessionWithDetectedHandler($sessionId, $context);
+
         return DB::transaction(fn (): EstimateImportDTO => $this->previewLocked($sessionId, $columnMapping, $context, $worksheetOptions));
     }
 
     private function previewLocked(string $sessionId, ?array $columnMapping, ?ImportAccessContext $context, array $worksheetOptions): EstimateImportDTO
     {
-        $session = $this->sessionWithDetectedHandler($sessionId, $context);
+        $session = $this->getSession($sessionId, $context, true);
         if ($worksheetOptions !== []) {
             $options = array_merge($session->options ?? [], array_intersect_key($worksheetOptions, array_flip(['worksheet_index', 'worksheet_mappings'])));
             if (array_key_exists('worksheet_index', $worksheetOptions) && ($session->options['worksheet_index'] ?? null) !== $worksheetOptions['worksheet_index']) {

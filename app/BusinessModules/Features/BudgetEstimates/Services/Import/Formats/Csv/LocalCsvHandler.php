@@ -125,6 +125,7 @@ final class LocalCsvHandler extends CustomExcelHandler
     {
         $best = ';';
         $bestScore = 0;
+        $bestWidth = 0;
         foreach ([';', ',', "\t"] as $delimiter) {
             $handle = fopen($filePath, 'rb');
             if ($handle === false) {
@@ -138,16 +139,19 @@ final class LocalCsvHandler extends CustomExcelHandler
             } finally {
                 fclose($handle);
             }
-            $frequencies = ($counts[0] ?? 0) > 1
-                ? array_count_values(array_filter($counts, static fn (int $count): bool => $count > 1))
-                : [];
+            $frequencies = array_count_values(array_filter($counts, static fn (int $count): bool => $count > 1));
             $score = 0;
-            foreach ($frequencies as $width => $frequency) {
-                $score = max($score, $frequency * (int) $width);
+            $width = 0;
+            foreach ($frequencies as $recordWidth => $frequency) {
+                if ($frequency > $score || ($frequency === $score && $recordWidth > $width)) {
+                    $score = $frequency;
+                    $width = (int) $recordWidth;
+                }
             }
-            if ($score > $bestScore) {
+            if ($score > $bestScore || ($score === $bestScore && $width > $bestWidth)) {
                 $best = $delimiter;
                 $bestScore = $score;
+                $bestWidth = $width;
             }
         }
 

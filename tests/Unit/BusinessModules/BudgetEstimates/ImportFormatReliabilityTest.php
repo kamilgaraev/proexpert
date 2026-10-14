@@ -108,6 +108,38 @@ final class ImportFormatReliabilityTest extends TestCase
         }
     }
 
+    public function test_csv_delimiter_uses_table_records_after_empty_or_single_column_preambles(): void
+    {
+        foreach ([',', "\t", ';'] as $delimiter) {
+            foreach (['', 'Synthetic estimate caption'] as $preamble) {
+                $path = tempnam(sys_get_temp_dir(), 'estimate-csv-preamble-');
+                $handle = fopen($path, 'wb');
+                fwrite($handle, $preamble."\n");
+                fputcsv($handle, ['No', 'Code', 'Name', 'Unit', 'Qty', 'Price', 'Total'], $delimiter, '"', '');
+                $name = 'Work '.str_repeat('part,detail;value' . "\t", 20)."\ncontinued";
+                fputcsv($handle, [1, 'RATE-1', $name, 'm3', 2, 100, 200], $delimiter, '"', '');
+                fputcsv($handle, [2, 'RATE-2', $name, 'm3', 1, 50, 50], $delimiter, '"', '');
+                fclose($handle);
+                try {
+                    $handler = new LocalCsvHandler(new SpreadsheetTableReader, new SpreadsheetHeaderDetector);
+                    self::assertSame($delimiter, (new \ReflectionMethod($handler, 'detectDelimiter'))->invoke($handler, $path));
+                    $session = new ImportSession;
+                    $structure = $handler->detectStructure($session, $path);
+                    $items = iterator_to_array($handler->streamRows($session, $path, $structure), false);
+                    self::assertSame(2, $structure->headerRow);
+                    self::assertSame($delimiter, $structure->metadata['delimiter']);
+                    self::assertCount(2, $items);
+                    self::assertSame(3, $items[0]->rowNumber);
+                    self::assertSame(4, $items[1]->rowNumber);
+                    self::assertSame($name, $items[0]->rawData[2]);
+                    self::assertSame(250.0, array_sum(array_map(static fn ($item) => $item->currentTotalAmount, $items)));
+                } finally {
+                    unlink($path);
+                }
+            }
+        }
+    }
+
     public function test_worksheets_keep_their_individual_mapping_and_selected_override(): void
     {
         $book = new Spreadsheet;
