@@ -87,7 +87,11 @@ class UserRoleAssignment extends Model
     protected static function booted(): void
     {
         static::saving(static function (self $assignment): void {
-            if (! $assignment->isDirty(['role_type', 'role_slug', 'context_id', 'custom_role_id'])) {
+            $reactivatingUnboundCustomRole = $assignment->role_type === self::TYPE_CUSTOM
+                && $assignment->custom_role_id === null && $assignment->is_active
+                && $assignment->isDirty('is_active');
+            if (! $assignment->isDirty(['role_type', 'role_slug', 'context_id', 'custom_role_id'])
+                && !$reactivatingUnboundCustomRole) {
                 return;
             }
 

@@ -296,4 +296,21 @@ final class BackendSecurityRegressionTest extends TestCase
             self::assertSame(404, $response->getStatusCode());
         }
     }
+
+    public function test_user_options_match_current_membership_activity_and_filters(): void
+    {
+        $context = AdminApiTestContext::create();
+        $other = Organization::factory()->create();
+        $member = User::factory()->create();
+        $context->organization->users()->attach($member->id, ['is_active' => false]);
+        $other->users()->attach($member->id, ['is_active' => true]);
+        $response = $this->getJson('/api/v1/admin/users/options?is_active=false', $context->authHeaders())->assertOk();
+        $options = collect($response->json('data.data'))->keyBy('id');
+        self::assertTrue($options->has($member->id));
+        self::assertFalse($options[$member->id]['is_active']);
+        self::assertTrue($member->fresh()->is_active);
+        self::assertTrue((bool) $member->organizations()->whereKey($other->id)->first()->pivot->is_active);
+        $active = $this->getJson('/api/v1/admin/users/options?is_active=true', $context->authHeaders())->assertOk();
+        self::assertNotContains($member->id, collect($active->json('data.data'))->pluck('id')->all());
+    }
 }

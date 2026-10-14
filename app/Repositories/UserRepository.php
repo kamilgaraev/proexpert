@@ -494,6 +494,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     $q->where('context_id', $context->id)
                         ->where('is_active', true);
                 },
+                'organizations' => fn ($q) => $q->where('organizations.id', $organizationId),
             ]);
 
         if (!empty($filters['name'])) {

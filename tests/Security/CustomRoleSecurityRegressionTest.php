@@ -15,6 +15,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
+use Tests\Support\AdminApiTestContext;
 
 final class CustomRoleSecurityRegressionTest extends TestCase
 {
@@ -169,6 +170,29 @@ final class CustomRoleSecurityRegressionTest extends TestCase
             systemPermissions: ['*'],
             createdBy: $owner,
         );
+    }
+
+    public function test_reactivating_a_preserved_assignment_binds_the_recreated_role_in_its_organization(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        $service = app(CustomRoleService::class);
+        $role = $service->createRole($context->organization->id, 'Recreated role', ['organization.view'], createdBy: $context->user);
+        $assignment = UserRoleAssignment::assignRole($member, $role->slug,
+            AuthorizationContext::getOrganizationContext($context->organization->id), UserRoleAssignment::TYPE_CUSTOM);
+        $service->deleteRole($role, $context->user, $context->organization->id);
+        self::assertNull($assignment->fresh()->custom_role_id);
+        self::assertFalse($assignment->fresh()->is_active);
+        $replacement = $service->createRole($context->organization->id, 'Recreated role', ['organization.view'], createdBy: $context->user);
+        self::assertSame($role->slug, $replacement->slug);
+        $reactivated = UserRoleAssignment::updateOrCreate([
+            'user_id' => $member->id, 'role_slug' => $replacement->slug, 'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'context_id' => $assignment->context_id,
+        ], ['is_active' => true]);
+        self::assertSame($assignment->id, $reactivated->id);
+        self::assertSame($replacement->id, $reactivated->custom_role_id);
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($member, 'organization.view', ['organization_id' => $context->organization->id]));
     }
 
     private function customRole(Organization $organization, string $slug): OrganizationCustomRole
