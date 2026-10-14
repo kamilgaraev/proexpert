@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Contract;
 
 use App\DTOs\Contract\ContractPartyData;
+use App\DTOs\Contract\ContractRegistrationNumber;
 use App\Enums\Contract\ContractPartyRoleEnum;
 use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
@@ -154,7 +155,7 @@ class ContractPartySnapshotService
 
     private function fromOrganization(Organization $organization, ContractPartyRoleEnum $role): ContractPartyData
     {
-        $registrationNumber = $this->digitsOnly($organization->registration_number);
+        $registrationNumber = new ContractRegistrationNumber($organization->registration_number);
 
         return new ContractPartyData(
             role: $role,
@@ -162,8 +163,8 @@ class ContractPartySnapshotService
             linkedOrganizationId: $organization->id,
             legalName: $organization->legal_name,
             inn: $organization->tax_number,
-            kpp: $this->kppFromRegistrationNumber($registrationNumber),
-            ogrn: $this->ogrnFromRegistrationNumber($registrationNumber),
+            kpp: $registrationNumber->kpp,
+            ogrn: $registrationNumber->ogrn,
             legalAddress: $organization->address,
             email: $organization->email,
             phone: $organization->phone,
@@ -228,30 +229,5 @@ class ContractPartySnapshotService
             ['side' => $side->value],
             $data
         );
-    }
-
-    private function digitsOnly(?string $value): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        $digits = preg_replace('/\D+/', '', $value) ?? '';
-
-        return $digits === '' ? null : $digits;
-    }
-
-    private function kppFromRegistrationNumber(?string $registrationNumber): ?string
-    {
-        return $registrationNumber !== null && strlen($registrationNumber) === 9
-            ? $registrationNumber
-            : null;
-    }
-
-    private function ogrnFromRegistrationNumber(?string $registrationNumber): ?string
-    {
-        return $registrationNumber !== null && in_array(strlen($registrationNumber), [13, 15], true)
-            ? $registrationNumber
-            : null;
     }
 }
