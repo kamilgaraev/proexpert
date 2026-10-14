@@ -635,6 +635,143 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame(0, $seen['offset']);
     }
 
+    public function test_manager_pumps_and_ventilation_count_preserves_estimate_links(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Есть ли в BIM-моделях нашего объекта насосы и вентиляционные установки? Сколько найдено и есть ли связи со сметными позициями?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'mixed', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
+                'element_query' => 'вентиляционные установки', 'equipment_kinds' => null, 'include_properties' => true,
+                'include_quantities' => true, 'include_estimate_links' => true, 'answer_kind' => 'elements', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame(['pump', 'ventilation_unit'], $seen['equipment_kinds'], json_encode($seen));
+        self::assertNull($seen['equipment_kind']);
+        self::assertNull($seen['element_query']);
+        self::assertFalse($seen['include_properties']);
+        self::assertFalse($seen['include_quantities']);
+        self::assertTrue($seen['include_estimate_links']);
+        self::assertSame(20, $seen['limit']);
+        self::assertSame(0, $seen['offset']);
+    }
+
+    public static function singleEquipmentWithEstimateLinks(): array
+    {
+        return [
+            ['насосов', 'pump'], ['кондиционеров', 'air_conditioner'], ['вентиляторов', 'fan'],
+            ['котлов', 'boiler'], ['чиллеров', 'chiller'], ['вентиляционных установок', 'ventilation_unit'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('singleEquipmentWithEstimateLinks')]
+    public function test_single_equipment_count_preserves_requested_estimate_links(string $equipment, string $kind): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Сколько '.$equipment.' найдено в BIM-моделях нашего объекта и есть ли связи со сметными позициями?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'single', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
+                'answer_kind' => 'models', 'include_estimate_links' => false, 'offset' => 20, 'limit' => 1], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame($kind, $seen['equipment_kind'] ?? $seen['equipment_kinds'][0]);
+        self::assertSame('elements', $seen['answer_kind']);
+        self::assertNull($seen['model_query']);
+        self::assertTrue($seen['include_estimate_links']);
+        self::assertSame(20, $seen['limit']);
+        self::assertSame(0, $seen['offset']);
+        self::assertFalse($seen['include_properties']);
+        self::assertFalse($seen['include_quantities']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('singleEquipmentWithEstimateLinks')]
+    public function test_model_catalog_with_equipment_count_does_not_discard_the_count(string $equipment, string $kind): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Какие версии BIM-моделей нашего объекта доступны и сколько '.$equipment.' найдено?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $args = ['project_id' => 52, 'model_query' => null, 'answer_kind' => 'elements', 'limit' => 20,
+            'equipment_kind' => $kind === 'ventilation_unit' ? null : $kind,
+            'equipment_kinds' => $kind === 'ventilation_unit' ? [$kind] : null, 'include_estimate_links' => true];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'catalog-and-count', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode($args, JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('elements', $seen['answer_kind']);
+        self::assertSame($kind, $seen['equipment_kind'] ?? $seen['equipment_kinds'][0]);
+        self::assertSame(52, $seen['project_id']);
+    }
+
+    public function test_current_ifc_catalog_discards_stale_element_and_version_filters(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Какие версии IFC-моделей нашего объекта доступны сейчас и какие из них текущие? Хочу убедиться, что команда работает с актуальной моделью.';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'mixed', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
+                'element_query' => 'вентиляционные установки', 'equipment_kinds' => null, 'version_id' => 88, 'compare_version_id' => 77, 'include_properties' => true,
+                'include_quantities' => true, 'include_estimate_links' => true, 'answer_kind' => 'elements', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('models', $seen['answer_kind']); self::assertNull($seen['model_query']); self::assertNull($seen['equipment_kinds']);
+        self::assertNull($seen['equipment_kind']);
+        self::assertNull($seen['element_query']); self::assertNull($seen['version_id']); self::assertNull($seen['compare_version_id']);
+        self::assertFalse($seen['include_properties']);
+        self::assertFalse($seen['include_quantities']);
+        self::assertFalse($seen['include_estimate_links']);
+        self::assertSame(20, $seen['limit']);
+        self::assertSame(0, $seen['offset']);
+    }
+
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
     {
         $arguments = ['domain' => 'contracts', 'entity_type' => 'contract', 'query' => 'Подрядчик', 'project_id' => null];

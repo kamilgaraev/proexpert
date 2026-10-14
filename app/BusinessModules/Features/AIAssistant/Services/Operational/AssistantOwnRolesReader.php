@@ -22,7 +22,7 @@ final readonly class AssistantOwnRolesReader extends AssistantOrganizationOperat
 
     public static function matches(string $query): bool
     {
-        return self::hasIntent($query) && preg_match('/назначь|измени|выдай|отзови|создай|удали|могу\s+назнач|сотрудник|пользовател|проект|\bправ[а-яё]*|сч[её]т|выгруз|пакет|уведомлен/iu', $query) !== 1;
+        return self::hasIntent($query) && preg_match('/назначь|измени|выдай|отзови|создай|удали|могу.*(?:назнач|выдать)|сотрудник|пользовател|проект|\bправ[а-яё]*|сч[её]т|выгруз|пакет|уведомлен/iu', $query) !== 1;
     }
 
     protected function collect(User $actor, int $organizationId): array

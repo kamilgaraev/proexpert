@@ -12,6 +12,13 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantAdminGovernanceIntentTest extends TestCase
 {
+    public function test_current_own_roles_with_temporary_assignments_do_not_select_assignable_roles(): void
+    {
+        $query = 'Какие роли у меня сейчас в этой организации? Есть ли временные назначения и когда они заканчиваются?';
+        self::assertSame('get_own_organization_roles', \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query)['name']);
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOwnRolesReader::matches('Какие роли у меня и какие роли могу ли назначить сотруднику?'));
+    }
+
     public function test_natural_governance_questions_keep_organization_scope_despite_selected_project(): void
     {
         foreach ([

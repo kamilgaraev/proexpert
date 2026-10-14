@@ -17,7 +17,9 @@ final readonly class GetProjectPaymentReadinessTool implements AIToolInterface
     public function getDescription(): string { return trans_message('ai_assistant_decisions.payment_description'); }
     public function getParametersSchema(): array
     {
-        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1]], 'required' => ['project_id'], 'additionalProperties' => false];
+        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1],
+            'offset' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 9999, 'description' => trans_message('ai_assistant_decisions.payment_offset')]],
+            'required' => ['project_id'], 'additionalProperties' => false];
     }
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {

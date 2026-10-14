@@ -12,6 +12,37 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantExportHistoryIntentTest extends TestCase
 {
+    public function test_subscription_and_export_question_reads_both_scopes_without_capturing_other_domains(): void
+    {
+        $query = 'Есть ли у меня активные регулярные отчёты и есть ли по нашему объекту готовые выгрузки? Хочу понять, что уже можно посмотреть.';
+        $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        self::assertSame('get_project_report_delivery_summary', AssistantOperationalReaderRegistry::intent($query)['name']);
+        self::assertSame(['name' => 'get_project_report_delivery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertContains('get_project_report_delivery_summary', AssistantToolSurface::names(['get_project_report_delivery_summary'], $plan));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_report_delivery_summary', ['project_id' => 999]));
+        foreach (['Хочу оценить, есть ли активные регулярные отчёты и готовые выгрузки по объекту?',
+            'Для оценки: есть ли активные регулярные отчёты и готовые выгрузки по объекту?'] as $readQuery) {
+            self::assertSame('get_project_report_delivery_summary', AssistantOperationalReaderRegistry::intent($readQuery)['name'] ?? null);
+        }
+        foreach ([$query.' И какие у меня права?', $query.' И что с бюджетом?', $query.' И сколько насосов в BIM?',
+            $query.' И какие сделки CRM?', $query.' И что с охраной труда?', $query.' И какие платежи нужно оплатить?',
+            $query.' И сколько расходов?', $query.' И какие долги?', 'Создай регулярные отчёты и скачай готовые выгрузки.'] as $mixed) {
+            self::assertNull(AssistantOperationalReaderRegistry::intent($mixed));
+        }
+        foreach (['какова текущая стоимость проекта', 'какие цены', 'что с финансами', 'сколько денег', 'в какой валюте бюджет',
+            'какой НДС', 'какие накладные расходы', 'есть ли кредит', 'какие сроки задач', 'какие контакты организации',
+            'есть ли непрочитанные уведомления', 'какие камеры объекта', 'какие вопросы проектировщикам без ответа',
+            'какие отчёты есть в каталоге', 'какой критический путь графика проекта', 'каковы сроки проекта',
+            'обнови регулярные отчёты', 'согласуйте документы', 'каково ценообразование услуг',
+            'какие зоны готовы к приёмке'] as $topic) {
+            $mixed = $query.' И '.$topic.'?';
+            $mixedPlan = ['request' => ['message' => $mixed, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            self::assertNull(AssistantOperationalReaderRegistry::intent($mixed), $topic);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($mixedPlan), $topic);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_report_delivery_summary', $mixed), $topic);
+        }
+    }
+
     public function test_manager_history_questions_select_a_read_only_source_and_mixed_actions_do_not(): void
     {
         foreach (['Какие готовые выгрузки отчётов нашего объекта у нас есть? Какие ещё обрабатываются и какие завершились ошибкой?',

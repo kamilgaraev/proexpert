@@ -208,6 +208,89 @@ final class AssistantDirectorDecisionsTest extends TestCase
         self::assertNull($withoutApprovalAccess['data']['items'][0]['approvals']['total']);
     }
 
+    public function test_payment_budget_readiness_uses_current_native_checks_without_writes_and_revalidates(): void
+    {
+        $organizationId = $this->fixture->organization->id;
+        $document = Model::withoutEvents(fn () => PaymentDocument::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $this->project->id, 'document_type' => 'invoice',
+            'document_number' => 'CURRENT-LIMIT', 'document_date' => today(), 'direction' => 'outgoing', 'invoice_type' => 'other',
+            'amount' => '1000.00', 'paid_amount' => '0.00', 'remaining_amount' => '1000.00', 'currency' => 'RUB', 'status' => 'approved',
+            'due_date' => today(), 'metadata' => ['private' => str_repeat('S', 1000000)],
+        ]));
+        $budget = Model::withoutEvents(function () use ($organizationId, $document) {
+            $period = \App\BusinessModules\Features\Budgeting\Models\BudgetPeriod::query()->create([
+                'organization_id' => $organizationId, 'code' => 'READINESS', 'name' => 'Текущий месяц', 'period_type' => 'month',
+                'starts_at' => now()->startOfMonth()->toDateString(), 'ends_at' => now()->endOfMonth()->toDateString(), 'status' => 'open']);
+            $scenario = \App\BusinessModules\Features\Budgeting\Models\BudgetScenario::query()->create([
+                'organization_id' => $organizationId, 'code' => 'READINESS', 'name' => 'Базовый', 'scenario_type' => 'base', 'is_default' => true, 'is_active' => true]);
+            $article = \App\BusinessModules\Features\Budgeting\Models\BudgetArticle::query()->create([
+                'organization_id' => $organizationId, 'code' => 'READINESS', 'name' => 'Платежи', 'budget_kind' => 'bdds',
+                'flow_direction' => 'outflow', 'is_leaf' => true, 'is_active' => true]);
+            $center = \App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter::query()->create([
+                'organization_id' => $organizationId, 'center_type' => 'project', 'code' => 'READINESS', 'name' => 'ЦФО проекта', 'is_active' => true]);
+            $version = \App\BusinessModules\Features\Budgeting\Models\BudgetVersion::query()->create([
+                'organization_id' => $organizationId, 'budget_period_id' => $period->id, 'scenario_id' => $scenario->id,
+                'budget_kind' => 'bdds', 'version_number' => 1, 'name' => 'Активный бюджет', 'status' => 'active', 'approved_at' => now(), 'activated_at' => now()]);
+            $line = \App\BusinessModules\Features\Budgeting\Models\BudgetLine::query()->create([
+                'budget_version_id' => $version->id, 'budget_article_id' => $article->id, 'responsibility_center_id' => $center->id, 'currency' => 'RUB']);
+            $document->updateQuietly(['budget_article_id' => $article->id, 'responsibility_center_id' => $center->id]);
+            return \App\BusinessModules\Features\Budgeting\Models\BudgetAmount::query()->create([
+                'budget_line_id' => $line->id, 'month' => now()->startOfMonth()->toDateString(), 'plan_amount' => '500.00', 'forecast_amount' => '500.00', 'currency' => 'RUB']);
+        });
+        $reader = app(AssistantProjectPaymentReader::class);
+        $before = $document->fresh()->getAttributes();
+        $checkCount = \App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck::query()->count();
+        $read = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
+        $check = $read['data']['items'][0]['budget_limit_check'];
+        self::assertSame('requires_exception', $check['status']);
+        self::assertSame('require_exception', $check['decision']);
+        self::assertSame('500.00', $check['excess_amount']);
+        self::assertFalse($check['override_applied']);
+        self::assertStringContainsString('обоснование исключения в документе не записано', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('SSSSSS', json_encode($read));
+        self::assertArrayNotHasKey('can_override', $check);
+        self::assertSame($before, $document->fresh()->getAttributes());
+        self::assertSame($checkCount, \App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck::query()->count());
+        self::assertTrue($reader->matchesReference($this->fixture->owner, $organizationId, $read['source_refs'][0]));
+        $document->updateQuietly(['budget_limit_override_reason' => 'PRIVATE-OVERRIDE-REASON']);
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $organizationId, $read['source_refs'][0]));
+        $overridden = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
+        self::assertTrue($overridden['data']['items'][0]['budget_limit_check']['override_applied']);
+        self::assertStringNotContainsString('PRIVATE-OVERRIDE-REASON', json_encode($overridden));
+        self::assertStringContainsString('записано обоснование исключения', $overridden['server_formatted_answer']);
+        $budget->updateQuietly(['plan_amount' => '2000.00']);
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $organizationId, $overridden['source_refs'][0]));
+        $available = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
+        self::assertSame('allow', $available['data']['items'][0]['budget_limit_check']['decision']);
+        $budget->updateQuietly(['plan_amount' => '500.00']);
+        $document->updateQuietly(['budget_limit_override_reason' => null]);
+        for ($i = 0; $i < 20; $i++) {
+            Model::withoutEvents(fn () => PaymentDocument::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $this->project->id, 'document_type' => 'invoice',
+                'document_number' => 'EARLIER-'.$i, 'document_date' => today(), 'direction' => 'outgoing', 'invoice_type' => 'other',
+                'amount' => '1.00', 'paid_amount' => '0.00', 'remaining_amount' => '1.00', 'currency' => 'RUB', 'status' => 'draft',
+                'due_date' => today()->subDay(),
+            ]));
+        }
+        $firstPage = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
+        self::assertSame(21, $firstPage['data']['total']);
+        self::assertSame(20, $firstPage['data']['next_offset']);
+        self::assertSame(1, $firstPage['data']['budget_check_coverage']['outside_page']);
+        self::assertNull($firstPage['data']['items'][0]['budget_limit_check']['excess_amount']);
+        self::assertStringContainsString('начиная с 21-го', $firstPage['server_formatted_answer']);
+        self::assertStringContainsString('не входят в эту проверку', $firstPage['server_formatted_answer']);
+        self::assertNotContains($document->id, array_column($firstPage['data']['items'], 'id'));
+        $lastPage = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id, 'offset' => 20]);
+        self::assertSame($document->id, $lastPage['data']['items'][0]['id']);
+        self::assertSame('500.00', $lastPage['data']['items'][0]['budget_limit_check']['excess_amount']);
+        self::assertNull($lastPage['data']['next_offset']);
+        self::assertFalse($lastPage['data']['has_more']);
+        self::assertNotNull($reader->verifiedAnswer($lastPage, $this->fixture->owner, $organizationId));
+        $wrongPage = $lastPage['source_refs'][0]; $wrongPage['offset'] = 0;
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $organizationId, $wrongPage));
+        self::assertSame($checkCount, \App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck::query()->count());
+    }
+
     public function test_payment_deadline_directions_and_bounded_approval_unknown_preserve_invoice_totals(): void
     {
         $base = ['organization_id' => $this->fixture->organization->id, 'project_id' => $this->project->id, 'document_type' => 'invoice',

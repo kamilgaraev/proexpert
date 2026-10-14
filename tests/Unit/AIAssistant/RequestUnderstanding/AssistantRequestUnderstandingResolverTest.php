@@ -13,6 +13,35 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_mutation_commands_share_classification_with_project_read_guards(): void
+    {
+        foreach ([
+            'create' => ['создай', 'добавь', 'создайте', 'добавьте'],
+            'update' => ['измени', 'обнови', 'назначь', 'перенеси'],
+            'delete' => ['удали', 'удалите'],
+            'approve' => ['утверди', 'согласуй', 'одобри', 'подтверди платеж'],
+            'send' => ['отправь уведомление', 'уведоми'],
+        ] as $intent => $commands) {
+            foreach ($commands as $command) {
+                foreach (['', 'Пожалуйста, ', 'Прошу: '] as $prefix) {
+                    self::assertSame($intent, (new AssistantRequestUnderstandingResolver)->resolve($prefix.$command.' запись')->primaryIntent);
+                    $scheduleQuery = $prefix.$command.' задачи нашего объекта, задерживающие работы';
+                    self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($scheduleQuery));
+                    $paymentQuery = $prefix.$command.' неоплаченные счета нашего объекта с превышенным бюджетным лимитом';
+                    self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($paymentQuery));
+                    self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches(
+                        'Покажи задачи нашего объекта, задерживающие работы, и '.$command.' запись'));
+                    self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches(
+                        'Покажи неоплаченные счета нашего объекта и '.$command.' запись'));
+                }
+            }
+        }
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent::type('Какие задачи задерживают этапы?'));
+        foreach (['Обновите сроки', 'Согласуйте документы', 'Отправь счета', 'Обновить сроки', 'Перенести задачи'] as $command) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent::containsRequest($command));
+        }
+    }
+
     public function test_negative_pdf_report_request_is_text_rag_read_only(): void
     {
         $result = (new AssistantRequestUnderstandingResolver)->resolve(

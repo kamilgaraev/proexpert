@@ -798,6 +798,47 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
     }
 
+    public function test_project_model_catalog_and_equipment_read_beyond_five_preserve_current_scope(): void
+    {
+        $ids = [];
+        for ($i = 0; $i < 7; $i++) {
+            $version = $this->model('Модель '.$i, 'current-'.$i.'.ifc');
+            $ids[] = $version->id;
+            $derivative = $this->readyIndex($version, 1);
+            $this->element($version, 'IFCPUMP', 'Насос '.$i)->updateQuietly([
+                'derivative_id' => $derivative->id, 'properties' => ['_ifc' => ['schema_version' => 2]]]);
+        }
+        $old = $this->model('Прежняя модель', 'old.ifc');
+        $old->updateQuietly(['is_current' => false]);
+        $catalog = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'answer_kind' => 'models']);
+        self::assertSame($ids, array_column(array_column($catalog['models'], 'version'), 'id'));
+        self::assertFalse($catalog['needs_clarification']);
+        self::assertSame(7, substr_count($catalog['server_formatted_answer'], 'Текущая версия.'));
+        self::assertStringNotContainsString('Прежняя модель', $catalog['server_formatted_answer']);
+        foreach ($catalog['models'] as $model) { self::assertSame([], $model['elements']); }
+        self::assertNotNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
+        $equipment = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'include_estimate_links' => true]);
+        self::assertCount(7, $equipment['models']);
+        foreach ($equipment['models'] as $model) {
+            self::assertSame(['pump' => 1, 'ventilation_unit' => 0], $model['equipment_counts']);
+            self::assertSame('complete', $model['semantic_coverage']['status']);
+        }
+        $single = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
+        self::assertCount(7, $single['models']);
+        self::assertFalse($single['bim_evidence']['too_many_models']);
+        foreach ($single['models'] as $model) {
+            self::assertSame(1, $model['total']);
+            self::assertSame('complete', $model['semantic_coverage']['status']);
+            self::assertSame('unavailable', $model['estimate_link_coverage']);
+        }
+        $this->allowEstimateLinks();
+        $authorized = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
+        self::assertCount(7, $authorized['models']);
+        foreach ($authorized['models'] as $model) { self::assertSame('page_limited', $model['estimate_link_coverage']); }
+        \App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion::query()->whereKey($ids[0])->update(['is_current' => false]);
+        self::assertNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
+    }
+
     public function test_mixed_equipment_counts_cover_all_rows_and_keep_ventilation_units_distinct_from_fans(): void
     {
         $version = $this->model('Севгу', 'mixed.ifc');

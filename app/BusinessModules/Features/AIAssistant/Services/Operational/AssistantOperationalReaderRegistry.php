@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
+
 final class AssistantOperationalReaderRegistry
 {
     private const STAFF_TOPIC = '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu';
@@ -19,6 +21,7 @@ final class AssistantOperationalReaderRegistry
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
+        'get_project_report_delivery_summary' => AssistantReportDeliverySummaryReader::class,
         'get_project_camera_roster' => AssistantProjectCameraReader::class,
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
         'get_project_safety_summary' => AssistantProjectSafetyReader::class,
@@ -80,6 +83,23 @@ final class AssistantOperationalReaderRegistry
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
             return null;
         }
+        if (AssistantReportDeliverySummaryReader::matches($query)) {
+            foreach (AssistantRequiredProjectRead::READERS as $reader) {
+                if (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : $reader::matches($query)) { return null; }
+            }
+            foreach (self::TOPICS as $pattern) {
+                if (in_array($pattern, [AssistantProjectExportHistoryReader::INTENT_PATTERN, AssistantProjectReportCatalogReader::INTENT_PATTERN], true)) { continue; }
+                if (preg_match($pattern, $query) === 1) { return null; }
+            }
+            foreach (self::ORGANIZATION_TOOLS as $reader) {
+                if ($reader !== AssistantReportSubscriptionsReader::class && $reader::hasIntent($query)) { return null; }
+            }
+            foreach (self::NAMED_TOOLS as $reader) {
+                if ($reader::hasIntent($query)) { return null; }
+            }
+            if (preg_match('/каталог|шаблон/iu', $query) === 1) { return null; }
+            return ['name' => 'get_project_report_delivery_summary', 'reader' => AssistantReportDeliverySummaryReader::class];
+        }
         foreach (self::NAMED_TOOLS as $name => $class) {
             if (! $class::hasIntent($query)) {
                 continue;
@@ -126,6 +146,7 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
             if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {

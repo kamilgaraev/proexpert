@@ -193,19 +193,20 @@ final class AssistantRequestUnderstandingResolver
             return 'analyze';
         }
 
-        if ($this->isCreateRequest($normalized)) {
+        $mutationIntent = AssistantMutationIntent::type($normalized);
+        if ($mutationIntent === 'create') {
             return 'create';
         }
 
-        if ($this->isUpdateRequest($normalized)) {
+        if ($mutationIntent === 'update') {
             return 'update';
         }
 
-        if ($this->hasLeadingCommand($normalized, ['отправь уведомление', 'уведоми'])) {
+        if ($mutationIntent === 'send') {
             return 'send';
         }
 
-        if ($this->isDeleteRequest($normalized)) {
+        if ($mutationIntent === 'delete') {
             return 'delete';
         }
 
@@ -451,7 +452,7 @@ final class AssistantRequestUnderstandingResolver
             return false;
         }
 
-        return $this->hasLeadingCommand($normalized, ['утверди', 'согласуй', 'одобри', 'подтверди платеж']);
+        return AssistantMutationIntent::type($normalized) === 'approve';
     }
 
     private function isNavigationRequest(string $normalized): bool
@@ -507,32 +508,6 @@ final class AssistantRequestUnderstandingResolver
         return is_array($reference) && ($reference['type'] ?? null) === 'project'
             && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
             && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
-    }
-
-    private function isCreateRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['создай', 'добавь', 'создайте', 'добавьте']);
-    }
-
-    private function isUpdateRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['измени', 'обнови', 'назначь', 'перенеси']);
-    }
-
-    private function isDeleteRequest(string $normalized): bool
-    {
-        return $this->hasLeadingCommand($normalized, ['удали', 'удалите']);
-    }
-
-    private function hasLeadingCommand(string $normalized, array $commands): bool
-    {
-        foreach ($commands as $command) {
-            if (preg_match('/^(?:пожалуйста |прошу )?'.preg_quote($command, '/').'(?: |$)/u', $normalized) === 1) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function isQuestionRequest(string $normalized): bool

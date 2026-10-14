@@ -11,6 +11,28 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_overdue_manager_question_requires_full_schedule_read(): void
+    {
+        foreach (['Какие просроченные задачи нашего объекта сейчас задерживают этапы и что руководителю проверить в первую очередь?',
+            'Какие задачи нашего объекта задерживают работы?'] as $query) {
+            self::assertSame(['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => 52, 'focus' => 'overdue_impact']], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        foreach (['Перенеси просроченные задачи нашего объекта.',
+            'Перенести задачи нашего объекта, задерживающие работы, на завтра',
+            'Перенесите задачи нашего объекта, задерживающие этапы, на завтра',
+            'Хочу перенести задачи нашего объекта, задерживающие сроки, на завтра',
+            'Сдвинь задачи нашего объекта, задерживающие этапы, на завтра',
+            'Переносим задачи нашего объекта, задерживающие сроки, на завтра',
+            'Обнови сроки задач нашего объекта, задерживающих работы',
+            'Пожалуйста, обнови сроки задач нашего объекта, задерживающих этапы',
+            'Прошу добавьте задачи нашего объекта, задерживающие сроки',
+            'Покажи задачи нашего объекта, задерживающие этапы, и обнови график',
+            'Обновите сроки задач нашего объекта, задерживающих работы',
+            'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
+        }
+    }
+
     public function test_operational_director_reads_bind_project_and_do_not_replace_mixed_answers(): void
     {
         $queries = [
@@ -103,6 +125,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $payment = $this->plan('Какие счета по нашему объекту ещё не оплачены, сколько по каждому и что мне проверить перед оплатой?');
         self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($payment));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 20]));
+        $nextPayment = $this->plan('Покажи неоплаченные счета нашего объекта, начиная с 21-го. Что проверить перед оплатой?');
+        self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52, 'offset' => 20]], AssistantRequiredProjectRead::fromPlan($nextPayment));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($nextPayment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 0]));
         self::assertSame('procurement', AssistantRequiredProjectRead::fromPlan($this->plan('Что со снабжением нашего объекта: какие поставки и заявки требуют решения сегодня, что может помешать ближайшим работам?'))['arguments']['focus']);
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Измени зависимости задач нашего проекта.')));
         foreach (['Какие задачи влияют на сроки нашего проекта и сколько потрачено за сентябрь 2026?',
@@ -193,6 +219,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'По нашему объекту какие платежные документы сейчас готовы к оплате, а какие задерживаются? Что проверить перед оплатой?',
             'Какие платёжные документы нашего объекта просрочены?',
             'Какие счета по нашему объекту готовы к оплате?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен бюджетный лимит?',
+            'Какие счета нашего объекта готовы к оплате и у каких превышен лимит бюджета?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и кто должен их подтвердить?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и кто должен их одобрить?',
         ] as $query) {
             self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]],
                 AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
@@ -203,6 +233,14 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие платежные документы готовы к оплате и какие акты требуют согласования?',
             'Оплати готовые платежные документы нашего объекта.',
             'Какие платежные документы нашего объекта готовы к оплате и каков бюджет?',
+            'Какие счета нашего объекта готовы к оплате, превышен ли бюджетный лимит и каков бюджет проекта?',
+            'Какие неоплаченные счета нашего объекта превышают бюджетный лимит и каковы расходы проекта?',
+            'Покажи неоплаченные счета нашего объекта и обнови сроки оплаты',
+            'Покажи неоплаченные счета нашего объекта и перечисли все бюджетные лимиты по всем статьям организации',
+            'Какие счета нашего объекта готовы к оплате и каковы все бюджетные лимиты по всем статьям организации?',
+            'Какие счета нашего объекта готовы к оплате и покажи список бюджетных лимитов?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен кредитный лимит?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен лимит контрагента?',
         ] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($query), $query);
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);

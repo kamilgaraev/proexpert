@@ -2053,7 +2053,7 @@ class AIAssistantService
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
-            'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_export_history', 'get_project_camera_roster', 'get_organization_access_review_summary', 'get_organization_one_c_exchange_summary', 'get_contract_supplementary_readiness', 'get_organization_notifications', 'get_organization_activity_summary', 'get_organization_supplier_roster', 'get_organization_project_roster', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_daily_staff', 'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance', 'get_organization_active_packages', 'get_organization_effective_modules', 'get_own_project_access', 'get_organization_purchase_orders', 'get_catalog_lookup', 'get_project_deliveries', 'get_project_staff_roster', 'get_project_act_readiness',
+            'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_export_history', 'get_project_report_delivery_summary', 'get_project_camera_roster', 'get_organization_access_review_summary', 'get_organization_one_c_exchange_summary', 'get_contract_supplementary_readiness', 'get_organization_notifications', 'get_organization_activity_summary', 'get_organization_supplier_roster', 'get_organization_project_roster', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_daily_staff', 'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance', 'get_organization_active_packages', 'get_organization_effective_modules', 'get_own_project_access', 'get_organization_purchase_orders', 'get_catalog_lookup', 'get_project_deliveries', 'get_project_staff_roster', 'get_project_act_readiness',
         ], true);
     }
 
@@ -2107,11 +2107,27 @@ class AIAssistantService
                     $args['answer_kind'] = 'materials';
                     $args['include_quantities'] = $args['include_properties'] = $args['include_estimate_links'] = false;
                 }
+                if (preg_match('/(?:ifc|bim|бим|модел)/iu', $requestQuery) === 1
+                    && (AssistantBimModelSelector::hasProjectScope($requestQuery) || preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1)
+                    && preg_match('/каки[её].*верси|верси.*(?:текущ|актуальн|доступн)/iu', $requestQuery) === 1
+                    && $requestedKind === null
+                    && preg_match('/сравни|разниц|изменен|элемент|вентиляц|приточ|вытяжн|материал|свойств|объ[её]м/iu', $requestQuery) !== 1) {
+                    $args['answer_kind'] = 'models';
+                    $args['model_query'] = null;
+                    $args['offset'] = 0;
+                    foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
+                        'property_value', 'quantity_name', 'version_id', 'compare_version_id', 'equipment_kind', 'equipment_kinds'] as $field) {
+                        if (isset($bimSchema[$field])) { $args[$field] = null; }
+                    }
+                    $args['include_quantities'] = $args['include_properties'] = $args['include_estimate_links'] = false;
+                }
             }
             if ($requestedKind !== null && isset($bimSchema['equipment_kind'])
                 && $this->simpleBimEquipmentQuestion($requestQuery, $namedProject ?? '')) {
                 $args['equipment_kind'] = $requestedKind;
+                if (isset($bimSchema['answer_kind'])) { $args['answer_kind'] = 'elements'; }
                 if (isset($bimSchema['equipment_kinds'])) { $args['equipment_kinds'] = null; }
+                if (preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1) { $args['model_query'] = null; }
                 foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
                     'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
                     if (isset($bimSchema[$field])) { $args[$field] = null; }
@@ -2129,6 +2145,7 @@ class AIAssistantService
                 && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)) {
                 $args['equipment_kinds'] = $requestedKinds;
                 $args['equipment_kind'] = null;
+                if (preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1) { $args['model_query'] = null; }
                 $args['answer_kind'] = 'elements';
                 foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
                     'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
@@ -2139,6 +2156,13 @@ class AIAssistantService
                 }
                 $args['offset'] = 0;
                 $args['limit'] = 1;
+            }
+            if ($requestedKinds !== [] && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)
+                && $this->bimEstimateLinksRequested($requestQuery)) {
+                if (isset($bimSchema['include_estimate_links'])) {
+                    $args['include_estimate_links'] = true;
+                }
+                if (isset($bimSchema['limit'])) { $args['limit'] = 20; }
             }
             $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
             if ($projectScopeRequested && $namedProject === null) {
@@ -2312,7 +2336,7 @@ class AIAssistantService
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
-                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_export_history', 'get_project_camera_roster', 'get_organization_access_review_summary', 'get_organization_one_c_exchange_summary', 'get_contract_supplementary_readiness', 'get_organization_notifications', 'get_organization_activity_summary', 'get_organization_supplier_roster', 'get_organization_project_roster', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_daily_staff', 'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance', 'get_organization_active_packages', 'get_organization_effective_modules', 'get_own_project_access', 'get_organization_purchase_orders', 'get_catalog_lookup', 'get_project_deliveries', 'get_project_staff_roster', 'get_project_act_readiness', 'get_bim_model_elements',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_export_history', 'get_project_report_delivery_summary', 'get_project_camera_roster', 'get_organization_access_review_summary', 'get_organization_one_c_exchange_summary', 'get_contract_supplementary_readiness', 'get_organization_notifications', 'get_organization_activity_summary', 'get_organization_supplier_roster', 'get_organization_project_roster', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_daily_staff', 'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance', 'get_organization_active_packages', 'get_organization_effective_modules', 'get_own_project_access', 'get_organization_purchase_orders', 'get_catalog_lookup', 'get_project_deliveries', 'get_project_staff_roster', 'get_project_act_readiness', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
@@ -3908,7 +3932,8 @@ class AIAssistantService
         $kind = (new AssistantBimIndexProjection)->queryEquipment($question);
         if ($kind === null || ! $this->simpleBimEquipmentQuestion($question, $alias)) { return null; }
         $arguments = ['model_query' => $alias, 'project_id' => $projectId, 'equipment_kind' => $kind,
-            'include_properties' => false, 'include_quantities' => false, 'include_estimate_links' => false];
+            'include_properties' => false, 'include_quantities' => false,
+            'include_estimate_links' => $this->bimEstimateLinksRequested($question)];
         try {
             if (! $this->permissionChecker->canExecuteTool($actor, 'get_bim_model_elements', $arguments, true)
                 || ! $this->scopedBimAliasMatches($actor, $organizationId, $projectId, $alias)) { return null; }
@@ -3933,6 +3958,11 @@ class AIAssistantService
             'replaced' => true, 'validation_status' => 'partial', 'needs_clarification' => true, 'source_refs' => []];
     }
 
+    private function bimEstimateLinksRequested(string $question): bool
+    {
+        return preg_match('/связ[а-яё]*\s+со?\s+сметн|сметн[а-яё]*\s+позици/iu', $question) === 1;
+    }
+
     private function simpleBimEquipmentQuestion(string $question, string $alias): bool
     {
         return count($this->simpleBimEquipmentKinds($question, $alias)) === 1;
@@ -3947,7 +3977,7 @@ class AIAssistantService
         $kinds = array_values(array_unique(array_map(fn (string $term): string => $projection->queryEquipment($term) ?? 'ventilation_unit', $equipmentTerms[0])));
         if ($kinds === []) { return []; }
         $remaining = preg_replace($equipmentPattern, ' ', $remaining ?? '');
-        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|и|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
+        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|и|ли|со?|наш[\pL]*|объект[\pL]*|найдено|связ[\pL]*|сметн[\pL]*|позици[\pL]*|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
 
         return preg_match('/[\pL\pN]/u', $remaining ?? $question) === 0 ? $kinds : [];
     }

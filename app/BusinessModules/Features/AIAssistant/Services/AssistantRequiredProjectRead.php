@@ -8,24 +8,25 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResol
 
 final readonly class AssistantRequiredProjectRead
 {
+    public const READERS = [
+        'get_project_finance_overview' => AssistantProjectFinanceOverview::class,
+        'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::class,
+        'get_project_workforce_summary' => AssistantProjectWorkforceReader::class,
+        'get_project_payment_readiness' => AssistantProjectPaymentReader::class,
+        'get_project_machinery_summary' => AssistantProjectMachineryReader::class,
+        'get_project_handover_summary' => AssistantProjectHandoverReader::class,
+        'get_project_contract_roster' => AssistantProjectContractRosterReader::class,
+        'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class,
+    ];
+
     public static function decisionReader(string $toolName, string $query): ?string
     {
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
         if ($operational !== null) { return $operational['name'] === $toolName ? $operational['reader'] : null; }
         if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::hasIntent($query)) { return null; }
         if ($toolName !== 'get_project_handover_summary' && AssistantProjectHandoverReader::hasIntent($query)) { return null; }
-        return match ($toolName) {
-            'get_project_finance_overview' => AssistantProjectFinanceOverview::matches($query) ? AssistantProjectFinanceOverview::class : null,
-            'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::matches($query) ? AssistantProjectScheduleImpactReader::class : null,
-            'get_project_workforce_summary' => AssistantProjectWorkforceReader::matches($query) ? AssistantProjectWorkforceReader::class : null,
-            'get_project_payment_readiness' => AssistantProjectPaymentReader::matches($query) ? AssistantProjectPaymentReader::class : null,
-            'get_project_machinery_summary' => AssistantProjectMachineryReader::matches($query) ? AssistantProjectMachineryReader::class : null,
-            'get_project_handover_summary' => AssistantProjectHandoverReader::matches($query) ? AssistantProjectHandoverReader::class : null,
-            'get_project_contract_roster' => AssistantProjectContractRosterReader::matches($query) ? AssistantProjectContractRosterReader::class : null,
-            'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
-                ? \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class : null,
-            default => null,
-        };
+        $reader = self::READERS[$toolName] ?? null;
+        return $reader !== null && $reader::matches($query) ? $reader : null;
     }
 
     public static function fromPlan(array $plan): ?array
@@ -78,7 +79,12 @@ final readonly class AssistantRequiredProjectRead
             return ['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => $scope->projectId]];
         }
         if (AssistantProjectPaymentReader::matches($query)) {
-            return ['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => $scope->projectId]];
+            $arguments = ['project_id' => $scope->projectId];
+            if (preg_match('/начиная\s+с\s+([0-9]+)(?:\s*-\s*го)?/iu', $query, $page) === 1) {
+                if (strlen($page[1]) > 5 || (int) $page[1] < 1 || (int) $page[1] > 10000) { return null; }
+                $arguments['offset'] = (int) $page[1] - 1;
+            }
+            return ['name' => 'get_project_payment_readiness', 'arguments' => $arguments];
         }
         if (AssistantProjectWorkforceReader::matches($query)) {
             $period = (new AssistantPeriodResolver)->resolve($query);
@@ -143,6 +149,8 @@ final readonly class AssistantRequiredProjectRead
             || $toolName === 'assistant_domain_search' && ($bound['predicate'] ?? null) !== 'overdue')
             && is_string($arguments['cursor'] ?? null)) { $bound['cursor'] = $arguments['cursor']; }
         if ($toolName === 'get_project_material_stock' && is_int($arguments['offset'] ?? null)) { $bound['offset'] = $arguments['offset']; }
+        if ($toolName === 'get_project_payment_readiness' && is_int($arguments['offset'] ?? null)
+            && $arguments['offset'] >= 0 && $arguments['offset'] <= 9999 && ! array_key_exists('offset', $bound)) { $bound['offset'] = $arguments['offset']; }
         if ($toolName === 'search_assistant_documents' && is_int($arguments['metadata_offset'] ?? null)) { $bound['metadata_offset'] = $arguments['metadata_offset']; }
         return $bound;
     }

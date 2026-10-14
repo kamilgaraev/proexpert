@@ -132,16 +132,17 @@ final readonly class AssistantBimModelReader
         if ($filters['version_id'] === null) {
             $this->lookup->apply($versions, $artifactScope, $packageScope, $projectScope, $filters['model_query']);
         }
+        $modelLimit = $filters['answer_kind'] === 'models' ? 100 : ($filters['equipment_kinds'] !== null || $filters['equipment_kind'] !== null ? 20 : 5);
         $candidates = $versions->select(array_map(static fn (string $field): string => 'design_artifact_versions.'.$field, self::VERSION_FIELDS))
-            ->orderBy('design_artifact_versions.id')->limit(6)->get();
+            ->orderBy('design_artifact_versions.id')->limit($modelLimit + 1)->get();
         $models = [];
         $references = [];
         $fetchedAt = now()->toISOString();
-        $tooMany = $candidates->count() > 5;
+        $tooMany = $candidates->count() > $modelLimit;
         $comparisonRows = [];
-        [$sourceScopes, $parentReferences] = $this->sourceScopes($candidates->take(5), $artifactScope, $packageScope, $projectScope, $organizationId, $fetchedAt);
+        [$sourceScopes, $parentReferences] = $this->sourceScopes($candidates->take($modelLimit), $artifactScope, $packageScope, $projectScope, $organizationId, $fetchedAt);
         array_push($references, ...$parentReferences);
-        foreach ($candidates->take(5) as $candidate) {
+        foreach ($candidates->take($modelLimit) as $candidate) {
             $reference = $this->reference('design_artifact_version', (int) $candidate->id, $organizationId,
                 (int) $candidate->project_id, self::VERSION_FIELDS, (string) $candidate->getRawOriginal('updated_at'), $fetchedAt,
                 $this->fieldIdentity($candidate->getAttributes(), self::VERSION_FIELDS));
@@ -149,7 +150,7 @@ final readonly class AssistantBimModelReader
             $model = ['version' => $candidate->attributesToArray(), 'source_scope' => $sourceScopes[(int) $candidate->id] ?? [],
                 'categories' => [], 'elements' => [], 'total' => null, 'has_more' => false,
                 'estimate_link_coverage' => $filters['include_estimate_links'] ? 'page_limited' : 'not_requested'];
-            if (! $tooMany) {
+            if (! $tooMany && $filters['answer_kind'] !== 'models') {
                 $scope = (clone $elements)->where('design_ifc_model_elements.project_id', $candidate->project_id)
                     ->where('design_ifc_model_elements.version_id', $candidate->id);
                 $derivatives = $this->access->engineeringEntityQuery($actor, $organizationId, 'design_model_derivative');
@@ -325,7 +326,7 @@ final readonly class AssistantBimModelReader
             'equipment_kinds.*' => ['string', 'distinct', 'in:air_conditioner,fan,pump,boiler,chiller,ventilation_unit'],
             'offset' => ['integer', 'min:0', 'max:1000000'], 'limit' => ['integer', 'min:1', 'max:20'],
             'include_estimate_links' => ['boolean'], 'include_quantities' => ['boolean'], 'include_properties' => ['boolean'],
-            'answer_kind' => ['string', 'in:elements,materials']])->validate();
+            'answer_kind' => ['string', 'in:elements,materials,models']])->validate();
         if (array_diff(array_keys($filters), ['model_query', 'element_query', 'project_id', 'version_id', 'compare_version_id', 'offset', 'limit', 'include_estimate_links',
             'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'equipment_kinds', 'include_quantities', 'include_properties', 'answer_kind']) !== []) {
             throw new \InvalidArgumentException('unsupported_bim_model_argument');
@@ -518,6 +519,18 @@ final readonly class AssistantBimModelReader
 
     private function format(array $models, array $filters, bool $tooMany): string
     {
+        if ($filters['answer_kind'] === 'models') {
+            $lines = [trans_message('ai_assistant_bim.model_catalog_scope', ['count' => count($models)])];
+            foreach ($models as $model) {
+                $version = $model['version'];
+                $lines[] = trans_message('ai_assistant_bim.model_line', ['name' => $this->text($version['title'] ?: $version['source_original_name']),
+                    'file' => $this->text($version['source_original_name']), 'version' => $this->text($version['version_number']), 'id' => $version['id']])
+                    .' '.trans_message($version['is_current'] ? 'ai_assistant_bim.version_current' : 'ai_assistant_bim.version_historical');
+            }
+            if ($tooMany) { $lines[] = trans_message('ai_assistant_bim.model_catalog_partial'); }
+            $lines[] = trans_message('ai_assistant_bim.model_catalog_basis');
+            return implode("\n\n", $lines);
+        }
         if (($filters['answer_kind'] ?? 'elements') === 'materials') { return $this->materialAnswer($models, $tooMany); }
         if ($models === []) {
             return trans_message('ai_assistant_bim.model_not_found');
@@ -602,7 +615,8 @@ final readonly class AssistantBimModelReader
             }
         }
         if ($tooMany) {
-            $lines[] = trans_message('ai_assistant_bim.too_many_models');
+            $lines[] = trans_message($filters['equipment_kinds'] !== null || $filters['equipment_kind'] !== null
+                ? 'ai_assistant_bim.too_many_equipment_models' : 'ai_assistant_bim.too_many_models');
         }
 
         return implode("\n\n", $lines);
