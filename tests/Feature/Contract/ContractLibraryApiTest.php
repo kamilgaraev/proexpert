@@ -257,9 +257,10 @@ final class ContractLibraryApiTest extends TestCase
         $this->actingAs($otherActor, 'api_admin');
         $this->getJson($base)->assertOk()->assertJsonPath('data.revision.id', $revision['id'])->assertJsonPath('data.can_create', false);
         $this->getJson($base.'/revisions/1')->assertOk()->assertJsonPath('data.id', $revision['id']);
-        $this->getJson($base.'/revisions/1/preview')->assertOk()
-            ->assertJsonPath('data.revision.id', $revision['id'])
-            ->assertJsonPath('data.html', '<article class="contract-document"><p>Сохранённые условия</p></article>');
+        $preview = $this->getJson($base.'/revisions/1/preview')->assertOk()
+            ->assertJsonPath('data.revision.id', $revision['id'])->json('data.html');
+        self::assertStringContainsString('<p>Сохранённые условия</p>', $preview);
+        self::assertStringContainsString($revision['content_hash'], $preview);
         $this->getJson('/api/v1/admin/contract-library/'.$template['item']['id'].'/versions/1')->assertNotFound();
         $this->actingAs($foreignActor, 'api_admin');
         $this->getJson($base.'/revisions/1')->assertNotFound();

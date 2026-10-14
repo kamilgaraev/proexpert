@@ -15,6 +15,9 @@ final class CalculateContractTemplateRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['values' => ['present', 'array', 'max:500']];
+        return [
+            'values' => ['present', 'array', 'max:500'],
+            'contract_id' => ['nullable', 'integer', 'min:1'],
+        ];
     }
 }
