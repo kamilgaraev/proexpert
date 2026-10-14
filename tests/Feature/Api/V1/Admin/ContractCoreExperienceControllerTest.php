@@ -15,13 +15,17 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\ContractorType;
 use App\Enums\ProjectOrganizationRole;
+use App\Models\CompletedWork;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\ContractOrganizationView;
 use App\Models\Contractor;
 use App\Models\Organization;
+use App\Models\PerformanceActLine;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -594,6 +598,100 @@ class ContractCoreExperienceControllerTest extends TestCase
         $showResponse->assertOk();
         $showResponse->assertJsonPath('data.id', $contract->id);
         $showResponse->assertJsonPath('data.organization_id', $participantContext->organization->id);
+    }
+
+    public function test_contract_details_include_frozen_and_legacy_act_units_without_lazy_work_queries(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contractor = $this->createContractor($context->organization, 'Unit contractor');
+        $contract = $this->createContract($context->organization, $project, $contractor, ['is_multi_project' => true]);
+        $contract->projects()->attach([$project->id, $otherProject->id]);
+        $act = ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id, 'project_id' => $project->id,
+            'act_document_number' => 'UNIT-CARD', 'act_date' => '2026-06-10',
+            'amount' => 2500, 'is_approved' => false, 'status' => ContractPerformanceAct::STATUS_DRAFT,
+        ]);
+        $expectedUnits = [];
+        foreach ([
+            ['stored' => 'шт', 'captured' => 'м', 'snapshot' => 'м²', 'expected' => 'шт', 'line' => true],
+            ['stored' => null, 'captured' => 'шт', 'snapshot' => 'м²', 'expected' => 'м²', 'line' => true],
+            ['stored' => null, 'captured' => 'м', 'snapshot' => null, 'expected' => 'м', 'line' => true],
+            ['stored' => null, 'captured' => 'кг', 'snapshot' => null, 'expected' => 'кг', 'line' => false],
+            ['stored' => null, 'captured' => null, 'snapshot' => null, 'expected' => null, 'line' => true],
+        ] as $case) {
+            $work = CompletedWork::query()->create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'contract_id' => $contract->id, 'user_id' => $context->user->id,
+                'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+                'quantity' => 10, 'price' => 100, 'total_amount' => 1000,
+                'completion_date' => '2026-06-10', 'status' => 'confirmed',
+                'additional_info' => ['unit_of_measurement' => $case['captured']],
+            ]);
+            $act->completedWorks()->attach($work->id, ['included_quantity' => 5, 'included_amount' => 500]);
+            if ($case['line']) {
+                PerformanceActLine::query()->create([
+                    'performance_act_id' => $act->id, 'completed_work_id' => $work->id,
+                    'line_type' => PerformanceActLine::TYPE_COMPLETED_WORK, 'title' => 'Unit work',
+                    'unit' => $case['stored'], 'quantity' => 5, 'unit_price' => 100, 'amount' => 500,
+                    'currency' => 'RUB', 'created_by' => $context->user->id,
+                    'basis_snapshot' => $case['snapshot'] === null ? [] : [
+                        'basis_type' => 'estimate_version',
+                        'estimate_item' => ['measurement_unit' => ['short_name' => $case['snapshot']]],
+                    ],
+                ]);
+            }
+            $expectedUnits[$work->id] = $case['expected'];
+        }
+        $otherAct = ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id, 'project_id' => $otherProject->id,
+            'act_document_number' => 'OTHER-PROJECT', 'act_date' => '2026-06-10',
+            'amount' => 0, 'is_approved' => false, 'status' => ContractPerformanceAct::STATUS_DRAFT,
+        ]);
+        $this->allowAdminAccess();
+
+        foreach ([
+            ["/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", 'data.performance_acts', 1],
+            ["/api/v1/admin/contracts/{$contract->id}", 'data.performance_acts', 2],
+            ["/api/v1/admin/contracts/{$contract->id}/full", 'data.performance_acts', 2],
+        ] as [$url, $actsPath, $expectedCount]) {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $response = $this->withHeaders($context->authHeaders())->getJson($url);
+                $response->assertOk();
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+            }
+            $acts = collect($response->json($actsPath));
+            if (str_ends_with($url, '/full')) {
+                $response->assertJsonPath('data.child_contracts', [])
+                    ->assertJsonPath('data.analytics.financial.child_contracts_amount', 0)
+                    ->assertJsonPath('data.analytics.counts.child_contracts', 0);
+            }
+            self::assertCount($expectedCount, $acts);
+            if ($expectedCount === 1) {
+                self::assertNotContains($otherAct->id, $acts->pluck('id')->all());
+            }
+            $payload = $acts->firstWhere('id', $act->id);
+            self::assertNotNull($payload);
+            self::assertSame(2500, $payload['amount']);
+            $works = collect($payload['completed_works'])->keyBy('id');
+            self::assertCount(5, $works);
+            foreach ($expectedUnits as $workId => $expectedUnit) {
+                self::assertArrayHasKey('unit', $works[$workId]);
+                self::assertSame($expectedUnit, $works[$workId]['unit']);
+                self::assertSame(5, $works[$workId]['included_quantity']);
+                self::assertSame(500, $works[$workId]['included_amount']);
+            }
+            $lazyWorkQueries = array_filter($queries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "completed_works" where "completed_works"."id" = ?'));
+            self::assertCount(0, $lazyWorkQueries);
+        }
+        self::assertSame(2500.0, (float) $act->fresh()->amount);
+        self::assertSame(3, PerformanceActLine::where('performance_act_id', $act->id)->whereNull('unit')->count());
     }
 
     private function createContractor(

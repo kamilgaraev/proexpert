@@ -49,6 +49,9 @@ class ContractAccessService
             $contract->load([
                 'performanceActs' => fn ($query) => $query->where('project_id', $projectId),
                 'performanceActs.completedWorks',
+                'performanceActs.completedWorks.workType',
+                'performanceActs.completedWorks.user',
+                'performanceActs.lines.completedWork:id,additional_info',
                 'payments' => fn ($query) => $query->where('project_id', $projectId),
                 'payments.transactions',
             ]);
@@ -56,6 +59,9 @@ class ContractAccessService
             $contract->load([
                 'performanceActs',
                 'performanceActs.completedWorks',
+                'performanceActs.completedWorks.workType',
+                'performanceActs.completedWorks.user',
+                'performanceActs.lines.completedWork:id,additional_info',
                 'payments.transactions',
             ]);
         }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct;
 
 use App\Models\ContractPerformanceAct;
+use App\Models\PerformanceActLine;
 use App\Services\ActReport\ActReportActionAccessService;
 use App\Services\ActReport\ActReportWorkflowService;
 use Illuminate\Http\Request;
@@ -69,11 +70,24 @@ class ContractPerformanceActResource extends JsonResource
 
             // Связанные выполненные работы
             'completed_works' => $this->whenLoaded('completedWorks', function () {
-                return $this->completedWorks->map(function ($work) {
+                $unitsByWorkId = $this->resource->relationLoaded('lines')
+                    ? $this->resource->lines->groupBy('completed_work_id')->map(static function ($lines): ?string {
+                        $units = $lines->map(static fn (PerformanceActLine $line): ?string => $line->unit)
+                            ->filter(static fn (?string $unit): bool => $unit !== null && trim($unit) !== '')
+                            ->map(static fn (string $unit): string => trim($unit))->unique()->values();
+
+                        return $units->count() === 1 ? (string) $units->first() : null;
+                    })
+                    : collect();
+
+                return $this->completedWorks->map(function ($work) use ($unitsByWorkId) {
                     return [
                         'id' => $work->id,
                         'work_type_name' => $work->workType->name ?? 'Не указано',
                         'user_name' => $work->user->name ?? 'Не указано',
+                        'unit' => $unitsByWorkId->has($work->id)
+                            ? $unitsByWorkId->get($work->id)
+                            : PerformanceActLine::capturedUnitFromCompletedWork($work),
                         'total_quantity' => (float) $work->quantity,
                         'total_amount' => (float) $work->total_amount,
                         'completion_date' => $work->completion_date,
