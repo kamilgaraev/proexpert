@@ -654,9 +654,6 @@ final class AssistantDataAccessPolicy
             try {
                 $query = clone $query;
                 $table = $query->getModel()->getTable();
-                $counterProjection = ! $expectedProjection && $joinSourceIds && $batchSize !== null && $columns === [
-                    $table.'.id', $table.'.source_type', $table.'.project_id', $table.'.chunk_count', $table.'.indexed_chunk_count',
-                ];
                 $query->where($table.'.organization_id', $organizationId);
                 $identitySources = $joinSourceIds ? DB::query()->from($query->getQuery()->from)->where($table.'.organization_id', $organizationId) : null;
                 $projects = $this->entityQuery($user, $organizationId, 'project');
@@ -678,7 +675,7 @@ final class AssistantDataAccessPolicy
                 $checkpoint?->__invoke();
                 $sourceCounts = $batchSize === null ? null : [];
                 $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
-                $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection, boundSourceIdentities: $counterProjection);
+                $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
                 foreach ($planned as $entry) {
                     $nextProcessingPhase('rag_acl_batch_compile');
                     $types = $entry['types'];
@@ -692,15 +689,13 @@ final class AssistantDataAccessPolicy
                         $batch->where($table.'.entity_type', $entry['entity']);
                         $batchIdentities = array_intersect_key($batchIdentities, [$entry['entity'] => true]);
                     }
-                    if (isset($entry['entities'])) {
-                        $batch->whereIn($table.'.entity_type', $entry['entities']);
-                        $batchIdentities = array_intersect_key($batchIdentities, array_fill_keys($entry['entities'], true));
-                    }
                     $batchIdentitySources = $expectedProjection && $joinSourceIds
                         ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
                         : $identitySources;
                     $sourceColumns = ! $expectedProjection && $joinSourceIds && ! in_array($table.'.*', $columns, true)
-                        && ($types === ['design_additional'] || $counterProjection)
+                        && ($types === ['design_additional'] || ($batchSize !== null && $columns === [
+                            $table.'.id', $table.'.source_type', $table.'.project_id', $table.'.chunk_count', $table.'.indexed_chunk_count',
+                        ]))
                         ? $candidateColumns : null;
                     if ($sourceColumns !== null) {
                         $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: count($types ?? []) > 1)->select([])->toBase();
