@@ -32,10 +32,10 @@ final class EstimateGenerationRoomIdentityController extends Controller
     public function index(Request $request, Project $project, EstimateGenerationSession $session, GetRoomIdentitySources $sources): JsonResponse
     {
         $input = $request->validate(['search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:50'], 'include_manual' => ['sometimes', 'boolean']]);
 
         return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id,
-            $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');
+            $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25), (bool) ($input['include_manual'] ?? false)))->header('Cache-Control', 'private, no-store');
     }
 
     public function confirm(ConfirmRoomIdentityRequest $request, Project $project, EstimateGenerationSession $session, ConfirmRoomIdentity $confirmation): JsonResponse
