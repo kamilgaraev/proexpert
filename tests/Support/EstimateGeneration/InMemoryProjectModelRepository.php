@@ -494,11 +494,14 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         return new ProjectModelSnapshot($entities, $facts, $evidence, $conflicts);
     }
 
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array
     {
+        $snapshot = $this->snapshot($organizationId, $projectId, $sessionId, $factLimit);
+
         return [
-            'snapshot' => $this->snapshot($organizationId, $projectId, $sessionId, $factLimit),
+            'snapshot' => $snapshot,
             'token' => $this->understandingSnapshotToken($organizationId, $projectId, $sessionId),
+            ...($includeFactSourceEntities ? ['source_entities' => $this->factSourceEntities($snapshot->facts)] : []),
         ];
     }
 
@@ -1046,6 +1049,24 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
     private function scope(object $record): array
     {
         return [$record->organizationId, $record->projectId, $record->sessionId];
+    }
+
+    private function factSourceEntities(array $facts): array
+    {
+        $wanted = [];
+        foreach ($facts as $fact) {
+            $wanted[implode('|', [...$this->scope($fact), $fact->entityId, $fact->sourceVersion])] = true;
+        }
+        $selected = [];
+        foreach ($this->entities as $entity) {
+            $key = implode('|', [...$this->scope($entity), $entity->id, $entity->sourceVersion]);
+            if (isset($wanted[$key])) {
+                $selected[$key] = $entity;
+            }
+        }
+        ksort($selected, SORT_STRING);
+
+        return array_values($selected);
     }
 
     private function understandingSnapshotToken(int $organizationId, int $projectId, int $sessionId): string

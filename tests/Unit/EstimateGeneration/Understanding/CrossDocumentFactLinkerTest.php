@@ -66,6 +66,34 @@ final class CrossDocumentFactLinkerTest extends TestCase
     }
 
     #[Test]
+    public function each_fact_uses_its_own_entity_version_when_a_stable_key_is_reused(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $version = $this->sourceVersion('c');
+        $entities[] = new Entity('entity:left', 1, 2, 3, $version, 'room', 'entity:left',
+            ['document_role' => 'facade', 'room_number' => '999']);
+        $facts[] = new Fact('fact:new-version', 1, 2, 3, $version, 'entity:left', 'height', '3', 'm',
+            0.0, 'document', 'confirmed', ['evidence:3']);
+        $evidence[] = new Evidence('evidence:3', 1, 2, 3, $version, 'artifact:facade', 'document', 1);
+        $result = $this->linker()->link($entities, $facts, $evidence);
+        self::assertCount(1, $result->links);
+        self::assertSame('fact:left', $result->links[0]['left_fact_id']);
+        self::assertSame('fact:right', $result->links[0]['right_fact_id']);
+        self::assertSame($this->sourceVersion('a'), $result->links[0]['left_fact_source_version']);
+        self::assertSame($result->links, $this->linker()->link(array_reverse($entities), $facts, $evidence)->links);
+    }
+
+    #[Test]
+    public function a_newer_entity_is_not_a_substitute_for_the_missing_fact_source_entity(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $entities[0] = new Entity('entity:left', 1, 2, 3, $this->sourceVersion('c'), 'room', 'entity:left',
+            ['document_role' => 'plan', 'room_number' => '101']);
+        $this->expectException(InvalidArgumentException::class);
+        $this->linker()->link($entities, $facts, $evidence);
+    }
+
+    #[Test]
     public function contradictions_across_document_versions_keep_both_original_facts_and_evidence(): void
     {
         [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');

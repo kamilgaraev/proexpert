@@ -51,6 +51,7 @@ final readonly class ProjectUnderstandingCoordinator
             $projectId,
             $sessionId,
             $this->budget->maxFacts + 1,
+            includeFactSourceEntities: true,
         );
         $snapshot = $capture['snapshot'];
         $snapshotToken = $capture['token'];
@@ -115,7 +116,7 @@ final readonly class ProjectUnderstandingCoordinator
             $this->budget,
             $sourceVersion,
         );
-        $result = $linker->link($snapshot->entities, $snapshot->facts, $snapshot->evidence);
+        $result = $linker->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
         $conflicts = [];
         $questionsByConflict = [];
         $evidenceById = [];

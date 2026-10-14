@@ -320,16 +320,46 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         );
     }
 
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array
     {
-        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit): array {
+        return $this->database->connection()->transaction(function () use ($organizationId, $projectId, $sessionId, $factLimit, $includeFactSourceEntities): array {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
 
+            $snapshot = $this->snapshot($organizationId, $projectId, $sessionId, $factLimit);
+
             return [
-                'snapshot' => $this->snapshot($organizationId, $projectId, $sessionId, $factLimit),
+                'snapshot' => $snapshot,
                 'token' => $this->understandingSnapshotToken($organizationId, $projectId, $sessionId),
+                ...($includeFactSourceEntities ? ['source_entities' => $this->factSourceEntities($organizationId, $projectId, $sessionId, $snapshot->facts)] : []),
             ];
         }, 3);
+    }
+
+    /** Original entity rows referenced by current facts; the general entity view stays unchanged. */
+    private function factSourceEntities(int $organizationId, int $projectId, int $sessionId, array $facts): array
+    {
+        if ($facts === []) {
+            return [];
+        }
+        $rows = $this->database->table('estimate_generation_project_model_fact_projections as projection')
+            ->join('estimate_generation_project_model_assertions as fact', 'fact.id', '=', 'projection.fact_id')
+            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
+            ->where('projection.organization_id', $organizationId)->where('projection.project_id', $projectId)
+            ->where('projection.session_id', $sessionId)->where('projection.is_current', true)
+            ->where('fact.organization_id', $organizationId)->where('fact.project_id', $projectId)->where('fact.session_id', $sessionId)
+            ->where('entity.organization_id', $organizationId)->where('entity.project_id', $projectId)->where('entity.session_id', $sessionId)
+            ->whereColumn('entity.source_version', 'fact.source_version')
+            ->whereIn('fact.stable_key', array_column($facts, 'id'))
+            ->select('entity.*')->distinct()->orderBy('entity.stable_key')->orderBy('entity.source_version')->get();
+        $entities = [];
+        foreach ($rows as $row) {
+            $attributes = $this->decode($row->payload);
+            unset($attributes['kind'], $attributes['key']);
+            $entities[] = new Entity((string) $row->stable_key, (int) $row->organization_id, (int) $row->project_id,
+                (int) $row->session_id, (string) $row->source_version, (string) $row->entity_kind, (string) $row->stable_key, $attributes);
+        }
+
+        return $entities;
     }
 
     public function understandingPreflight(
@@ -1783,7 +1813,7 @@ SQL, [
             ->orderBy('fact.id')
             ->get([
                 'projection.id as projection_id', 'projection.projection_version',
-                'projection.entity_stable_key', 'fact.id', 'fact.stable_key', 'fact.source_version',
+                'projection.entity_stable_key', 'fact.id', 'fact.entity_id as entity_database_id', 'fact.stable_key', 'fact.source_version',
                 'fact.fact_version', 'fact.fact_status', 'fact.fact_value', 'fact.assertion_type',
                 'fact.fact_unit', 'fact.confidence', 'fact.fact_origin',
             ]);
@@ -1817,6 +1847,7 @@ SQL, [
                 'evidence.source_ref', 'evidence.source_type', 'evidence.locator',
             ]);
         $stableKeys = $facts->pluck('stable_key')->map(static fn ($key): string => (string) $key)->all();
+        $entityIds = array_fill_keys($facts->pluck('entity_database_id')->all(), true);
         $entityKeys = $facts->pluck('entity_stable_key')->unique()->values()->all();
         $entityRows = $entityKeys === [] ? collect() : $this->database
             ->table('estimate_generation_project_model_entities')
@@ -1881,16 +1912,19 @@ SQL, [
         }
         $entities = [];
         $confirmationAnchor = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::identity($organizationId, $projectId, $sessionId);
+        $latestEntityKeys = [];
         foreach ($entityRows as $entity) {
             $stableKey = (string) $entity->stable_key;
             if ($stableKey === $confirmationAnchor['entity_id'] && (string) $entity->source_version === $confirmationAnchor['source_version']
                 && ! $facts->contains('entity_stable_key', $stableKey)) {
                 continue;
             }
-            if (isset($entities[$stableKey])) {
+            // Fence both the legacy latest-entity view and every exact fact source.
+            if (isset($latestEntityKeys[$stableKey]) && ! isset($entityIds[$entity->id])) {
                 continue;
             }
-            $entities[$stableKey] = [
+            $latestEntityKeys[$stableKey] = true;
+            $entities[$stableKey.'|'.$entity->source_version] = [
                 'id' => (int) $entity->id,
                 'stable_key' => $stableKey,
                 'source_version' => (string) $entity->source_version,

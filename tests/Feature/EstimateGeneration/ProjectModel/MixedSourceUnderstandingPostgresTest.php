@@ -104,6 +104,94 @@ final class MixedSourceUnderstandingPostgresTest extends EstimateGenerationCanon
         }
     }
 
+    public function test_understanding_retains_each_current_facts_original_entity_version(): void
+    {
+        [$models, $scope, , $originalFacts] = $this->fixture('18.4');
+        $version = 'sha256:'.str_repeat('d', 64);
+        $stored = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData(...[...$scope,
+            EvidenceType::Extracted, EvidenceSourceType::DocumentUnit, 'document:3', $version,
+            ['document_id' => 3, 'page' => 1, 'element_key' => 'element:3'],
+            ['field_key' => 'wall_height', 'field_value' => '3', 'unit' => 'm'], 1, 'native_numeric_parser', 'extractor:v1']));
+        $entity = new Entity('entity:left', ...[...$scope, $version, 'room', 'entity:left',
+            ['semantic_type' => 'room', 'document_role' => 'facade']]);
+        $evidence = new Evidence('evidence:'.$stored->id, ...[...$scope, $version, 'document:3', 'xlsx', 1, null, 'xlsx:sheet:Rooms!C3']);
+        $fact = new Fact('fact:new-version', ...[...$scope, $version, $entity->id, 'height', '3', 'm',
+            0.0, 'document', 'confirmed', [$evidence->id]]);
+        try {
+            $models->saveSourceModel([$entity], [$fact], [$evidence]);
+            self::fail('The current writer must reject changed attributes under its immutable canonical key.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('project_model_entity_exact_identity_collision', $exception->getMessage());
+        }
+        // Historical rows can use separate model namespaces after the 2026-08-14
+        // detach migration. Insert that legal storage state with every FK/guard on;
+        // do not weaken the current writer to manufacture an old-version fixture.
+        $original = (array) DB::table('estimate_generation_project_model_assertions')
+            ->where('organization_id', $scope[0])->where('session_id', $scope[2])
+            ->where('stable_key', $originalFacts[0]->id)->where('source_version', $originalFacts[0]->sourceVersion)->first();
+        $historicalEntity = (array) DB::table('estimate_generation_project_model_entities')->where('id', $original['entity_id'])->first();
+        unset($historicalEntity['id']);
+        $historicalScope = (int) DB::table('estimate_generation_project_model_entities')->max('building_model_id') + 1;
+        $historicalEntity['building_model_id'] = $historicalScope;
+        $historicalEntity['source_version'] = $version;
+        $historicalEntity['payload'] = json_encode(['kind' => 'room', 'key' => $entity->id, ...$entity->attributes], JSON_THROW_ON_ERROR);
+        $entityDatabaseId = DB::table('estimate_generation_project_model_entities')->insertGetId($historicalEntity);
+        $historicalFact = $original;
+        unset($historicalFact['id']);
+        $historicalFact['building_model_id'] = $historicalScope;
+        $historicalFact['entity_id'] = $entityDatabaseId;
+        $historicalFact['source_version'] = $version;
+        $historicalFact['stable_key'] = $fact->id;
+        $historicalFact['assertion_type'] = 'height';
+        $historicalPayload = json_decode($original['payload'], true, 64, JSON_THROW_ON_ERROR);
+        $historicalFact['payload'] = json_encode([...$historicalPayload, 'value' => '3', 'unit' => 'm'], JSON_THROW_ON_ERROR);
+        $historicalFact['fact_value'] = json_encode(['value' => '3'], JSON_THROW_ON_ERROR);
+        $historicalFact['fact_unit'] = 'm';
+        $factDatabaseId = DB::table('estimate_generation_project_model_assertions')->insertGetId($historicalFact);
+        DB::table('estimate_generation_project_model_fact_evidence')->insert([
+            'organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2],
+            'fact_id' => $factDatabaseId, 'evidence_id' => $stored->id, 'source_version' => $version,
+            'evidence_source_version' => $version,
+            'evidence_invalidation_version' => DB::table('estimate_generation_evidence')->where('id', $stored->id)->value('invalidation_version'),
+            'created_at' => now(),
+        ]);
+        $projection = (array) DB::table('estimate_generation_project_model_fact_projections')->where('fact_id', $original['id'])->first();
+        unset($projection['id']);
+        $projection['fact_id'] = $factDatabaseId;
+        $projection['source_version'] = $version;
+        $projection['fact_type'] = 'height';
+        DB::table('estimate_generation_project_model_fact_projections')->insert($projection);
+        $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        self::assertCount(3, $capture['snapshot']->facts);
+        self::assertCount(3, $capture['source_entities']);
+        $legacy = array_values(array_filter($capture['snapshot']->entities, static fn (Entity $row): bool => $row->id === 'entity:left'));
+        self::assertCount(1, $legacy);
+        self::assertSame($version, $legacy[0]->sourceVersion);
+        self::assertSame('facade', $legacy[0]->attributes['document_role']);
+        $byVersion = [];
+        foreach ($capture['source_entities'] as $row) {
+            $byVersion[$row->id.'|'.$row->sourceVersion] = $row;
+        }
+        $oldEntity = $byVersion['entity:left|'.$originalFacts[0]->sourceVersion];
+        self::assertSame(['semantic_type' => 'room'], $oldEntity->attributes);
+        self::assertSame('facade', $byVersion['entity:left|'.$version]->attributes['document_role']);
+        foreach ($capture['snapshot']->facts as $row) {
+            self::assertArrayHasKey($row->entityId.'|'.$row->sourceVersion, $byVersion);
+        }
+        // Matching labels are still synthetic; this regression proves version lineage,
+        // not production extraction of room numbers or document roles.
+        $described = array_map(static fn (Entity $row): Entity => new Entity($row->id, $row->organizationId,
+            $row->projectId, $row->sessionId, $row->sourceVersion, $row->type, $row->stableKey,
+            ['document_role' => $row->sourceVersion === $version ? 'facade' : ($row->id === 'entity:left' ? 'plan' : 'room_schedule'),
+                'room_number' => $row->sourceVersion === $version ? '999' : '101']), $capture['source_entities']);
+        $linked = $this->linker()->link($described, $capture['snapshot']->facts, $capture['snapshot']->evidence);
+        self::assertCount(1, $linked->links);
+        self::assertSame('fact:left', $linked->links[0]['left_fact_id']);
+        self::assertSame($originalFacts[0]->sourceVersion, $linked->links[0]['left_fact_source_version']);
+        self::assertArrayNotHasKey('source_entities', $models->snapshotForUnderstanding(...[...$scope, 100]));
+        self::assertSame([], $models->snapshotForUnderstanding($scope[0] + 99999, $scope[1], $scope[2], 100, true)['source_entities']);
+    }
+
     private function linker(): CrossDocumentFactLinker
     {
         return new CrossDocumentFactLinker(new TargetedConflictResolver(static fn (string $key, array $replace): string => $key));

@@ -12,9 +12,9 @@ use InvalidArgumentException;
 
 final readonly class CrossDocumentFactLinker
 {
-    private const STRATEGY_VERSION = 2;
+    private const STRATEGY_VERSION = 3;
 
-    public const CONTRACT = 'cross-document-sources:v2';
+    public const CONTRACT = 'cross-document-sources:v3';
 
     public const MAX_EVIDENCE_PER_FACT = 20;
 
@@ -53,7 +53,7 @@ final readonly class CrossDocumentFactLinker
 
                 continue;
             }
-            $descriptor = $this->descriptor($entityById[$fact->entityId]);
+            $descriptor = $this->descriptor($entityById[$fact->entityId.'|'.$fact->sourceVersion]);
             if ($descriptor === null) {
                 continue;
             }
@@ -259,10 +259,10 @@ final readonly class CrossDocumentFactLinker
             }
             $scope ??= [$entity->organizationId, $entity->projectId, $entity->sessionId];
             $this->assertModelScope($entity, $scope);
-            if (isset($entityById[$entity->id])) {
+            if (isset($entityById[$entity->id.'|'.$entity->sourceVersion])) {
                 throw new InvalidArgumentException('Cross-document entity is duplicated.');
             }
-            $entityById[$entity->id] = $entity;
+            $entityById[$entity->id.'|'.$entity->sourceVersion] = $entity;
         }
         $factList = [];
         foreach ($facts as $fact) {
@@ -271,7 +271,7 @@ final readonly class CrossDocumentFactLinker
             }
             $scope ??= [$fact->organizationId, $fact->projectId, $fact->sessionId];
             $this->assertModelScope($fact, $scope);
-            if (! isset($entityById[$fact->entityId])) {
+            if (! isset($entityById[$fact->entityId.'|'.$fact->sourceVersion])) {
                 throw new InvalidArgumentException('Cross-document fact entity is outside the requested scope.');
             }
             if (isset($factList[$fact->id])) {
