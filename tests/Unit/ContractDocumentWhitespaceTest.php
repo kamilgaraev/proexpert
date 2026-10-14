@@ -5,12 +5,45 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Http\Middleware\TrimStringsPreservingDocumentText;
-use Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull;
+use App\Http\Middleware\ConvertEmptyStringsToNullPreservingDocumentText as ConvertEmptyStringsToNull;
 use Illuminate\Http\Request;
 use PHPUnit\Framework\TestCase;
 
 final class ContractDocumentWhitespaceTest extends TestCase
 {
+    public function test_empty_text_before_an_inserted_field_remains_a_string(): void
+    {
+        $document = ['type' => 'doc', 'content' => [
+            ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Учебный документ']]],
+            ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Контроль']]],
+            ['type' => 'paragraph', 'content' => [
+                ['type' => 'text', 'text' => ''],
+                ['type' => 'variable', 'attrs' => ['variableId' => 'd30704c6-c2b0-48ee-aef1-82c10d852d8c']],
+            ]],
+        ]];
+        foreach ([['content' => ['document' => $document]], ['document' => $document]] as $payload) {
+            $request = Request::create('/api/v1/admin/contract-library', 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'], json_encode($payload + ['description' => ''], JSON_THROW_ON_ERROR));
+            (new TrimStringsPreservingDocumentText())->handle($request, static fn (Request $trimmed) =>
+                (new ConvertEmptyStringsToNull())->handle($trimmed, static fn (Request $normalized) => $normalized));
+            $path = isset($payload['content']) ? 'content.document' : 'document';
+            self::assertSame('', $request->input($path.'.content.2.content.0.text'));
+            self::assertSame($document, $request->input($path));
+            self::assertNull($request->input('description'));
+        }
+    }
+
+    public function test_cleared_presentation_text_remains_an_empty_string(): void
+    {
+        $presentation = ['prefix' => '', 'suffix' => ''];
+        $request = Request::create('/api/v1/admin/contract-library', 'POST', [], [], [], ['CONTENT_TYPE' => 'application/json'], json_encode([
+            'content' => ['type' => 'number', 'display' => ['group' => '', 'presentation' => $presentation]],
+        ], JSON_THROW_ON_ERROR));
+        (new TrimStringsPreservingDocumentText())->handle($request, static fn (Request $trimmed) =>
+            (new ConvertEmptyStringsToNull())->handle($trimmed, static fn (Request $normalized) => $normalized));
+        self::assertSame($presentation, $request->input('content.display.presentation'));
+        self::assertNull($request->input('content.display.group'));
+    }
+
     public function test_variable_presentation_spacing_survives_create_and_revision_normalization(): void
     {
         $definition = ['type' => 'number', 'display' => ['group' => '  Расчёты  ', 'presentation' => ['prefix' => 'Площадь: ', 'suffix' => ' м² ']]];

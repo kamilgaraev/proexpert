@@ -28,6 +28,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->replace(\Illuminate\Foundation\Http\Middleware\TrimStrings::class, \App\Http\Middleware\TrimStringsPreservingDocumentText::class);
+        $middleware->replace(\Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class, \App\Http\Middleware\ConvertEmptyStringsToNullPreservingDocumentText::class);
         // Доверяем всем прокси (решает проблему с HTTPS в Nginx -> Octane/RoadRunner для Livewire)
         $middleware->trustProxies(at: '*');
         $middleware->remove(\Illuminate\Http\Middleware\HandleCors::class);
