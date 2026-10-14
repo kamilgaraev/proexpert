@@ -17,6 +17,26 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
+    public function test_room_numbers_require_their_own_literal_contract_and_room_entity(): void
+    {
+        foreach (['plan', 'explication', 'unknown'] as $role) {
+            $payload = $this->payload($role, 'room_number');
+            $payload['facts'][0]['value'] = ['type' => 'string', 'data' => '001'];
+            $payload['facts'][0]['unit'] = null;
+            $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+            self::assertCount(1, $analysis->facts);
+            self::assertSame('001', $analysis->facts[0]['value']['data']);
+            foreach ([['unit' => 'm2'], ['entityKey' => 'wall-1'], ['value' => ['type' => 'number', 'data' => '1']],
+                ['value' => ['type' => 'string', 'data' => 'Офис']]] as $change) {
+                $invalid = $payload;
+                $invalid['facts'][0] = [...$invalid['facts'][0], ...$change];
+                $rejected = ProjectSheetAnalysisData::fromProviderArray($invalid, ['page-1']);
+                self::assertSame([], $rejected->facts);
+                self::assertSame('invalid_room_number_observation', $rejected->quarantinedItems[0]['reason']);
+            }
+        }
+    }
+
     public function test_engineering_values_require_the_correct_entity_parameter_and_unit(): void
     {
         $payload = $this->payload('specification', 'cable_length');

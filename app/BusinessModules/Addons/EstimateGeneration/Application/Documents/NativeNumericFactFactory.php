@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Brick\Math\BigDecimal;
@@ -79,8 +80,11 @@ final class NativeNumericFactFactory
                 ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit);
             $roomName = $parameter === 'room_name' ? RoomIdentityObservation::label($entity,
                 ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit) : null;
-            if ($roomName !== null) {
-                $value = $roomName;
+            $roomNumber = $parameter === 'room_number' ? RoomNumberObservation::label($entity,
+                ['type' => 'string', 'data' => $value], trim($rawUnit) === '' ? null : $rawUnit) : null;
+            $roomLiteral = $roomName ?? $roomNumber;
+            if ($roomLiteral !== null) {
+                $value = $roomLiteral;
             }
             if ($document !== null) {
                 $key = $document['semantic_type'].':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity, $location], JSON_THROW_ON_ERROR)), 0, 32);
@@ -90,9 +94,9 @@ final class NativeNumericFactFactory
                 $location['source_entity_key'] = $entity;
             }
             $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
-                'unit' => $document !== null || $roomName !== null ? null : $rawUnit,
-                'literal_type' => $document !== null || $roomName !== null ? 'string'
-                    : ($parameter === 'room_name' ? 'invalid_room_identity'
+                'unit' => $document !== null || $roomLiteral !== null ? null : $rawUnit,
+                'literal_type' => $document !== null || $roomLiteral !== null ? 'string'
+                    : (in_array($parameter, ['room_name', 'room_number'], true) ? 'invalid_room_identity'
                         : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number')),
                 'reference' => 'xlsx:sheet:'.(string) ($native['sheet'] ?? '').'!'.$cell['address'],
                 'confirmed' => $formula === null, 'reason' => $formula === null ? null : 'native_formula_requires_confirmation', 'location' => $location];

@@ -32,6 +32,29 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class DocumentArbitrationTest extends TestCase
 {
+    public function test_vision_number_locator_is_bound_to_captured_document_and_page_before_publication(): void
+    {
+        $runs = $this->observerRuns();
+        $literal = $runs['observer_literal'];
+        $payload = $literal->payload;
+        $payload['claims'][0] = [...$payload['claims'][0], 'entityKey' => 'room.office', 'factType' => 'room_number',
+            'value' => ['type' => 'string', 'data' => '001'], 'sourcePolygonOrNativeRef' => 'pdf:page:4/text'];
+        $payload['evidence'][0]['locator'] = [...$payload['evidence'][0]['locator'], 'document_id' => 999, 'page' => 99];
+        $runs['observer_literal'] = new AiRoleRunResult($payload, $literal->physicalAttemptId);
+        $claims = (new ArbitrationInputBuilder)->claimBatch($this->sourceInput(), $runs)->claims;
+        foreach ($claims as $claim) {
+            self::assertSame(13, $claim->locator['document_id']);
+            self::assertSame(4, $claim->locator['page']);
+        }
+        $claim = $claims[0];
+        $decisions = (new ArbitrationIntentIngestor)->ingest([['claim_id' => $claim->id, 'status' => 'accepted',
+            'supporting_claim_ids' => [$claim->id], 'evidence_refs' => [$claim->evidenceRef], 'reason' => 'Explicit source number']], [$claim])->accepted;
+        $models = new InMemoryProjectModelRepository;
+        (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration([$claim], $decisions, 13, 4);
+        self::assertSame('001', array_values($models->facts)[0]->value);
+        self::assertSame('confirmed', array_values($models->facts)[0]->status);
+    }
+
     #[Test]
     public function document_injection_corpus_cannot_replace_arbiter_rules_or_publish_facts(): void
     {

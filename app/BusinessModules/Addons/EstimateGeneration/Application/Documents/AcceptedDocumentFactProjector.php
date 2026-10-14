@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 
@@ -12,6 +13,12 @@ final class AcceptedDocumentFactProjector
 {
     public function project(ObservationClaim $claim): ?array
     {
+        if ($claim->factType === 'room_number') {
+            $number = (new RoomNumberObservation)->number($claim);
+
+            return $number === null ? null : ['fact_type' => 'note', 'label_key' => 'room_number',
+                'value_text' => $number, 'value_number' => null, 'unit' => null];
+        }
         $value = $claim->value['data'];
         if ($value === null || (is_string($value) && trim($value) === '')) {
             return null;

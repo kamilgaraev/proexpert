@@ -269,7 +269,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'schema_version' => 4,
             'project_sheet_analysis' => [
                 'contractVersion' => 'sheet-analysis:v3', 'role' => 'plan',
-                'facts' => [$this->semanticFact('room-1', 'room_name', ['type' => 'string', 'data' => 'Кухня'])],
+                'facts' => [$this->semanticFact('room-1', 'room_name', ['type' => 'string', 'data' => 'Кухня']),
+                    $this->semanticFact('room-1', 'room_number', ['type' => 'string', 'data' => '001'])],
             ],
             'analysis_routing' => [
                 'page_kind' => 'drawing',
@@ -297,11 +298,14 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame('dense_ambiguous', $analysis->analysisRouting?->effectiveRoute->value);
         self::assertSame('Размерная цепочка фасада', $analysis->analysisRouting?->semanticRegions[0]['label']);
         foreach ([$analysis->rawObserverFacts, $analysis->projectSheetAnalysis?->facts ?? []] as $facts) {
-            self::assertCount(1, $facts);
+            self::assertCount(2, $facts);
             self::assertSame('room-1', $facts[0]['entityKey']);
             self::assertSame('room_name', $facts[0]['factType']);
             self::assertSame(['type' => 'string', 'data' => 'Кухня'], $facts[0]['value']);
             self::assertNull($facts[0]['unit']);
+            self::assertSame('room_number', $facts[1]['factType']);
+            self::assertSame(['type' => 'string', 'data' => '001'], $facts[1]['value']);
+            self::assertNull($facts[1]['unit']);
         }
         Http::assertSent(static function ($request): bool {
             $system = (string) $request['messages'][0]['content'];
@@ -312,6 +316,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && $user['contract_version'] === ObserverProfile::Literal->promptContractVersion()
                 && str_contains($system, 'analysis_routing') && str_contains($system, 'schema_version must equal integer 4')
                 && str_contains($system, 'factType room_name, value.type string, unit null')
+                && str_contains($system, 'factType room_number, value.type string and unit null')
                 && str_contains($system, 'room-prefixed entityKey unique within the page');
         });
         Http::assertSentCount(1);

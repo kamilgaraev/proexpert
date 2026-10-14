@@ -58,6 +58,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             ['room:office', 'length', 5, 'м', '1'],
             ['room:office', 'width', 10, 'м', '1'],
             ['room:office', 'room_name', 'Офис', '', '1'],
+            ['room:office', 'room_number', '001', '', '1'],
         ]);
         try {
             (new Xlsx($book))->save($input);
@@ -72,6 +73,48 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                     $nameCells = array_values(array_filter($payload['native_structure']['cells'] ?? [], static fn (array $cell): bool => $cell['address'] === 'C4'));
                     self::assertCount(1, $names, json_encode(['name_cells' => $nameCells, 'fact_types' => array_column($snapshot->facts, 'type')], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
                     self::assertSame('Офис', $names[0]->value);
+                    $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+                    self::assertCount(1, $numbers);
+                    $number = $numbers[0];
+                    self::assertSame('001', $number->value);
+                    self::assertNull($number->unit);
+                    self::assertSame('confirmed', $number->status);
+                    self::assertSame('candidate', $names[0]->status, 'A printed number cannot confirm the room name.');
+                    self::assertSame($names[0]->entityId, $number->entityId);
+                    $room = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->id === $number->entityId))[0];
+                    self::assertSame('1', $room->attributes['floor_id']);
+                    self::assertArrayNotHasKey('room_number', $room->attributes);
+                    $evidence = DB::table('estimate_generation_evidence')->where('session_id', $session->id)
+                        ->where('id', (int) substr($number->evidenceIds[0], strlen('evidence:')))->first();
+                    self::assertNotNull($evidence);
+                    self::assertSame(['fact_key' => 'room_number', 'fact_value' => hash('sha256', '001')], json_decode($evidence->value, true, flags: JSON_THROW_ON_ERROR));
+                    self::assertSame('xlsx:sheet:Размеры!C5', json_decode($evidence->locator, true, flags: JSON_THROW_ON_ERROR)['native_reference']);
+                    self::assertSame($number->sourceVersion, $evidence->source_version);
+                    $document = EstimateGenerationDocument::query()->where('session_id', $session->id)->firstOrFail();
+                    $numberNote = $document->facts()->where('label', 'Номер помещения')->first();
+                    self::assertNotNull($numberNote);
+                    self::assertSame('note', $numberNote->fact_type);
+                    self::assertSame('001', $numberNote->value_text);
+                    self::assertNull($numberNote->value_number);
+                    self::assertNull($numberNote->unit);
+                    $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000200_allow_room_number_evidence.php');
+                    $migration->up();
+                    $migration->up();
+                    self::assertEquals($evidence, DB::table('estimate_generation_evidence')->where('id', $evidence->id)->first());
+                    foreach ([['fact_key' => 'room_number', 'fact_value' => '001'],
+                        ['fact_key' => 'room_number', 'fact_value' => 1],
+                        ['fact_key' => 'room_number', 'fact_value' => hash('sha256', '001'), 'unit' => 'm2']] as $index => $invalidValue) {
+                        $invalid = (array) $evidence;
+                        unset($invalid['id']);
+                        $invalid['fingerprint'] = hash('sha256', 'invalid-room-number:'.$index);
+                        $invalid['value'] = json_encode($invalidValue, JSON_THROW_ON_ERROR);
+                        try {
+                            DB::transaction(static fn () => DB::table('estimate_generation_evidence')->insert($invalid));
+                            self::fail('Invalid room number proof must be rejected by PostgreSQL.');
+                        } catch (\Illuminate\Database\QueryException $exception) {
+                            self::assertStringContainsString('room_identity_evidence_invalid', $exception->getMessage());
+                        }
+                    }
                 });
             $result = $adapter->run(new BenchmarkPredictionCaseData('xlsx-floor-finishing-v1', BenchmarkDatasetType::Regression,
                 BenchmarkSourceType::Spreadsheet, 'dimensions.xlsx', hash_file('sha256', $input), ['native_xlsx_joined_regression'], []), 300000);
@@ -79,8 +122,14 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             $session = EstimateGenerationSession::query()->findOrFail($adapter->lastRun['session_id']);
             self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->draft_payload));
             self::assertCount(count(ProcessingStage::cases()), $adapter->lastRun['completed_stages']);
-            self::assertSame(4, $adapter->lastRun['provider_requests']);
-            self::assertSame(4, $adapter->lastRun['requests_after_replay']);
+            self::assertSame(6, $adapter->lastRun['provider_requests']);
+            self::assertSame(6, $adapter->lastRun['requests_after_replay']);
+            $auditSubjects = DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
+                ->where('role', 'estimate_auditor')->pluck('subject_id')->all();
+            self::assertCount(5, $auditSubjects);
+            foreach ($auditSubjects as $subject) {
+                self::assertStringStartsWith($session->id.':0:part:', $subject, 'Context parts are not extra audit/correction passes.');
+            }
             self::assertSame(0, $adapter->lastRun['document_run']['vision_requests']);
             self::assertSame(0, $adapter->lastRun['document_run']['vision_requests_after_replay']);
             self::assertSame(['completed'], $adapter->lastRun['document_run']['units']);
@@ -104,8 +153,8 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame('floor_area', $positions[0]['quantity_formula']);
             self::assertNotEmpty($positions[0]['quantity_evidence_details']);
             self::assertNull($positions[0]['price_snapshot']);
-            self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
-            self::assertSame(3, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
+            self::assertSame(6, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            self::assertSame(5, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
                 ->where('role', 'estimate_auditor')->where('status', 'completed')->distinct()->count('subject_id'));
             $repository = app(ProjectModelRepository::class);
             $measurementVersion = $numeric[0]->sourceVersion;
@@ -262,6 +311,6 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         }
         $totals = (new \ReflectionMethod(EstimateExportService::class, 'prepareTotalsData'))->invoke(app(EstimateExportService::class), $estimate->fresh());
         self::assertSame('1.77', (string) $totals['total_amount_with_vat']);
-        self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
+        self::assertSame(6, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
     }
 }

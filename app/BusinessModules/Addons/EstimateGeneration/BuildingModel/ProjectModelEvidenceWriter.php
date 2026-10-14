@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Canonical
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
@@ -92,7 +93,14 @@ final readonly class ProjectModelEvidenceWriter
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
-                    if (($decision->status === 'accepted' || $claim->factType === 'room_name') && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
+                    if ($claim->factType === 'room_number' && $decision->status === 'accepted'
+                        && (! $supportingClaim->explicitEvidence
+                            || ($supportingClaim->locator['document_id'] ?? null) !== $documentId
+                            || (array_key_exists('unit_index', $supportingClaim->locator) && $supportingClaim->locator['unit_index'] !== $pageNumber)
+                            || ($supportingClaim->locator['page'] ?? $supportingClaim->locator['unit_index'] ?? null) !== $pageNumber)) {
+                        continue;
+                    }
+                    if (($decision->status === 'accepted' || in_array($claim->factType, ['room_name', 'room_number'], true)) && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
                         continue;
                     }
                     if ($supportingClaim->evidenceRef === null
@@ -145,6 +153,7 @@ final readonly class ProjectModelEvidenceWriter
                     $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
                 }
                 $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
+                $roomNumberFact = (new RoomNumberObservation)->number($claim) !== null;
                 $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
                 if ($nativeNamedRoom) {
                     // New parser metadata must not collide with immutable older room rows.
@@ -225,6 +234,8 @@ final readonly class ProjectModelEvidenceWriter
                 );
                 $projectedStatus = match (true) {
                     $roomIdentityFact => $evidenceIds !== [] && in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
+                    $roomNumberFact => $decision->status === 'accepted' && $claim->explicitEvidence && $evidenceIds !== [] ? 'confirmed'
+                        : ($decision->status === 'candidate' && $evidenceIds !== [] ? 'candidate' : 'unresolved'),
                     $visualInventoryFact => in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
                     default => match ($decision->status) {
                         'accepted' => 'confirmed',
@@ -355,6 +366,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
     {
+        $roomNumber = (new RoomNumberObservation)->fingerprint($claim);
+        if ($roomNumber !== null) {
+            return $roomNumber;
+        }
         $roomIdentity = (new RoomIdentityObservation)->fingerprint($claim);
         if ($roomIdentity !== null) {
             return $roomIdentity;
@@ -372,6 +387,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function projectModelFactValue(ObservationClaim $claim): mixed
     {
+        $roomNumber = (new RoomNumberObservation)->number($claim);
+        if ($roomNumber !== null) {
+            return $roomNumber;
+        }
         $roomName = (new RoomIdentityObservation)->name($claim);
         if ($roomName !== null) {
             return $roomName;
@@ -531,6 +550,11 @@ final readonly class ProjectModelEvidenceWriter
             return ['type' => 'room', 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
                 'attributes' => ['semantic_type' => 'room', 'name' => $roomName,
                     'properties' => ['identity_only' => true, 'requires_confirmation' => true]]];
+        }
+
+        if ((new RoomNumberObservation)->number($claim) !== null) {
+            return ['type' => 'room', 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['semantic_type' => 'room']];
         }
 
         if (in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture'], true)
