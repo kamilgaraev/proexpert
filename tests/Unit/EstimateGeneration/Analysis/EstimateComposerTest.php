@@ -31,6 +31,47 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    public function test_unknown_work_with_a_forged_section_stays_request_info_and_replays_without_paid_calls(): void
+    {
+        $input = $this->input(allowedWorkSections: ['roofing']);
+        $payload = $this->validResult($input);
+        $payload['work_intents'][] = $this->unverifiedSupplementaryWork();
+        $model = new RecordedEstimateComposerModel($payload);
+        $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $outcome = $composer->runDetailed($input);
+        self::assertNotContains('custom.installation', array_column($outcome['intents'], 'work_key'));
+        self::assertSame('estimate_composer_work_definition_unverified', $outcome['quarantined'][0]['reason']);
+        self::assertSame('Монтаж труб отопления', $outcome['quarantined'][0]['work_name']);
+        self::assertSame(['fact:roof'], $outcome['quarantined'][0]['source_fact_ids']);
+        self::assertSame($outcome, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+    }
+
+    public function test_a_stored_unverified_work_is_rechecked_locally_without_changing_valid_candidate_identity(): void
+    {
+        $input = $this->input(allowedWorkSections: ['roofing']);
+        $stored = $this->validResult($input)['work_intents'];
+        $stored[] = [...$this->unverifiedSupplementaryWork(), 'candidate_id' => 'supplementary:legacy', 'entity_id' => 'entity:roof'];
+        $runs = new ComposerRoleRunMemoryRepository;
+        $runs->complete(1, '11111111-1111-4111-8111-111111111111', new AiRoleRunResult([
+            'work_intents' => $stored, 'quarantined_intents' => [],
+        ], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+        $model = new RecordedEstimateComposerModel([]);
+        $outcome = (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna'))->runDetailed($input);
+        self::assertNotContains('custom.installation', array_column($outcome['intents'], 'work_key'));
+        self::assertSame(array_column($input->candidates, 'candidate_id'), array_column($outcome['intents'], 'candidate_id'));
+        self::assertSame('estimate_composer_work_definition_unverified', $outcome['quarantined'][0]['reason']);
+        self::assertSame(0, $model->calls);
+    }
+
+    private function unverifiedSupplementaryWork(): array
+    {
+        return ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'custom.installation',
+            'name' => 'Монтаж труб отопления', 'unit' => 'm', 'work_section' => 'roofing',
+            'derived_quantity_id' => null, 'source_fact_ids' => ['fact:roof'], 'technology_package_candidate' => null,
+            'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+    }
+
     public function test_irrelevant_roof_fact_becomes_request_info_and_replays_without_another_model_call(): void
     {
         $input = $this->input();
@@ -85,11 +126,15 @@ final class EstimateComposerTest extends TestCase
             'missing_document_recommendations' => [],
         ];
 
-        $intents = (new RunEstimateComposer(
+        $model = new RecordedEstimateComposerModel($result);
+        $composer = new RunEstimateComposer(
             new ComposerRoleRunMemoryRepository,
-            new RecordedEstimateComposerModel($result),
+            $model,
             'openai/gpt-5-mini',
-        ))->run($input);
+        );
+        $intents = $composer->run($input);
+        self::assertSame($intents, $composer->run($input));
+        self::assertSame(1, $model->calls);
         $intent = $intents[array_key_last($intents)];
         self::assertSame('supplementary', $intent['kind']);
         self::assertStringStartsWith('supplementary:', $intent['candidate_id']);
@@ -572,6 +617,7 @@ final class EstimateComposerTest extends TestCase
         ?array $derivedQuantities = null,
         ?array $missingDocuments = null,
         ?array $candidates = null,
+        array $allowedWorkSections = [],
     ): EstimateComposerInput {
         $workKeys = [
             'foundation', 'walls', 'roof', 'facades', 'openings', 'site_preparation',
@@ -609,6 +655,7 @@ final class EstimateComposerTest extends TestCase
             candidates: $candidates,
             missingDocuments: $missingDocuments ?? [['code' => 'foundation_detail', 'source_fact_ids' => ['fact:foundation']]],
             contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
+            allowedWorkSections: $allowedWorkSections,
         );
     }
 

@@ -105,17 +105,26 @@ final readonly class RunEstimateComposer
                 throw new RuntimeException('estimate_composer_replay_invalid');
             }
 
-            $replayed = [];
-            foreach ($stored as $intent) {
-                if (! is_array($intent)) {
-                    throw new RuntimeException('estimate_composer_replay_invalid');
-                }
-                $replayed[] = EstimateWorkIntent::fromArray($intent)->toArray();
-            }
-
             $quarantined = $claim->result->payload['quarantined_intents'] ?? [];
             if (! is_array($quarantined) || ! array_is_list($quarantined)) {
                 throw new RuntimeException('estimate_composer_replay_invalid');
+            }
+            $replayed = [];
+            $quantityProvenance = new ComposedQuantityProvenance($input->derivedQuantities, $input->facts);
+            $allowedFactIds = array_fill_keys(array_column($input->facts, 'id'), true);
+            foreach ($stored as $index => $intent) {
+                if (! is_array($intent)) {
+                    throw new RuntimeException('estimate_composer_replay_invalid');
+                }
+                $typed = EstimateWorkIntent::fromArray($intent);
+                try {
+                    if ($typed->kind === 'supplementary') {
+                        $typed = $this->bindSupplementary($typed, $input, $quantityProvenance);
+                    }
+                    $replayed[] = $typed->toArray();
+                } catch (InvalidArgumentException $exception) {
+                    $quarantined[] = $this->quarantine($index, $exception, $intent, $allowedFactIds);
+                }
             }
 
             return ['intents' => $replayed, 'quarantined' => $quarantined];
@@ -260,12 +269,7 @@ final readonly class RunEstimateComposer
                     if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
                         throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
                     }
-                    $quantityBinding = $quantityProvenance->binding($intent->toArray());
-                    $target = $intent->entityId ?? $quantityBinding['entity_id'] ?? null;
-                    $sourceBinding = (new WorkIntentSourceClassifier)->binding([
-                        ...$intent->toArray(), ...($target === null ? [] : ['entity_id' => $target]),
-                    ], $input->facts);
-                    $intent = EstimateWorkIntent::fromArray([...$intent->toArray(), 'entity_id' => $sourceBinding['entity_id']]);
+                    $intent = $this->bindSupplementary($intent, $input, $quantityProvenance);
                     if ($intent->technologyPackageCandidate !== null
                         && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
                         throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');
@@ -278,11 +282,7 @@ final readonly class RunEstimateComposer
                 $seenCandidateIds[$intent->candidateId] = true;
                 $intentsById[$intent->candidateId] = $intent->toArray();
             } catch (InvalidArgumentException $exception) {
-                $quarantined[] = ['index' => $index, 'reason' => $exception->getMessage(),
-                    'work_name' => is_array($record) && is_string($record['name'] ?? null) && mb_strlen($record['name']) <= 300 ? $record['name'] : null,
-                    'next_action' => 'confirm_work_source',
-                    'source_fact_ids' => is_array($record) && is_array($record['source_fact_ids'] ?? null)
-                        ? array_values(array_filter($record['source_fact_ids'], static fn ($id): bool => is_string($id) && isset($allowedFactIds[$id]))) : []];
+                $quarantined[] = $this->quarantine($index, $exception, $record, $allowedFactIds);
             }
         }
         ksort($supplementaryById, SORT_STRING);
@@ -298,5 +298,31 @@ final readonly class RunEstimateComposer
             ), ...array_values($supplementaryById)],
             'quarantined' => $quarantined,
         ];
+    }
+
+    private function bindSupplementary(EstimateWorkIntent $intent, EstimateComposerInput $input, ComposedQuantityProvenance $quantityProvenance): EstimateWorkIntent
+    {
+        if ($intent->workSection !== null && ! in_array($intent->workSection, $input->allowedWorkSections, true)) {
+            throw new InvalidArgumentException('estimate_composer_work_section_not_selected');
+        }
+        if (array_diff($intent->sourceFactIds, array_column($input->facts, 'id')) !== []) {
+            throw new InvalidArgumentException('estimate_composer_source_fact_invalid');
+        }
+        $quantityBinding = $quantityProvenance->binding($intent->toArray());
+        $target = $intent->entityId ?? $quantityBinding['entity_id'] ?? null;
+        $sourceBinding = (new WorkIntentSourceClassifier)->binding([
+            ...$intent->toArray(), ...($target === null ? [] : ['entity_id' => $target]),
+        ], $input->facts);
+
+        return EstimateWorkIntent::fromArray([...$intent->toArray(), 'entity_id' => $sourceBinding['entity_id']]);
+    }
+
+    private function quarantine(int $index, InvalidArgumentException $exception, mixed $record, array $allowedFactIds): array
+    {
+        return ['index' => $index, 'reason' => $exception->getMessage(),
+            'work_name' => is_array($record) && is_string($record['name'] ?? null) && mb_strlen($record['name']) <= 300 ? $record['name'] : null,
+            'next_action' => 'confirm_work_source',
+            'source_fact_ids' => is_array($record) && is_array($record['source_fact_ids'] ?? null)
+                ? array_values(array_filter($record['source_fact_ids'], static fn ($id): bool => is_string($id) && isset($allowedFactIds[$id]))) : []];
     }
 }
