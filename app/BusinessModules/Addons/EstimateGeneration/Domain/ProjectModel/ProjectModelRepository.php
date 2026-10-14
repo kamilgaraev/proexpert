@@ -44,6 +44,7 @@ interface ProjectModelRepository
         string $sourceVersion,
         array $quantities,
         array $inactiveLogicalIds,
+        ?string $expectedSnapshotToken = null,
     ): void;
 
     /** @param list<DerivedQuantity> $quantities */
@@ -60,6 +61,7 @@ interface ProjectModelRepository
         int $projectId,
         int $sessionId,
         ?string $sourceVersion = null,
+        bool $stageFiveOnly = false,
     ): void;
 
     /** @return list<DerivedQuantity> */
@@ -102,7 +104,7 @@ interface ProjectModelRepository
     public function snapshot(int $organizationId, int $projectId, int $sessionId, ?int $factLimit = null): ProjectModelSnapshot;
 
     /** @return array{snapshot:ProjectModelSnapshot,token:string} */
-    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit): array;
+    public function snapshotForUnderstanding(int $organizationId, int $projectId, int $sessionId, int $factLimit, bool $includeFactSourceEntities = false): array;
 
     public function understandingPreflight(
         int $organizationId,

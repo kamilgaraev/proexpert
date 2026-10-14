@@ -25,9 +25,16 @@ final readonly class DocumentSemanticUnderstandingSummarizer
         $arbitratedPageCount = 0;
         $schemaFourPageKinds = [];
         $acceptedQuantityClaimIds = [];
+        $nativeUnderstanding = [];
 
         foreach ($payloads as $payload) {
             if (! is_array($payload)) {
+                continue;
+            }
+            if (($payload['schema_version'] ?? null) === 1 && ($payload['source_kind'] ?? null) === 'spreadsheet'
+                && ($payload['native_understanding']['contract'] ?? null) === NativeSpreadsheetUnderstanding::CONTRACT) {
+                $nativeUnderstanding[] = $payload['native_understanding'];
+
                 continue;
             }
             if (($payload['schema_version'] ?? null) === 4) {
@@ -133,12 +140,29 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             'page_kinds' => array_values(array_keys($schemaFourPageKinds)),
             'pages_count' => $arbitratedPageCount,
         ];
+        if ($nativeUnderstanding !== [] && count($nativeUnderstanding) === count($payloads)) {
+            $capabilities = [];
+            foreach ($nativeUnderstanding as $page) {
+                foreach ($page['extracted_capabilities'] as $key => $value) {
+                    $capabilities[$key] = $key === 'accepted_quantity_claims'
+                        ? ($capabilities[$key] ?? 0) + $value
+                        : ($capabilities[$key] ?? false) || $value;
+                }
+            }
+            $documentUnderstanding = ['document_type' => 'spreadsheet',
+                'role_for_estimation' => ($capabilities['requires_manual_review'] ?? true) ? 'needs_review'
+                    : (($capabilities['has_quantities'] ?? false) ? 'quantity_source' : 'context_document'),
+                'extracted_capabilities' => $capabilities,
+                'pages_count' => count($nativeUnderstanding), 'page_kinds' => ['spreadsheet'],
+                'verification_status' => 'native_source_checked'];
+        }
 
         return [
-            'pages_checked' => count($coverage) + $arbitratedPageCount,
+            'pages_checked' => count($coverage) + $arbitratedPageCount + count($nativeUnderstanding),
             'roles' => $roles,
             'facts' => $facts,
-            'analysis_roles_complete' => $arbitratedPageCount > 0 && $roleRunsComplete,
+            ...(count($nativeUnderstanding) > 0 && count($nativeUnderstanding) === count($payloads)
+                ? [] : ['analysis_roles_complete' => $arbitratedPageCount > 0 && $roleRunsComplete]),
             ...($documentUnderstanding === null ? [] : ['document_understanding' => $documentUnderstanding]),
             'recommendations' => array_slice($recommendations, 0, self::MAX_ITEMS_PER_GROUP),
             'coverage' => array_slice($coverage, 0, self::MAX_ITEMS_PER_GROUP),

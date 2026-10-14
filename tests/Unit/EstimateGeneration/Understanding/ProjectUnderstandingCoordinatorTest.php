@@ -29,12 +29,35 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class ProjectUnderstandingCoordinatorTest extends TestCase
 {
     #[Test]
+    public function mixed_description_and_document_sources_use_an_aggregate_understanding_version_without_rewriting_facts(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $descriptionVersion = 'sha256:'.str_repeat('c', 64);
+        $entity = new Entity('entity:description', 1, 2, 3, $descriptionVersion, 'room', 'entity:description');
+        $fact = new Fact('fact:description', 1, 2, 3, $descriptionVersion, $entity->id, 'room_name',
+            'Описание помещения', null, 0.0, 'user_assumption', 'confirmed', []);
+        $models->saveSourceModel([$entity], [$fact], []);
+        $factory = new RecordingArbitratorFactory;
+        $coordinator = $this->coordinator($models, $factory);
+
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 1, allowModelCalls: false);
+
+        self::assertCount(1, $result->links);
+        self::assertSame('linked', $result->links[0]['status']);
+        self::assertSame(0, $factory->calls);
+        self::assertSame($descriptionVersion, $models->fact(1, 2, 3, $fact->id)->sourceVersion);
+        self::assertSame($this->modelSource(), $models->fact(1, 2, 3, 'fact:left')->sourceVersion);
+        self::assertSame($result->links, $coordinator->refresh(1, 2, 3, $this->token(), 2, allowModelCalls: false)->links);
+    }
+
+    #[Test]
     public function an_identity_only_photo_can_plan_an_unverified_worklist_without_confirming_a_dimension(): void
     {
         $models = new InMemoryProjectModelRepository;
         $source = $this->modelSource();
         $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
-            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+            ['semantic_type' => 'room', 'properties' => ['identity_only' => true, 'requires_confirmation' => true]]);
         $fact = new Fact('fact:room-name', 1, 2, 3, $source, $entity->id, 'room_name', 'Помещение на фото',
             null, 0.0, 'ai_inference', 'candidate', ['evidence:1']);
         $models->saveSourceModel([$entity], [$fact], [$this->evidence('evidence:1')]);
@@ -42,7 +65,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $coordinator = $this->coordinator($models, $factory);
         self::assertFalse($coordinator->refresh(1, 2, 3, $this->token(), 1)->isReadyForPlanning());
         $result = $coordinator->refresh(1, 2, 3, $this->token(), 2, allowIdentityOnlyPlanning: true);
-        self::assertTrue($result->isReadyForPlanning());
+        self::assertTrue($result->isReadyForPlanning(), json_encode($result, JSON_THROW_ON_ERROR));
         self::assertNotSame([], $result->limitations);
         self::assertSame(0, $result->providerCalls);
         self::assertSame('candidate', $models->fact(1, 2, 3, 'fact:room-name')->status);
@@ -56,7 +79,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $models = new InMemoryProjectModelRepository;
         $source = $this->modelSource();
         $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
-            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+            ['semantic_type' => 'room', 'properties' => ['identity_only' => true, 'requires_confirmation' => true]]);
         $models->saveSourceModel([$entity], [new Fact('fact:guessed-area', 1, 2, 3, $source, $entity->id,
             'area', '12', 'm2', 0.0, 'ai_inference', 'candidate', ['evidence:1'])], [$this->evidence('evidence:1')]);
         $result = $this->coordinator($models, new RecordingArbitratorFactory)

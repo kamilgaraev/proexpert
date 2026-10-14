@@ -20,6 +20,100 @@ use PHPUnit\Framework\TestCase;
 final class CrossDocumentFactLinkerTest extends TestCase
 {
     #[Test]
+    #[DataProvider('foreignScopes')]
+    public function mixed_sources_never_allow_a_foreign_fact(int $organizationId, int $projectId, int $sessionId): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $facts[1] = new Fact('fact:right', $organizationId, $projectId, $sessionId, $this->sourceVersion('c'),
+            'entity:right', 'area', 18.4, 'm2', 0.95, 'document', 'confirmed', ['evidence:2']);
+        $this->expectException(InvalidArgumentException::class);
+        $this->linker()->link($entities, $facts, $evidence);
+    }
+
+    public static function foreignScopes(): array
+    {
+        return [[99, 2, 3], [1, 99, 3], [1, 2, 99]];
+    }
+
+    #[Test]
+    public function duplicate_fact_ids_from_different_versions_are_rejected_instead_of_overwriting(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $facts[] = new Fact('fact:right', 1, 2, 3, $this->sourceVersion('c'), 'entity:right', 'area', 19.1,
+            'm2', 0.95, 'document', 'confirmed', ['evidence:2']);
+        $this->expectException(InvalidArgumentException::class);
+        $this->linker()->link($entities, $facts, $evidence);
+    }
+
+    #[Test]
+    public function different_document_versions_link_without_rewriting_their_fact_versions(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $version = $this->sourceVersion('c');
+        $entities[1] = new Entity('entity:right', 1, 2, 3, $version, 'room', 'entity:right',
+            ['document_role' => 'room_schedule', 'room_number' => '101']);
+        $facts[1] = new Fact('fact:right', 1, 2, 3, $version, 'entity:right', 'area', 18.4,
+            'm2', 0.95, 'document', 'confirmed', ['evidence:2']);
+
+        $result = $this->linker()->link($entities, $facts, $evidence);
+
+        self::assertCount(1, $result->links);
+        self::assertSame($this->sourceVersion('a'), $result->links[0]['left_fact_source_version']);
+        self::assertSame($version, $result->links[0]['right_fact_source_version']);
+        self::assertSame($version, $facts[1]->sourceVersion);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame($result->links, $this->linker()->link(array_reverse($entities), array_reverse($facts), array_reverse($evidence))->links);
+    }
+
+    #[Test]
+    public function each_fact_uses_its_own_entity_version_when_a_stable_key_is_reused(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $version = $this->sourceVersion('c');
+        $entities[] = new Entity('entity:left', 1, 2, 3, $version, 'room', 'entity:left',
+            ['document_role' => 'facade', 'room_number' => '999']);
+        $facts[] = new Fact('fact:new-version', 1, 2, 3, $version, 'entity:left', 'height', '3', 'm',
+            0.0, 'document', 'confirmed', ['evidence:3']);
+        $evidence[] = new Evidence('evidence:3', 1, 2, 3, $version, 'artifact:facade', 'document', 1);
+        $result = $this->linker()->link($entities, $facts, $evidence);
+        self::assertCount(1, $result->links);
+        self::assertSame('fact:left', $result->links[0]['left_fact_id']);
+        self::assertSame('fact:right', $result->links[0]['right_fact_id']);
+        self::assertSame($this->sourceVersion('a'), $result->links[0]['left_fact_source_version']);
+        self::assertSame($result->links, $this->linker()->link(array_reverse($entities), $facts, $evidence)->links);
+    }
+
+    #[Test]
+    public function a_newer_entity_is_not_a_substitute_for_the_missing_fact_source_entity(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $entities[0] = new Entity('entity:left', 1, 2, 3, $this->sourceVersion('c'), 'room', 'entity:left',
+            ['document_role' => 'plan', 'room_number' => '101']);
+        $this->expectException(InvalidArgumentException::class);
+        $this->linker()->link($entities, $facts, $evidence);
+    }
+
+    #[Test]
+    public function contradictions_across_document_versions_keep_both_original_facts_and_evidence(): void
+    {
+        [$entities, $facts, $evidence] = $this->pair('plan', 'room_schedule', 'room_number', '101', 'room');
+        $version = $this->sourceVersion('c');
+        $entities[1] = new Entity('entity:right', 1, 2, 3, $version, 'room', 'entity:right',
+            ['document_role' => 'room_schedule', 'room_number' => '101']);
+        $facts[1] = new Fact('fact:right', 1, 2, 3, $version, 'entity:right', 'area', 19.1,
+            'm2', 0.95, 'document', 'confirmed', ['evidence:2']);
+
+        $result = $this->linker()->link($entities, $facts, $evidence);
+
+        self::assertSame([], $result->links);
+        self::assertCount(1, $result->conflicts);
+        self::assertSame([$this->sourceVersion('a'), $version], array_column($result->conflicts[0]->facts, 'sourceVersion'));
+        self::assertSame(['evidence:1', 'evidence:2'], $result->conflicts[0]->evidenceIds);
+        self::assertCount(1, $result->questions);
+        self::assertSame(0, $result->providerCalls);
+    }
+
+    #[Test]
     #[DataProvider('deterministicScenarios')]
     public function deterministic_engineering_keys_link_the_four_required_document_scenarios_without_ai(
         string $leftRole,
@@ -121,7 +215,8 @@ final class CrossDocumentFactLinkerTest extends TestCase
         self::assertSame('ai_arbitration', $result->links[0]['strategy']);
         self::assertSame(['operation_identity', 'strategy', 'match_key', 'source_version', 'subject', 'candidates'], array_keys($arbitrator->payloads[0]));
         self::assertSame(['fact', 'evidence'], array_keys($arbitrator->payloads[0]['subject']));
-        self::assertSame(['id', 'type', 'value', 'unit', 'confidence', 'origin', 'status'], array_keys($arbitrator->payloads[0]['subject']['fact']));
+        self::assertSame(['id', 'source_version', 'type', 'value', 'unit', 'confidence', 'origin', 'status'], array_keys($arbitrator->payloads[0]['subject']['fact']));
+        self::assertSame($this->sourceVersion('a'), $arbitrator->payloads[0]['subject']['fact']['source_version']);
         self::assertSame(['id', 'source_artifact_id', 'source_type', 'source_version', 'page', 'region', 'native_reference'], array_keys($arbitrator->payloads[0]['subject']['evidence'][0]));
         self::assertSame($this->sourceVersion('a'), $arbitrator->payloads[0]['source_version']);
         self::assertSame($this->sourceVersion('b'), $arbitrator->payloads[0]['subject']['evidence'][0]['source_version']);

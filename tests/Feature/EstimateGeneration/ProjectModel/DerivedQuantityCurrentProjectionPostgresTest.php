@@ -211,6 +211,34 @@ SQL);
     }
 
     #[Test]
+    public function stale_stage_five_keeps_independent_formula_projections_and_all_history(): void
+    {
+        [$repository, $scope, $entity, $fact, $evidence] = $this->fixture();
+        $stageFive = $this->quantity($scope, $entity, $fact, $evidence, ['technology_source_version' => $scope[3]]);
+        $geometry = $this->quantity($scope, $entity, $fact, $evidence, ['contract' => 'geometry-formulas:v2'],
+            'quantity:independent-geometry', 'geometry-formulas:v2');
+        $repository->replaceDerivedQuantityProjection(...[...$scope, [$stageFive], []]);
+        $repository->replaceDerivedQuantityFormulaProjectionSet($scope[0], $scope[1], $scope[2], 'geometry-formulas:v2', [$geometry]);
+        self::assertCount(2, $repository->currentDerivedQuantities(...$scope));
+        $service = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService(
+            $repository, new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory);
+        $blocked = $service->derive($scope[0], $scope[1], $scope[2]);
+        self::assertSame('stage5_projection_not_current', $blocked['warnings'][0]['code']);
+        self::assertSame([$geometry->id], array_column($repository->currentDerivedQuantities(...$scope), 'id'));
+        self::assertSame([$geometry->id], array_column($repository->currentDerivedQuantitiesForFormulaVersion(
+            $scope[0], $scope[1], $scope[2], 'geometry-formulas:v2'), 'id'));
+        foreach ([$stageFive, $geometry] as $quantity) {
+            self::assertSame([$quantity->id], array_column($repository->derivedQuantityHistory(...[...$scope, $quantity->logicalId]), 'id'));
+        }
+        $service->derive($scope[0], $scope[1], $scope[2]);
+        self::assertSame([$geometry->id], array_column($repository->currentDerivedQuantities(...$scope), 'id'));
+        // The existing default API retains its explicit whole-scope invalidation behavior.
+        $repository->deactivateDerivedQuantityProjectionScope($scope[0], $scope[1], $scope[2]);
+        self::assertSame([], $repository->currentDerivedQuantities(...$scope));
+        self::assertCount(1, $repository->derivedQuantityHistory(...[...$scope, $geometry->logicalId]));
+    }
+
+    #[Test]
     public function concurrent_equivalent_and_competing_projection_writers_leave_one_valid_current_row(): void
     {
         $this->production_schema_has_a_scoped_current_derived_quantity_projection();
@@ -367,7 +395,8 @@ SQL);
     }
 
     /** @param array{int,int,int,string} $scope */
-    private function quantity(array $scope, Entity $entity, Fact $fact, Evidence $evidence, array $snapshot): DerivedQuantity
+    private function quantity(array $scope, Entity $entity, Fact $fact, Evidence $evidence, array $snapshot,
+        string $logicalId = 'quantity:technology_work_package:quantity:1', string $formulaVersion = '1'): DerivedQuantity
     {
         $operand = [
             'fact_id' => $fact->id,
@@ -390,10 +419,9 @@ SQL);
             ]],
             'decision_id' => null,
         ];
-        $logicalId = 'quantity:technology_work_package:quantity:1';
         $prototype = new DerivedQuantity(
             $logicalId, $scope[0], $scope[1], $scope[2], $scope[3], $entity->id, 'technology_work_package:1', [$operand], '5', 'm',
-            'half_up', 2, [$evidence->id], 'confirmed', 'technology_work_package', '1',
+            'half_up', 2, [$evidence->id], 'confirmed', 'technology_work_package', $formulaVersion,
             snapshotIdentity: $snapshot,
             logicalId: $logicalId,
         );
@@ -401,7 +429,7 @@ SQL);
 
         return new DerivedQuantity(
             'quantityv:'.$identity, $scope[0], $scope[1], $scope[2], $scope[3], $entity->id, 'technology_work_package:1', [$operand], '5', 'm',
-            'half_up', 2, [$evidence->id], 'confirmed', 'technology_work_package', '1',
+            'half_up', 2, [$evidence->id], 'confirmed', 'technology_work_package', $formulaVersion,
             snapshotIdentity: $snapshot,
             logicalId: $logicalId,
             exactIdentity: $identity,

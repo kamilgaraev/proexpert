@@ -173,7 +173,7 @@ final class ScenarioEstimateCalculator
             : ($complete && $scopeConfirmed && ! $currencyConversionRequired ? EstimateResultClass::VerifiedScope : EstimateResultClass::Refined))->value,
             'selected_scope' => array_values($scope), 'missing_requirements' => $requirements, 'scenarios' => $results,
             'scenario_range' => $range, 'range_kind' => $range === null ? null : 'scenario', 'accuracy_calibrated' => false,
-            'can_confirm_for_apply' => $complete && $hasKnownQuantity && ! $currencyConversionRequired, 'currency_conversion_required' => $currencyConversionRequired, 'scope_confirmed' => $scopeConfirmed];
+            'can_confirm_for_apply' => $complete && $scopeConfirmed && $hasKnownQuantity && ! $currencyConversionRequired, 'currency_conversion_required' => $currencyConversionRequired, 'scope_confirmed' => $scopeConfirmed];
     }
 
     private function number(mixed $value): ?BigDecimal
