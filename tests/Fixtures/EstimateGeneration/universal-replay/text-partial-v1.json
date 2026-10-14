@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic_transport_fixture",
+  "accuracy_calibrated": false,
+  "tags": [
+    "incomplete_project",
+    "current_repair"
+  ],
+  "description": "Отделка комнаты: требуется окраска стен. Размеры и источник цены необходимо уточнить.",
+  "profile_id": "renovation",
+  "construction_type": "current_repair",
+  "selected_sections": [
+    "finishing"
+  ],
+  "recordings": [
+    {
+      "role": "estimate_composition",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"work_intents\":[{\"kind\":\"supplementary\",\"work_key\":\"painting-from-description\",\"name\":\"Окраска стен\",\"derived_quantity_id\":null,\"source_fact_ids\":[\"__description_fact_id__\"],\"technology_package_candidate\":null,\"unit\":\"m2\",\"work_section\":\"finishing\",\"assumptions\":[],\"exclusions\":[],\"missing_document_recommendations\":[]}]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    }
+  ]
+}
