@@ -40,7 +40,7 @@ final class ContractRevisionLegalArchiveService
             $profileMetadata,
         );
         $binding = DB::transaction(function () use ($actor, $organizationId, $contractId, $number, $hash): object {
-            Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
+            $contract = Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
             $preview = $this->instances->preview($actor, $organizationId, $contractId, $number);
             $revision = $preview['revision'];
             $own = array_filter($revision['parties'], static fn (array $party): bool => (int) ($party['linked_organization_id'] ?? 0) === $organizationId);
@@ -55,6 +55,12 @@ final class ContractRevisionLegalArchiveService
             if ((int) $current !== $revision['id']) {
                 throw new ContractBuilderException('contracts.confirmation_conflict', 409);
             }
+            $requisites = ContractRevisionArchiveRequisites::capture($contract, $revision, $organizationId);
+            $titleNumber = (string) ($requisites['document_number'] ?: $contractId);
+            $numberLimit = 255 - mb_strlen(trans_message('contracts.revision_legal_title', ['contract' => '', 'revision' => $number]));
+            if (mb_strlen($titleNumber) > $numberLimit) {
+                $titleNumber = mb_substr($titleNumber, 0, $numberLimit - 1).'…';
+            }
             $bytes = (new ContractDocumentExporter)->render($preview['html'], 'pdf');
             $fileHash = hash('sha256', $bytes);
             $organization = Organization::findOrFail($organizationId);
@@ -65,7 +71,8 @@ final class ContractRevisionLegalArchiveService
             }
             $id = DB::table('contract_revision_legal_bindings')->insertGetId([
                 'revision_id' => $revision['id'], 'organization_id' => $organizationId, 'created_by' => $actor->id,
-                'title' => trans_message('contracts.revision_legal_title', ['contract' => $contractId, 'revision' => $number]),
+                'title' => trans_message('contracts.revision_legal_title', ['contract' => $titleNumber, 'revision' => $number]),
+                'document_requisites' => json_encode($requisites, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'filename' => $filename, 'storage_path' => $path, 'content_hash' => $hash, 'file_hash' => $fileHash,
                 'size' => strlen($bytes), 'created_at' => now(), 'updated_at' => now(),
             ]);
@@ -93,6 +100,7 @@ final class ContractRevisionLegalArchiveService
                     'contract_id' => $contractId, 'contract_revision_id' => (int) $binding->revision_id,
                     'contract_content_hash' => $binding->content_hash, 'contract_revision_binding_id' => (int) $binding->id];
                 $document = $this->publisher->publish($organizationId, (int) $binding->created_by, [
+                    ...($binding->document_requisites === null ? [] : json_decode($binding->document_requisites, true, 512, JSON_THROW_ON_ERROR)),
                     'title' => $binding->title, 'document_type' => 'contract', 'status' => 'draft',
                     'type_profile_code' => $revisionData['contract_profile_code'] ?? ContractDocumentProfiles::fromVersion($revisionData['template_version_id'] === null ? null : (int) $revisionData['template_version_id'], $revisionData['parties']),
                     'confidentiality_level' => ContractDocumentProfiles::all()[$revisionData['contract_profile_code'] ?? 'contract.work']['confidentiality_level'] ?? 'internal', 'direction' => 'internal',

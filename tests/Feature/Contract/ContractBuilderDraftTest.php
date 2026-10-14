@@ -1114,6 +1114,14 @@ final class ContractBuilderDraftTest extends TestCase
             $service->prepare($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash']);
             self::fail('Archive failure should be visible');
         } catch (\App\Exceptions\ContractBuilderException $exception) { self::assertSame(503, $exception->getCode()); }
+        self::assertArrayHasKey('document_number', $payloads[0]['data']);
+        self::assertSame('DRAFT-1', $payloads[0]['data']['document_number']);
+        self::assertSame('2026-09-19', $payloads[0]['data']['document_date']);
+        self::assertSame((int) $contract->project_id, $payloads[0]['data']['primary_project_id']);
+        self::assertSame($revision['parties'][1]['name'], $payloads[0]['data']['counterparty_name']);
+        self::assertSame('Договор DRAFT-1 — редакция 1', $payloads[0]['data']['title']);
+        $contract->update(['number' => 'CHANGED-AFTER-FIRST-PREPARE', 'date' => '2026-10-14',
+            'project_id' => Project::factory()->create(['organization_id' => $actor->current_organization_id])->id]);
         self::assertSame('failed', $service->state($actor, $actor->current_organization_id, $contract->id, 1)['binding']['status']);
         $state = $service->prepare($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash']);
         self::assertEquals($payloads[0], $payloads[1]);
@@ -1125,6 +1133,8 @@ final class ContractBuilderDraftTest extends TestCase
         self::assertEquals($state, $service->prepare($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash']));
         self::assertNull($service->state($other, $other->current_organization_id, $contract->id, 1)['binding']);
         $otherState = $service->prepare($other, $other->current_organization_id, $contract->id, 1, $revision['content_hash']);
+        self::assertNull($payloads[2]['data']['primary_project_id']);
+        self::assertSame($revision['parties'][0]['name'], $payloads[2]['data']['counterparty_name']);
         self::assertNotSame($state['binding']['document_id'], $otherState['binding']['document_id']);
         self::assertSame($state['binding']['content_hash'], $otherState['binding']['content_hash']);
         $document = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument::findOrFail($state['binding']['document_id']);
@@ -1132,7 +1142,96 @@ final class ContractBuilderDraftTest extends TestCase
         self::assertSame('legal_document_editing_frozen', $guard->mutationBlocker($document));
         $guard->assertWorkflowSubmissionAllowed($document);
         $guard->assertSignatureAllowed($document);
+        $storedRequisites = DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->where('organization_id', $actor->current_organization_id)->value('document_requisites');
+        try {
+            DB::transaction(static fn (): int => DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->where('organization_id', $actor->current_organization_id)->update(['document_requisites' => '{}']));
+            self::fail('Archive requisites must stay immutable');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('contract_revision_legal_binding_immutable', $exception->getMessage());
+        }
+        self::assertSame($storedRequisites, DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->where('organization_id', $actor->current_organization_id)->value('document_requisites'));
         self::assertSame(1, DB::table('contract_builder_revisions')->count());
+    }
+
+    public function test_revision_archive_requisites_use_frozen_context_and_keep_shared_project_scope(): void
+    {
+        [$actor, $other, $contract, , , $revision] = $this->fixture(contractContext: true);
+        $projectId = (int) $contract->project_id;
+        $contract->update(['number' => 'CURRENT-HEADER', 'date' => '2026-10-14', 'subject' => 'Учебный предмет']);
+        $requisites = \App\Services\Contract\ContractRevisionArchiveRequisites::capture($contract, $revision, (int) $actor->current_organization_id);
+        self::assertSame('DRAFT-1', $requisites['document_number']);
+        self::assertSame('2026-09-19', $requisites['document_date']);
+        self::assertSame($projectId, $requisites['primary_project_id']);
+        self::assertSame($revision['parties'][1]['name'], $requisites['counterparty_name']);
+        self::assertSame('Учебный предмет', $requisites['description']);
+        $external = \App\Services\Contract\ContractRevisionArchiveRequisites::capture($contract, $revision, (int) $other->current_organization_id);
+        self::assertNull($external['primary_project_id']);
+        self::assertSame($revision['parties'][0]['name'], $external['counterparty_name']);
+        $contract->project->organizations()->attach($other->current_organization_id, ['is_active' => true]);
+        self::assertSame($projectId, \App\Services\Contract\ContractRevisionArchiveRequisites::capture($contract, $revision, (int) $other->current_organization_id)['primary_project_id']);
+        $contract->project->organizations()->updateExistingPivot($other->current_organization_id, ['is_active' => false]);
+        self::assertNull(\App\Services\Contract\ContractRevisionArchiveRequisites::capture($contract, $revision, (int) $other->current_organization_id)['primary_project_id']);
+    }
+
+    public function test_legacy_revision_archive_binding_keeps_its_stored_identity_without_requisites(): void
+    {
+        [$actor, , $contract, , , $revision] = $this->fixture();
+        $this->fakeBuilderStorage();
+        $bytes = (new \App\Services\Contract\ContractDocumentExporter)->render(app(ContractBuilderInstanceService::class)->preview($actor, $actor->current_organization_id, $contract->id, 1)['html'], 'pdf');
+        $organization = Organization::findOrFail($actor->current_organization_id);
+        $path = app(\App\Services\Storage\FileService::class)->putContent($bytes, 'contracts/'.$contract->id.'/builder/legal', 'legacy.pdf', 'private', $organization);
+        DB::table('contract_revision_legal_bindings')->insert([
+            'revision_id' => $revision['id'], 'organization_id' => $actor->current_organization_id, 'created_by' => $actor->id,
+            'title' => 'Ранее подготовленная редакция', 'filename' => 'legacy.pdf', 'storage_path' => $path,
+            'content_hash' => $revision['content_hash'], 'file_hash' => hash('sha256', $bytes), 'size' => strlen($bytes),
+            'document_requisites' => null, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $contract->update(['number' => 'CHANGED-HEADER']);
+        $publisher = \Mockery::mock(\App\Services\Contract\ContractRevisionArchivePublisher::class);
+        $published = null;
+        $publisher->shouldReceive('publish')->once()->andReturnUsing(static function (int $organizationId, int $actorId, array $data) use (&$published): never {
+            $published = $data;
+            throw new \RuntimeException('Simulated legacy archive outage');
+        });
+        $this->app->instance(\App\Services\Contract\ContractRevisionArchivePublisher::class, $publisher);
+        try {
+            app(\App\Services\Contract\ContractRevisionLegalArchiveService::class)->prepare($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash']);
+            self::fail('Archive outage should be visible');
+        } catch (\App\Exceptions\ContractBuilderException $exception) {
+            self::assertSame(503, $exception->getCode());
+        }
+        self::assertIsArray($published);
+        self::assertSame('Ранее подготовленная редакция', $published['title']);
+        self::assertArrayNotHasKey('document_number', $published);
+        self::assertArrayNotHasKey('primary_project_id', $published);
+        self::assertNull(DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->value('document_requisites'));
+    }
+
+    public function test_revision_archive_title_limits_long_unicode_number_without_losing_requisites(): void
+    {
+        [$actor, , $contract, , , $revision] = $this->fixture();
+        $this->fakeBuilderStorage();
+        $longNumber = str_repeat('Я', 255);
+        DB::table('contracts')->where('id', $contract->id)->update(['number' => $longNumber]);
+        $publisher = \Mockery::mock(\App\Services\Contract\ContractRevisionArchivePublisher::class);
+        $published = null;
+        $publisher->shouldReceive('publish')->once()->andReturnUsing(static function (int $organizationId, int $actorId, array $data) use (&$published): never {
+            $published = $data;
+            throw new \RuntimeException('Simulated archive outage');
+        });
+        $this->app->instance(\App\Services\Contract\ContractRevisionArchivePublisher::class, $publisher);
+        try {
+            app(\App\Services\Contract\ContractRevisionLegalArchiveService::class)->prepare($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash']);
+            self::fail('Archive outage should be visible');
+        } catch (\App\Exceptions\ContractBuilderException $exception) {
+            self::assertSame(503, $exception->getCode());
+        }
+        self::assertIsArray($published);
+        self::assertLessThanOrEqual(255, mb_strlen($published['title']));
+        self::assertStringEndsWith(' — редакция 1', $published['title']);
+        self::assertSame($longNumber, $published['document_number']);
+        $snapshot = json_decode(DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->value('document_requisites'), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame($longNumber, $snapshot['document_number']);
     }
 
     public function test_activation_schedule_requires_both_confirmations_and_separate_right_and_preserves_future_conditions(): void
@@ -1530,7 +1629,7 @@ final class ContractBuilderDraftTest extends TestCase
         ]);
     }
 
-    private function fixture(bool $entity = false, bool $source = false, bool $external = false, bool $application = false, bool $legacy = false, array $additional = [], bool $deferInstance = false): array
+    private function fixture(bool $entity = false, bool $source = false, bool $external = false, bool $application = false, bool $legacy = false, array $additional = [], bool $deferInstance = false, bool $contractContext = false): array
     {
         $authorization = \Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->andReturn(true);
@@ -1596,6 +1695,16 @@ final class ContractBuilderDraftTest extends TestCase
                 ]]]],
             ]];
             $applicationValues[$worksId] = [['id' => 'work-1', 'values' => ['name' => 'Монтаж', 'unit' => 'шт.', 'quantity' => '2', 'price' => ['amount' => '60', 'currency' => 'RUB']]]];
+        }
+        if ($contractContext) {
+            foreach (['contract.number' => 'text', 'contract.date' => 'date'] as $field => $type) {
+                $contextField = $library->create($actor, $owner->id, 'variable', $field, ['type' => $type,
+                    'source' => ['kind' => 'contract_context', 'field' => $field]], 'context-'.$field);
+                $contextId = $contextField['item']['id'];
+                $library->publish($actor, $owner->id, $contextId, 1, 1);
+                $content['variables'][$contextId] = 1;
+                $content['document']['content'][0]['content'][] = ['type' => 'variable', 'attrs' => ['variableId' => $contextId]];
+            }
         }
         $template = $library->create($actor, $owner->id, 'template', 'Договор', $content, 'template');
         $templateId = $template['item']['id'];
