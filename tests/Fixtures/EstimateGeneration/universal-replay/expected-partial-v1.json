@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "expected_model_schema_version": "benchmark-expected:v1",
+  "expected": {
+    "sheet_type": "partial_worklist",
+    "room_cells": [],
+    "wall_cells": [],
+    "opening_ids": [],
+    "areas": [],
+    "quantities": [],
+    "work_ids": [
+      "painting-from-description"
+    ],
+    "normative_rankings": {},
+    "costs": [],
+    "applicable_item_ids": [],
+    "evidence_ids_by_item": {},
+    "unknown_numeric_fields": [
+      "areas",
+      "quantities",
+      "costs"
+    ]
+  }
+}
