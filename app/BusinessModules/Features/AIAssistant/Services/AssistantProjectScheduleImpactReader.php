@@ -16,7 +16,7 @@ final readonly class AssistantProjectScheduleImpactReader
 
     public static function matches(string $query): bool
     {
-        return AssistantMutationIntent::type($query) === null
+        return ! AssistantMutationIntent::containsRequest($query)
             && preg_match('/задач|график|критическ|зависимост/iu', $query) === 1
             && preg_match('/влия[а-яё]*.*срок|срок.*влия|критическ.*путь|разблокир|зависимост|задержива[а-яё]*.*(?:этап|срок|работ)/iu', $query) === 1
             && preg_match('/создай|измени|назначь|удали|перенес|перенест|перенос|сдвин|бюджет|расход|оплат|потрач|затрат|сумм|выручк|марж|долг|документ|дефект|замечан|табел|сотрудник|ifc|bim|бим/iu', $query) !== 1;

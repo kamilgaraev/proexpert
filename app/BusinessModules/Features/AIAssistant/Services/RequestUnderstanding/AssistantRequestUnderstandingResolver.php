@@ -202,7 +202,7 @@ final class AssistantRequestUnderstandingResolver
             return 'update';
         }
 
-        if ($this->hasLeadingCommand($normalized, ['отправь уведомление', 'уведоми'])) {
+        if ($mutationIntent === 'send') {
             return 'send';
         }
 
@@ -452,7 +452,7 @@ final class AssistantRequestUnderstandingResolver
             return false;
         }
 
-        return $this->hasLeadingCommand($normalized, ['утверди', 'согласуй', 'одобри', 'подтверди платеж']);
+        return AssistantMutationIntent::type($normalized) === 'approve';
     }
 
     private function isNavigationRequest(string $normalized): bool
@@ -508,17 +508,6 @@ final class AssistantRequestUnderstandingResolver
         return is_array($reference) && ($reference['type'] ?? null) === 'project'
             && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
             && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
-    }
-
-    private function hasLeadingCommand(string $normalized, array $commands): bool
-    {
-        foreach ($commands as $command) {
-            if (preg_match('/^(?:пожалуйста |прошу )?'.preg_quote($command, '/').'(?: |$)/u', $normalized) === 1) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function isQuestionRequest(string $normalized): bool

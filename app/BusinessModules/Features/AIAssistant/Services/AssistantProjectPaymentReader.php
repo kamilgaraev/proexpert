@@ -22,8 +22,10 @@ final readonly class AssistantProjectPaymentReader
 
     public static function matches(string $query): bool
     {
-        $otherTopics = preg_replace('/бюджетн[а-яё]*\s+лимит[а-яё]*|лимит[а-яё]*\s+бюджет[а-яё]*/iu', '', $query) ?? $query;
-        return AssistantMutationIntent::type($query) === null
+        $invoiceLimitCheck = preg_match('/превыш|нарушен|наруша|укладыва|исключен|перед\s+оплат|готов[а-яё]*\s+к\s+оплат/iu', $query) === 1
+            && preg_match('/перечисл[а-яё]*.*лимит|(?:список|перечень|каталог).*лимит|(?:все|кажд[а-яё]*)\s+бюджетн[а-яё]*\s+лимит|по\s+всем\s+стать|лимит.*(?:организац|стать|отдел|всех\s+проект)/iu', $query) !== 1;
+        $otherTopics = $invoiceLimitCheck ? (preg_replace('/бюджетн[а-яё]*\s+лимит[а-яё]*|лимит[а-яё]*\s+бюджет[а-яё]*/iu', '', $query) ?? $query) : $query;
+        return ! AssistantMutationIntent::containsRequest($query)
             && preg_match('/сч[её]т[а-яё]*|плат[её]жн[а-яё]*\s+документ[а-яё]*/iu', $query) === 1
             && preg_match('/не\s+оплачен|неоплачен|перед\s+оплатой|жд[её]т.*оплат|готов[а-яё]*\s+к\s+оплат|просроч|задержива/iu', $query) === 1
             && preg_match('/создай|оплати|одобри|утверди|удали|бюджет|потрач|расход|затрат|прибыл|выручк|график|задач|табел|смет|поставк|замечан|сотрудник|техник|машин|механизм|бим|bim|ifc|(?<![\p{L}\p{N}_])акт[а-яё]*(?![\p{L}\p{N}_])/iu', $otherTopics) !== 1;

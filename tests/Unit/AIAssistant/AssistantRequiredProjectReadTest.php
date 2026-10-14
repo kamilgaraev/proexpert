@@ -26,6 +26,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Обнови сроки задач нашего объекта, задерживающих работы',
             'Пожалуйста, обнови сроки задач нашего объекта, задерживающих этапы',
             'Прошу добавьте задачи нашего объекта, задерживающие сроки',
+            'Покажи задачи нашего объекта, задерживающие этапы, и обнови график',
+            'Обновите сроки задач нашего объекта, задерживающих работы',
             'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
         }
@@ -227,6 +229,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие платежные документы нашего объекта готовы к оплате и каков бюджет?',
             'Какие счета нашего объекта готовы к оплате, превышен ли бюджетный лимит и каков бюджет проекта?',
             'Какие неоплаченные счета нашего объекта превышают бюджетный лимит и каковы расходы проекта?',
+            'Покажи неоплаченные счета нашего объекта и обнови сроки оплаты',
+            'Покажи неоплаченные счета нашего объекта и перечисли все бюджетные лимиты по всем статьям организации',
+            'Какие счета нашего объекта готовы к оплате и каковы все бюджетные лимиты по всем статьям организации?',
+            'Какие счета нашего объекта готовы к оплате и покажи список бюджетных лимитов?',
         ] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($query), $query);
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);
