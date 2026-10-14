@@ -143,6 +143,17 @@ final class DocumentProcessingControlPostgresTest extends EstimateGenerationCano
     #[Test]
     public function cancelled_session_stops_inflight_units_and_retains_late_physical_response_without_publication(): void
     {
+        $this->assertStoppedSessionRetainsLateResponse(false);
+    }
+
+    #[Test]
+    public function archived_session_stops_inflight_units_and_retains_late_physical_response_without_publication(): void
+    {
+        $this->assertStoppedSessionRetainsLateResponse(true);
+    }
+
+    private function assertStoppedSessionRetainsLateResponse(bool $archive): void
+    {
         DB::beginTransaction();
         try {
             $fixture = $this->fixture();
@@ -156,6 +167,9 @@ final class DocumentProcessingControlPostgresTest extends EstimateGenerationCano
             [$physical, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
             $physical->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
             app(TransitionEstimateGenerationSession::class)->handle($fixture['session'], 0, EstimateGenerationEvent::Cancelled, $fixture['user']);
+            if ($archive) {
+                app(TransitionEstimateGenerationSession::class)->handle($fixture['session']->fresh(), 1, EstimateGenerationEvent::Archived, $fixture['user']);
+            }
             self::assertSame('superseded', $fixture['unit']->fresh()->status->value);
             self::assertSame('cancelled', $fixture['document']->fresh()->processing_control_status);
             $physical->storeResponse($context->attemptId, $fingerprint, $owner,
@@ -168,13 +182,13 @@ final class DocumentProcessingControlPostgresTest extends EstimateGenerationCano
                 unitType: $fixture['unit']->unit_type, unitIndex: 1, sourceVersion: $fixture['sourceVersion'],
             ), $now));
             self::assertSame('completed', DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $context->attemptId)->value('state'));
-            self::assertSame('cancelled', $fixture['session']->fresh()->status->value);
+            self::assertSame($archive ? 'archived' : 'cancelled', $fixture['session']->fresh()->status->value);
             self::assertSame(0, $fixture['unit']->fresh()->output_count);
             self::assertSame([], app(DocumentUnitDispatchStore::class)->dueForDocument((int) $fixture['document']->id, $fixture['sourceVersion'], $now, 10));
             [$next, $nextContext, $nextFingerprint, $nextOwner] = $this->physicalAttempt($fixture);
             try {
                 $next->markWireStarted($nextContext->attemptId, $nextFingerprint, $nextOwner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
-                self::fail('A cancelled session cannot send another request.');
+                self::fail('A stopped session cannot send another request.');
             } catch (DocumentUnitProcessingException $exception) {
                 self::assertSame('document_processing_stopped', $exception->safeCode);
             }
