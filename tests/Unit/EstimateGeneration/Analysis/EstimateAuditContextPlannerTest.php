@@ -70,6 +70,54 @@ final class EstimateAuditContextPlannerTest extends TestCase
         (new EstimateAuditContextPlanner)->prepare($this->root(), 1000);
     }
 
+    public function test_duplicate_quantity_lineage_fits_one_part_without_losing_server_draft_or_audit_proofs(): void
+    {
+        $basis = ['key' => 'floor_area', 'amount' => '20', 'unit' => 'm2', 'source' => 'evidenced',
+            'assumptions' => [], 'formula_inputs' => ['operands' => [['fact_id' => 'fact:area',
+                'value' => '20', 'evidence_ids' => ['evidence:area'], 'decision_reason' => str_repeat('confirmed input ', 800)]]]];
+        $quantity = ['id' => 'floor_area', 'entity_id' => 'room:1', 'quantity_basis' => $basis,
+            'operand_fact_ids' => ['fact:area']];
+        $items = [];
+        for ($i = 0; $i < 3; $i++) {
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Floor '.$i, 'unit' => 'm2', 'quantity' => '20',
+                'quantity_status' => 'supported', 'quantity_evidence' => $basis, 'quantity_basis_details' => $basis,
+                'price_snapshot' => ['id' => 'price:'.$i, 'unit_price' => '100'], 'source_refs' => [['fact_id' => 'fact:area']]];
+        }
+        $draft = ['local_estimates' => [['key' => 'room', 'sections' => [['key' => 'floor', 'work_items' => $items]]]],
+            'building_quantities' => ['quantities' => [$basis], 'diagnostics' => ['keep_this_warning']],
+            'estimate_composition' => ['derived_quantities' => [$quantity], 'snapshot_token' => str_repeat('b', 64)],
+            'traceability' => ['document_source_refs' => [['document_id' => 7, 'page' => 2]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0,
+            [['id' => 'fact:area', 'entity_id' => 'room:1', 'value' => '20', 'unit' => 'm2']], [$quantity], $draft,
+            [['fact_id' => 'fact:area', 'locator' => ['evidence_id' => 'evidence:area', 'page' => 2]]], 'estimate-auditor:v1');
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, 55000);
+        self::assertCount(1, $parts);
+        $input = $parts[0]['input'];
+        self::assertSame($draft, $input->draft, 'Wire deduplication must never rewrite the server business artifact.');
+        self::assertSame($root->facts, $input->facts);
+        self::assertSame($root->evidence, $input->evidence);
+        self::assertSame([$quantity], $input->derivedQuantities);
+        $wire = $input->canonicalPayload()['draft'];
+        self::assertArrayNotHasKey('derived_quantities', $wire['estimate_composition']);
+        self::assertArrayNotHasKey('quantities', $wire['building_quantities']);
+        self::assertSame(['keep_this_warning'], $wire['building_quantities']['diagnostics']);
+        self::assertSame($draft['traceability'], $wire['traceability']);
+        foreach ($wire['local_estimates'][0]['sections'][0]['work_items'] as $row) {
+            self::assertSame($basis, $row['quantity_basis_details']);
+            self::assertArrayNotHasKey('quantity_evidence', $row);
+            self::assertSame('quantity_basis_details', $row['quantity_evidence_ref']);
+            self::assertSame('100', $row['price_snapshot']['unit_price']);
+            self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::itemFingerprint(
+                $items[array_search($row['key'], array_column($items, 'key'), true)]), $row['item_fingerprint']);
+        }
+        self::assertLessThanOrEqual(55000, $input->wireBytes());
+        $changed = $draft;
+        $changed['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence']['amount'] = '21';
+        $different = $root->withDraft($changed, 0);
+        self::assertSame('21', $different->canonicalPayload()['draft']['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence']['amount']);
+        self::assertNotSame($root->fingerprint(), $different->fingerprint());
+    }
+
     private function root(): EstimateAuditInput
     {
         $facts = $evidence = $items = [];

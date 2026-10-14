@@ -31,7 +31,7 @@ final class EstimateAuditContextPlanner
         $full = $root->canonicalPayload();
         $allFit = true;
         foreach ($parts as $part) {
-            $payload = [...$full, 'draft' => $part['draft']];
+            $payload = [...$full, 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $root->derivedQuantities)];
             if ($part['id'] !== 'whole') {
                 $payload['part_id'] = $part['id'];
             }
@@ -181,7 +181,7 @@ final class EstimateAuditContextPlanner
                 $draft['estimate_composition']['derived_quantities'] = $quantities;
             }
             $payload = [...$full, 'facts' => $facts, 'derived_quantities' => $quantities, 'evidence' => $evidence,
-                'draft' => $draft, 'part_id' => $id, 'context_manifest' => $manifest];
+                'draft' => EstimateAuditDraftWireProjection::project($draft, $quantities), 'part_id' => $id, 'context_manifest' => $manifest];
             if (! $this->fits($payload, $maximumBytes)) {
                 return null;
             }

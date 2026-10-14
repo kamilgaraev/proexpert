@@ -58,7 +58,9 @@ final readonly class EstimateAuditInput
         }
         // The full server snapshot can exceed a single wire request. It is never
         // sent before section/context partitioning and admission checks.
-        if (strlen($this->canonicalJson($this->canonicalPayload())) > ($partId === 'whole' ? 33_554_432 : 2_097_152)) {
+        $serverPayload = $this->canonicalPayload();
+        $serverPayload['draft'] = $this->draft;
+        if (strlen($this->canonicalJson($serverPayload)) > ($partId === 'whole' ? 33_554_432 : 2_097_152)) {
             throw new InvalidArgumentException('estimate_audit_input_too_large');
         }
     }
@@ -75,7 +77,7 @@ final readonly class EstimateAuditInput
             'cycle' => $this->cycle,
             'facts' => $this->facts,
             'derived_quantities' => $this->derivedQuantities,
-            'draft' => $this->draft,
+            'draft' => EstimateAuditDraftWireProjection::project($this->draft, $this->derivedQuantities),
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
             ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
@@ -86,6 +88,8 @@ final readonly class EstimateAuditInput
     public function fingerprint(): string
     {
         $payload = $this->canonicalPayload();
+        // Replay binds the complete server artifact, including fields deduplicated on wire.
+        $payload['draft'] = $this->draft;
         if ($this->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
         }

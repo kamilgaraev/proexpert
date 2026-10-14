@@ -30,7 +30,12 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         $this->replayPhoto('photo-simple-context-v1.json', 0, 1);
     }
 
-    private function replayPhoto(string $recording, int $descriptionFacts, ?int $expectedVisionCalls = null): void
+    public function test_user_entered_floor_area_is_calculated_and_wall_assumptions_are_not_reported_as_measurements_or_prices(): void
+    {
+        $this->replayPhoto('photo-user-area-v1.json', 0, 1, '20');
+    }
+
+    private function replayPhoto(string $recording, int $descriptionFacts, ?int $expectedVisionCalls = null, ?string $expectedArea = null): void
     {
         $image = imagecreatetruecolor(32, 24);
         imagefill($image, 0, 0, imagecolorallocate($image, 235, 235, 235));
@@ -62,8 +67,33 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
             self::assertNotEmpty($result->prediction['work_ids']);
             self::assertFalse($adapter->lastRun['evaluation']['can_confirm_for_apply']);
         }
-        self::assertSame([], $result->prediction['areas']);
-        self::assertSame([], $result->prediction['quantities']);
+        if ($expectedArea === null) {
+            self::assertSame([], $result->prediction['areas']);
+            self::assertSame([], $result->prediction['quantities']);
+        } else {
+            self::assertCount(1, $result->prediction['areas']);
+            foreach ($result->prediction['areas'] as $area) {
+                self::assertTrue(\Brick\Math\BigDecimal::of($area)->isEqualTo($expectedArea));
+            }
+            $positions = $adapter->lastRun['evaluation']['scenarios'][0]['positions'];
+            $supported = array_values(array_filter($positions, static fn ($position): bool => $position['quantity_status'] === 'supported'));
+            self::assertNotEmpty($supported);
+            foreach ($supported as $position) {
+                self::assertTrue(\Brick\Math\BigDecimal::of($position['quantity'])->isEqualTo($expectedArea));
+                self::assertSame('evidenced', $position['quantity_basis']['source']);
+                self::assertSame([], $position['quantity_basis']['assumptions']);
+            }
+            $assumed = array_values(array_filter($positions, static fn ($position): bool => $position['quantity_status'] === 'assumed'));
+            self::assertNotEmpty($assumed);
+            foreach ($assumed as $position) {
+                self::assertSame('estimated', $position['quantity_basis']['source']);
+                self::assertNotEmpty($position['quantity_basis']['assumptions']);
+                self::assertSame('preliminary_quantity_coefficients:v1', $position['quantity_basis']['formula_inputs']['scenario_id']);
+            }
+            self::assertSame(['area'], array_column($adapter->lastRun['confirmed_numeric_facts'], 'type'));
+            self::assertSame('scenario_estimate', $adapter->lastRun['evaluation']['result_class']);
+            self::assertNotEmpty($adapter->lastRun['evaluation']['scenarios'][0]['assumptions']);
+        }
         self::assertSame([], $result->prediction['costs']);
         $run = $adapter->lastRun['document_run'];
         self::assertSame(['completed'], $run['units']);
@@ -71,8 +101,9 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         self::assertSame(array_fill(0, $run['vision_requests'], true), $run['provider_ownership_preserved']);
         self::assertSame($run['vision_requests'], $run['vision_requests_after_replay']);
         self::assertSame(0, $run['receipt']['consumed_units_minor']);
-        self::assertSame(0, $adapter->lastRun['consumed_units_minor']);
-        self::assertSame(1000000, $adapter->lastRun['available_minor']);
+        $expectedCharge = $expectedArea === null ? 0 : 50;
+        self::assertSame($expectedCharge, $adapter->lastRun['consumed_units_minor']);
+        self::assertSame(1000000 - $expectedCharge, $adapter->lastRun['available_minor']);
         self::assertNotEmpty($adapter->lastRun['evaluation']['priority_questions']);
         self::assertFalse($adapter->lastRun['evaluation']['accuracy_calibrated']);
         self::assertSame($run['vision_requests'] + 2, count($adapter->lastRun['usage']));
