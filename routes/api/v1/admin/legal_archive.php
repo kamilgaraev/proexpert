@@ -78,6 +78,8 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
 
     Route::get('documents/{legalDocument}/workflow/history', LegalWorkflowHistoryController::class)
         ->middleware('authorize:legal_archive.workflow.view')->whereNumber('legalDocument')->name('workflow.history');
+    Route::get('documents/{legalDocument}/workflow/submit-preview', [LegalArchiveWorkflowController::class, 'submitPreview'])
+        ->middleware('authorize:legal_archive.workflow.submit')->whereNumber('legalDocument')->name('workflow.submit-preview');
     Route::post('documents/{legalDocument}/workflow/submit', [LegalArchiveWorkflowController::class, 'submit'])
         ->middleware('authorize:legal_archive.workflow.submit')->whereNumber('legalDocument')->name('workflow.submit');
     Route::post('workflow-steps/{legalWorkflowStep}/approve', [LegalArchiveWorkflowController::class, 'approve'])
