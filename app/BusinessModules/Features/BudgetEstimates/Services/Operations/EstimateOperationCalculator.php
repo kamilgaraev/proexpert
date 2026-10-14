@@ -71,6 +71,10 @@ final class EstimateOperationCalculator
             if ($row['role'] !== 'subtract') {
                 continue;
             }
+            if ($row['node']['attributes']['is_not_accounted']) {
+                $row['quantity'] = '0';
+                continue;
+            }
             if (Decimal::compare($row['quantity'], '0') === 0 || (! $signedSubtraction && Decimal::compare($row['quantity'], '0') < 0)) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'quantity_invalid');
                 continue;
@@ -89,7 +93,8 @@ final class EstimateOperationCalculator
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'subtract_match_required', [$target => $base[$target]]);
                 continue;
             }
-            if (Decimal::compare($factor, '0') <= 0 || $row['node']['attributes']['item_type'] !== $base[$target]['node']['attributes']['item_type']) {
+            if (Decimal::compare($factor, '0') <= 0 || $base[$target]['node']['attributes']['is_not_accounted']
+                || $row['node']['attributes']['item_type'] !== $base[$target]['node']['attributes']['item_type']) {
                 $row['conflicts'][] = $this->conflict('match:'.$key, 'subtract_match_required', $candidates);
                 continue;
             }
@@ -326,11 +331,14 @@ final class EstimateOperationCalculator
         return true;
     }
 
-    private function priceNode(array &$node, string $quantity, bool $reprice, array $prices, array $resolutions, array &$conflicts, array $parameters): void
+    private function priceNode(array &$node, string $quantity, bool $reprice, array $prices, array $resolutions, array &$conflicts, array $parameters, string $parentRatio = '1'): void
     {
         $oldQuantity = $node['quantity'];
-        $ratio = Decimal::compare($oldQuantity, '0') === 0 ? '0' : Decimal::divide($quantity, $oldQuantity, 12);
         $attrs = &$node['attributes'];
+        $informative = ($attrs['parent_work_id'] ?? null) !== null && (bool) ($attrs['metadata']['is_informative_row'] ?? false);
+        $ratio = Decimal::compare($oldQuantity, '0') === 0
+            ? ($informative ? $parentRatio : '0')
+            : Decimal::divide($quantity, $oldQuantity, 12);
         $original = $attrs;
         $factor = Decimal::multiply((string) ($attrs['price_coefficient'] ?: '1'), (string) ($attrs['coefficient_total'] ?: '1'), 12);
         $oldParts = $this->childCosts($node);
@@ -373,7 +381,7 @@ final class EstimateOperationCalculator
         }
         unset($detail);
         foreach ($node['children'] as &$child) {
-            $this->priceNode($child, Decimal::multiply($child['quantity'], $ratio, 8), $reprice, $prices, $resolutions, $conflicts, $parameters);
+            $this->priceNode($child, Decimal::multiply($child['quantity'], $ratio, 8), $reprice, $prices, $resolutions, $conflicts, $parameters, $ratio);
         }
         unset($child);
         if (! $reprice || Decimal::compare($quantity, '0') === 0) {
@@ -645,6 +653,7 @@ final class EstimateOperationCalculator
         usort($children, fn (array $a, array $b): int => strcmp(json_encode($a, JSON_THROW_ON_ERROR), json_encode($b, JSON_THROW_ON_ERROR)));
 
         return [
+            (bool) $attrs['is_not_accounted'],
             (string) ($attrs['price_coefficient'] ?: '1'), (string) ($attrs['coefficient_total'] ?: '1'),
             $attrs['applied_coefficients'], $attrs['custom_resources'],
             array_map(fn (array $r): array => [$r['resource_type'], $r['material_id'], $r['measurement_unit_id'], $r['name'], $r['quantity_per_unit'], $includePrice ? $r['unit_price'] : null], $node['resources']),
@@ -668,7 +677,8 @@ final class EstimateOperationCalculator
             $attrs = $row['node']['attributes'];
             $other = $target['node']['attributes'];
 
-            return $row['key'] !== $target['key'] && $attrs['item_type'] === $other['item_type'] && (
+            return $row['key'] !== $target['key'] && $attrs['item_type'] === $other['item_type']
+                && (bool) $attrs['is_not_accounted'] === (bool) $other['is_not_accounted'] && (
                 ($attrs['normative_rate_code'] && $this->text($attrs['normative_rate_code']) === $this->text((string) $other['normative_rate_code']))
                 || (($attrs['code'] ?? null) && $this->text($attrs['code']) === $this->text((string) ($other['code'] ?? '')))
                 || ($attrs['material_id'] && $attrs['material_id'] === $other['material_id'])

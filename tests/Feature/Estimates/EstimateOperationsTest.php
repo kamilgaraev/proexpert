@@ -86,6 +86,55 @@ final class EstimateOperationsTest extends TestCase
         $this->operations->apply($this->actor, $this->project->id, $operation->id, 'blocked');
     }
 
+    public function test_adjustment_preserves_inactive_additions_and_informational_children_in_storage(): void
+    {
+        [$base, $baseItem] = $this->source('10');
+        $base->update(['vat_rate' => '22']);
+        $baseItem->update(['current_total_amount' => '50']);
+        [$add, $addItem] = $this->source('4');
+        $addItem->update(['is_not_accounted' => true, 'current_total_amount' => '20',
+            'metadata' => ['source_accounting' => ['status' => 'inactive']]]);
+        $child = $addItem->replicate(['stable_key']);
+        $child->fill(['parent_work_id' => $addItem->id, 'position_number' => '1.1', 'name' => 'ОТ',
+            'normative_rate_code' => 'INFO-LABOR', 'quantity' => '0', 'quantity_total' => '0',
+            'unit_price' => '0', 'current_unit_price' => '0', 'direct_costs' => '5', 'labor_cost' => '5',
+            'total_amount' => '5', 'current_total_amount' => '5',
+            'metadata' => ['is_informative_row' => true, 'raw_data' => ['source_current_total' => '5.00']]]);
+        $child->save();
+        [$subtract] = $this->source('4');
+        $beforeBase = $baseItem->fresh()->attributesToArray();
+        $beforeAddition = $addItem->fresh()->attributesToArray();
+        $beforeChild = $child->fresh()->attributesToArray();
+
+        $operation = $this->adjust($base, $add, $subtract);
+        $this->preview($operation);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('30.00', $operation->fresh()->summary['total_amount']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'inactive-addition');
+        $this->operations->process($operation->id, $operation->generation, true);
+
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        $active = $result->items()->whereNull('parent_work_id')->where('is_not_accounted', false)->firstOrFail();
+        $inactive = $result->items()->whereNull('parent_work_id')->where('is_not_accounted', true)->firstOrFail();
+        $storedChild = $result->items()->where('parent_work_id', $inactive->id)->firstOrFail();
+        self::assertSame(3, $result->items()->count());
+        self::assertSame('6.00000000', $active->quantity_total);
+        self::assertSame('4.00000000', $inactive->quantity_total);
+        self::assertSame('20.00', $inactive->total_amount);
+        self::assertSame('inactive', $inactive->metadata['source_accounting']['status']);
+        self::assertTrue($storedChild->is_not_accounted);
+        self::assertSame('0.00000000', $storedChild->quantity_total);
+        self::assertSame('5.00', $storedChild->total_amount);
+        self::assertSame('5.00', $storedChild->current_total_amount);
+        self::assertTrue($storedChild->metadata['is_informative_row']);
+        self::assertSame('5.00', $storedChild->metadata['raw_data']['source_current_total']);
+        self::assertSame('30.00', $result->total_amount);
+        self::assertSame('36.60', $result->total_amount_with_vat);
+        self::assertSame($beforeBase, $baseItem->fresh()->attributesToArray());
+        self::assertSame($beforeAddition, $addItem->fresh()->attributesToArray());
+        self::assertSame($beforeChild, $child->fresh()->attributesToArray());
+    }
+
     public function test_signed_adjustment_preserves_negative_components_resources_and_a_single_vat(): void
     {
         [$base, $baseItem] = $this->source('-10', '10');

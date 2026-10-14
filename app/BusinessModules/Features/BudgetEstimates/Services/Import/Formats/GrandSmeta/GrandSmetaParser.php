@@ -63,6 +63,9 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
             $this->processor->reset();
             $this->processor->setWorksheet($spreadsheet->getIndex($sheet), $sheet->getTitle());
             $this->processor->setLayout(($options['layout'] ?? null) === 'modern_2020');
+            if (($options['layout'] ?? null) === 'modern_2020') {
+                $this->processor->setSourceAccountingStates((new GrandSmetaAccountingStateReader)->detect($filePath, $sheet, $mapping, $headerRow));
+            }
 
             $rawRowIndex = 0;
             foreach ($sheet->getRowIterator($headerRow + 1) as $row) {

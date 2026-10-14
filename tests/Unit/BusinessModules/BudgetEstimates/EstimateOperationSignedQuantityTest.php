@@ -244,6 +244,129 @@ final class EstimateOperationSignedQuantityTest extends TestCase
         self::assertContains('numeric_range', $this->codes($result));
     }
 
+    public function test_inactive_additions_remain_separate_from_active_positions_in_both_orders(): void
+    {
+        foreach ([false, true] as $inactiveBase) {
+            $base = $this->item(1, 1, '10');
+            $base['attributes']['is_not_accounted'] = $inactiveBase;
+            $addition = $this->item(2, 2, '4');
+            $addition['attributes']['is_not_accounted'] = ! $inactiveBase;
+            $result = $this->calculate([$this->source(1, 'base', [$base]), $this->source(2, 'add', [$addition])]);
+
+            self::assertSame($inactiveBase ? '20.00' : '50.00', $result['summary']['total_amount']);
+            self::assertSame('50.00', $result['output'][0]['node']['attributes']['total_amount']);
+            self::assertSame([], $this->codes($result));
+            self::assertCount(2, $result['output']);
+            self::assertSame($inactiveBase, $result['output'][0]['node']['attributes']['is_not_accounted']);
+            self::assertSame(! $inactiveBase, $result['output'][1]['node']['attributes']['is_not_accounted']);
+            self::assertSame('10', $result['output'][0]['quantity']);
+            self::assertSame('4', $result['output'][1]['quantity']);
+        }
+    }
+
+    public function test_manual_addition_match_cannot_activate_an_inactive_contribution(): void
+    {
+        $addition = $this->item(2, 2, '4');
+        $addition['attributes']['is_not_accounted'] = true;
+        $result = $this->calculate([
+            $this->source(1, 'base', [$this->item(1, 1, '10')]),
+            $this->source(2, 'add', [$addition]),
+        ], resolutions: ['match:2:2' => ['target_key' => '1:1']]);
+
+        self::assertContains('match_required', $this->codes($result));
+        self::assertSame('50.00', $result['summary']['total_amount']);
+        self::assertSame('50.00', $result['output'][0]['node']['attributes']['total_amount']);
+        self::assertCount(2, $result['output']);
+    }
+
+    public function test_inactive_children_cannot_merge_into_active_children(): void
+    {
+        $baseChild = $this->item(1, 2, '20', '3');
+        $baseChild['attributes']['parent_work_id'] = 1;
+        $additionChild = $this->item(2, 4, '8', '3');
+        $additionChild['attributes']['parent_work_id'] = 3;
+        $additionChild['attributes']['is_not_accounted'] = true;
+        $result = $this->calculate([
+            $this->source(1, 'base', [$this->item(1, 1, '10'), $baseChild]),
+            $this->source(2, 'add', [$this->item(2, 3, '4'), $additionChild]),
+        ]);
+
+        self::assertContains('match_required', $this->codes($result));
+        self::assertCount(2, $result['output']);
+        self::assertSame('60.00', $result['output'][0]['node']['children'][0]['attributes']['total_amount']);
+        self::assertFalse($result['output'][0]['node']['children'][0]['attributes']['is_not_accounted']);
+        self::assertTrue($result['output'][1]['node']['children'][0]['attributes']['is_not_accounted']);
+    }
+
+    public function test_inactive_exclusions_have_no_effect_in_either_quantity_mode(): void
+    {
+        foreach ([false, true] as $signed) {
+            $subtraction = $this->item(2, 2, $signed ? '-30' : '30');
+            $subtraction['attributes']['is_not_accounted'] = true;
+            $result = $this->calculate([
+                $this->source(1, 'base', [$this->item(1, 1, '100')]),
+                $this->source(2, 'subtract', [$subtraction]),
+            ], $signed);
+
+            self::assertSame([], $this->codes($result));
+            self::assertSame('100', $result['output'][0]['quantity']);
+            self::assertSame('500.00', $result['summary']['total_amount']);
+        }
+    }
+
+    public function test_exclusions_automatically_match_only_accounted_base_positions(): void
+    {
+        $inactive = $this->item(1, 2, '100');
+        $inactive['attributes']['is_not_accounted'] = true;
+        $result = $this->calculate([
+            $this->source(1, 'base', [$this->item(1, 1, '100'), $inactive]),
+            $this->source(2, 'subtract', [$this->item(2, 3, '-30')]),
+        ]);
+
+        self::assertSame([], $this->codes($result));
+        self::assertSame('70.00000000', $result['output'][0]['quantity']);
+        self::assertSame('100', $result['output'][1]['quantity']);
+        self::assertSame('350.00', $result['summary']['total_amount']);
+    }
+
+    public function test_manual_exclusion_cannot_target_an_inactive_base_position(): void
+    {
+        $base = $this->item(1, 1, '100');
+        $base['attributes']['is_not_accounted'] = true;
+        $result = $this->calculate([
+            $this->source(1, 'base', [$base]),
+            $this->source(2, 'subtract', [$this->item(2, 2, '-30')]),
+        ], resolutions: ['match:2:2' => ['target_key' => '1:1']]);
+
+        self::assertContains('subtract_match_required', $this->codes($result));
+        self::assertSame('100', $result['output'][0]['quantity']);
+        self::assertSame('0.00', $result['summary']['total_amount']);
+    }
+
+    public function test_zero_quantity_informational_amounts_follow_the_parent_remainder(): void
+    {
+        foreach ([['0', '20.00', '50.00'], ['-4', '12.00', '30.00'], ['-10', '0.00', '0.00']] as [$excluded, $childAmount, $total]) {
+            $child = $this->item(1, 2, '0', '0');
+            $child['attributes']['parent_work_id'] = 1;
+            $child['attributes']['is_not_accounted'] = true;
+            $child['attributes']['metadata'] = ['is_informative_row' => true];
+            foreach (['direct_costs', 'total_amount', 'current_total_amount'] as $field) {
+                $child['attributes'][$field] = '20.00';
+            }
+            $sources = [$this->source(1, 'base', [$this->item(1, 1, '10'), $child])];
+            if ($excluded !== '0') {
+                $sources[] = $this->source(2, 'subtract', [$this->item(2, 3, $excluded)]);
+            }
+            $result = $this->calculate($sources, resolutions: ['match:2:3' => ['target_key' => '1:1']]);
+
+            self::assertSame([], $this->codes($result));
+            self::assertSame($total, $result['summary']['total_amount']);
+            self::assertSame($childAmount, $result['output'][0]['node']['children'][0]['attributes']['total_amount']);
+            self::assertSame($childAmount, $result['output'][0]['node']['children'][0]['attributes']['current_total_amount']);
+            self::assertTrue($result['output'][0]['node']['children'][0]['attributes']['is_not_accounted']);
+        }
+    }
+
     private function calculate(array $sources, bool $signed = true, array $resolutions = []): array
     {
         return (new EstimateOperationCalculator())->calculate($sources, [

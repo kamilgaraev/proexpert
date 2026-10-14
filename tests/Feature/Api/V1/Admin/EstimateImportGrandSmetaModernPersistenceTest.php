@@ -109,6 +109,39 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         self::assertSame($before, Estimate::query()->where('organization_id', $context->organization->id)->count());
     }
 
+    public function test_inactive_export_positions_keep_indexed_amounts_without_increasing_saved_or_recalculated_totals(): void
+    {
+        [$service, $context, $session] = $this->prepareImport(inactiveExport: true);
+        $preview = $service->preview($session->id, null, $context->access());
+        self::assertTrue($preview->validationSummary['is_valid']);
+        self::assertEquals(0.11, $preview->totals['total_amount']);
+        $estimate = $this->executeImport($service, $context, $session);
+
+        foreach ([0, 22] as $vat) {
+            $estimate = app(EstimateService::class)->update($estimate, ['vat_rate' => $vat]);
+            app(EstimateCalculationService::class)->recalculateAll($estimate);
+            $estimate->refresh();
+            $items = EstimateItem::query()->where('estimate_id', $estimate->id)->orderBy('id')->get();
+            $roots = $items->whereNull('parent_work_id')->values();
+            self::assertCount(3, $roots);
+            self::assertSame([false, true, false], $roots->pluck('is_not_accounted')->all());
+            self::assertEquals([0.06, 0.09, 0.05], $roots->pluck('current_total_amount')->all());
+            self::assertEquals(0.11, $estimate->total_amount);
+            self::assertEquals($vat === 22 ? 0.13 : 0.11, $estimate->total_amount_with_vat);
+            self::assertEquals(0.11, EstimateSection::query()->where('estimate_id', $estimate->id)->sum('section_total_amount'));
+            self::assertSame('grand_export_inactive', $roots[1]->metadata['raw_data']['source_accounting']['marker']);
+            foreach ($roots as $root) {
+                $children = $items->where('parent_work_id', $root->id)->values();
+                self::assertCount(1, $children);
+                self::assertTrue($children[0]->is_not_accounted);
+                self::assertTrue($children[0]->metadata['is_informative_row']);
+                self::assertSame((float) $root->machinery_cost, (float) $children[0]->current_total_amount);
+                self::assertSame('parent_indexed_component', $children[0]->metadata['raw_data']['total_source']);
+                self::assertSame($root->metadata['raw_data']['index_provenance'], $children[0]->metadata['raw_data']['index_provenance']);
+            }
+        }
+    }
+
     private function assertPreservedSource(Estimate $estimate, int $vat, float $laborCost = 220): void
     {
         $items = EstimateItem::query()->where('estimate_id', $estimate->id)->orderBy('id')->get();
@@ -139,6 +172,7 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         self::assertCount(3, $children);
         self::assertSame(['ОТ', 'ЭМ', 'М'], $children->pluck('name')->all());
         self::assertTrue($children->every(fn ($item) => $item->is_not_accounted));
+        self::assertTrue($children->every(fn ($item) => $item->metadata['is_informative_row']));
         self::assertTrue($children->every(fn ($item) => $item->metadata['raw_data']['parent_source_identity'] === '0:6'));
         self::assertEquals(-2, $roots[2]->quantity);
         self::assertEquals(10, $roots[2]->unit_price);
@@ -164,7 +198,7 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         return Estimate::query()->findOrFail($session->stats['estimate_id']);
     }
 
-    private function prepareImport(bool $missingComponent = false, bool $standaloneInformative = false): array
+    private function prepareImport(bool $missingComponent = false, bool $standaloneInformative = false, bool $inactiveExport = false): array
     {
         Storage::fake('s3');
         Queue::fake();
@@ -198,7 +232,7 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
             $this->app->instance(GrandSmetaParser::class, $parser);
         }
         $context = EstimateImportTestContext::create();
-        $path = $this->createSpreadsheet($missingComponent);
+        $path = $inactiveExport ? $this->createInactiveSpreadsheet() : $this->createSpreadsheet($missingComponent);
         $service = app(EstimateImportService::class);
         try {
             $id = $service->uploadFile(new UploadedFile($path, 'grand-modern-synthetic.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true), $context->user->id, $context->organization->id, $context->access());
@@ -209,6 +243,42 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         }
 
         return [$service, $context, ImportSession::query()->findOrFail($id)];
+    }
+
+    private function createInactiveSpreadsheet(): string
+    {
+        $book = new Spreadsheet;
+        $sheet = $book->getActiveSheet();
+        $sheet->setCellValue('A1', 'ГРАНД-Смета 2026.2');
+        $sheet->setCellValue('J1', 'Сметная стоимость в базисном уровне цен');
+        $sheet->setCellValue('M1', 'Индексы');
+        $sheet->setCellValue('N1', 'Сметная стоимость в текущем уровне цен');
+        $sheet->fromArray([1, 2, 3, null, null, 4, 5, 6, 7, 8, 9, 10, 11, 12], null, 'A3', true);
+        $sheet->setCellValue('C4', 'Раздел 1. Монтаж');
+        foreach ([5 => 'Работа один', 10 => 'Неучтённая работа', 15 => 'Работа два'] as $row => $name) {
+            $sheet->fromArray([$row === 5 ? 1 : 2, 'ГЭСН-'.$row, $name], null, 'A'.$row, true);
+            $sheet->setCellValue('I'.$row, 1);
+            $sheet->setCellValue('C'.($row + 1), 'ЭМ');
+            $sheet->setCellValue('L'.($row + 1), 0.05);
+            $sheet->setCellValue('C'.($row + 2), 'Итого по расценке');
+            $sheet->setCellValue('L'.($row + 2), 0.05);
+            $sheet->setCellValue(($row === 10 ? 'Q' : 'P').$row, $name);
+        }
+        $sheet->setCellValue('C13', 'НР 10%');
+        $sheet->setCellValue('N13', 0.02);
+        $sheet->setCellValue('C14', 'СП 5%');
+        $sheet->setCellValue('N14', 0.01);
+        $sheet->getStyle('A10:C10')->getFont()->getColor()->setARGB('FF7F7F7F');
+        foreach ([20 => ['C' => 'Итоги по смете:'], 21 => ['C' => 'Строительные работы'], 22 => ['C' => 'Эксплуатация машин и механизмов', 'L' => 0.1, 'M' => 1.1, 'N' => 0.11], 23 => ['C' => 'Всего', 'N' => 0.11]] as $row => $values) {
+            foreach ($values as $column => $value) {
+                $sheet->setCellValue($column.$row, $value);
+            }
+        }
+        $path = sys_get_temp_dir().DIRECTORY_SEPARATOR.'grand-inactive-persistence-'.Str::uuid().'.xlsx';
+        (new Xlsx($book))->save($path);
+        $book->disconnectWorksheets();
+
+        return $path;
     }
 
     private function createSpreadsheet(bool $missingComponent): string

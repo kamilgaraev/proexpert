@@ -43,7 +43,10 @@ final class ImportRowPolicy
         $overhead ??= $row->overheadAmount ?? 0;
         $profit ??= $row->profitAmount ?? 0;
 
-        return ! $this->isInformative($row) && ! $row->isSubItem && $row->currentTotalAmount !== null
+        $hasFinalTotal = ! $row->isSubItem && $row->currentTotalAmount !== null
+            && (! $this->isInformative($row) || ($row->rawData['financial_structure']['layout'] ?? null) === 'grand_modern_2020');
+
+        return $hasFinalTotal
             ? $amount + ($row->overheadAmount === null ? $overhead : 0) + ($row->profitAmount === null ? $profit : 0)
             : $amount + $overhead + $profit;
     }
