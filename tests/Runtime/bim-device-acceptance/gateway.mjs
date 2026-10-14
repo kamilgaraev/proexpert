@@ -10,6 +10,21 @@ const sockets = new Set();
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 let shuttingDown = false;
 
+function postgresPort() {
+  const profile = process.env.MOST_POSTGRES_TEST_PROFILE ?? '';
+  if (!['', 'ai-assistant'].includes(profile)) throw new Error('postgres_runtime_guard_invalid');
+  const defaultPort = profile === 'ai-assistant' ? '55443' : '55433';
+  const runtimePort = process.env.MOST_POSTGRES_TEST_PORT ?? '';
+  const runtimeProject = process.env.MOST_POSTGRES_TEST_PROJECT ?? '';
+  if (!runtimePort && !runtimeProject) return defaultPort;
+  const baseProject = profile === 'ai-assistant' ? 'most-ai-assistant-tests' : 'most-postgres-tests';
+  const port = Number(runtimePort);
+  if (!/^[1-9][0-9]*$/.test(runtimePort) || !Number.isInteger(port) || port < 1024 || port > 65535 || port === 5432
+    || !new RegExp(`^${baseProject}(?:-[a-f0-9]{32})?$`).test(runtimeProject)
+    || (runtimeProject === baseProject && runtimePort !== defaultPort)) throw new Error('postgres_runtime_guard_invalid');
+  return runtimePort;
+}
+
 function descriptor() {
   if (!descriptorPath || basename(descriptorPath) !== 'descriptor.json') throw new Error('descriptor_path_invalid');
   const root = realpathSync.native(dirname(descriptorPath));
@@ -19,7 +34,7 @@ function descriptor() {
   const hasControl = data.control_port !== undefined || data.control_base_url !== undefined;
   const ports = [data.http_port, data.admin_http_port, data.reverb_port, data.redis_port, ...(data.admin_worker_ports ?? []),
     ...(hasControl ? [data.control_port] : [])];
-  if (env.APP_ENV !== 'testing' || env.DB_CONNECTION !== 'pgsql' || env.DB_HOST !== '127.0.0.1' || env.DB_PORT !== '55433'
+  if (env.APP_ENV !== 'testing' || env.DB_CONNECTION !== 'pgsql' || env.DB_HOST !== '127.0.0.1' || env.DB_PORT !== postgresPort()
     || !/^most_phpunit_[a-f0-9]{24}_testing$/.test(env.DB_DATABASE) || env.DB_USERNAME !== 'most_testing' || env.DB_PASSWORD !== 'most_testing_password'
     || realpathSync.native(data.runtime_directory) !== root || data.ui_origin !== 'http://127.0.0.1:31391'
     || env.WEB_AUTH_ADMIN_ALLOWED_ORIGINS !== data.ui_origin || Date.now() >= data.expires_at * 1000

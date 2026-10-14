@@ -11,6 +11,7 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class ContractPaymentPostgresRaceTest extends TestCase
 {
@@ -31,7 +32,7 @@ final class ContractPaymentPostgresRaceTest extends TestCase
         $database = (string) getenv('DB_DATABASE');
         $username = (string) getenv('DB_USERNAME');
         $password = (string) getenv('DB_PASSWORD');
-        if ($host !== '127.0.0.1' || $port !== '55433' || preg_match('/_testing$/D', $database) !== 1) {
+        if ($host !== '127.0.0.1' || $port !== (string) IsolatedPostgresTestDatabase::profilePort() || preg_match('/_testing$/D', $database) !== 1) {
             self::markTestSkipped('Contract payment concurrency test requires the isolated PostgreSQL 16 test database.');
         }
 

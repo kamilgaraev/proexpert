@@ -7,6 +7,7 @@ namespace Tests\Support\EstimateGeneration;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 abstract class EstimateGenerationCanonicalPostgresTestCase extends EstimateGenerationApplicationTestCase
 {
@@ -18,7 +19,7 @@ abstract class EstimateGenerationCanonicalPostgresTestCase extends EstimateGener
         self::assertSame('testing', app()->environment());
         self::assertSame('pgsql', DB::getDriverName());
         self::assertSame('127.0.0.1', DB::connection()->getConfig('host'));
-        self::assertSame('55433', (string) DB::connection()->getConfig('port'));
+        self::assertSame((string) IsolatedPostgresTestDatabase::profilePort(), (string) DB::connection()->getConfig('port'));
         self::assertStringEndsWith('_testing', DB::getDatabaseName());
         $this->indexingState = app(AssistantIndexingState::class);
         $this->indexingState->beginMigration();

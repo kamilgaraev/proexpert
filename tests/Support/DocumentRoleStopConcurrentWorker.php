@@ -12,13 +12,14 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 $app = require dirname(__DIR__, 2).'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 if (! $app->environment('testing') || DB::getDriverName() !== 'pgsql'
     || DB::connection()->getConfig('host') !== '127.0.0.1'
-    || (string) DB::connection()->getConfig('port') !== '55433'
+    || (string) DB::connection()->getConfig('port') !== (string) IsolatedPostgresTestDatabase::profilePort()
     || ! str_ends_with((string) DB::getDatabaseName(), '_testing')) {
     throw new RuntimeException('document_role_stop_worker_environment_unsafe');
 }
