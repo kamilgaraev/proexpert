@@ -21,6 +21,46 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimatorKnownContextSnapshotTest extends TestCase
 {
+    public function test_post_audit_views_are_not_reaudited_but_remain_bound_by_the_complete_saved_draft_hash(): void
+    {
+        $previous = Container::getInstance();
+        $container = new Container;
+        $container->instance('config', new Repository([]));
+        Container::setInstance($container);
+        try {
+            $models = new InMemoryProjectModelRepository;
+            $source = 'sha256:'.str_repeat('a', 64);
+            $models->saveSourceModel([new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('room:1', 10, 20, 30, $source, 'room', 'room:1')],
+                [new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:new', 10, 20, 30, $source, 'room:1', 'room_name',
+                    'Updated room name', null, 0.0, 'user_assumption', 'confirmed', [])], []);
+            $draft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+                'local_estimates' => [['key' => 'local:1', 'sections' => [['key' => 'section:1', 'work_items' => [[
+                    'key' => 'work:1', 'item_type' => 'priced_work', 'name' => 'Paint', 'unit' => 'm2', 'quantity' => '10',
+                    'source_refs' => [['fact_id' => 'fact:new']],
+                ]]]]]], 'evaluation_result' => ['derived_view' => str_repeat('snapshot ', 20000)],
+                'quality_summary' => ['derived_review' => str_repeat('review ', 20000)]];
+            $session = new EstimateGenerationSession;
+            $session->setRawAttributes(['id' => 30, 'organization_id' => 10, 'project_id' => 20,
+                'input_payload' => '{}', 'draft_payload' => json_encode($draft, JSON_THROW_ON_ERROR)]);
+            $capture = new EstimatorKnownContextSnapshot($models, new EstimateComposerInputFactory($models, 2000),
+                new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000),
+                new ProjectSynthesisInputFactory($models), new EstimateCompositionProjector,
+                new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts);
+            $plan = $capture->capture($session, false);
+            self::assertSame(1, $plan['part_limits']['audit']);
+            self::assertSame(hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($draft)), $plan['saved_draft_hash']);
+            self::assertSame($draft, $session->draft_payload);
+            $changed = [...$draft, 'quality_summary' => ['derived_review' => 'changed']];
+            $session->setRawAttributes([...$session->getAttributes(), 'draft_payload' => json_encode($changed, JSON_THROW_ON_ERROR)]);
+            self::assertNotSame($plan['fingerprint'], $capture->capture($session, false)['fingerprint']);
+            $session->setRawAttributes([...$session->getAttributes(), 'draft_payload' => json_encode($draft, JSON_THROW_ON_ERROR)]);
+            $this->expectExceptionMessage('estimator_known_context_requires_source_split');
+            $capture->capture($session, false, \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::legacyCapture());
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('draftStates')]
     public function test_an_old_draft_fact_reference_does_not_block_a_quote_for_recomposition_with_current_facts(string $reference, int $technologyRevision, string $status, int $auditParts): void
     {

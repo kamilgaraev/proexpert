@@ -22,12 +22,26 @@ final class EstimatorTextWirePolicy
         $prepared = (new TokenBudgetService)->prepare([], [], 'normal');
 
         return ['contract' => self::CONTRACT, 'profile' => 'normal',
+            'audit_draft_view' => \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::BUSINESS,
             'token_limits' => $prepared['budget_limits'], 'maximum_serialized_input_bytes' => self::MAX_SERIALIZED_INPUT_BYTES];
+    }
+
+    public static function legacyCapture(): array
+    {
+        $policy = self::capture();
+        unset($policy['audit_draft_view']);
+
+        return $policy;
     }
 
     public static function validate(array $policy): array
     {
         $limits = $policy['token_limits'] ?? null;
+        if (array_key_exists('audit_draft_view', $policy) && ! in_array($policy['audit_draft_view'],
+            [\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::LEGACY,
+                \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::BUSINESS], true)) {
+            throw new DomainException('estimator_text_wire_policy_invalid');
+        }
         if (($policy['contract'] ?? null) !== self::CONTRACT || ($policy['profile'] ?? null) !== 'normal'
             || ! is_array($limits) || ! is_int($policy['maximum_serialized_input_bytes'] ?? null)
             || $policy['maximum_serialized_input_bytes'] < 1 || $policy['maximum_serialized_input_bytes'] > self::MAX_SERIALIZED_INPUT_BYTES) {

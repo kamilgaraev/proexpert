@@ -1029,6 +1029,9 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $plan = json_decode($row->processing_plan, true, 64, JSON_THROW_ON_ERROR);
         $plan['contract_version'] = 'estimator-processing-plan:v1';
         unset($plan['work_ceiling_policy'], $plan['document_costs']);
+        unset($plan['text_payload_policy']['audit_draft_view']);
+        $plan['known_context'] = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextSnapshot::class)
+            ->capture(EstimateGenerationSession::query()->findOrFail($scope->sessionId), (bool) $plan['complex'], $plan['text_payload_policy']);
         $plan['audit_part_limit'] = 1;
         $plan['roles']['estimate_audit']['max_calls'] = 9;
         $plan['roles']['estimate_composer_correction']['max_calls'] = 6;

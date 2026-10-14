@@ -56,4 +56,15 @@ final class EstimatorTextWirePolicyTest extends TestCase
         self::assertTrue((new EstimatorTextPayloadBudget)->fits('Small source', $policy));
         self::assertFalse((new EstimatorTextPayloadBudget)->fits(str_repeat('word ', 2000), $policy));
     }
+
+    public function test_historical_policy_without_a_view_marker_keeps_its_exact_shape_and_limits(): void
+    {
+        $legacy = EstimatorTextWirePolicy::legacyCapture();
+        self::assertArrayNotHasKey('audit_draft_view', $legacy);
+        self::assertSame($legacy, EstimatorTextWirePolicy::validate($legacy));
+        self::assertSame('business:v1', EstimatorTextWirePolicy::capture()['audit_draft_view']);
+        self::assertSame(65536, EstimatorTextWirePolicy::forInputCeiling($legacy, 524288)['maximum_serialized_input_bytes']);
+        $this->expectExceptionMessage('estimator_text_wire_policy_invalid');
+        EstimatorTextWirePolicy::validate([...$legacy, 'audit_draft_view' => 'unknown']);
+    }
 }

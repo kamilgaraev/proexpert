@@ -22,8 +22,14 @@ final readonly class EstimateAuditInputFactory
         }
     }
 
-    public function capture(int $organizationId, int $projectId, int $sessionId, array $draft, ?AiSessionWireScope $wireScope = null): EstimateAuditInput
+    public function capture(int $organizationId, int $projectId, int $sessionId, array $draft, ?AiSessionWireScope $wireScope = null, ?string $draftView = null): EstimateAuditInput
     {
+        if ($draftView === null && $wireScope?->creditOperationId !== null) {
+            $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+                $organizationId, $projectId, $sessionId, $wireScope->creditOperationId, 'estimate_audit');
+            $draftView = $policy['audit_draft_view'] ?? EstimateAuditDraftView::LEGACY;
+        }
+        $auditDraft = EstimateAuditDraftView::project($draft, $draftView ?? EstimateAuditDraftView::LEGACY);
         $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts + 1);
         $snapshot = $capture['snapshot'];
         if (count($snapshot->facts) > $this->maxFacts) {
@@ -57,7 +63,7 @@ final readonly class EstimateAuditInputFactory
             is_array($draft['estimate_composition']['derived_quantities'] ?? null)
                 ? array_values(array_filter($draft['estimate_composition']['derived_quantities'], 'is_array'))
                 : [],
-            $draft,
+            $auditDraft,
             $this->evidence(
                 $organizationId,
                 $projectId,

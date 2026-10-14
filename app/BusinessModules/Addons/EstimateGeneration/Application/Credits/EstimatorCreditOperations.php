@@ -125,7 +125,7 @@ final readonly class EstimatorCreditOperations
             throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
         }
         if (isset($plan['known_context']) && is_array($plan['known_context'])) {
-            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? null,
+            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::legacyCapture(),
                 $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
             if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
                 throw new DomainException('estimator_known_context_changed');
@@ -247,7 +247,7 @@ final readonly class EstimatorCreditOperations
             throw new DomainException('estimator_credit_manifest_changed');
         }
         if (isset($plan['known_context']) && is_array($plan['known_context'])) {
-            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? null,
+            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::legacyCapture(),
                 $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
             if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
                 throw new DomainException('estimator_known_context_changed');
