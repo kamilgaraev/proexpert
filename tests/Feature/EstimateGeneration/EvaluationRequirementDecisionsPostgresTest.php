@@ -95,6 +95,19 @@ final class EvaluationRequirementDecisionsPostgresTest extends EstimateGeneratio
         $snapshot = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
         $decisions = $models->decisionsForSelectedFacts(...[...$scope, [$receipt['fact_id']]]);
         self::assertTrue((new DocumentRequirementAcceptance)->accepted($snapshot, $decisions, $fact, 'unspecified', $target, 'equipment'));
+        $evaluationDraft = ['evaluation_policy' => ['profile_id' => 'construction', 'selected_sections' => ['equipment']],
+            'local_estimates' => [['key' => 'equipment', 'sections' => [['work_items' => [['key' => 'buy-pump', 'name' => 'Покупка насоса',
+                'quantity' => null, 'unit' => 'count', 'metadata' => ['scope_entity_id' => $target, 'requirement_key' => 'equipment_purchase']]]]]]]];
+        $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($evaluationDraft, $snapshot, $decisions);
+        $specification = array_values(array_filter($evaluation['coverage']['covered_requirements'], static fn (array $row): bool => $row['requirement'] === 'equipment_specification'))[0];
+        self::assertSame('Насос P1', $specification['entity_name']);
+        self::assertSame($target, $specification['entity_id']);
+        self::assertSame($fact->id, $specification['sources'][0]['fact_id']);
+        self::assertSame((int) $document->id, $specification['sources'][0]['locators'][0]['document_id']);
+        self::assertSame($version, $specification['sources'][0]['locators'][0]['source_version']);
+        self::assertNotNull($specification['sources'][0]['locators'][0]['native_reference']);
+        self::assertFalse($evaluation['coverage']['scope_complete']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
         $quantities = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'];
         $targetQuantities = array_values(array_filter($quantities, static fn ($quantity): bool => ($quantity->formulaInputs['entity_id'] ?? null) === $target && $quantity->formulaKey === 'equipment_count'));
         self::assertCount(1, $targetQuantities);
@@ -103,6 +116,8 @@ final class EvaluationRequirementDecisionsPostgresTest extends EstimateGeneratio
         $document->update(['status' => 'ignored']);
         $fresh = $models->snapshotForPlanning(...[...$scope, 100])['snapshot'];
         self::assertNotContains($fact->id, array_column($fresh->facts, 'id'));
+        $afterIgnore = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($evaluationDraft, $fresh, $decisions);
+        self::assertNotContains('equipment_specification', array_column($afterIgnore['coverage']['covered_requirements'], 'requirement'));
         self::assertFalse((new DocumentRequirementAcceptance)->accepted($fresh, $decisions, $fact, 'unspecified', $target, 'equipment'));
         self::assertContains($fact->id, array_column($models->snapshot(...$scope)->facts, 'id'));
         $document->update(['status' => 'ready', 'checksum_sha256' => str_repeat('e', 64)]);
