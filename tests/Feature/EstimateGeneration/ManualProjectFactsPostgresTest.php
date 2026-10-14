@@ -168,7 +168,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
     }
 
-    public function test_native_opening_parent_choice_preserves_source_entity_and_requires_new_coverage(): void
+    public function test_legacy_native_dimensions_reach_net_wall_area_with_confirmed_parent_and_coverage(): void
     {
         [$actor, $session] = $this->fixture();
         config(['estimate-generation.universal_enabled' => true]);
@@ -188,7 +188,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
             ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
             ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.'],
         ], 'cells' => []];
-        foreach ([['wall.w1', 'length', '3', 'm'], ['wall.w1', 'height', '2', 'm']] as $index => $row) {
+        foreach ([['wall.w1', 'wall_length', '3', 'm'], ['wall.w1', 'wall_height', '2', 'm']] as $index => $row) {
             foreach ($row as $column => $value) {
                 $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
             }
@@ -204,7 +204,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
             1, ...[...$scope, (int) $openingDocument->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
                 1, 'sha256:'.str_repeat('f', 64), [], $openingDocument->storage_path, $openingDocument->mime_type, $openingDocument->filename, 'fixture-claim', 1, 0, 'draft']);
         $native['cells'] = [];
-        foreach ([['opening.o1', 'width', '1', 'm'], ['opening.o1', 'height', '2', 'm']] as $index => $row) {
+        foreach ([['opening.o1', 'opening_width', '1', 'm'], ['opening.o1', 'opening_height', '2', 'm']] as $index => $row) {
             foreach ($row as $column => $value) {
                 $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
             }
@@ -214,6 +214,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
             ->writeArbitration($publication->claims, $publication->decisions, (int) $openingDocument->id, 1, $publication->numericSources);
         $models = app(ProjectModelRepository::class);
         $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertEqualsCanonicalizing(['length', 'height', 'width', 'height'], array_map(static fn ($fact): string => $fact->type, $snapshot->facts));
         $wall = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->type === 'wall'))[0];
         $opening = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->type === 'opening'))[0];
         $get = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class);
