@@ -848,6 +848,8 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы и объёмы и сметные связи', 'elements', true],
             ['Покажи материалы и объёмы, не забудь свойства', 'elements', true],
             ['Покажи материалы и объёмы, не прекращай показывать свойства', 'elements', true],
+            ['Покажи материалы и объёмы, а не только свойства', 'elements', true],
+            ['Покажи не только материалы, но и объёмы', 'materials_and_quantities', false],
             ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
@@ -881,7 +883,7 @@ class AIAssistantServiceBudgetTest extends TestCase
     {
         self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide('Не меняй настройки, покажи во всех проектах'));
         foreach (['Не забудь проверить по всем проектам', 'Не забывай проверять по всем проектам',
-            'Не прекращай проверять по всем проектам'] as $positiveQuery) {
+            'Не прекращай проверять по всем проектам', 'Не только по всем проектам'] as $positiveQuery) {
             self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide($positiveQuery));
         }
         foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
