@@ -14,11 +14,17 @@ use Illuminate\Validation\ValidationException;
 /** Converts explicitly accepted scenario values into the existing canonical quantity ledger, retaining their assumed origin. */
 final readonly class MaterializeSelectedEvaluationQuantities
 {
-    public function __construct(private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices) {}
+    public function __construct(private UserWorkQuantityFactWriter $numbers, private UserEvaluationChoiceWriter $choices,
+        private \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository $models) {}
 
     public function materialize(User $actor, EstimateGenerationSession $session, array $selected, string $requestId, string $sourceRevisionId): bool
     {
         $payload = $session->input_payload ?? [];
+        $snapshot = $this->models->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
+        if (count($snapshot->facts) > 10000) {
+            throw ValidationException::withMessages(['scenario' => 'Разделите проект: предел фактов превышен.']);
+        }
+        $entities = array_column($snapshot->entities, null, 'id');
         $changed = false;
         foreach ($selected['scenario']['positions'] as $position) {
             if (($position['quantity_status'] ?? null) !== 'assumed') {
@@ -29,7 +35,11 @@ final readonly class MaterializeSelectedEvaluationQuantities
                 throw ValidationException::withMessages(['scenario' => 'Сценарный объём после перевода единицы превышает допустимую точность.']);
             }
             $reason = 'Принятое допущение сценария '.$selected['scenario_id'].' ревизии '.$sourceRevisionId.'. Размеры по фотографии не подтверждаются.';
-            $source = $this->numbers->write($actor, $session, $position['key'], $normalized['value'], $normalized['unit'], $reason, $requestId, true);
+            $target = $entities[$position['entity_id'] ?? ''] ?? null;
+            if ($target === null) {
+                throw ValidationException::withMessages(['scenario' => 'Подтвердите объект работы перед сохранением сценарного объёма.']);
+            }
+            $source = $this->numbers->write($actor, $session, $position['key'], $normalized['value'], $normalized['unit'], $reason, $requestId, true, $target);
             $selection = ['answer_kind' => 'direct_quantity', 'work_item_key' => $position['key'], 'quantity_key' => DirectQuantityBinding::key($position['key']),
                 'source_fact_id' => $source->id, 'source_fact_version' => $source->version, 'source_version' => $source->sourceVersion,
                 'source_entity_id' => $source->entityId, 'source_unit' => $source->unit, 'source_value_hash' => DirectQuantityBinding::valueHash($source->value),

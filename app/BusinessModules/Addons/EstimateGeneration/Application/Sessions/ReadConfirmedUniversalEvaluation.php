@@ -39,6 +39,10 @@ final readonly class ReadConfirmedUniversalEvaluation
             return null;
         }
         $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        if (! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding)
+            ->current($session->input_payload['scenario_selections'] ?? null, $snapshot, $decisions)) {
+            return null;
+        }
         $result = json_decode($row->result, true, 64, JSON_THROW_ON_ERROR);
         $confirmation = (new ConfirmedEvaluationSelection)->accepted($snapshot, $decisions,
             $session->input_payload['confirmed_evaluation'], ['revision_id' => $row->public_id, 'content_hash' => $row->content_hash,

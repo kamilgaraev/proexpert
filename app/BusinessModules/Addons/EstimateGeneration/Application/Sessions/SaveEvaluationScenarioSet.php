@@ -6,8 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSet;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationScenarioSourceBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ParametricEvaluationScenarios;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
@@ -20,13 +23,15 @@ use InvalidArgumentException;
 final readonly class SaveEvaluationScenarioSet
 {
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
-        private UserEvaluationChoiceWriter $choices, private EvaluationScenarioSet $scenarios = new EvaluationScenarioSet,
+        private UserEvaluationChoiceWriter $choices, private ProjectModelRepository $models, private ParametricEvaluationScenarios $parameters,
+        private EvaluationScenarioSet $scenarios = new EvaluationScenarioSet,
         private BuildMostEstimateDraft $artifacts = new BuildMostEstimateDraft) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
     {
         if (! Str::isUuid($input['request_id'] ?? '') || ! is_int($input['state_version'] ?? null) || $input['state_version'] < 0
-            || ! is_array($input['definitions'] ?? null)) {
+            || (isset($input['definitions']) === isset($input['parameter_cases']))
+            || ! is_array($input['definitions'] ?? $input['parameter_cases'] ?? null)) {
             throw ValidationException::withMessages(['scenarios' => trans_message('estimate_evaluation.scenario_request_invalid')]);
         }
 
@@ -61,15 +66,46 @@ final readonly class SaveEvaluationScenarioSet
             if (! is_array($positions) || $positions === []) {
                 throw ValidationException::withMessages(['scenarios' => trans_message('estimate_evaluation.scenario_draft_required')]);
             }
+            $works = [];
             foreach ($positions as $position) {
-                (new EvaluationWorkItemLocator)->find($draft, $payload, $position['key']);
+                $works[$position['key']] = (new EvaluationWorkItemLocator)->find($draft, $payload, $position['key']);
             }
+            $projection = null;
             try {
-                $definitions = $this->scenarios->validate($input['definitions'], $positions);
-            } catch (InvalidArgumentException) {
-                throw ValidationException::withMessages(['scenarios' => trans_message('estimate_evaluation.scenario_request_invalid')]);
+                if (isset($input['parameter_cases'])) {
+                    $scope = [(int) $session->organization_id, $projectId, $sessionId];
+                    $capture = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+                    $snapshot = $capture['snapshot'];
+                    if (count($snapshot->facts) > 10000) {
+                        throw new InvalidArgumentException('evaluation_scenario_fact_budget_exceeded');
+                    }
+                    $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+                    $projection = $this->parameters->build($input['parameter_cases'], $works, $positions, $snapshot, $capture['token'],
+                        $this->models->currentTechnologyRecommendations(...$scope), $this->models->currentCompleteness(...$scope),
+                        $decisions, (string) $actor->id);
+                    $definitions = $projection['definitions'];
+                    unset($projection['definitions']);
+                    $projection['source_fingerprint'] = (new EvaluationScenarioSourceBinding)->fingerprint($snapshot, $decisions);
+                    if (! hash_equals($capture['token'], $this->models->snapshotForPlanning(...[...$scope, 10001])['token'])) {
+                        throw new InvalidArgumentException('evaluation_scenario_parameter_stale');
+                    }
+                } else {
+                    $definitions = $this->scenarios->validate($input['definitions'], $positions);
+                }
+            } catch (InvalidArgumentException $error) {
+                $message = match ($error->getMessage()) {
+                    'evaluation_scenario_work_budget_exceeded' => 'Разделите оценку по разделам: один параметрический расчёт поддерживает до 2000 позиций.',
+                    'evaluation_scenario_parameters_not_calculable' => 'Для этих формул недостаточно проверенных параметров или покрытия геометрии. Уточните исходные размеры и проёмы либо задайте объёмы работ вручную.',
+                    'evaluation_scenario_parameter_stale' => 'Исходные параметры изменились. Обновите их и сохраните согласованные сценарии заново.',
+                    'evaluation_scenario_quantity_order_invalid' => 'Наборы параметров дают несовместимый порядок объёмов работ. Задайте согласованные целые случаи: минимальный, базовый и максимальный.',
+                    default => trans_message('estimate_evaluation.scenario_request_invalid'),
+                };
+                throw ValidationException::withMessages(['scenarios' => $message]);
             }
             $selection = ['version' => EvaluationScenarioSet::VERSION, 'definitions' => $definitions];
+            if ($projection !== null) {
+                $selection['parameter_projection'] = $projection;
+            }
             $proof = $this->choices->write($actor, $session, 'scenario-set', 'evaluation_scenario', $selection,
                 trans_message('estimate_evaluation.scenario_selected'), $input['request_id']);
             $payload['scenario_selections'] = [...$selection, ...$proof];

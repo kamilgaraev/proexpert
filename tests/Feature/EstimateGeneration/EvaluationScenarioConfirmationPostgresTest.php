@@ -33,6 +33,97 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationScenarioConfirmationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_parameter_cases_recalculate_confirm_and_become_stale_after_operand_change_without_ai(): void
+    {
+        \Illuminate\Support\Facades\Http::fake([]);
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        [$actor, $session] = $this->fixture();
+        Queue::fake();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $room = array_values(array_filter($models->snapshot(...$scope)->entities, static fn (Entity $entity): bool => $entity->id === 'room:fixture'))[0];
+        foreach (['length' => '5', 'width' => '10'] as $parameter => $value) {
+            $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:scenario-'.$parameter,
+                ...[...$scope, $room->sourceVersion, $room->id, $parameter, $value, 'm', 0.0, 'user_assumption', 'confirmed', []]);
+            $models->saveSourceModel([], [$fact], []);
+            $models->applyDecision(new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:scenario-'.$parameter,
+                ...[...$scope, $room->sourceVersion, 'fact', $fact->id, $fact->id, 'user', (string) $actor->id,
+                    'Введённое пользователем допущение для сценария, не измерение фотографии.', 1, []]), $fact);
+        }
+        $draft = $session->fresh()->draft_payload;
+        foreach ($draft['local_estimates'][0]['sections'][0]['work_items'] as &$work) {
+            $work['metadata']['quantity_key'] = $work['key'] === 'preparation' ? 'office.ceiling' : 'finish.floor';
+            $work['name'] = $work['key'] === 'preparation' ? 'Отделка потолка' : 'Отделка пола';
+            $work['metadata']['scope_entity_id'] = $room->id;
+        }
+        unset($work);
+        $session->update(['draft_payload' => (new BuildMostEstimateDraft)->seal((new UniversalReviewSummaryProjector)->project($draft))]);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        self::assertTrue($models->replaceTechnologyRecommendations(...[...$scope, $room->sourceVersion, $capture['token'], 'technology:v1', str_repeat('c', 64), [], []]));
+        self::assertTrue($models->replaceCompleteness(...[...$scope, $room->sourceVersion, $capture['token'], 'technology:v1', str_repeat('c', 64), 'rules:v1', str_repeat('d', 64), [], []]));
+        $cases = [];
+        foreach (['minimum' => '5', 'base' => '6', 'maximum' => '7'] as $id => $value) {
+            $cases[] = ['id' => $id, 'basis' => 'Согласованный вариант длины '.$value.' м', 'parameters' => [[
+                'source_fact_id' => 'fact:scenario-length', 'source_fact_version' => 1, 'entity_id' => $room->id,
+                'source_value_hash' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::valueHash('5'),
+                'unit' => 'm', 'value' => $value,
+            ]]];
+        }
+        $request = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'parameter_cases' => $cases];
+        $parameters = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationScenarioParameters::class)
+            ->handle($actor, $scope[1], $scope[2], $request['state_version']);
+        self::assertSame(['length', 'width'], array_column($parameters['parameters'], 'parameter'));
+        self::assertSame('5', $parameters['parameters'][0]['value']);
+        self::assertSame('0', $parameters['cost_units']);
+        $saved = app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], $request);
+        self::assertEquals($saved, app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], $request));
+        self::assertSame('0', $saved['cost_units']);
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $saved['state_version'], (string) Str::uuid());
+        self::assertSame(['50', '60', '70'], array_map(static fn (array $scenario): mixed => array_column($scenario['positions'], 'quantity', 'key')['preparation'], $revision['result']['scenarios']),
+            json_encode(array_map(static fn (array $scenario): array => ['id' => $scenario['id'], 'quantities' => array_column($scenario['positions'], 'quantity', 'key')], $revision['result']['scenarios']), JSON_THROW_ON_ERROR));
+        $basePosition = array_column($revision['result']['scenarios'][1]['positions'], null, 'key')['preparation'];
+        self::assertSame('floor_area', $basePosition['quantity_formula']);
+        self::assertSame('user_assumption', $basePosition['quantity_parameter_recipe']['status']);
+        self::assertSame('5', $models->fact(...[...$scope, 'fact:scenario-length'])->value);
+        self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode([
+            'missing' => $revision['result']['missing_requirements'],
+            'unpriced' => $revision['result']['scenarios'][1]['unpriced_positions'],
+            'conditions' => $revision['result']['scenarios'][1]['price_conditions_unresolved'],
+            'tax' => $revision['result']['scenarios'][1]['tax_breakdown_unknown_positions'],
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true];
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], $input);
+        $current = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
+        self::assertFalse($current['result_stale']);
+        self::assertSame('base', $current['confirmed_scenario']['scenario_id']);
+        config(['cache.default' => 'array']);
+        $this->actingAs($actor);
+        $session->refresh();
+        $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
+            $scope[2], $scope[0], $scope[1], $confirmation['state_version'], idempotencyKey: (string) Str::uuid(),
+            artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+        $apply = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class);
+        $published = $apply->handle($command);
+        self::assertSame($published->estimateId, $apply->handle($command)->estimateId);
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame('12000.00', $estimate->total_amount);
+        $money = $estimate->only(['total_amount', 'total_amount_with_vat']);
+        $width = $models->fact(...[...$scope, 'fact:scenario-width']);
+        $changed = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:scenario-width-v2',
+            ...[...$scope, $room->sourceVersion, $room->id, 'width', '11', 'm', 0.0, 'user_assumption', 'confirmed', [], 2, $width->id]);
+        $models->saveSourceModel([], [$changed], []);
+        $models->applyDecision(new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:scenario-width-v2',
+            ...[...$scope, $room->sourceVersion, 'fact', $width->id, $changed->id, 'user', (string) $actor->id, 'Изменилось исходное допущение ширины.', 2, []]), $changed);
+        $stale = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
+        self::assertTrue($stale['result_stale']);
+        self::assertNull($stale['confirmed_scenario']);
+        self::assertSame($current['revision_id'], $stale['revision_id']);
+        self::assertSame($money, $estimate->fresh()->only(['total_amount', 'total_amount_with_vat']));
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
     public function test_confirmation_is_a_real_free_choice_of_one_current_scenario_and_replays_once(): void
     {
         [$actor, $session, $catalog, $input] = $this->fixture();
@@ -63,8 +154,9 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertSame('1', $item['quantity']);
         self::assertSame('assumed', $item['quantity_status']);
         self::assertSame('direct_quantity', $item['quantity_basis_details']['formula_key']);
-        $numbers = array_values(array_filter($facts, static fn ($fact): bool => $fact->type === 'quantity'));
+        $numbers = array_values(array_filter($facts, static fn ($fact): bool => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::parameter($fact->type) === 'quantity'));
         self::assertCount(2, $numbers);
+        self::assertSame(['room:fixture'], array_values(array_unique(array_column($numbers, 'entityId'))));
         self::assertSame(['user_assumption'], array_values(array_unique(array_column($numbers, 'origin'))));
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class)
             ->assertCurrent(...[...$scope, $session->fresh()->draft_payload]));
@@ -294,7 +386,7 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
             'metadata' => ['currency' => $currency, 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => true]]);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
             'status' => 'estimate_review_required', 'state_version' => 0,
-            'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']]]);
+            'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'region' => 'Москва', 'selected_sections' => ['finishing']]]);
         $models = app(ProjectModelRepository::class);
         $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
         $entity = new Entity('room:fixture', ...[...$scope, 'sha256:'.hash('sha256', 'scope-without-photo-dimensions'), 'room', 'room:fixture',
