@@ -95,9 +95,29 @@ final class SpreadsheetCostBlockParser
                 continue;
             }
 
-            $isNumbered = preg_match('/^\d+(?:\.\d+)*\.?$/u', $position) === 1;
+            if (self::isVatSummaryLabel($label)) {
+                $current = null;
+                if ($amount !== null) {
+                    $footer['vat_amount'] = $amount;
+                }
+                if (preg_match('/(?:ндс|налог на добавленную стоимость)\D*([\d,.]+)\s*%/u', $label, $matches) === 1) {
+                    $footer['vat_rate'] = $numbers->parse($matches[1]);
+                }
+
+                continue;
+            }
+
+            $isSummary = $this->isSummaryLabel($label);
+            $isEstimateSummary = $isSummary && $this->isEstimateSummaryLabel($label);
+            $isSectionSummary = $isSummary && $this->isSectionSummaryLabel($label);
+            if ($isSummary && !$isEstimateSummary && !$isSectionSummary) {
+                $current = null;
+                continue;
+            }
+
+            $isNumbered = !$isSummary && preg_match('/^\d+(?:\.\d+)*\.?$/u', $position) === 1;
             $isUnnumbered = $position === '' && $amount !== null
-                && preg_match('/^(?:итого|всего|ндс|на единицу в базисных ценах|накладные расходы|сметная прибыль)/u', $label) !== 1;
+                && preg_match('/^(?:итого|всего|на единицу в базисных ценах|накладные расходы|сметная прибыль)/u', $label) !== 1;
             if (($isNumbered || $isUnnumbered) && ($name !== '' || $code !== '')) {
                 $current = (int) $rowNumber;
                 $quantity = $numbers->parse($this->cell($row, $mapping['quantity'] ?? null));
@@ -116,23 +136,9 @@ final class SpreadsheetCostBlockParser
                 continue;
             }
 
-            if (preg_match('/^(?:ндс|налог на добавленную стоимость)/u', $label) === 1) {
+            if ($isSummary) {
                 $current = null;
-                if ($amount !== null) {
-                    $footer['vat_amount'] = $amount;
-                }
-                if (preg_match('/ндс\D*([\d,.]+)\s*%/u', $label, $matches) === 1) {
-                    $footer['vat_rate'] = $numbers->parse($matches[1]);
-                }
-
-                continue;
-            }
-
-            if (preg_match('/^(?:итого|всего)(?:\s|:|$)/u', $label) === 1
-                && !str_contains($label, 'с учетом') && !str_contains($label, 'накладн') && !str_contains($label, 'прибыл')
-                && !str_contains($label, 'на физобъем')) {
-                $current = null;
-                if (!str_contains($label, 'раздел') && $amount !== null) {
+                if ($isEstimateSummary && $amount !== null) {
                     $vatRate = str_contains($label, 'без ндс') ? null : ($footer['vat_rate'] ?? null);
                     $vatAmount = str_contains($label, 'без ндс') ? null : ($footer['vat_amount'] ?? null);
                     $summaryControls[] = [
@@ -146,7 +152,7 @@ final class SpreadsheetCostBlockParser
                     if ($vatRate !== null || $vatAmount !== null) {
                         $footer['total_with_vat'] = $amount;
                     }
-                } elseif ($amount !== null) {
+                } elseif ($isSectionSummary && $amount !== null) {
                     $sectionControls[] = ['amount' => $amount, 'from' => $sectionStart, 'to' => (int) $rowNumber];
                     $sectionStart = (int) $rowNumber + 1;
                 }
@@ -353,6 +359,31 @@ final class SpreadsheetCostBlockParser
         }
 
         return ['positions' => $result, 'footer' => $footer, 'total_mismatch' => $mismatch];
+    }
+
+    public static function isVatSummaryLabel(string $label): bool
+    {
+        return preg_match('/^(?:(?:в\s+том\s+числе|в\s+т\.\s*ч\.|сумма|включая)\s+)?(?:ндс|налог\s+на\s+добавленную\s+стоимость)(?:\s*[:,]?\s*\(?\s*\d+(?:[.,]\d+)?\s*%\s*\)?)?\s*:?$/iu', $label) === 1;
+    }
+
+    private function isSummaryLabel(string $label): bool
+    {
+        return preg_match('/^(?:итого|всего)(?:\s|:|$)/u', $label) === 1
+            && !str_contains($label, 'накладн') && !str_contains($label, 'прибыл') && !str_contains($label, 'на физобъем')
+            && (!str_contains($label, 'с учетом') || preg_match('/с учетом\s+ндс/u', $label) === 1);
+    }
+
+    private function isEstimateSummaryLabel(string $label): bool
+    {
+        $label = rtrim($label, ": \t\n\r");
+
+        return preg_match('/^(?:итого|всего)(?:\s+(?:(?:по\s+)?(?:смете|акту|документу)(?:\s+(?:без\s+ндс|с\s+(?:учетом\s+)?ндс|в\s+(?:текущих|базисных)\s+ценах))?|без\s+ндс|с\s+(?:учетом\s+)?ндс|к\s+оплате))?$/u', $label) === 1
+            || $label === 'всего работ и затрат, включаемых в стоимость работ';
+    }
+
+    private function isSectionSummaryLabel(string $label): bool
+    {
+        return preg_match('/^(?:итого|всего)\s+(?:по\s+)?раздел(?:у|а)?(?:\s|:|$)/u', $label) === 1;
     }
 
     private function controlsMismatch(array $positions, array $sectionControls, array $positionControls): bool

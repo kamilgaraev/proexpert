@@ -1405,7 +1405,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         return str_starts_with($normalized, 'итого')
             || str_starts_with($normalized, 'всего')
             || str_starts_with($normalized, 'на единицу в базисных ценах')
-            || str_starts_with($normalized, 'ндс')
+            || SpreadsheetCostBlockParser::isVatSummaryLabel($normalized)
             || str_contains($normalized, 'накладные расходы')
             || str_contains($normalized, 'сметная прибыль');
     }

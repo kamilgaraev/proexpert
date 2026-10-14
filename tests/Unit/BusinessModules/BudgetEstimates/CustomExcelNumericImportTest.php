@@ -281,6 +281,65 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertSame(100.0, $analysis['positions'][1]['total']);
     }
 
+    public function test_included_vat_summary_labels_are_controls_and_never_positions(): void
+    {
+        foreach (['В том числе НДС', 'В т.ч. НДС', 'В т. ч. НДС (22%)', 'Сумма НДС 22%', 'Налог на добавленную стоимость 22%'] as $vatLabel) {
+            $rows = [
+                1 => ['1', 'RATE-1', 'Work', null, null, 2, 100, null, 200],
+                2 => [null, null, 'Итого по смете', null, null, null, null, null, 200],
+                3 => [null, null, $vatLabel, null, null, null, null, null, 44],
+                4 => [null, null, 'Всего с учетом НДС', null, null, null, null, null, 244],
+            ];
+            $valid = $this->analyze($rows);
+            self::assertCount(1, $valid['positions'], $vatLabel);
+            self::assertSame(44.0, $valid['footer']['vat_amount']);
+            self::assertSame(200.0, $valid['footer']['total_estimate_cost']);
+            self::assertSame(244.0, $valid['footer']['total_with_vat']);
+            self::assertFalse($valid['total_mismatch']);
+            self::assertCount(1, $this->rows($rows), $vatLabel);
+            $rows[3][8] = 45;
+            $invalid = $this->analyze($rows);
+            self::assertTrue($invalid['total_mismatch']);
+            self::assertSame($valid['positions'], $invalid['positions']);
+        }
+    }
+
+    public function test_work_names_mentioning_vat_do_not_become_tax_controls(): void
+    {
+        $rows = [
+            1 => ['1', 'RATE-1', 'Подготовка документов по НДС', null, null, 1, 100, null, 100],
+            2 => [null, null, 'НДС: оформление декларации', null, null, 1, 100, null, 100],
+            3 => [null, null, 'Итого по смете', null, null, null, null, null, 200],
+        ];
+        $valid = $this->analyze($rows);
+        self::assertCount(2, $valid['positions']);
+        self::assertArrayNotHasKey('vat_amount', $valid['footer']);
+        self::assertFalse($valid['total_mismatch']);
+        self::assertCount(2, $this->rows($rows));
+    }
+
+    public function test_category_chapter_and_subset_totals_do_not_become_estimate_totals_or_positions(): void
+    {
+        foreach (['Итого материалов', 'Всего оборудования', 'Итого по главе 1', 'Итого позиций 1-2', 'Итого материалов по разделу 1', 'Итого по расценкам'] as $partialLabel) {
+            foreach ([null, '99'] as $positionNumber) {
+                $rows = [
+                    1 => ['1', 'RATE-1', 'Work', null, null, 1, 125, null, 125],
+                    2 => ['2', 'MAT-1', 'Material', null, null, 1, 75, null, 75],
+                    3 => [$positionNumber, null, $partialLabel, null, null, null, null, null, 75],
+                    4 => [null, null, 'Итого по смете', null, null, null, null, null, 200],
+                ];
+                $valid = $this->analyze($rows);
+                self::assertCount(2, $valid['positions'], $partialLabel);
+                self::assertSame(200.0, $valid['footer']['total_estimate_cost']);
+                self::assertFalse($valid['total_mismatch']);
+                unset($rows[4]);
+                $partialOnly = $this->analyze($rows);
+                self::assertArrayNotHasKey('total_estimate_cost', $partialOnly['footer']);
+                self::assertFalse($partialOnly['total_mismatch']);
+            }
+        }
+    }
+
     private function analyze(array $rows): array
     {
         return (new SpreadsheetCostBlockParser)->analyze($rows, ['position_number' => 'A', 'code' => 'B', 'name' => 'C', 'quantity' => 'F', 'unit_price' => 'G', 'total_price' => 'I'], 0);
