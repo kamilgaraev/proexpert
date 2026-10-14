@@ -33,6 +33,7 @@ use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactLease;
 use App\BusinessModules\Core\Reporting\Temporal\TemporalOwnerFactMaterializer;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\WorkforceReportDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\DTO\EffectiveAssignmentFact;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\AttendanceDurationEvidence;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\AttendanceExecutionFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\WorkforceCapacityFormula;
 use Brick\Math\BigDecimal;
@@ -51,9 +52,11 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
 {
     public const CAPACITY_FORMULA = 'workforce-capacity.v1';
 
-    public const ATTENDANCE_FORMULA = 'attendance.v1';
+    public const ATTENDANCE_FORMULA = 'attendance.v2';
 
     public const SCHEMA_VERSION = 'workforce-report-source.v1';
+
+    public const ATTENDANCE_SCHEMA_VERSION = 'workforce-attendance-source.v2';
 
     public const SORTS = [
         'workforce_capacity' => [
@@ -687,11 +690,12 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                         || ($shiftIds !== [] && ($shiftId === null || ! in_array($shiftId, $shiftIds, true)))) {
                         continue;
                     }
-                    $present = $correction !== null && (string) $correction->status === 'at_work'
-                        ? (string) ($correction->hours ?? $grainEligible)
-                        : ($shiftScans->isEmpty()
-                            ? '0'
-                            : $this->decimalMetadata($metadata, 'present_hours', (string) $grainEligible));
+                    $duration = AttendanceDurationEvidence::resolve($correction !== null ? (string) $correction->status : null,
+                        $correction->hours ?? null, ! $shiftScans->isEmpty(), $absence !== null);
+                    $present = $duration['confirmed_hours'] ?? '0';
+                    if (! $duration['known']) {
+                        $attendanceWarnings[] = 'ATTENDANCE_DURATION_UNCONFIRMED';
+                    }
                     $absenceHours = $absence === null ? '0' : (string) $grainEligible;
                     $overtime = BigDecimal::of($present)->minus($grainEligible);
                     if ($overtime->isLessThan(BigDecimal::zero())) {
@@ -722,6 +726,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                     $auditRefs = $correction === null ? [] : [
                         ['type' => 'attendance_correction', 'id' => (int) $correction->id],
                     ];
+                    $status = ! $duration['known']
+                        ? ($duration['presence_confirmed'] ? 'presence_duration_unconfirmed' : 'fact_unconfirmed')
+                        : ($metrics->violation ? 'unexplained_absence' : 'covered');
                     $row = [
                         'row_key' => hash('sha256', implode('|', [
                             $date,
@@ -756,6 +763,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                             'shift_id' => $shiftId,
                             'eligible_hours' => $metrics->eligibleHours,
                             'present_hours' => $metrics->presentHours,
+                            'actual_duration_known' => $duration['known'],
                             'approved_absence_hours' => $metrics->approvedAbsenceHours,
                             'unexplained_absence_hours' => $metrics->unexplainedAbsenceHours,
                             'overtime_hours' => $metrics->overtimeHours,
@@ -764,18 +772,21 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                             'source_refs' => $sourceRefs,
                             'audit_refs' => $auditRefs,
                         ])),
-                        'status' => $metrics->violation ? 'unexplained_absence' : 'covered',
+                        'status' => $status,
+                        'status_label' => trans_message('reports.statuses.'.$status, [], 'ru'),
+                        'actual_duration_known' => $duration['known'],
+                        'confirmed_hours' => $duration['confirmed_hours'],
                         'eligible_hours' => $metrics->eligibleHours,
                         'present_hours' => $metrics->presentHours,
                         'approved_absence_hours' => $metrics->approvedAbsenceHours,
-                        'unexplained_absence_hours' => $metrics->unexplainedAbsenceHours,
-                        'absence_hours' => $metrics->unexplainedAbsenceHours,
+                        'unexplained_absence_hours' => $duration['known'] ? $metrics->unexplainedAbsenceHours : '0',
+                        'absence_hours' => $duration['known'] ? $metrics->unexplainedAbsenceHours : '0',
                         'overtime_hours' => $metrics->overtimeHours,
                         'late_hours' => $metrics->lateHours,
                         'early_hours' => $metrics->earlyHours,
-                        'execution_percent' => $metrics->executionPercent,
+                        'execution_percent' => $duration['known'] ? $metrics->executionPercent : null,
                         'correction_rate' => $metrics->correctionRate,
-                        'violation' => $metrics->violation,
+                        'violation' => $duration['known'] && $metrics->violation,
                         'source_refs' => $sourceRefs,
                         'audit_refs' => $auditRefs,
                     ];
@@ -1007,12 +1018,13 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         [$periodFrom, $periodTo] = $this->snapshotPeriod($query, $code);
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
         $sourceManifest = $this->sourceManifest($code, $rows);
+        $sourceSchemaVersion = $code === 'attendance_execution' ? self::ATTENDANCE_SCHEMA_VERSION : self::SCHEMA_VERSION;
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'code' => $code,
             'organization_id' => $scope->organizationId,
             'query_hash' => $query->queryHash->value,
             'rows' => $rows,
-            'schema_version' => self::SCHEMA_VERSION,
+            'schema_version' => $sourceSchemaVersion,
         ])));
         $coverageDenominator = count($rows);
         $coverageNumerator = count(array_filter(
@@ -1058,6 +1070,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             $rowSchema,
             $warnings,
             $rows,
+            $sourceSchemaVersion,
             $rowTable,
             $generatedAt,
             $staleAt,
@@ -1081,7 +1094,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 'period_from' => $periodFrom,
                 'period_to' => $periodTo,
                 'formula_version' => $formulaVersion,
-                'source_schema_version' => self::SCHEMA_VERSION,
+                'source_schema_version' => $sourceSchemaVersion,
                 'freshness_status' => 'fresh',
                 'quality_status' => $quality,
                 'reconciliation_status' => $reconciliation,
@@ -1099,7 +1112,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 $this->connection->table($rowTable)->insert(array_map(
                     static function (array $row) use ($id, $scope): array {
                         $payload = $row;
-                        unset($row['absence_hours']);
+                        unset($row['absence_hours'], $row['actual_duration_known'], $row['confirmed_hours'], $row['status_label']);
                         foreach (['source_refs', 'audit_refs', 'quality_warnings'] as $jsonColumn) {
                             if (array_key_exists($jsonColumn, $row)) {
                                 $row[$jsonColumn] = CanonicalJson::encode($row[$jsonColumn]);
@@ -1838,17 +1851,23 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     {
         $eligible = BigDecimal::zero();
         $present = BigDecimal::zero();
+        $confirmed = BigDecimal::zero();
         $approvedAbsence = BigDecimal::zero();
         $absence = BigDecimal::zero();
         $overtime = BigDecimal::zero();
+        $unknownDurationRows = 0;
         foreach ($rows as $row) {
+            if (($row['actual_duration_known'] ?? true) === false) {
+                $unknownDurationRows++;
+            }
             $eligible = $eligible->plus($row['eligible_hours']);
             $present = $present->plus($row['present_hours']);
+            $confirmed = $confirmed->plus($row['confirmed_hours'] ?? $row['present_hours']);
             $approvedAbsence = $approvedAbsence->plus($row['approved_absence_hours']);
             $absence = $absence->plus($row['unexplained_absence_hours']);
             $overtime = $overtime->plus($row['overtime_hours']);
         }
-        $execution = $eligible->isZero()
+        $execution = $eligible->isZero() || $unknownDurationRows > 0
             ? null
             : $present->plus($approvedAbsence)
                 ->multipliedBy(100)
@@ -1858,6 +1877,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         }
 
         return [
+            'unknown_duration_rows' => $unknownDurationRows,
+            'actual_duration_known' => $unknownDurationRows === 0,
+            'confirmed_hours' => $unknownDurationRows === 0 ? (string) $confirmed->toScale(2, RoundingMode::HalfUp) : null,
             'eligible_hours' => (string) $eligible->toScale(2, RoundingMode::HalfUp),
             'present_hours' => (string) $present->toScale(2, RoundingMode::HalfUp),
             'approved_absence_hours' => (string) $approvedAbsence->toScale(2, RoundingMode::HalfUp),
@@ -1883,11 +1905,20 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     private function attendanceSchema(): array
     {
         return array_map(
-            static fn (string $id): array => ['id' => $id],
+            static function (string $id): array {
+                $column = ['id' => $id];
+                if (in_array($id, ['confirmed_hours', 'actual_duration_known', 'status_label'], true)) {
+                    $label = trans_message('reports.columns.'.$id, [], 'ru');
+                    $column['label'] = $label;
+                    $column['labels'] = ['ru' => $label];
+                }
+
+                return $column;
+            },
             [
                 'work_date', 'employee_name', 'project_name', 'site_name', 'shift',
-                'eligible_hours', 'present_hours', 'overtime_hours', 'absence_hours',
-                'execution_percent', 'status', 'close_version', 'audit_refs',
+                'eligible_hours', 'confirmed_hours', 'actual_duration_known', 'overtime_hours', 'absence_hours',
+                'execution_percent', 'status_label', 'close_version', 'audit_refs',
             ],
         );
     }

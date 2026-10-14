@@ -55,7 +55,26 @@
     "production-labor.payroll.prepare",
     "production-labor.payroll.approve",
     "production-labor.reports.export",
-    "production-labor.settings.manage"
+    "production-labor.settings.manage",
+    "workforce.hr.private.read",
+    "workforce.hr.private.write",
+    "workforce.hr.documents.read",
+    "workforce.hr.documents.manage",
+    "workforce.hr.recruitment.manage",
+    "workforce.hr.lifecycle.manage",
+    "workforce.timekeeping.view",
+    "workforce.timekeeping.manage",
+    "workforce.timekeeping.verify",
+    "workforce.timekeeping.approve",
+    "workforce.timekeeping.close",
+    "workforce.timekeeping.export",
+    "workforce.self-service.view",
+    "workforce.self-service.request",
+    "workforce.team-queue.view",
+    "workforce.team-queue.manage",
+    "workforce.payroll-source.view",
+    "workforce.payroll-source.correct",
+    "workforce.exports.view"
   ],
   "features": [
     "Наряды и сменные задания по бригадам",
@@ -84,7 +103,9 @@
         "workforce.attendance.self",
         "production-labor.view",
         "production-labor.work-orders.create",
-        "production-labor.output.record"
+        "production-labor.output.record",
+        "workforce.self-service.view",
+        "workforce.self-service.request"
       ]
     },
     "pro": {
@@ -121,7 +142,20 @@
         "production-labor.work-orders.approve",
         "production-labor.output.record",
         "production-labor.output.approve",
-        "production-labor.payroll.prepare"
+        "production-labor.payroll.prepare",
+        "workforce.self-service.view",
+        "workforce.self-service.request",
+        "workforce.timekeeping.view",
+        "workforce.timekeeping.manage",
+        "workforce.timekeeping.verify",
+        "workforce.timekeeping.approve",
+        "workforce.timekeeping.close",
+        "workforce.timekeeping.export",
+        "workforce.team-queue.view",
+        "workforce.team-queue.manage",
+        "workforce.payroll-source.view",
+        "workforce.payroll-source.correct",
+        "workforce.exports.view"
       ]
     },
     "corporate": {
@@ -178,7 +212,26 @@
         "production-labor.payroll.prepare",
         "production-labor.payroll.approve",
         "production-labor.reports.export",
-        "production-labor.settings.manage"
+        "production-labor.settings.manage",
+        "workforce.self-service.view",
+        "workforce.self-service.request",
+        "workforce.timekeeping.view",
+        "workforce.timekeeping.manage",
+        "workforce.timekeeping.verify",
+        "workforce.timekeeping.approve",
+        "workforce.timekeeping.close",
+        "workforce.timekeeping.export",
+        "workforce.team-queue.view",
+        "workforce.team-queue.manage",
+        "workforce.payroll-source.view",
+        "workforce.payroll-source.correct",
+        "workforce.exports.view",
+        "workforce.hr.private.read",
+        "workforce.hr.private.write",
+        "workforce.hr.documents.read",
+        "workforce.hr.documents.manage",
+        "workforce.hr.recruitment.manage",
+        "workforce.hr.lifecycle.manage"
       ]
     }
   },

@@ -30,6 +30,14 @@ final class MobileTimeEntryResource extends JsonResource
             'task_id' => $entry->task_id,
             'task_label' => $entry->task?->name,
             'work_date' => $entry->work_date?->toDateString(),
+            'start_at' => $entry->start_at?->toIso8601String(),
+            'end_at' => $entry->end_at?->toIso8601String(),
+            'timezone' => $entry->timezone,
+            'timezone_requires_reconciliation' => (bool) $entry->timezone_requires_reconciliation,
+            'net_minutes' => $entry->net_minutes,
+            'net_microseconds' => $entry->net_microseconds,
+            'break_intervals' => $entry->break_intervals ?? [],
+            'requires_reconciliation' => $entry->requires_reconciliation,
             'start_time' => $this->time($entry->start_time),
             'end_time' => $this->time($entry->end_time),
             'hours_worked' => $entry->hours_worked !== null ? (float) $entry->hours_worked : null,
@@ -63,7 +71,7 @@ final class MobileTimeEntryResource extends JsonResource
     private function availableActions(Request $request, TimeEntry $entry): array
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return [];
         }
 

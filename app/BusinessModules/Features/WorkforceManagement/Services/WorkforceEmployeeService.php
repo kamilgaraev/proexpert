@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\EmploymentContract;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Services\EmploymentRelationService;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Services\HrAccess;
+use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
 use App\Models\User;
@@ -19,8 +23,10 @@ final class WorkforceEmployeeService
 {
     public function __construct(private readonly WorkforceCapacityOwnerMutationBridge $capacityCapture) {}
 
-    public function paginate(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
+    public function paginate(int $organizationId, int $perPage, array $filters = [], ?User $actor = null): LengthAwarePaginator
     {
+        $payrollSearch = ! empty($filters['search']) && app(HrAccess::class)->allows($organizationId, $actor, 'workforce.payroll-source.manage');
+
         return WorkforceEmployee::query()
             ->with('user:id,name,email,current_organization_id')
             ->where('organization_id', $organizationId)
@@ -38,12 +44,14 @@ final class WorkforceEmployeeService
                     }));
             })
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('employment_status', $status))
-            ->when($filters['search'] ?? null, function (Builder $query, string $search): void {
-                $query->where(function (Builder $nested) use ($search): void {
+            ->when($filters['search'] ?? null, function (Builder $query, string $search) use ($payrollSearch): void {
+                $query->where(function (Builder $nested) use ($search, $payrollSearch): void {
                     $nested->where('personnel_number', 'like', "%{$search}%")
                         ->orWhere('last_name', 'like', "%{$search}%")
-                        ->orWhere('first_name', 'like', "%{$search}%")
-                        ->orWhere('external_payroll_ref', 'like', "%{$search}%");
+                        ->orWhere('first_name', 'like', "%{$search}%");
+                    if ($payrollSearch) {
+                        $nested->orWhere('external_payroll_ref', 'like', "%{$search}%");
+                    }
                 });
             })
             ->orderBy('last_name')
@@ -51,49 +59,78 @@ final class WorkforceEmployeeService
             ->paginate($perPage);
     }
 
-    public function create(int $organizationId, array $payload): WorkforceEmployee
+    public function create(int $organizationId, array $payload, ?User $actor = null): WorkforceEmployee
     {
-        return DB::transaction(function () use ($organizationId, $payload): WorkforceEmployee {
+        app(HrAccess::class)->assert($organizationId, $actor);
+        $this->assertPrivateMutation($organizationId, $payload, $actor);
+        $basis = $this->basis($payload);
+        $payload = $this->employeePayload($payload, false);
+
+        return DB::transaction(function () use ($organizationId, $payload, $actor, $basis): WorkforceEmployee {
             $this->lockOrganization($organizationId);
             $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
             $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null);
 
-            return WorkforceEmployee::create(array_merge($payload, [
+            $employee = WorkforceEmployee::create(array_merge($payload, [
                 'organization_id' => $organizationId,
                 'employment_status' => $payload['employment_status'] ?? 'active',
-            ]))->load('user:id,name,email,current_organization_id');
+                'hr_reconciliation_status' => 'needs_reconciliation',
+            ]));
+            app(EmploymentRelationService::class)->event($organizationId, (int) $employee->id, 'personnel_card_created', $employee->hire_date->toDateString(), $basis, isset($payload['basis_document_id']) ? (int) $payload['basis_document_id'] : null, $actor, null, $employee->toArray());
+
+            return $employee->load('user:id,name,email,current_organization_id');
         });
     }
 
-    public function update(int $organizationId, int $employeeId, array $payload): WorkforceEmployee
+    public function update(int $organizationId, int $employeeId, array $payload, ?User $actor = null): WorkforceEmployee
     {
-        if (array_key_exists('employment_status', $payload) || array_key_exists('dismissal_date', $payload)) {
+        app(HrAccess::class)->assert($organizationId, $actor);
+        $this->assertPrivateMutation($organizationId, $payload, $actor);
+        $basis = $this->basis($payload);
+        if (array_key_exists('employment_status', $payload) || array_key_exists('dismissal_date', $payload) || array_key_exists('hire_date', $payload) || array_key_exists('hr_reconciliation_status', $payload)) {
             throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
         }
 
-        return DB::transaction(function () use ($organizationId, $employeeId, $payload): WorkforceEmployee {
+        $payload = $this->employeePayload($payload, true);
+
+        return DB::transaction(function () use ($organizationId, $employeeId, $payload, $actor, $basis): WorkforceEmployee {
             $this->lockOrganization($organizationId);
             $employee = $this->find($organizationId, $employeeId);
             $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
             $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null, $employeeId);
+            if (array_key_exists('user_id', $payload)
+                && ($payload['user_id'] === null ? null : (int) $payload['user_id']) !== ($employee->user_id === null ? null : (int) $employee->user_id)) {
+                $this->assertUserRelinkDoesNotChangeFrozenSource($organizationId, $employeeId);
+            }
+            $before = $employee->toArray();
             $employee->update($payload);
+            app(EmploymentRelationService::class)->event($organizationId, $employeeId, 'personnel_card_changed', now()->toDateString(), $basis, isset($payload['basis_document_id']) ? (int) $payload['basis_document_id'] : null, $actor, $before, $employee->refresh()->toArray());
 
             return $employee->refresh()->load('user:id,name,email,current_organization_id');
         });
     }
 
-    public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null): WorkforceEmployee
+    public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null, ?User $actor = null, array $basisPayload = []): WorkforceEmployee
     {
-        return DB::transaction(function () use ($organizationId, $employeeId, $dismissalDate): WorkforceEmployee {
+        app(HrAccess::class)->assert($organizationId, $actor);
+        $basis = $this->basis($basisPayload);
+
+        return DB::transaction(function () use ($organizationId, $employeeId, $dismissalDate, $actor, $basisPayload, $basis): WorkforceEmployee {
             $this->lockOrganization($organizationId);
             $employee = $this->find($organizationId, $employeeId);
             $date = $dismissalDate ?? now()->toDateString();
+            if ($employee->employment_status === 'dismissed' || Carbon::parse($date)->isFuture()) {
+                throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+            }
+            app(EmploymentRelationService::class)->basis($organizationId, $employeeId, isset($basisPayload['basis_document_id']) ? (int) $basisPayload['basis_document_id'] : null);
+            $before = $employee->toArray();
 
             if ($employee->hire_date !== null && Carbon::parse($date)->lt(Carbon::parse($employee->hire_date))) {
                 throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
             }
 
             $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
+            app(EmploymentRelationService::class)->assertTimekeepingHistoryMutable($organizationId, $employeeId, $date);
             $captureDraft = $this->capacityCapture->beginDismissal($organizationId, (int) $employee->id, $date);
             $employee->update([
                 'employment_status' => 'dismissed',
@@ -132,10 +169,57 @@ final class WorkforceEmployeeService
                     'status' => 'cancelled',
                     'updated_at' => now(),
                 ]);
+            foreach (EmploymentContract::query()->where('organization_id', $organizationId)->where('employee_id', $employeeId)->where('status', 'active')->lockForUpdate()->get() as $relation) {
+                if ($relation->start_date->toDateString() > $date) {
+                    $relation->update(['status' => 'cancelled']);
+                } elseif ($relation->end_date === null || $relation->end_date->toDateString() > $date) {
+                    $relation->update(['end_date' => $date]);
+                }
+            }
+            app(EmploymentRelationService::class)->event($organizationId, $employeeId, 'dismissal', $date, $basis, isset($basisPayload['basis_document_id']) ? (int) $basisPayload['basis_document_id'] : null, $actor, $before, $employee->refresh()->toArray());
             $this->capacityCapture->finishDismissal($captureDraft);
 
             return $employee->refresh()->load('user:id,name,email,current_organization_id');
         });
+    }
+
+    private function employeePayload(array $payload, bool $partial): array
+    {
+        $allowed = ['user_id', 'personnel_number', 'last_name', 'first_name', 'middle_name', 'hire_date', 'dismissal_date', 'employment_status', 'external_payroll_ref', 'phone', 'email', 'metadata', 'basis_reference', 'basis_document_id'];
+        if (array_diff(array_keys($payload), $allowed) !== []) {
+            throw new DomainException(trans_message('workforce.errors.workflow_transition_forbidden'));
+        }
+
+        return \Illuminate\Support\Facades\Validator::make($payload, [
+            'user_id' => ['nullable', 'integer'], 'personnel_number' => [$partial ? 'sometimes' : 'required', 'string', 'max:80'],
+            'last_name' => [$partial ? 'sometimes' : 'required', 'string', 'max:255'], 'first_name' => [$partial ? 'sometimes' : 'required', 'string', 'max:255'],
+            'middle_name' => ['nullable', 'string', 'max:255'], 'hire_date' => $partial ? ['prohibited'] : ['required', 'date'],
+            'dismissal_date' => $partial ? ['prohibited'] : ['nullable', 'date', 'after_or_equal:hire_date'],
+            'employment_status' => $partial ? ['prohibited'] : ['nullable', 'in:active,inactive'],
+            'external_payroll_ref' => ['nullable', 'string', 'max:120'], 'phone' => ['nullable', 'string', 'max:80'],
+            'email' => ['nullable', 'email', 'max:255'], 'metadata' => ['nullable', 'array'],
+            'basis_reference' => ['required', 'string', 'max:255'], 'basis_document_id' => ['nullable', 'integer'],
+        ])->validate();
+    }
+
+    private function basis(array $payload): string
+    {
+        $basis = trim((string) ($payload['basis_reference'] ?? ''));
+        if ($basis === '' || strlen($basis) > 1000) {
+            throw new DomainException(trans_message('workforce.errors.hr_basis_required'));
+        }
+
+        return $basis;
+    }
+
+    private function assertPrivateMutation(int $organizationId, array $payload, ?User $actor): void
+    {
+        if (array_intersect(['phone', 'email', 'metadata'], array_keys($payload)) !== []) {
+            app(HrAccess::class)->assert($organizationId, $actor, 'workforce.hr.private.write');
+        }
+        if (array_key_exists('external_payroll_ref', $payload)) {
+            app(HrAccess::class)->assert($organizationId, $actor, 'workforce.payroll-source.manage');
+        }
     }
 
     private function lockOrganization(int $organizationId): void
@@ -170,7 +254,8 @@ final class WorkforceEmployeeService
             : null;
         $activeAbsence = $this->activeAbsence($organizationId, $employeeId, $date);
         $activeBusinessTrip = $this->activeBusinessTrip($organizationId, $employeeId, $date);
-        $presence = $this->presence($employee->employment_status, $date, $assignment, $schedule, $activeAbsence, $activeBusinessTrip);
+        [$correction, $confirmedScan] = $this->attendanceEvidence($organizationId, $employeeId, $date, $assignment);
+        $presence = $this->presence($employee->employment_status, $date, $assignment, $schedule, $activeAbsence, $activeBusinessTrip, $correction, $confirmedScan);
 
         return [
             'id' => $employee->id,
@@ -179,6 +264,7 @@ final class WorkforceEmployeeService
             'employment_status' => $employee->employment_status,
             'employment_status_label' => trans_message("workforce.employee_statuses.{$employee->employment_status}"),
             'presence' => $presence,
+            'assignment_history' => app(\App\BusinessModules\Features\WorkforceManagement\Domain\HR\Services\AssignmentHistoryService::class)->forEmployee($organizationId, $employeeId),
             'current_assignment' => $assignment ? [
                 'id' => $assignment->id,
                 'department_id' => $assignment->department_id,
@@ -272,6 +358,18 @@ final class WorkforceEmployeeService
         }
     }
 
+    private function assertUserRelinkDoesNotChangeFrozenSource(int $organizationId, int $employeeId): void
+    {
+        // The user link has no effective date: changing it switches every historical time-entry source.
+        app(EmploymentRelationService::class)->assertTimekeepingHistoryMutable($organizationId, $employeeId, null);
+        if (DB::table('workforce_payroll_periods as period')
+            ->join('workforce_payroll_source_rows as source', 'source.payroll_period_id', '=', 'period.id')
+            ->where('period.organization_id', $organizationId)->where('source.organization_id', $organizationId)
+            ->where('period.status', 'locked')->where('source.employee_id', $employeeId)->exists()) {
+            throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
+        }
+    }
+
     private function currentAssignment(int $organizationId, int $employeeId, string $date): ?object
     {
         return DB::table('workforce_employee_assignments as assignment')
@@ -306,6 +404,8 @@ final class WorkforceEmployeeService
                 'schedule.code as schedule_code',
                 'schedule.name as schedule_label',
                 'schedule.hours_per_day as schedule_hours_per_day',
+                'schedule.schedule_type',
+                'schedule.week_pattern',
             ])
             ->first();
     }
@@ -377,18 +477,29 @@ final class WorkforceEmployeeService
         ?object $assignment,
         ?object $schedule,
         ?array $activeAbsence,
-        ?array $activeBusinessTrip
+        ?array $activeBusinessTrip,
+        ?object $correction = null,
+        bool $confirmedScan = false
     ): array {
+        $plannedHours = $this->plannedHours($assignment, $schedule, $date);
         if ($employmentStatus !== 'active') {
-            return $this->presencePayload('not_at_work', $date, 0, 'employment_status');
+            return $this->presencePayload('not_at_work', $date, 0, 'employment_status', $plannedHours);
+        }
+
+        if ($correction !== null) {
+            return $this->presencePayload((string) $correction->status, $date, $correction->hours !== null ? (float) $correction->hours : null, 'manual_correction', $plannedHours);
+        }
+
+        if ($confirmedScan) {
+            return $this->presencePayload('at_work', $date, null, 'qr_scan', $plannedHours);
         }
 
         if ($activeBusinessTrip !== null) {
-            return $this->presencePayload('business_trip', $date, null, 'business_trip');
+            return $this->presencePayload('business_trip', $date, null, 'business_trip', $plannedHours);
         }
 
         if ($activeAbsence !== null) {
-            return $this->presencePayload('absence', $date, null, 'absence');
+            return $this->presencePayload('absence', $date, null, 'absence', $plannedHours);
         }
 
         if ($assignment === null) {
@@ -399,22 +510,57 @@ final class WorkforceEmployeeService
             return $this->presencePayload('not_scheduled', $date, null, 'schedule');
         }
 
-        if ($schedule !== null && $schedule->day_type !== 'work') {
-            return $this->presencePayload('scheduled_day_off', $date, (float) $schedule->planned_hours, 'schedule');
+        if ($plannedHours === null) {
+            return $this->presencePayload('unknown', $date, null, 'schedule');
         }
 
-        $hours = $schedule?->planned_hours ?? $assignment->schedule_hours_per_day ?? 8;
+        if ($plannedHours === 0.0) {
+            return $this->presencePayload('scheduled_day_off', $date, null, 'schedule', 0);
+        }
 
-        return $this->presencePayload('at_work', $date, (float) $hours, 'schedule');
+        return $this->presencePayload('scheduled_work', $date, null, 'schedule', $plannedHours);
     }
 
-    private function presencePayload(string $status, string $date, ?float $hours, string $source): array
+    private function plannedHours(?object $assignment, ?object $schedule, string $date): ?float
+    {
+        if ($assignment === null || $assignment->work_schedule_id === null) {
+            return null;
+        }
+        if ($schedule !== null) {
+            return $schedule->day_type === 'work' ? (isset($schedule->planned_hours) ? (float) $schedule->planned_hours : null) : 0.0;
+        }
+        $pattern = WorkforceWeekPattern::hoursByIsoWeekday($assignment->schedule_type ?? null, $assignment->week_pattern ?? null, $assignment->schedule_hours_per_day ?? null);
+
+        return $pattern !== [] ? (float) ($pattern[(string) Carbon::parse($date)->dayOfWeekIso] ?? 0) : null;
+    }
+
+    private function attendanceEvidence(int $organizationId, int $employeeId, string $date, ?object $assignment): array
+    {
+        $projectId = $assignment?->project_id;
+        $correction = DB::table('workforce_attendance_corrections')->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)->whereDate('work_date', $date)
+            ->where(function ($query) use ($projectId): void {
+                $query->whereNull('project_id');
+                if ($projectId !== null) {
+                    $query->orWhere('project_id', $projectId);
+                }
+            })
+            ->orderByRaw('CASE WHEN project_id IS NULL THEN 1 ELSE 0 END')->orderByDesc('created_at')->orderByDesc('id')->first();
+        $confirmedScan = DB::table('workforce_attendance_scan_events')->where('organization_id', $organizationId)
+            ->where('employee_id', $employeeId)->whereDate('work_date', $date)->where('result', 'confirmed')
+            ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))->exists();
+
+        return [$correction, $confirmedScan];
+    }
+
+    private function presencePayload(string $status, string $date, ?float $hours, string $source, ?float $plannedHours = null): array
     {
         return [
             'status' => $status,
             'label' => trans_message("workforce.presence.{$status}"),
             'work_date' => $date,
             'hours' => $hours,
+            'planned_hours' => $plannedHours,
             'source_label' => trans_message("workforce.presence_sources.{$source}"),
         ];
     }

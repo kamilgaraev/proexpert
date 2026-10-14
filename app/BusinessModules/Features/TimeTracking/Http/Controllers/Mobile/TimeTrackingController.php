@@ -141,7 +141,7 @@ final class TimeTrackingController extends Controller
                     'time_tracking.manual_entry',
                     $validated,
                     fn () => $this->service->createManualEntry($organizationId, $user, $validated),
-                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId)
+                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId, 'time_tracking.create')
                 )),
                 trans_message('time_tracking.mobile.messages.entry_created'),
                 201
@@ -174,7 +174,7 @@ final class TimeTrackingController extends Controller
                     'time_tracking.start_timer',
                     $validated,
                     fn () => $this->service->startTimer($organizationId, $user, $validated),
-                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId)
+                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId, 'time_tracking.create')
                 )),
                 trans_message('time_tracking.mobile.messages.timer_started'),
                 201
@@ -196,7 +196,11 @@ final class TimeTrackingController extends Controller
 
         try {
             $validated = $this->validated($request, [
-                'end_time' => ['required', 'date_format:H:i'],
+                'end_time' => ['required_without:end_at', 'nullable', 'date_format:H:i'],
+                'end_at' => ['nullable', 'date'],
+                'break_intervals' => ['nullable', 'array', 'max:24'],
+                'break_intervals.*.start_at' => ['required', 'date'],
+                'break_intervals.*.end_at' => ['required', 'date'],
                 'break_time' => ['required', 'numeric', 'min:0', 'max:24'],
                 'notes' => ['nullable', 'string', 'max:1000'],
             ]);
@@ -211,11 +215,11 @@ final class TimeTrackingController extends Controller
                     'time_tracking.stop_timer',
                     ['entry_id' => $entry, ...$validated],
                     fn () => $this->service->stopTimer(
-                        $this->service->findEntry($organizationId, $userId, $entry),
+                        $this->service->findEntry($organizationId, $userId, $entry, 'time_tracking.edit'),
                         $userId,
                         $validated
                     ),
-                    fn (int $entryId) => $this->service->findEntry($organizationId, $userId, $entryId)
+                    fn (int $entryId) => $this->service->findEntry($organizationId, $userId, $entryId, 'time_tracking.edit')
                 )),
                 trans_message('time_tracking.mobile.messages.timer_stopped')
             );
@@ -238,7 +242,8 @@ final class TimeTrackingController extends Controller
             $model = $this->service->findEntry(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
-                $entry
+                $entry,
+                'time_tracking.submit'
             );
 
             return MobileResponse::success(
@@ -266,8 +271,14 @@ final class TimeTrackingController extends Controller
             $validated = $this->validated($request, [
                 'hours_worked' => ['required', 'numeric', 'min:0.01', 'max:24'],
                 'correction_reason' => ['required', 'string', 'max:1000'],
+                'start_at' => ['nullable', 'date'],
+                'end_at' => ['nullable', 'date'],
+                'timezone' => ['nullable', 'timezone'],
+                'break_intervals' => ['nullable', 'array', 'max:24'],
+                'break_intervals.*.start_at' => ['required', 'date'],
+                'break_intervals.*.end_at' => ['required', 'date'],
                 'start_time' => ['nullable', 'date_format:H:i', 'required_with:end_time'],
-                'end_time' => ['nullable', 'date_format:H:i', 'after:start_time'],
+                'end_time' => ['nullable', 'date_format:H:i'],
                 'break_time' => ['nullable', 'numeric', 'min:0', 'max:24'],
                 'title' => ['nullable', 'string', 'max:255'],
                 'description' => ['nullable', 'string', 'max:1000'],
@@ -276,7 +287,8 @@ final class TimeTrackingController extends Controller
             $model = $this->service->findEntry(
                 (int) $request->attributes->get('current_organization_id'),
                 (int) $request->user()?->id,
-                $entry
+                $entry,
+                'time_tracking.edit'
             );
 
             return MobileResponse::success(
@@ -324,12 +336,19 @@ final class TimeTrackingController extends Controller
     {
         return [
             'project_id' => ['required', 'integer'],
+            'employment_contract_id' => ['nullable', 'integer', 'min:1'],
+            'start_at' => ['nullable', 'date'],
+            'end_at' => ['nullable', 'date'],
+            'timezone' => ['nullable', 'timezone'],
+            'break_intervals' => ['nullable', 'array', 'max:24'],
+            'break_intervals.*.start_at' => ['required', 'date'],
+            'break_intervals.*.end_at' => ['required', 'date'],
             'work_type_id' => ['nullable', 'integer'],
             'task_id' => ['nullable', 'integer'],
             'work_date' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
-            'start_time' => [$requireStartTime ? 'required' : 'nullable', 'date_format:H:i', 'required_with:end_time'],
-            'end_time' => ['nullable', 'date_format:H:i', 'after:start_time'],
-            'hours_worked' => [$requireHours ? 'required' : 'prohibited', 'numeric', 'min:0.01', 'max:24'],
+            'start_time' => [$requireStartTime ? 'required_without:start_at' : 'nullable', 'date_format:H:i', 'required_with:end_time'],
+            'end_time' => ['nullable', 'date_format:H:i'],
+            'hours_worked' => [$requireHours ? 'required_without_all:start_at,start_time' : 'prohibited', 'numeric', 'min:0.01', 'max:24'],
             'break_time' => ['nullable', 'numeric', 'min:0', 'max:24'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:1000'],
@@ -361,7 +380,7 @@ final class TimeTrackingController extends Controller
 
     private function domainStatus(DomainException $exception): int
     {
-        return in_array($exception->getCode(), [409, 422], true) ? $exception->getCode() : 422;
+        return in_array($exception->getCode(), [403, 409, 422], true) ? $exception->getCode() : 422;
     }
 
     private function failed(Request $request, \Throwable $exception, string $action): JsonResponse

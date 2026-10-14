@@ -42,13 +42,13 @@ final class TimeTrackingMobileTest extends TestCase
             ->json('data');
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->getJson('/api/v1/mobile/time-tracking/daily-summary?date=2026-05-22&project_id=' . $project->id)
+            ->getJson('/api/v1/mobile/time-tracking/daily-summary?date=2026-05-22&project_id='.$project->id)
             ->assertOk()
             ->assertJsonPath('data.active_timer.id', $timer['id'])
             ->assertJsonPath('data.totals.by_status.draft', 1);
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $timer['id'] . '/stop', [
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$timer['id'].'/stop', [
                 'end_time' => '12:00',
                 'break_time' => 0.5,
             ])
@@ -69,7 +69,7 @@ final class TimeTrackingMobileTest extends TestCase
             ->json('data');
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $manual['id'] . '/submit')
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$manual['id'].'/submit')
             ->assertOk()
             ->assertJsonPath('data.status', 'submitted')
             ->assertJsonPath('data.approval_summary.status', 'submitted');
@@ -205,11 +205,11 @@ final class TimeTrackingMobileTest extends TestCase
         $headers = [...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'timer-stop-replay-0001'];
         $payload = ['end_time' => '12:00', 'break_time' => 0.5];
         $first = $this->withHeaders($headers)
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/stop', $payload)
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/stop', $payload)
             ->assertOk()
             ->json();
         $replay = $this->withHeaders($headers)
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/stop', $payload)
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/stop', $payload)
             ->assertOk()
             ->json();
 
@@ -221,7 +221,7 @@ final class TimeTrackingMobileTest extends TestCase
             'custom_fields' => ['mobile_time_tracking' => ['active_timer' => true, 'corrections' => []]],
         ]);
         $this->withHeaders($headers)
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $otherEntry->id . '/stop', $payload)
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$otherEntry->id.'/stop', $payload)
             ->assertStatus(409);
         $this->assertDatabaseHas('time_entries', ['id' => $otherEntry->id, 'hours_worked' => null]);
     }
@@ -238,7 +238,7 @@ final class TimeTrackingMobileTest extends TestCase
         $this->allowAccess(['time_tracking.view', 'time_tracking.edit', 'time_tracking.submit']);
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/correction', [
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/correction', [
                 'hours_worked' => 5.5,
                 'correction_reason' => 'Добавлен фактический демонтаж',
             ])
@@ -285,7 +285,7 @@ final class TimeTrackingMobileTest extends TestCase
         $this->allowAccess(['time_tracking.view']);
 
         $response = $this->withHeaders($context->mobileAuthHeaders())
-            ->getJson('/api/v1/mobile/time-tracking/entries?project_id=' . $project->id)
+            ->getJson('/api/v1/mobile/time-tracking/entries?project_id='.$project->id)
             ->assertOk()
             ->assertJsonPath('data.items.0.id', $ownEntry->id);
 
@@ -301,7 +301,7 @@ final class TimeTrackingMobileTest extends TestCase
         $this->allowAccess(['time_tracking.view', 'time_tracking.reject']);
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/reject', [
                 'reason' => 'Не совпадают подтвержденные часы',
             ])
             ->assertOk()
@@ -309,7 +309,7 @@ final class TimeTrackingMobileTest extends TestCase
             ->assertJsonPath('data.rejection_reason', 'Не совпадают подтвержденные часы');
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/reject', [
                 'reason' => 'Повторное отклонение',
             ])
             ->assertStatus(409);
@@ -323,7 +323,7 @@ final class TimeTrackingMobileTest extends TestCase
         $this->allowAccess(['time_tracking.view']);
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/reject', [
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/reject', [
                 'reason' => 'Не совпадают подтвержденные часы',
             ])
             ->assertStatus(403);
@@ -348,11 +348,11 @@ final class TimeTrackingMobileTest extends TestCase
                 ->json('data');
 
             $this->withHeaders($context->mobileAuthHeaders())
-                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry['id'] . '/submit')
+                ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry['id'].'/submit')
                 ->assertOk();
 
             $this->withHeaders($context->mobileAuthHeaders())
-                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry['id'] . '/approve')
+                ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry['id'].'/approve')
                 ->assertOk()
                 ->assertJsonPath('data.status', 'approved')
                 ->assertJsonPath('data.hours_worked', 0.01);
@@ -389,7 +389,7 @@ final class TimeTrackingMobileTest extends TestCase
         ]);
 
         $this->withHeaders($context->mobileAuthHeaders())
-            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/approve')
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/approve')
             ->assertOk()
             ->assertJsonPath('data.status', 'approved');
 
@@ -420,7 +420,7 @@ final class TimeTrackingMobileTest extends TestCase
             ]);
 
             $this->withHeaders($context->mobileAuthHeaders())
-                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/approve')
+                ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/approve')
                 ->assertStatus(409);
 
             $entry->refresh();
@@ -429,6 +429,26 @@ final class TimeTrackingMobileTest extends TestCase
             self::assertNull($entry->approved_by_user_id);
         }
 
+        $this->assertDatabaseCount('time_entry_approval_reporting_facts', 0);
+    }
+
+    public function test_mobile_approval_returns_closed_period_conflict_without_mutating_source(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.approve']);
+        $entry = $this->timeEntry($context, $project, ['status' => 'submitted']);
+        \App\BusinessModules\Features\WorkforceManagement\Domain\Timekeeping\Models\TimekeepingPeriod::create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'month' => '2026-05-01',
+            'status' => 'closed', 'revision' => 1, 'rule_snapshot' => [], 'snapshot' => [],
+            'snapshot_sha256' => hash('sha256', '[]'), 'created_by' => $context->user->id,
+        ]);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/approve')
+            ->assertStatus(409)->assertJsonPath('message', trans_message('workforce.errors.timekeeping_closed'));
+        self::assertSame('submitted', $entry->refresh()->status);
+        self::assertNull($entry->approved_at);
+        self::assertNull($entry->approved_by_user_id);
         $this->assertDatabaseCount('time_entry_approval_reporting_facts', 0);
     }
 
@@ -452,6 +472,100 @@ final class TimeTrackingMobileTest extends TestCase
                 ],
             ],
         ], $attributes));
+    }
+
+    public function test_overnight_timer_persists_utc_interval_and_can_resume_from_next_day_summary(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.view', 'time_tracking.create', 'time_tracking.edit']);
+        $timer = $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', [
+            'project_id' => $project->id, 'work_date' => '2026-01-31', 'start_time' => '22:00', 'timezone' => 'Europe/Moscow', 'title' => 'Ночная смена', 'is_billable' => true,
+        ])->assertCreated()->json('data.id');
+        $this->withHeaders($context->mobileAuthHeaders())->getJson('/api/v1/mobile/time-tracking/daily-summary?date=2026-02-01&project_id='.$project->id)
+            ->assertOk()->assertJsonPath('data.active_timer.id', $timer);
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/entries/'.$timer.'/stop', [
+            'end_time' => '06:00', 'break_time' => 0.5,
+        ])->assertOk()->assertJsonPath('data.net_minutes', 450)->assertJsonPath('data.hours_worked', 7.5)->assertJsonPath('data.requires_reconciliation', true);
+        $entry = TimeEntry::query()->findOrFail($timer);
+        self::assertSame('2026-01-31 19:00:00', $entry->start_at->utc()->format('Y-m-d H:i:s'));
+        self::assertSame('2026-02-01 03:00:00', $entry->end_at->utc()->format('Y-m-d H:i:s'));
+    }
+
+    public function test_timer_start_is_unique_for_user_across_projects(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $this->allowAccess(['time_tracking.create']);
+        $projects = Project::factory()->count(2)->create(['organization_id' => $context->organization->id]);
+        $payload = ['work_date' => '2026-01-31', 'start_time' => '22:00', 'title' => 'Смена', 'is_billable' => true];
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', ['project_id' => $projects[0]->id, ...$payload])->assertCreated();
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', ['project_id' => $projects[1]->id, ...$payload])->assertStatus(409);
+        self::assertDatabaseCount('time_entries', 1);
+    }
+
+    public function test_legacy_mobile_clocks_use_the_single_confirmed_employment_timezone(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.create', 'time_tracking.edit']);
+        $this->timezoneContract($context, 'Europe/Moscow', 'CLOCK-ONE');
+        $timer = $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', [
+            'project_id' => $project->id, 'work_date' => '2026-01-31', 'start_time' => '22:00', 'title' => 'Ночная смена', 'is_billable' => true,
+        ])->assertCreated()->assertJsonPath('data.timezone', 'Europe/Moscow')->assertJsonPath('data.timezone_requires_reconciliation', false)->json('data.id');
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/entries/'.$timer.'/stop', [
+            'end_time' => '06:00', 'break_time' => 0,
+        ])->assertOk()->assertJsonPath('data.hours_worked', 8)->assertJsonPath('data.timezone_requires_reconciliation', false)->assertJsonPath('data.requires_reconciliation', false);
+        self::assertSame('2026-01-31 19:00:00', TimeEntry::query()->findOrFail($timer)->start_at->utc()->format('Y-m-d H:i:s'));
+    }
+
+    public function test_legacy_mobile_clocks_with_ambiguous_or_unlinked_timezone_require_reconciliation(): void
+    {
+        foreach ([false, true] as $ambiguous) {
+            $context = AdminApiTestContext::create(roleSlug: 'foreman');
+            $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $this->allowAccess(['time_tracking.create', 'time_tracking.edit']);
+            if ($ambiguous) {
+                $this->timezoneContract($context, 'Europe/Moscow', 'CLOCK-MOSCOW');
+                $this->timezoneContract($context, 'Asia/Vladivostok', 'CLOCK-EAST');
+            }
+            $timer = $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', [
+                'project_id' => $project->id, 'work_date' => '2026-01-31', 'start_time' => '22:00', 'title' => 'Смена', 'is_billable' => true,
+            ])->assertCreated()->assertJsonPath('data.timezone_requires_reconciliation', true)->json('data.id');
+            $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/entries/'.$timer.'/stop', [
+                'end_time' => '06:00', 'break_time' => 0,
+            ])->assertOk()->assertJsonPath('data.hours_worked', 8)->assertJsonPath('data.timezone_requires_reconciliation', true)->assertJsonPath('data.requires_reconciliation', true);
+        }
+    }
+
+    public function test_explicit_employment_contract_selects_timezone_and_rejects_foreign_contract(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.create']);
+        $this->timezoneContract($context, 'Europe/Moscow', 'CLOCK-MAIN');
+        $selected = $this->timezoneContract($context, 'Asia/Vladivostok', 'CLOCK-SECONDARY');
+        $foreign = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignContract = $this->timezoneContract($foreign, 'Europe/Moscow', 'CLOCK-FOREIGN');
+        $payload = ['project_id' => $project->id, 'work_date' => '2026-01-31', 'start_time' => '22:00', 'title' => 'Смена', 'is_billable' => true];
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', ['employment_contract_id' => $foreignContract, ...$payload])->assertStatus(422);
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/time-tracking/timer/start', ['employment_contract_id' => $selected, ...$payload])
+            ->assertCreated()->assertJsonPath('data.timezone', 'Asia/Vladivostok')->assertJsonPath('data.timezone_requires_reconciliation', false);
+    }
+
+    private function timezoneContract(AdminApiTestContext $context, string $timezone, string $number): int
+    {
+        $employee = \App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee::query()
+            ->firstOrCreate(['organization_id' => $context->organization->id, 'user_id' => $context->user->id], [
+                'personnel_number' => 'CLOCK-'.$context->user->id, 'last_name' => 'Работник', 'first_name' => 'Тест',
+                'employment_status' => 'active', 'hire_date' => '2025-01-01', 'hr_reconciliation_status' => 'reconciled',
+            ]);
+
+        return (int) \App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\EmploymentContract::create([
+            'organization_id' => $context->organization->id, 'employee_id' => $employee->id, 'contract_number' => $number,
+            'contract_date' => '2025-01-01', 'start_date' => '2025-01-01', 'status' => 'active', 'relation_type' => 'employment',
+            'employment_mode' => 'main', 'job_share' => 1, 'weekly_norm_hours' => 40, 'timezone' => $timezone,
+            'summed_accounting_period' => 'month', 'calendar_profile' => 'ru_standard',
+        ])->id;
     }
 
     private function allowAccess(array $allowedPermissions): void

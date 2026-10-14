@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\WorkforceCapacityFormula;
@@ -20,7 +20,7 @@ final readonly class WorkforceCapacityCandidateContract
 
     public const FORMULA_HASH = 'ec5f0c7c6f0c55c5cb97ae69587c3ca695da41746bcd51b11b1f477e961a18b3';
 
-    public const SOURCE_HASH = 'e7eb0cc2f4b7f6b428ac8bcba254f9398fe413b9793f64aed34a64509ee32bd8';
+    public const SOURCE_HASH = '0230035419e2adf002770d32375c6bc55e6598cf6cd375a1f68dd6a763f836f9';
 
     public function filters(): array
     {

@@ -26,6 +26,7 @@ final class WorkforceStartWorkflowTest extends TestCase
 
         $created = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employees', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'personnel_number' => 'EMP-001',
                 'last_name' => 'Иванов',
                 'first_name' => 'Иван',
@@ -43,13 +44,14 @@ final class WorkforceStartWorkflowTest extends TestCase
         $employeeId = (int) $created->json('data.id');
 
         $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/workforce/employees?search=Иванов')
+            ->getJson('/api/v1/admin/workforce/employees?'.http_build_query(['search' => 'Иванов']))
             ->assertOk()
             ->assertJsonPath('data.0.id', $employeeId)
             ->assertJsonPath('meta.total', 1);
 
         $this->withHeaders($context->authHeaders())
             ->putJson("/api/v1/admin/workforce/employees/{$employeeId}", [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'phone' => '+79990000000',
             ])
             ->assertOk()
@@ -57,6 +59,7 @@ final class WorkforceStartWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/employees/{$employeeId}/dismiss", [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'dismissal_date' => '2026-05-20',
             ])
             ->assertOk()
@@ -89,6 +92,7 @@ final class WorkforceStartWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employees', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'personnel_number' => 'EMP-001',
                 'last_name' => 'Сидоров',
                 'first_name' => 'Сидор',
@@ -193,7 +197,7 @@ final class WorkforceStartWorkflowTest extends TestCase
         $workOrder = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/work-orders', [
                 'project_id' => $projectId,
-                'order_number' => 'PL-' . uniqid(),
+                'order_number' => 'PL-'.uniqid(),
                 'title' => 'Монтаж',
                 'assignee_type' => 'brigade',
                 'assignee_name' => 'Бригада',
@@ -225,6 +229,7 @@ final class WorkforceStartWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

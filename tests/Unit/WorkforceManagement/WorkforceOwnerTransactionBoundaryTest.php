@@ -74,7 +74,17 @@ final class WorkforceOwnerTransactionBoundaryTest extends TestCase
         self::assertLessThan($captureBegin, $hireDateValidation);
         self::assertLessThan($employeeMutation, $captureBegin);
         self::assertLessThan($captureFinish, $employeeMutation);
-        self::assertStringNotContainsString('->get(', $source);
+        // HR closes locked contract rows after capture begins; assignment updates remain bulk operations.
+        $assignmentMutations = strpos($source, '$changedAssignments =');
+        $contractClosure = strpos($source, 'foreach (EmploymentContract::query()');
+        self::assertNotFalse($assignmentMutations);
+        self::assertNotFalse($contractClosure);
+        self::assertLessThan($assignmentMutations, $captureBegin);
+        self::assertLessThan($contractClosure, $assignmentMutations);
+        self::assertLessThan($captureFinish, $contractClosure);
+        self::assertStringNotContainsString('->get(', substr($source, 0, $captureBegin));
+        self::assertStringNotContainsString('->get(', substr($source, $assignmentMutations, $contractClosure - $assignmentMutations));
+        self::assertStringContainsString('->lockForUpdate()->get()', substr($source, $contractClosure, $captureFinish - $contractClosure));
         self::assertStringNotContainsString('assignmentIds', $source);
         self::assertStringNotContainsString('updatedAssignments', $source);
     }

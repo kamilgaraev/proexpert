@@ -38,6 +38,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -49,7 +50,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
             ->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/work-schedules/' . $scheduleId . '/days', [
+            ->postJson('/api/v1/admin/workforce/work-schedules/'.$scheduleId.'/days', [
                 'work_date' => '2026-05-23',
                 'day_type' => 'work',
                 'planned_hours' => 6,
@@ -58,6 +59,8 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
 
         $absence = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-05-20',
@@ -66,11 +69,13 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
         $absence->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/absences/' . $absence->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/absences/'.$absence->json('data.id').'/approve')
             ->assertOk();
 
         $trip = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/business-trips', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'business_trip',
                 'employee_id' => $employee->id,
                 'project_id' => $project->id,
                 'start_date' => '2026-05-22',
@@ -80,7 +85,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
         $trip->assertCreated();
 
         $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/workforce/business-trips/' . $trip->json('data.id') . '/approve')
+            ->postJson('/api/v1/admin/workforce/business-trips/'.$trip->json('data.id').'/approve')
             ->assertOk();
 
         $this->withHeaders($context->authHeaders())
@@ -108,7 +113,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/work-schedules', [
-                'code' => 'INVALID-WEEK-' . uniqid(),
+                'code' => 'INVALID-WEEK-'.uniqid(),
                 'name' => 'Некорректная неделя',
                 'schedule_type' => 'weekly',
                 'hours_per_day' => 8,
@@ -137,14 +142,14 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
     {
         $department = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/departments', [
-                'code' => 'CAL-DEP-' . uniqid(),
+                'code' => 'CAL-DEP-'.uniqid(),
                 'name' => 'Строительный участок',
             ]);
         $department->assertCreated();
 
         $position = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/positions', [
-                'code' => 'CAL-POS-' . uniqid(),
+                'code' => 'CAL-POS-'.uniqid(),
                 'name' => 'Монтажник',
             ]);
         $position->assertCreated();
@@ -153,7 +158,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
             ->postJson('/api/v1/admin/workforce/staff-units', [
                 'department_id' => $department->json('data.id'),
                 'position_id' => $position->json('data.id'),
-                'code' => 'CAL-UNIT-' . uniqid(),
+                'code' => 'CAL-UNIT-'.uniqid(),
                 'headcount' => 1,
                 'rate' => 1,
                 'valid_from' => '2026-05-01',
@@ -162,7 +167,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
 
         $schedule = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/work-schedules', [
-                'code' => 'CAL-5-2-' . uniqid(),
+                'code' => 'CAL-5-2-'.uniqid(),
                 'name' => 'Пятидневка',
                 'schedule_type' => 'weekly',
                 'hours_per_day' => 8,
@@ -187,6 +192,7 @@ final class WorkforceScheduleCalendarWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

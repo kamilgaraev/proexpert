@@ -41,6 +41,8 @@ final class ProductionLaborTimesheetResource extends JsonResource
                 'include_in_payroll' => (bool) $entry->include_in_payroll,
                 'worker_name' => $entry->worker_name,
                 'hours' => (float) $entry->hours,
+                'time_interval' => $entry->metadata['time_interval'] ?? null,
+                'requires_reconciliation' => $entry->metadata['requires_reconciliation'] ?? true,
                 'safety_permit_reference' => $entry->safety_permit_reference,
                 'employee' => $entry->relationLoaded('employee') && $entry->employee ? [
                     'id' => $entry->employee->id,

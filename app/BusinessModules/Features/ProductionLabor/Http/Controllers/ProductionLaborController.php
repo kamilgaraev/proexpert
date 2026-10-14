@@ -21,9 +21,7 @@ use Illuminate\Validation\ValidationException;
 
 final class ProductionLaborController extends Controller
 {
-    public function __construct(private readonly ProductionLaborService $service)
-    {
-    }
+    public function __construct(private readonly ProductionLaborService $service) {}
 
     public function workOrders(Request $request): JsonResponse
     {
@@ -283,7 +281,14 @@ final class ProductionLaborController extends Controller
             'entries.*.employee_id' => ['nullable', 'integer'],
             'entries.*.include_in_payroll' => ['nullable', 'boolean'],
             'entries.*.worker_name' => ['nullable', 'string', 'max:255'],
-            'entries.*.hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
+            'entries.*.hours' => ['required_without_all:entries.*.start_at,entries.*.end_at', 'nullable', 'numeric', 'min:0.01', 'max:24'],
+            'entries.*.start_at' => ['nullable', 'date', 'required_with:entries.*.end_at'],
+            'entries.*.end_at' => ['nullable', 'date', 'required_with:entries.*.start_at'],
+            'entries.*.timezone' => ['nullable', 'timezone'],
+            'entries.*.break_time' => ['nullable', 'numeric', 'min:0', 'max:24'],
+            'entries.*.break_intervals' => ['nullable', 'array', 'max:24'],
+            'entries.*.break_intervals.*.start_at' => ['required', 'date'],
+            'entries.*.break_intervals.*.end_at' => ['required', 'date'],
             'entries.*.safety_permit_reference' => ['nullable', 'string', 'max:120'],
             'entries.*.metadata' => ['nullable', 'array'],
             'metadata' => ['nullable', 'array'],

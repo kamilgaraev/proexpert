@@ -44,12 +44,16 @@ final class WorkforceDateRangeLocalizationRegressionTest extends TestCase
 
         $cases = [
             '/api/v1/admin/workforce/absences' => [
+                'basis_reference' => 'Заявление на отпуск',
+                'reason_code' => 'vacation',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'vacation',
                 'start_date' => '2026-09-03',
                 'end_date' => '2026-09-02',
             ],
             '/api/v1/admin/workforce/business-trips' => [
+                'basis_reference' => 'Приказ о командировке',
+                'reason_code' => 'business_trip',
                 'employee_id' => $employee->id,
                 'start_date' => '2026-09-05',
                 'end_date' => '2026-09-04',
@@ -90,6 +94,7 @@ final class WorkforceDateRangeLocalizationRegressionTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

@@ -3,6 +3,20 @@
 declare(strict_types=1);
 
 return [
+    'columns' => [
+        'confirmed_hours' => 'Подтверждённые часы',
+        'actual_duration_known' => 'Часы подтверждены',
+        'status_label' => 'Состояние',
+    ],
+    'statuses' => [
+        'fact_unconfirmed' => 'Фактические часы не подтверждены',
+        'presence_duration_unconfirmed' => 'Присутствие подтверждено, часы не подтверждены',
+        'covered' => 'Подтверждено',
+        'unexplained_absence' => 'Неподтверждённое отсутствие',
+    ],
+    'warnings' => [
+        'ATTENDANCE_DURATION_UNCONFIRMED' => 'Длительность работы не подтверждена.',
+    ],
     'official' => [
         'official_material_usage_m29' => 'Ведомость расхода материалов М-29',
         'official_hidden_work_act' => 'Акт освидетельствования скрытых работ',

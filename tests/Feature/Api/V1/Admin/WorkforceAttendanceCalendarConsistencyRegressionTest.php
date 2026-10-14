@@ -44,8 +44,9 @@ final class WorkforceAttendanceCalendarConsistencyRegressionTest extends TestCas
             ->assertOk()
             ->assertJsonPath('data.rows.0.days.2026-08-31.status', 'not_at_work')
             ->assertJsonPath('data.rows.0.days.2026-08-31.hours', 0)
-            ->assertJsonPath('data.rows.0.days.2026-09-01.status', 'at_work')
-            ->assertJsonPath('data.rows.0.days.2026-09-01.hours', 8)
+            ->assertJsonPath('data.rows.0.days.2026-09-01.status', 'scheduled_work')
+            ->assertJsonPath('data.rows.0.days.2026-09-01.hours', null)
+            ->assertJsonPath('data.rows.0.days.2026-09-01.planned_hours', 8)
             ->assertJsonPath('data.rows.0.days.2026-09-02.status', 'absence')
             ->assertJsonPath('data.rows.0.days.2026-09-02.status_label', 'Отпуск')
             ->assertJsonPath('data.rows.0.days.2026-09-02.hours', 0)
@@ -57,8 +58,9 @@ final class WorkforceAttendanceCalendarConsistencyRegressionTest extends TestCas
             ->assertJsonPath('data.rows.0.days.2026-09-05.hours', 0)
             ->assertJsonPath('data.rows.0.days.2026-09-06.status', 'scheduled_day_off')
             ->assertJsonPath('data.rows.0.days.2026-09-06.hours', 0)
-            ->assertJsonPath('data.rows.0.days.2026-09-07.status', 'at_work')
-            ->assertJsonPath('data.rows.0.days.2026-09-07.hours', 8);
+            ->assertJsonPath('data.rows.0.days.2026-09-07.status', 'scheduled_work')
+            ->assertJsonPath('data.rows.0.days.2026-09-07.hours', null)
+            ->assertJsonPath('data.rows.0.days.2026-09-07.planned_hours', 8);
     }
 
     private function employeeWithFiveTwoAssignment(AdminApiTestContext $context, int $projectId): WorkforceEmployee
@@ -175,6 +177,7 @@ final class WorkforceAttendanceCalendarConsistencyRegressionTest extends TestCas
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

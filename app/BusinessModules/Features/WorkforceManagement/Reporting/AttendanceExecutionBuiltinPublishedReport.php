@@ -13,9 +13,9 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\Da
 
 final readonly class AttendanceExecutionBuiltinPublishedReport
 {
-    public const CONTRACT_VERSION = '1.0.0';
+    public const CONTRACT_VERSION = '2.0.0';
 
-    public const RENDERER_VERSION = '1.0.0';
+    public const RENDERER_VERSION = '2.0.0';
 
     public const MANIFEST_ORDINAL = 20;
 
@@ -66,7 +66,7 @@ final readonly class AttendanceExecutionBuiltinPublishedReport
             'versions' => [
                 'contract' => self::CONTRACT_VERSION,
                 'formula' => DatabaseWorkforceReportAdapter::ATTENDANCE_FORMULA,
-                'source_schema' => DatabaseWorkforceReportAdapter::SCHEMA_VERSION,
+                'source_schema' => DatabaseWorkforceReportAdapter::ATTENDANCE_SCHEMA_VERSION,
                 'renderer' => self::RENDERER_VERSION,
             ],
             'semantic_fingerprints' => [

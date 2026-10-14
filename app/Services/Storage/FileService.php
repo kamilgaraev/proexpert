@@ -171,8 +171,19 @@ class FileService
     public function deleteCurrent(string $key): void
     {
         $this->assertOrganizationPath($key);
+        $this->assertWorkforceDocumentNotDeleted($key);
         if ($this->disk()->delete($key) !== true) {
             throw new \RuntimeException('storage_object_delete_failed');
+        }
+    }
+
+    private function assertWorkforceDocumentNotDeleted(string $key): void
+    {
+        $protected = \App\Models\File::withTrashed()->where('path', $key)
+            ->get(['id', 'category', 'fileable_type'])
+            ->contains(fn (\App\Models\File $file): bool => $file->isWorkforcePrivateDocument());
+        if ($protected) {
+            throw new \DomainException(trans_message('workforce.errors.hr_document_disposal_forbidden'));
         }
     }
 
@@ -1306,6 +1317,8 @@ class FileService
         if (! $path) {
             return true;
         }
+
+        $this->assertWorkforceDocumentNotDeleted($path);
 
         $startTime = microtime(true);
 

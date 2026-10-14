@@ -29,126 +29,132 @@ class UpdateTimeEntryRequest extends FormRequest
             'worker_type' => [
                 'sometimes',
                 'string',
-                Rule::in(['user', 'virtual', 'brigade', 'equipment'])
+                Rule::in(['user', 'virtual', 'brigade', 'equipment']),
             ],
             'user_id' => [
                 'sometimes',
                 'nullable',
                 'integer',
-                Rule::exists('users', 'id')
+                Rule::exists('users', 'id'),
             ],
             'worker_name' => [
                 'sometimes',
                 'nullable',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'worker_count' => [
                 'sometimes',
                 'nullable',
                 'integer',
                 'min:1',
-                'max:1000'
+                'max:1000',
             ],
             'equipment_type' => [
                 'sometimes',
                 'nullable',
                 'string',
-                'max:100'
+                'max:100',
             ],
             'equipment_number' => [
                 'sometimes',
                 'nullable',
                 'string',
-                'max:50'
+                'max:50',
             ],
             'project_id' => [
                 'sometimes',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId)
+                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
             'work_type_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('work_types', 'id')
+                Rule::exists('work_types', 'id'),
             ],
             'task_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('schedule_tasks', 'id')
+                Rule::exists('schedule_tasks', 'id'),
             ],
             'work_date' => [
                 'sometimes',
                 'date',
-                'before_or_equal:today'
+                'before_or_equal:today',
             ],
+            'employment_contract_id' => ['nullable', 'integer', 'min:1'],
+            'start_at' => ['nullable', 'date'],
+            'end_at' => ['nullable', 'date'],
+            'timezone' => ['nullable', 'timezone'],
+            'break_intervals' => ['nullable', 'array', 'max:24'],
+            'break_intervals.*.start_at' => ['required', 'date'],
+            'break_intervals.*.end_at' => ['required', 'date'],
             'start_time' => [
                 'sometimes',
                 'nullable',
-                'date_format:H:i'
+                'date_format:H:i',
             ],
             'end_time' => [
                 'nullable',
                 'date_format:H:i',
-                'after:start_time'
             ],
             'hours_worked' => [
                 'sometimes',
                 'nullable',
                 'numeric',
                 'min:0.01',
-                'max:24'
+                'max:24',
             ],
             'break_time' => [
                 'nullable',
                 'numeric',
                 'min:0',
-                'max:24'
+                'max:24',
             ],
             'volume_completed' => [
                 'sometimes',
                 'nullable',
                 'numeric',
-                'min:0'
+                'min:0',
             ],
             'title' => [
                 'sometimes',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'description' => [
                 'nullable',
                 'string',
-                'max:1000'
+                'max:1000',
             ],
             'status' => [
                 'sometimes',
                 'string',
-                Rule::in(['draft', 'submitted', 'approved', 'rejected'])
+                Rule::in(['draft', 'submitted', 'approved', 'rejected']),
             ],
             'is_billable' => [
                 'sometimes',
-                'boolean'
+                'boolean',
             ],
             'hourly_rate' => [
                 'nullable',
                 'numeric',
-                'min:0'
+                'min:0',
             ],
             'location' => [
                 'nullable',
                 'string',
-                'max:255'
+                'max:255',
             ],
             'custom_fields' => [
                 'nullable',
-                'array'
+                'array',
             ],
             'notes' => [
                 'nullable',
                 'string',
-                'max:1000'
-            ]
+                'max:1000',
+            ],
         ];
     }
 
@@ -186,7 +192,7 @@ class UpdateTimeEntryRequest extends FormRequest
             'hourly_rate.numeric' => 'Почасовая ставка должна быть числом',
             'hourly_rate.min' => 'Почасовая ставка не может быть отрицательной',
             'location.max' => 'Местоположение не может превышать 255 символов',
-            'notes.max' => 'Заметки не могут превышать 1000 символов'
+            'notes.max' => 'Заметки не могут превышать 1000 символов',
         ];
     }
 }

@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Mobile;
 
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Mobile\ApproveMobileTimeEntryRequest;
 use App\Http\Requests\Api\V1\Mobile\ListMobileTimeEntryApprovalsRequest;
 use App\Http\Requests\Api\V1\Mobile\RejectMobileTimeEntryRequest;
 use App\Http\Responses\MobileResponse;
-use App\Exceptions\BusinessLogicException;
 use App\Models\User;
 use App\Services\Mobile\MobileTimeEntryApprovalService;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +32,8 @@ final class MobileTimeEntryApprovalController extends Controller
             );
         } catch (BusinessLogicException $exception) {
             return $this->businessError($exception);
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), in_array($exception->getCode(), [403, 409, 422], true) ? $exception->getCode() : 422);
         }
 
         return MobileResponse::paginated($result['items'], $result['meta']);
@@ -64,6 +66,8 @@ final class MobileTimeEntryApprovalController extends Controller
             ));
         } catch (BusinessLogicException $exception) {
             return $this->businessError($exception);
+        } catch (\DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), in_array($exception->getCode(), [403, 409, 422], true) ? $exception->getCode() : 422);
         }
     }
 

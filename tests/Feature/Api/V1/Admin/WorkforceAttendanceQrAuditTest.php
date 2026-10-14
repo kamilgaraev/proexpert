@@ -63,6 +63,7 @@ final class WorkforceAttendanceQrAuditTest extends TestCase
             ->getJson("/api/v1/admin/workforce/attendance-sheet?date_from=2026-05-16&date_to=2026-05-16&project_id={$project->id}")
             ->assertOk()
             ->assertJsonPath('data.rows.0.days.2026-05-16.status_label', 'На работе')
+            ->assertJsonPath('data.rows.0.days.2026-05-16.hours', null)
             ->assertJsonPath('data.rows.0.days.2026-05-16.source_label', trans_message('workforce.attendance.qr_source_label'));
 
         $this->assertSame(1, DB::table('workforce_attendance_scan_events')->where('result', 'confirmed')->count());
@@ -128,6 +129,7 @@ final class WorkforceAttendanceQrAuditTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

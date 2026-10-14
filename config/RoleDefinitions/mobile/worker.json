@@ -5,12 +5,10 @@
   "context": "project",
   "interface": "mobile",
   "description": "Исполнение работ на строительном объекте",
-  
   "system_permissions": [
     "profile.view",
     "profile.edit"
   ],
-  
   "module_permissions": {
     "projects": [
       "projects.view_assigned",
@@ -38,14 +36,18 @@
       "completed_works.view"
     ],
     "advance-accounting": [
-      "advance_transactions.view", "users.advance_balance.view"
+      "advance_transactions.view",
+      "users.advance_balance.view"
     ],
     "act-reporting": [
       "act_reports.view",
       "act_reports.field_confirm"
     ],
     "time-tracking": [
-      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.submit"
+      "time_tracking.view",
+      "time_tracking.create",
+      "time_tracking.edit",
+      "time_tracking.submit"
     ],
     "material-analytics": [],
     "contractor-portal": [],
@@ -100,21 +102,31 @@
     "workforce-management": [
       "workforce.view",
       "workforce.attendance.qr.self",
-      "workforce.attendance.self"
+      "workforce.attendance.self",
+      "workforce.self-service.view",
+      "workforce.self-service.request"
     ]
   },
-  
-  "interface_access": ["mobile"],
-  
+  "interface_access": [
+    "mobile"
+  ],
   "hierarchy": {
     "can_manage_roles": [],
-    "cannot_manage": ["*"]
+    "cannot_manage": [
+      "*"
+    ]
   },
-  
   "conditions": {
     "time": {
       "working_hours": "07:00-19:00",
-      "working_days": [1, 2, 3, 4, 5, 6]
+      "working_days": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
     },
     "location": {
       "require_geolocation": true

@@ -1,16 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use App\BusinessModules\Features\TimeTracking\Support\WorkTimeInterval;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Carbon\Carbon;
 
 class TimeEntry extends Model
 {
     use HasFactory, SoftDeletes;
+
+    protected $dateFormat = 'Y-m-d H:i:s.u';
 
     protected $fillable = [
         'organization_id',
@@ -22,6 +26,7 @@ class TimeEntry extends Model
         'work_type_id',
         'task_id',
         'work_date',
+        'start_at', 'end_at', 'timezone', 'timezone_requires_reconciliation', 'net_minutes', 'net_microseconds', 'break_intervals',
         'start_time',
         'end_time',
         'hours_worked',
@@ -44,6 +49,12 @@ class TimeEntry extends Model
 
     protected $casts = [
         'work_date' => 'date',
+        'start_at' => 'immutable_datetime',
+        'end_at' => 'immutable_datetime',
+        'net_minutes' => 'float',
+        'timezone_requires_reconciliation' => 'boolean',
+        'net_microseconds' => 'integer',
+        'break_intervals' => 'array',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
         'hours_worked' => 'decimal:2',
@@ -55,6 +66,35 @@ class TimeEntry extends Model
         'custom_fields' => 'array',
         'approved_at' => 'datetime',
     ];
+
+    /** Exact interval minutes remain authoritative; legacy decimal hours are retained as a fallback. */
+    public function getHoursWorkedAttribute(mixed $value): ?float
+    {
+        if ($this->net_microseconds !== null) {
+            return (int) $this->net_microseconds / 3_600_000_000;
+        }
+
+        return $this->net_minutes !== null ? (float) $this->net_minutes / 60 : ($value === null ? null : (float) $value);
+    }
+
+    public function getRequiresReconciliationAttribute(): bool
+    {
+        if ($this->start_at === null || $this->end_at === null || $this->timezone === null || $this->timezone_requires_reconciliation) {
+            return true;
+        }
+        try {
+            return WorkTimeInterval::fromInput([
+                'work_date' => $this->work_date->format('Y-m-d'),
+                'start_at' => $this->start_at->format('Y-m-d\\TH:i:s.uP'),
+                'end_at' => $this->end_at->format('Y-m-d\\TH:i:s.uP'),
+                'timezone' => $this->timezone,
+                'break_time' => $this->break_time ?? 0,
+                'break_intervals' => $this->break_intervals ?? [],
+            ])->requiresReconciliation;
+        } catch (\Throwable $exception) {
+            return true;
+        }
+    }
 
     /**
      * Получить организацию, к которой относится запись времени.
@@ -142,10 +182,10 @@ class TimeEntry extends Model
      */
     public function getTotalCostAttribute()
     {
-        if (!$this->is_billable || !$this->hourly_rate) {
+        if (! $this->is_billable || ! $this->hourly_rate) {
             return 0;
         }
-        
+
         return $this->hours_worked * $this->hourly_rate;
     }
 
@@ -170,7 +210,7 @@ class TimeEntry extends Model
      */
     public function approve(User $approver): bool
     {
-        if (!$this->canBeApproved()) {
+        if (! $this->canBeApproved()) {
             return false;
         }
 
@@ -189,7 +229,7 @@ class TimeEntry extends Model
      */
     public function reject(User $rejector, string $reason): bool
     {
-        if (!$this->canBeApproved()) {
+        if (! $this->canBeApproved()) {
             return false;
         }
 
@@ -208,7 +248,7 @@ class TimeEntry extends Model
      */
     public function submit(): bool
     {
-        if (!$this->canBeEdited()) {
+        if (! $this->canBeEdited()) {
             return false;
         }
 
@@ -227,20 +267,14 @@ class TimeEntry extends Model
      */
     public function calculateHoursFromTimes(): void
     {
-        if ($this->start_time && $this->end_time) {
-            $start = Carbon::parse($this->start_time);
-            $end = Carbon::parse($this->end_time);
-            
-            // Если время окончания меньше времени начала, значит работа продолжилась на следующий день
-            if ($end->lt($start)) {
-                $end->addDay();
-            }
-            
-            $totalMinutes = $end->diffInMinutes($start);
-            $breakMinutes = $this->break_time * 60;
-            $workMinutes = $totalMinutes - $breakMinutes;
-            
-            $this->hours_worked = round($workMinutes / 60, 2);
+        if (($this->start_at || $this->start_time) && ($this->end_at || $this->end_time)) {
+            $data = $this->getAttributes();
+            $data['work_date'] = $this->work_date->format('Y-m-d');
+            $data['break_intervals'] = $this->break_intervals ?? [];
+            $data['timezone_requires_reconciliation'] = $this->timezone === null || (bool) $this->timezone_requires_reconciliation;
+            $data['start_at'] = $this->start_at?->utc()->format('Y-m-d\\TH:i:s.u\\Z');
+            $data['end_at'] = $this->end_at?->utc()->format('Y-m-d\\TH:i:s.u\\Z');
+            $this->fill(WorkTimeInterval::fromInput($data, (string) config('app.timezone', 'UTC'))->persistence());
         }
     }
 
@@ -249,7 +283,7 @@ class TimeEntry extends Model
      */
     public function getStatusLabelAttribute(): string
     {
-        return match($this->status) {
+        return match ($this->status) {
             'draft' => 'Черновик',
             'submitted' => 'На утверждении',
             'approved' => 'Утверждено',
@@ -286,11 +320,13 @@ class TimeEntry extends Model
 
         if ($this->isBrigade()) {
             $count = $this->worker_count ? " ({$this->worker_count} чел.)" : '';
-            return ($this->worker_name ?? 'Бригада') . $count;
+
+            return ($this->worker_name ?? 'Бригада').$count;
         }
 
         if ($this->isEquipment()) {
             $parts = array_filter([$this->worker_name, $this->equipment_type, $this->equipment_number]);
+
             return implode(' / ', $parts) ?: 'Техника';
         }
 

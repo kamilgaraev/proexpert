@@ -69,7 +69,7 @@ final class ProductionLaborController extends Controller
                 ],
             ]);
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), in_array($exception->getCode(), [403, 409], true) ? $exception->getCode() : 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'work_orders.index');
         }
@@ -86,6 +86,7 @@ final class ProductionLaborController extends Controller
             }
 
             $validated = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
                 'work_order_line_id' => ['required', 'integer'],
                 'work_date' => ['required', 'date', 'before_or_equal:today'],
                 'quantity' => ['required', 'numeric', 'min:0.0001'],
@@ -112,7 +113,7 @@ final class ProductionLaborController extends Controller
                 $exception->errors()
             );
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 403 ? 403 : ($exception->getCode() === 409 ? 409 : 422));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'output.store');
         }
@@ -122,6 +123,7 @@ final class ProductionLaborController extends Controller
     {
         try {
             $validated = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
                 'work_order_id' => ['required', 'integer'],
                 'shift_date' => ['required', 'date', 'before_or_equal:today'],
                 'entries' => ['required', 'array', 'min:1'],
@@ -130,7 +132,14 @@ final class ProductionLaborController extends Controller
                 'entries.*.employee_id' => ['nullable', 'integer'],
                 'entries.*.include_in_payroll' => ['nullable', 'boolean'],
                 'entries.*.worker_name' => ['nullable', 'string', 'max:255'],
-                'entries.*.hours' => ['required', 'numeric', 'min:0.01', 'max:24'],
+                'entries.*.hours' => ['required_without_all:entries.*.start_at,entries.*.end_at', 'nullable', 'numeric', 'min:0.01', 'max:24'],
+                'entries.*.start_at' => ['nullable', 'date', 'required_with:entries.*.end_at'],
+                'entries.*.end_at' => ['nullable', 'date', 'required_with:entries.*.start_at'],
+                'entries.*.timezone' => ['nullable', 'timezone'],
+                'entries.*.break_time' => ['nullable', 'numeric', 'min:0', 'max:24'],
+                'entries.*.break_intervals' => ['nullable', 'array', 'max:24'],
+                'entries.*.break_intervals.*.start_at' => ['required', 'date'],
+                'entries.*.break_intervals.*.end_at' => ['required', 'date'],
                 'entries.*.safety_permit_reference' => ['nullable', 'string', 'max:120'],
                 'entries.*.metadata' => ['nullable', 'array'],
                 'metadata' => ['nullable', 'array'],
@@ -152,7 +161,7 @@ final class ProductionLaborController extends Controller
                 $exception->errors()
             );
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), in_array($exception->getCode(), [403, 409], true) ? $exception->getCode() : 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'timesheets.store');
         }

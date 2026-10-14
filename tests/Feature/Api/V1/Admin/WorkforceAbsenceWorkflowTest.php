@@ -26,6 +26,8 @@ final class WorkforceAbsenceWorkflowTest extends TestCase
 
         $absenceId = (int) $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/absences', [
+                'basis_reference' => 'Основание тестового кадрового события',
+                'reason_code' => 'sick_leave',
                 'employee_id' => $employee->id,
                 'absence_type_code' => 'sick_leave',
                 'start_date' => '2026-05-16',
@@ -77,6 +79,7 @@ final class WorkforceAbsenceWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

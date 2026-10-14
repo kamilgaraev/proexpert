@@ -201,7 +201,11 @@
       "workforce.view",
       "workforce.attendance.qr.self",
       "workforce.attendance.self",
-      "workforce.attendance.scan-confirm"
+      "workforce.attendance.scan-confirm",
+      "workforce.self-service.view",
+      "workforce.self-service.request",
+      "workforce.team-queue.view",
+      "workforce.team-queue.manage"
     ],
     "handover-acceptance": [
       "handover-acceptance.view",

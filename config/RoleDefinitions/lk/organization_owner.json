@@ -95,7 +95,26 @@
     "legal_archive.workflow.reassign",
     "legal_archive.workflow.cancel",
     "legal_archive.workflow_templates.manage",
-    "legal_archive.settings.manage"
+    "legal_archive.settings.manage",
+    "workforce.hr.private.read",
+    "workforce.hr.private.write",
+    "workforce.hr.documents.read",
+    "workforce.hr.documents.manage",
+    "workforce.hr.recruitment.manage",
+    "workforce.hr.lifecycle.manage",
+    "workforce.timekeeping.view",
+    "workforce.timekeeping.manage",
+    "workforce.timekeeping.verify",
+    "workforce.timekeeping.approve",
+    "workforce.timekeeping.close",
+    "workforce.timekeeping.export",
+    "workforce.self-service.view",
+    "workforce.self-service.request",
+    "workforce.team-queue.view",
+    "workforce.team-queue.manage",
+    "workforce.payroll-source.view",
+    "workforce.payroll-source.correct",
+    "workforce.exports.view"
   ],
   "module_permissions": {
     "projects": [

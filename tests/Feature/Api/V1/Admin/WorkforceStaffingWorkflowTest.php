@@ -39,6 +39,7 @@ final class WorkforceStaffingWorkflowTest extends TestCase
 
         $assignment = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -60,6 +61,7 @@ final class WorkforceStaffingWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $lateEmployee->id,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -89,14 +91,14 @@ final class WorkforceStaffingWorkflowTest extends TestCase
     {
         $department = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/departments', [
-                'code' => 'STAFF-DEP-' . uniqid(),
+                'code' => 'STAFF-DEP-'.uniqid(),
                 'name' => 'Staff department',
             ]);
         $department->assertCreated();
 
         $position = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/positions', [
-                'code' => 'STAFF-POS-' . uniqid(),
+                'code' => 'STAFF-POS-'.uniqid(),
                 'name' => 'Staff position',
             ]);
         $position->assertCreated();
@@ -105,7 +107,7 @@ final class WorkforceStaffingWorkflowTest extends TestCase
             ->postJson('/api/v1/admin/workforce/staff-units', [
                 'department_id' => $department->json('data.id'),
                 'position_id' => $position->json('data.id'),
-                'code' => 'STAFF-UNIT-' . uniqid(),
+                'code' => 'STAFF-UNIT-'.uniqid(),
                 'headcount' => 1.5,
                 'rate' => 1,
                 'valid_from' => '2026-05-01',
@@ -129,6 +131,7 @@ final class WorkforceStaffingWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

@@ -361,6 +361,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/employee-assignments', [
+                'basis_reference' => 'Основание тестового кадрового события',
                 'employee_id' => $employeeId,
                 'staff_unit_id' => $staffUnitId,
                 'department_id' => $departmentId,
@@ -477,14 +478,14 @@ final class WorkforceCorporateWorkflowTest extends TestCase
     {
         $department = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/departments', [
-                'code' => 'DEP-' . uniqid(),
+                'code' => 'DEP-'.uniqid(),
                 'name' => 'Строительный участок',
             ]);
         $department->assertCreated();
 
         $position = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/positions', [
-                'code' => 'POS-' . uniqid(),
+                'code' => 'POS-'.uniqid(),
                 'name' => 'Монтажник',
             ]);
         $position->assertCreated();
@@ -493,16 +494,17 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson('/api/v1/admin/workforce/staff-units', [
                 'department_id' => $department->json('data.id'),
                 'position_id' => $position->json('data.id'),
-                'code' => 'UNIT-' . uniqid(),
+                'code' => 'UNIT-'.uniqid(),
                 'valid_from' => '2026-05-01',
             ]);
         $staffUnit->assertCreated();
 
         $schedule = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/work-schedules', [
-                'code' => 'SCH-' . uniqid(),
+                'code' => 'SCH-'.uniqid(),
                 'name' => '5/2',
                 'hours_per_day' => 8,
+                'week_pattern' => ['work_days' => [1, 2, 3, 4, 5]],
             ]);
         $schedule->assertCreated();
 
@@ -519,7 +521,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $workOrder = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/work-orders', [
                 'project_id' => $projectId,
-                'order_number' => 'CORP-' . uniqid(),
+                'order_number' => 'CORP-'.uniqid(),
                 'title' => 'Монтаж',
                 'assignee_type' => 'brigade',
                 'assignee_name' => 'Бригада',
@@ -543,7 +545,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/output-entries', [
                 'work_order_line_id' => $lineId,
-                'work_date' => '2026-05-16',
+                'work_date' => '2026-05-15',
                 'quantity' => 10,
                 'hours' => 8,
             ])
@@ -552,11 +554,15 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/timesheets', [
                 'work_order_id' => $workOrderId,
-                'shift_date' => '2026-05-16',
+                'shift_date' => '2026-05-15',
                 'entries' => [[
                     'work_order_line_id' => $lineId,
                     'employee_id' => $employeeId,
                     'hours' => 8,
+                    'start_at' => '2026-05-15T08:00:00+03:00',
+                    'end_at' => '2026-05-15T16:00:00+03:00',
+                    'timezone' => 'Europe/Moscow',
+                    'break_intervals' => [],
                 ]],
             ])
             ->assertCreated();
@@ -578,6 +584,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

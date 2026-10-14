@@ -420,16 +420,39 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ->assertOk();
 
         $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'project_id' => $project->id,
+                'work_order_line_id' => $lineId,
+                'work_date' => '2026-05-15',
+                'quantity' => 10,
+                'hours' => 8,
+            ])->assertCreated()->assertJsonPath('data.hours', 8);
+
+        $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/timesheets', [
                 'work_order_id' => $workOrderId,
-                'shift_date' => '2026-05-16',
+                'shift_date' => '2026-05-15',
                 'entries' => [[
                     'work_order_line_id' => $lineId,
                     'employee_id' => $employee->id,
                     'hours' => 8,
+                    'start_at' => '2026-05-15T08:00:00+03:00',
+                    'end_at' => '2026-05-15T16:00:00+03:00',
+                    'timezone' => 'Europe/Moscow',
+                    'break_intervals' => [],
                 ]],
             ])
             ->assertCreated();
+
+        // Payroll source includes accepted production facts only.
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/production-labor/work-orders/{$workOrderId}/submit")
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/production-labor/work-orders/{$workOrderId}/accept")
+            ->assertOk();
+
+        $openWorkOrder = $this->createIssuedWorkOrderForProject($context, $project, 'LOCKED-LABOR-OPEN-002');
 
         $period = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/payroll-periods', [
@@ -463,8 +486,8 @@ final class WorkforcePayrollWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/output-entries', [
-                'work_order_line_id' => $lineId,
-                'work_date' => '2026-05-16',
+                'work_order_line_id' => $openWorkOrder['line_id'],
+                'work_date' => '2026-05-15',
                 'quantity' => 1,
                 'hours' => 1,
             ])
@@ -473,10 +496,10 @@ final class WorkforcePayrollWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/timesheets', [
-                'work_order_id' => $workOrderId,
-                'shift_date' => '2026-05-16',
+                'work_order_id' => $openWorkOrder['work_order_id'],
+                'shift_date' => '2026-05-15',
                 'entries' => [[
-                    'work_order_line_id' => $lineId,
+                    'work_order_line_id' => $openWorkOrder['line_id'],
                     'employee_id' => $employee->id,
                     'hours' => 1,
                 ]],
@@ -664,6 +687,7 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($role): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn([$role]);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
