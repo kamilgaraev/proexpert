@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('user_role_assignments', static function (Blueprint $table): void {
             $table->foreignId('custom_role_id')->nullable()->index()
-                ->constrained('organization_custom_roles')->cascadeOnDelete();
+                ->constrained('organization_custom_roles')->nullOnDelete();
         });
 
         DB::statement("UPDATE user_role_assignments AS assignments

@@ -27,6 +27,7 @@ use App\Services\User\UserService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
@@ -228,5 +229,36 @@ final class BackendSecurityRegressionTest extends TestCase
         $this->get($signed)->assertRedirect($url);
         $this->get(str_replace('example.test', 'attacker.test', $signed))->assertForbidden();
         $this->get('/security-track/missing?url=https%3A%2F%2Fattacker.test')->assertForbidden();
+    }
+
+    public function test_project_detail_loads_membership_in_a_batch_and_preserves_member_activity(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $queries = [];
+        DB::listen(static function ($query) use (&$queries): void {
+            if (str_contains(strtolower($query->sql), 'organization_user')) {
+                $queries[] = $query->sql;
+            }
+        });
+        $members = [];
+        foreach (range(1, 6) as $index) {
+            $member = User::factory()->create();
+            $context->organization->users()->attach($member->id, ['is_active' => $index !== 6]);
+            $project->users()->attach($member->id, ['is_active' => true, 'role' => 'member']);
+            $members[] = $member;
+            if ($index === 1) {
+                $queries = [];
+                $this->getJson('/api/v1/admin/projects/'.$project->id, $context->authHeaders())->assertOk();
+                $oneMemberQueries = count($queries);
+            }
+        }
+        $queries = [];
+        $response = $this->getJson('/api/v1/admin/projects/'.$project->id, $context->authHeaders())->assertOk();
+        self::assertLessThanOrEqual($oneMemberQueries + 1, count($queries));
+        $team = collect($response->json('data.assigned_users'))->keyBy('id');
+        self::assertCount(6, $team);
+        self::assertTrue($team[$members[0]->id]['is_active']);
+        self::assertFalse($team[$members[5]->id]['is_active']);
     }
 }

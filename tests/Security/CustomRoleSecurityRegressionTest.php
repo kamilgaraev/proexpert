@@ -38,6 +38,10 @@ final class CustomRoleSecurityRegressionTest extends TestCase
             AuthorizationContext::getOrganizationContext($firstOrganization->id), UserRoleAssignment::TYPE_CUSTOM);
         $secondAssignment = UserRoleAssignment::assignRole($secondUser, $secondRole->slug,
             AuthorizationContext::getOrganizationContext($secondOrganization->id), UserRoleAssignment::TYPE_CUSTOM);
+        $historyConditions = ['working_days' => [0, 1, 2, 3, 4, 5, 6]];
+        $condition = $firstAssignment->conditions()->create([
+            'condition_type' => 'time', 'condition_data' => $historyConditions, 'is_active' => true,
+        ]);
 
         $roles = OrganizationCustomRole::query()->with('assignments.user')->whereIn('id', [$firstRole->id, $secondRole->id])->get()->keyBy('id');
         self::assertSame([$firstUser->id], $roles[$firstRole->id]->assignments->pluck('user_id')->all());
@@ -50,7 +54,12 @@ final class CustomRoleSecurityRegressionTest extends TestCase
         self::assertFalse($firstAssignment->fresh()->is_active);
         self::assertTrue($secondAssignment->fresh()->is_active);
         $firstRole->delete();
-        self::assertNull($firstAssignment->fresh());
+        self::assertNotNull($firstAssignment->fresh());
+        self::assertFalse($firstAssignment->fresh()->is_active);
+        self::assertNull($firstAssignment->fresh()->custom_role_id);
+        self::assertSame($firstRole->slug, $firstAssignment->fresh()->role_slug);
+        self::assertSame([$condition->id], $firstAssignment->fresh()->conditions->pluck('id')->all());
+        self::assertSame($historyConditions, $condition->fresh()->condition_data);
         self::assertNotNull($secondAssignment->fresh());
     }
 

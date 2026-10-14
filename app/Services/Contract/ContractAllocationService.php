@@ -253,6 +253,12 @@ class ContractAllocationService
     public function getAllocationSummary(Contract $contract): array
     {
         $allocations = $this->readableAllocations($contract);
+        $accessibleIds = app(UserProjectAccessService::class)
+            ->queryAccessibleProjects(Auth::user(), (int) $contract->organization_id, true)
+            ->pluck('projects.id')->map(fn ($id) => (int) $id)->all();
+        if (array_diff($this->relatedProjectIds($contract), $accessibleIds) !== []) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
         $contractTotal = (float) $contract->total_amount;
 
         $allocated = $allocations->sum(function ($allocation) {

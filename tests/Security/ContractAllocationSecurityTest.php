@@ -9,6 +9,7 @@ use App\Models\Contractor;
 use App\Models\ContractProjectAllocation;
 use App\Models\Project;
 use App\Services\Contract\ContractAllocationService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\AdminApiTestContext;
@@ -59,6 +60,32 @@ final class ContractAllocationSecurityTest extends TestCase
             'allocations' => [['project_id' => $project->id, 'allocation_type' => 'fixed', 'allocated_amount' => 100]],
         ])->assertForbidden();
         self::assertSame(0, ContractProjectAllocation::query()->where('contract_id', $contract->id)->count());
+    }
+
+    public function test_partial_project_access_cannot_receive_a_full_contract_allocation_summary(): void
+    {
+        $context = AdminApiTestContext::create();
+        $first = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $second = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contract = $this->contract($context, $first);
+        $contract->update(['is_multi_project' => true]);
+        $contract->projects()->attach([$first->id, $second->id]);
+        Auth::shouldUse('api_admin');
+        Auth::setUser($context->user);
+        $service = app(ContractAllocationService::class);
+        $service->syncAllocations($contract, [
+            ['project_id' => $first->id, 'allocation_type' => 'fixed', 'allocated_amount' => 400],
+            ['project_id' => $second->id, 'allocation_type' => 'fixed', 'allocated_amount' => 600],
+        ]);
+        $summary = $service->getAllocationSummary($contract);
+        self::assertEquals(1000, $summary['total_allocated']);
+        self::assertEquals(0, $summary['unallocated']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+        $context->user->assignedProjects()->attach($first->id, ['is_active' => true, 'role' => 'member']);
+        self::assertSame([$first->id], $service->readableAllocations($contract)->pluck('project_id')->all());
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/contracts/'.$contract->id.'/allocations/summary')->assertForbidden();
+        $this->expectException(AuthorizationException::class);
+        $service->getAllocationSummary($contract);
     }
 
     private function contract(AdminApiTestContext $context, Project $project): Contract
