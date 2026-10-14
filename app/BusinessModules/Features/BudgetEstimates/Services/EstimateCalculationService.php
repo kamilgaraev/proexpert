@@ -127,7 +127,12 @@ class EstimateCalculationService
                 + (abs($fotOtmAgg) >= abs($fotOtmDet) ? $fotOtmAgg : $fotOtmDet);
             $finalHours = (new EstimateLaborHoursService)->calculate($item, $loadedChildren);
 
-            if ($hasChildren || $finalFot > 0) {
+            $sourceStructure = $item->metadata['raw_data']['financial_structure'] ?? [];
+            $hasSourceLabor = $hasImportedTotal && is_array($sourceStructure)
+                && ($sourceStructure['layout'] ?? null) === 'grand_modern_2020'
+                && ($sourceStructure['labor_cost_declared'] ?? false) === true
+                && is_numeric($sourceStructure['labor_cost'] ?? null);
+            if (! $hasSourceLabor && ($hasChildren || $finalFot > 0)) {
                 $item->labor_cost = $finalFot;
             }
             if ($hasChildren || $finalHours > 0) {

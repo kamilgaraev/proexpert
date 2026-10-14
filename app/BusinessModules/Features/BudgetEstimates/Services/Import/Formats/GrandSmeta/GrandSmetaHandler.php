@@ -74,6 +74,8 @@ class GrandSmetaHandler extends AbstractFormatHandler
         ]);
 
         $processor = new StatefulGrandSmetaProcessor();
+        $processor->setWorksheet($content->getIndex($sheet), $sheet->getTitle());
+        $processor->setLayout(($detection['layout'] ?? null) === 'modern_2020');
 
         foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
             $rowData = [];
@@ -106,12 +108,16 @@ class GrandSmetaHandler extends AbstractFormatHandler
             $rowData = [];
             $foundMarkers = 0;
             $tempMapping = [];
+            $numberedColumns = [];
             
             $iterator = $row->getCellIterator();
             $iterator->setIterateOnlyExistingCells(true);
             foreach ($iterator as $cell) {
                 $val = trim((string)$cell->getValue());
                 $col = $cell->getColumn();
+                if (ctype_digit($val)) {
+                    $numberedColumns[(int) $val] = $col;
+                }
                 
                 if ($val === '1') { $tempMapping['position_number'] = $col; $foundMarkers++; }
                 if ($val === '2') { $tempMapping['code'] = $col; $foundMarkers++; }
@@ -127,6 +133,32 @@ class GrandSmetaHandler extends AbstractFormatHandler
             // If we found at least 4 key markers (including 1, 2, 3), this is our numbering row
             if ($foundMarkers >= 4 && isset($tempMapping['position_number'], $tempMapping['code'], $tempMapping['name'])
                 && (isset($tempMapping['quantity']) || isset($tempMapping['unit_price']) || isset($tempMapping['total_price']))) {
+                $groupLabels = [];
+                foreach ([8, 11, 12] as $marker) {
+                    $parts = [];
+                    if (isset($numberedColumns[$marker])) {
+                        for ($groupRow = max(1, $row->getRowIndex() - 4); $groupRow < $row->getRowIndex(); $groupRow++) {
+                            $parts[] = (string) $sheet->getCell($numberedColumns[$marker].$groupRow)->getValue();
+                        }
+                    }
+                    $groupLabels[$marker] = mb_strtolower(implode(' ', $parts));
+                }
+                if (isset($numberedColumns[8], $numberedColumns[9], $numberedColumns[10], $numberedColumns[11], $numberedColumns[12])
+                    && str_contains($groupLabels[11], 'индекс') && str_contains($groupLabels[8], 'базисн') && str_contains($groupLabels[12], 'текущ')) {
+                    unset($tempMapping['current_unit_price']);
+                    $tempMapping['quantity_coefficient'] = $numberedColumns[6] ?? '';
+                    $tempMapping['price_coefficient'] = $numberedColumns[9];
+                    $tempMapping['base_total_price'] = $numberedColumns[10];
+                    $tempMapping['price_index'] = $numberedColumns[11];
+                    $tempMapping['unit_price'] = $numberedColumns[8];
+
+                    return [
+                        'mapping' => $tempMapping,
+                        'header_row' => $row->getRowIndex(),
+                        'header_confirmed' => true,
+                        'layout' => 'modern_2020',
+                    ];
+                }
                 if (!isset($tempMapping['total_price']) && isset($tempMapping['current_unit_price'])) {
                     $tempMapping['total_price'] = $tempMapping['current_unit_price'];
                 }

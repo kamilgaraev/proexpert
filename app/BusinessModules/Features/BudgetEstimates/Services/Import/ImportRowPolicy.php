@@ -31,7 +31,8 @@ final class ImportRowPolicy
         $code = mb_strtolower($row->code ?? '');
         $aggregates = ['от(зт)', 'эм', 'отм(зтм)', 'м', 'зтм', 'зт', 'от', 'отм', 'мат'];
 
-        return (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2))
+        return $row->isNotAccounted
+            || (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2))
             || str_starts_with($code, '4-100-')
             || str_contains($name, 'всего по позиции');
     }

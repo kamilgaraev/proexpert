@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportFinancialSettingsResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaSpreadsheetLoader;
@@ -122,7 +121,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
                 'mapping' => $mapping,
             ]],
             warnings: ($detection['header_confirmed'] ?? false) ? [] : [trans_message('estimate.import_header_not_found')],
-            metadata: ['header_confirmed' => $detection['header_confirmed'] ?? false],
+            metadata: ['header_confirmed' => $detection['header_confirmed'] ?? false, 'layout' => $detection['layout'] ?? 'legacy_421'],
         );
     }
 
@@ -140,7 +139,9 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
         $totalAmount = 0.0;
         $policy = new ImportRowPolicy;
 
-        foreach ($this->streamRows($session, $filePath, $structure) as $row) {
+        $xml = in_array(strtolower(pathinfo($filePath, PATHINFO_EXTENSION)), ['xml', 'gsfx'], true);
+        $rows = $xml ? $this->xmlParser->getStream($filePath, $structure->toArray()) : $this->parseRows($filePath, $structure);
+        foreach ($rows as $row) {
             $dto = $row instanceof EstimateImportRowDTO ? $row : EstimateImportRowDTO::fromArray((array) $row);
             if (! $policy->shouldImport($dto)) {
                 continue;
@@ -154,38 +155,45 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             }
 
             $items[] = $payload;
-            if (! $dto->isSubItem && ! $policy->isInformative($dto)) {
+            if (! $dto->isSubItem && ! $policy->isInformative($dto)
+                && (!isset($structure->columnMapping['base_total_price']) || $dto->currentTotalAmount !== null)) {
                 $totalAmount += $policy->totalAmount($dto);
             }
         }
 
-        $footer = in_array(strtolower(pathinfo($filePath, PATHINFO_EXTENSION)), ['xml', 'gsfx'], true)
-            ? [] : $this->getFooterData();
-        $importedTotals = (new EstimateImportFinancialSettingsResolver)->resolveImportedTotals($footer);
+        $footer = $xml ? [] : $this->getFooterData();
+        $totalAmount = $this->reconciledAmount($totalAmount, $xml ? [] : $rows, $footer);
+        $errors = $this->rowValidationErrors($footer, $totalAmount, $xml);
+        $validation = $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items))->toArray();
+        $validation['errors'] = array_merge($validation['errors'] ?? [], $errors);
+        $validation['is_valid'] = $validation['errors'] === [];
 
         return new ImportPreviewResult(
             formatSlug: $this->slug(),
             sections: $sections,
             items: $items,
             totals: [
-                'total_amount' => $importedTotals['total_amount'] ?? round($totalAmount, 2),
+                'total_amount' => round($totalAmount, 2),
                 'items_count' => count($items),
                 'sections_count' => count($sections),
             ],
-            validation: $this->validate($session, new ImportPreviewResult($this->slug(), $sections, $items))->toArray(),
+            validation: $validation,
             summary: [
                 'rows_count' => count($items) + count($sections),
             ],
             metadata: [
                 'handler' => $this->slug(),
                 'header_row' => $structure->headerRow,
+                'footer' => $footer,
+                'source_errors' => $xml ? [] : $this->spreadsheetParser->getValidationErrors(),
             ],
         );
     }
 
     public function validate(ImportSession $session, ImportPreviewResult $preview): ImportValidationResult
     {
-        $errors = [];
+        $errors = $preview->validation['errors'] ?? [];
+        $warnings = $preview->validation['warnings'] ?? [];
 
         if (($preview->metadata['header_confirmed'] ?? null) === false) {
             $errors[] = trans_message('estimate.import_grand_structure_unconfirmed');
@@ -194,7 +202,8 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
         }
 
         return new ImportValidationResult(
-            errors: $errors,
+            errors: array_values(array_unique($errors, SORT_REGULAR)),
+            warnings: $warnings,
             summary: [
                 'items_count' => count($preview->items),
                 'sections_count' => count($preview->sections),
@@ -215,10 +224,84 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             return;
         }
 
-        yield from $this->spreadsheetParser->getStream($filePath, [
+        $rows = $this->parseRows($filePath, $structure);
+        $policy = new ImportRowPolicy;
+        $amount = 0.0;
+        foreach ($rows as $row) {
+            if (!$row->isSection && !$row->isSubItem && !$policy->isInformative($row) && $policy->shouldImport($row)
+                && (!isset($structure->columnMapping['base_total_price']) || $row->currentTotalAmount !== null)) {
+                $amount += $policy->totalAmount($row);
+            }
+        }
+        $footer = $this->getFooterData();
+        $errors = $this->rowValidationErrors($footer, $this->reconciledAmount($amount, $rows, $footer), false);
+        if ($errors !== []) {
+            throw new \InvalidArgumentException($errors[0]);
+        }
+
+        yield from $rows;
+    }
+
+    private function parseRows(string $filePath, ImportStructureResult $structure): array
+    {
+        return iterator_to_array($this->spreadsheetParser->getStream($filePath, [
             'header_row' => $structure->headerRow,
             'column_mapping' => $structure->columnMapping,
-        ]);
+            'layout' => $structure->metadata['layout'] ?? null,
+        ]), false);
+    }
+
+    private function reconciledAmount(float $amount, array $rows, array $footer): float
+    {
+        $policy = new ImportRowPolicy;
+        if (!isset($footer['total_estimate_cost'])) {
+            return $amount;
+        }
+        foreach ($rows as $row) {
+            if (($row->rawData['financial_structure']['layout'] ?? null) === 'grand_modern_2020') {
+                return $amount;
+            }
+        }
+        foreach (['overhead_cost' => 'overheadAmount', 'profit_cost' => 'profitAmount'] as $field => $property) {
+            if (!array_key_exists($field, $footer)) {
+                continue;
+            }
+            $allocated = 0.0;
+            foreach ($rows as $row) {
+                if (!$row->isSection && !$row->isSubItem && !$policy->isInformative($row)) {
+                    $allocated += $row->{$property} ?? 0;
+                }
+            }
+            $declared = (float) $footer[$field];
+            if ($allocated === 0.0 || ($declared * $allocated >= 0 && abs($declared) >= abs($allocated))) {
+                $amount += $declared - $allocated;
+            }
+        }
+
+        return $amount;
+    }
+
+    private function rowValidationErrors(array $footer, float $amount, bool $xml): array
+    {
+        $errors = [];
+        if (!$xml) {
+            foreach ($this->spreadsheetParser->getValidationErrors() as $error) {
+                $errors[] = trans_message($error['key'], $error['params']);
+            }
+        }
+        if (isset($footer['total_estimate_cost']) && abs(round($amount, 2) - (float) $footer['total_estimate_cost']) > 0.02) {
+            $errors[] = trans_message('estimate.import_grand_total_mismatch', ['computed' => round($amount, 2), 'source' => $footer['total_estimate_cost']]);
+        }
+        if (isset($footer['total_estimate_cost'], $footer['vat_amount'], $footer['total_with_vat'])
+            && abs(round((float) $footer['total_estimate_cost'] + (float) $footer['vat_amount'], 2) - (float) $footer['total_with_vat']) > 0.02) {
+            $errors[] = trans_message('estimate.import_grand_vat_mismatch', ['net' => $footer['total_estimate_cost'], 'vat' => $footer['vat_amount'], 'gross' => $footer['total_with_vat']]);
+        }
+        if (isset($footer['total_estimate_cost'], $footer['vat_amount'], $footer['vat_rate'])
+            && abs(round((float) $footer['total_estimate_cost'] * (float) $footer['vat_rate'] / 100, 2) - (float) $footer['vat_amount']) > 0.02) {
+            $errors[] = trans_message('estimate.import_grand_vat_mismatch', ['net' => $footer['total_estimate_cost'], 'vat' => $footer['vat_amount'], 'gross' => $footer['total_with_vat'] ?? '']);
+        }
+
+        return array_values(array_unique($errors));
     }
 
     public function getFooterData(): array
@@ -249,7 +332,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             rawHeaders: $headers,
             sampleRows: $this->spreadsheetParser->getRawSampleRows($filePath, ['header_row' => $headerRow, 'column_mapping' => $mapping], 5),
             warnings: $confirmed ? [] : [trans_message('estimate.import_grand_structure_unconfirmed')],
-            metadata: ['header_confirmed' => $confirmed],
+            metadata: ['header_confirmed' => $confirmed, 'layout' => $structure->metadata['layout'] ?? 'legacy_421'],
         );
     }
 

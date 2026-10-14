@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
-use Illuminate\Support\Facades\Log;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetNumberParser;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 
 /**
  * Handles hierarchical parsing of GrandSmeta (LSR 421) files.
@@ -18,9 +20,41 @@ class StatefulGrandSmetaProcessor
     private array $sections = [];
     private bool $inFooter = false;
     private array $footerData = [];
+    private array $errors = [];
+    private array $components = [];
+    private ?float $directSubtotal = null;
+    private ?float $machineLaborSubtotal = null;
+    private ?float $laborSubtotal = null;
+    private array $baseComponents = [];
+    private ?float $baseDirectSubtotal = null;
+    private array $modernPositions = [];
+    private array $indexGroups = [];
+    private string $footerScope = '';
+    private bool $modernFinalized = false;
+    private bool $inSectionSummary = false;
+    private bool $modern = false;
+    private int $worksheetIndex = 0;
+    private string $worksheetName = '';
+
+    public function setWorksheet(int $index, string $name): void
+    {
+        $this->worksheetIndex = $index;
+        $this->worksheetName = $name;
+    }
+
+    public function setLayout(bool $modern): void
+    {
+        $this->modern = $modern;
+    }
 
     public function processRow(array $rowData, array $mapping, int $rowNumber): void
     {
+        if ($this->modern || isset($mapping['base_total_price'])) {
+            $this->modern = true;
+            $this->processModernRow($rowData, $mapping, $rowNumber);
+
+            return;
+        }
         $name = trim((string)($rowData[$mapping['name'] ?? ''] ?? ''));
         $posNo = trim((string)($rowData[$mapping['position_number'] ?? ''] ?? ''));
         $code = trim((string)($rowData[$mapping['code'] ?? ''] ?? ''));
@@ -59,9 +93,6 @@ class StatefulGrandSmetaProcessor
         // Позиция — это не раздел, и у нее есть номер, отличный от текущего
         $isPosition = !$isSection && $this->isPosition($posNo, $name, $code, $rowData, $mapping);
         
-        // Ресурс — это если это не раздел и не новая позиция
-        $isResource = !$isSection && !$isPosition && $this->isResource($rowData, $mapping);
-
         if ($isSection) {
             $this->closeCurrentPosition();
             $this->sections[] = $this->mapToDTO($rowData, $mapping, $rowNumber, true);
@@ -81,16 +112,6 @@ class StatefulGrandSmetaProcessor
         if ($this->currentPosition && !$isSection && !$isPosition) {
             $cleanName = mb_strtolower($name);
             
-            // Обработка "Всего по позиции" - это финализация данных текущей позиции
-            if (str_contains($cleanName, 'всего по позиции')) {
-                $money = $this->extractMoney($rowData, $mapping);
-                $total = $money['total_price'] !== 0.0 ? $money['total_price'] : $money['unit_price'];
-                if ($total !== 0.0) {
-                    $this->currentPosition->currentTotalAmount = $total;
-                }
-                return;
-            }
-
             // Is it an informational row for NR/SP?
             if (str_starts_with($cleanName, 'нр ') || str_starts_with($cleanName, 'нр(') || str_starts_with($cleanName, 'накладные')) {
                 $money = $this->extractMoney($rowData, $mapping);
@@ -121,39 +142,6 @@ class StatefulGrandSmetaProcessor
             $this->items[] = $subItemDTO;
             return;
         }
-    }
-
-    private function isResource(array $data, array $mapping): bool
-    {
-        $name = mb_strtolower(trim((string)($data[$mapping['name'] ?? ''] ?? '')));
-        $unit = mb_strtolower(trim((string)($data[$mapping['unit'] ?? ''] ?? '')));
-        $code = mb_strtolower(trim((string)($data[$mapping['code'] ?? ''] ?? '')));
-        
-        // Exclude NR and SP from being resources even if unit is %
-        if (str_starts_with($name, 'нр ') || str_starts_with($name, 'нр(') || str_starts_with($name, 'накладные')) return false;
-        if (str_starts_with($name, 'сп ') || str_starts_with($name, 'сп(') || str_starts_with($name, 'сметная прибыль')) return false;
-
-        if (str_contains($name, 'вспомогательные') && str_contains($name, 'ресурсы')) {
-            return true;
-        }
-
-        if (in_array($name, ['м', 'от', 'зп', 'эм', 'зт', 'от(зт)', 'отм', 'зпм', 'зтм', 'отм(зтм)', 'мат', 'зпм(зтм)'], true)) {
-            return true;
-        }
-
-        // Specific GrandSmeta codes for materials and labor
-        if (preg_match('/^(01\.|ТСЦ|ФССЦ|ФСБЦ|ФСРЦ|ОТ|ЗП|ЗТ|ЭМ|ФСЭМ)/ui', $code)) {
-            return true;
-        }
-
-        if (empty($unit)) return false;
-
-        $resourceUnits = ['чел.-ч', 'чел-ч', 'маш.-ч', 'квт-ч', '%'];
-        foreach ($resourceUnits as $ru) {
-            if ($unit === $ru || str_starts_with($unit, $ru)) return true;
-        }
-
-        return false;
     }
 
     private function isPosition(string $posNo, string $name, string $code, array $rowData = [], array $mapping = []): bool
@@ -195,17 +183,65 @@ class StatefulGrandSmetaProcessor
 
     private function closeCurrentPosition(): void
     {
+        if ($this->modern && $this->currentPosition !== null) {
+            $position = $this->currentPosition;
+            $completeComponents = isset($this->components['labor'], $this->components['machinery'], $this->components['materials']) && !in_array(null, $this->components, true);
+            if ($position->currentTotalAmount === null && ($completeComponents || $this->directSubtotal !== null) && !array_key_exists('overhead_missing', $this->components) && !array_key_exists('profit_missing', $this->components)) {
+                $position->currentTotalAmount = round(($this->directSubtotal ?? array_sum($this->components)) + ($position->overheadAmount ?? 0) + ($position->profitAmount ?? 0), 2);
+                $position->rawData['total_source'] = 'current_components';
+            }
+            if ($position->currentTotalAmount !== null && ($position->quantity ?? 0) != 0) {
+                $position->unitPrice = ($position->currentTotalAmount - ($position->overheadAmount ?? 0) - ($position->profitAmount ?? 0)) / $position->quantity;
+                $position->currentUnitPrice = $position->unitPrice;
+            }
+            $position->rawData['financial_structure'] = [
+                'layout' => 'grand_modern_2020',
+                'effective_unit_price' => ($position->quantity ?? 0) != 0 && $position->currentTotalAmount !== null ? $position->currentTotalAmount / $position->quantity : null,
+            ];
+            $sourceLabor = $this->laborSubtotal;
+            if ($sourceLabor === null && isset($this->components['labor']) && ($this->machineLaborSubtotal !== null || ($this->components['machinery'] ?? null) === 0.0)) {
+                $sourceLabor = $this->components['labor'] + ($this->machineLaborSubtotal ?? 0);
+            }
+            if ($sourceLabor !== null) {
+                $position->laborCost = $sourceLabor;
+                $position->rawData['financial_structure']['labor_cost'] = $sourceLabor;
+                $position->rawData['financial_structure']['labor_cost_declared'] = true;
+            }
+            $position->overheadAmount ??= 0.0;
+            $position->profitAmount ??= 0.0;
+            if ($this->baseDirectSubtotal !== null && abs(array_sum($this->baseComponents) - $this->baseDirectSubtotal) < 0.000001) {
+                foreach (['labor', 'machinery', 'materials'] as $component) {
+                    if (!array_key_exists($component, $this->baseComponents)) {
+                        $this->baseComponents[$component] = 0.0;
+                        $this->components[$component] = 0.0;
+                    }
+                }
+            }
+            $position->rawData['component_sources'] = ['base' => $this->baseComponents, 'current' => $this->components, 'base_direct_total' => $this->baseDirectSubtotal];
+            if ($this->baseDirectSubtotal !== null && ($position->quantity ?? 0) != 0) {
+                $position->baseUnitPrice = $this->baseDirectSubtotal / $position->quantity;
+            }
+            $this->modernPositions[] = $position;
+        }
+        $this->components = [];
+        $this->directSubtotal = null;
+        $this->machineLaborSubtotal = null;
+        $this->laborSubtotal = null;
+        $this->baseComponents = [];
+        $this->baseDirectSubtotal = null;
         $this->currentPosition = null;
     }
 
     public function getResult(): array
     {
         $this->closeCurrentPosition();
+        $this->finalizeModernPositions();
         
         return [
             'items' => $this->items,
             'sections' => $this->sections,
-            'footer' => $this->footerData
+            'footer' => $this->footerData,
+            'errors' => $this->errors,
         ];
     }
     
@@ -216,6 +252,315 @@ class StatefulGrandSmetaProcessor
         $this->sections = [];
         $this->inFooter = false;
         $this->footerData = [];
+        $this->errors = [];
+        $this->components = [];
+        $this->directSubtotal = null;
+        $this->machineLaborSubtotal = null;
+        $this->laborSubtotal = null;
+        $this->baseComponents = [];
+        $this->baseDirectSubtotal = null;
+        $this->modernPositions = [];
+        $this->indexGroups = [];
+        $this->footerScope = '';
+        $this->modernFinalized = false;
+        $this->inSectionSummary = false;
+        $this->modern = false;
+    }
+
+    private function processModernRow(array $data, array $mapping, int $rowNumber): void
+    {
+        $name = trim((string) ($data[$mapping['name']] ?? ''));
+        $label = mb_strtolower(preg_replace('/\s+/u', ' ', $name) ?? $name);
+        if ($this->inFooter) {
+            $this->processModernFooter($label, $data, $mapping);
+
+            return;
+        }
+        if ($this->isFooterMarker($name)) {
+            $this->closeCurrentPosition();
+            $this->inFooter = true;
+            $this->processModernFooter($label, $data, $mapping);
+
+            return;
+        }
+        if (preg_match('/^(?:итоги|всего|итого) по разделу/u', $label) === 1) {
+            $this->closeCurrentPosition();
+            $this->inSectionSummary = true;
+
+            return;
+        }
+        if (str_contains($label, 'всего по позиции')) {
+            $total = $this->number($data, $mapping, 'total_price');
+            if ($this->currentPosition !== null && $total !== null) {
+                $this->currentPosition->currentTotalAmount = $total;
+                $this->currentPosition->rawData['total_source'] = 'position_subtotal';
+            }
+
+            return;
+        }
+        if ($this->isSection($data, $name)) {
+            $this->closeCurrentPosition();
+            $this->inSectionSummary = false;
+            $dto = $this->mapToDTO($data, $mapping, $rowNumber, true);
+            $dto->worksheetIndex = $this->worksheetIndex;
+            $dto->worksheetName = $this->worksheetName;
+            $dto->rawData['source_identity'] = $this->worksheetIndex.':'.$rowNumber;
+            $this->sections[] = $dto;
+
+            return;
+        }
+        $posNo = trim((string) ($data[$mapping['position_number']] ?? ''));
+        $posNo = preg_split('/\s+/u', $posNo)[0] ?? '';
+        if (preg_match('/^\d+[а-яa-z-]*$/iu', $posNo) === 1) {
+            $this->closeCurrentPosition();
+            $this->inSectionSummary = false;
+            $this->currentPosition = $this->modernDTO($data, $mapping, $rowNumber);
+            $this->currentPosition->sectionNumber = $posNo;
+            $this->items[] = $this->currentPosition;
+
+            return;
+        }
+        if ($this->currentPosition === null || $this->inSectionSummary) {
+            return;
+        }
+        $total = $this->number($data, $mapping, 'total_price');
+        if ($label === 'итого по расценке') {
+            $this->directSubtotal = $total;
+            $this->baseDirectSubtotal = $this->number($data, $mapping, 'base_total_price');
+
+            return;
+        }
+        if (preg_match('/^(?:в\s*т\.?\s*ч\.?\s*)?отм(?:\(зтм\))?$/u', $label) === 1) {
+            $this->machineLaborSubtotal = $total;
+
+            return;
+        }
+        if ($label === 'фот') {
+            $this->laborSubtotal = $total;
+
+            return;
+        }
+        if (preg_match('/^(?:нр(?:\s|\(|$)|накладные расходы)/u', $label) === 1) {
+            $this->currentPosition->overheadAmount = $total;
+            if ($total === null) {
+                $this->components['overhead_missing'] = null;
+            }
+
+            return;
+        }
+        if (preg_match('/^(?:сп(?:\s|\(|$)|сметная прибыль)/u', $label) === 1) {
+            $this->currentPosition->profitAmount = $total;
+            if ($total === null) {
+                $this->components['profit_missing'] = null;
+            }
+
+            return;
+        }
+        $component = match ($label) {
+            'от', 'зп', 'от(зт)' => 'labor',
+            'эм' => 'machinery',
+            'м', 'мат', 'материалы' => 'materials',
+            default => null,
+        };
+        if ($component !== null) {
+            $this->components[$component] = $total;
+            $base = $this->number($data, $mapping, 'base_total_price');
+            if ($base !== null) {
+                $this->baseComponents[$component] = $base;
+            }
+            $property = match ($component) {
+                'labor' => 'laborCost', 'machinery' => 'machineryCost', default => 'materialsCost',
+            };
+            $this->currentPosition->{$property} = $total;
+        }
+        if (preg_match('/^(?:в\s*т\.?\s*ч\.?\s*отм|отм|фот|итого|всего|затраты труда)/u', $label) === 1) {
+            return;
+        }
+        $child = $this->modernDTO($data, $mapping, $rowNumber);
+        $child->isSubItem = true;
+        if (mb_strtoupper(trim((string) ($data[$mapping['position_number']] ?? ''))) === 'Н' && $child->currentTotalAmount !== null) {
+            $this->components['unaccounted_resource'] = null;
+        }
+        $child->rawData['parent_source_identity'] = $this->worksheetIndex.':'.$this->currentPosition->rowNumber;
+        $this->items[] = $child;
+    }
+
+    private function number(array $data, array $mapping, string $field): ?float
+    {
+        return (new SpreadsheetNumberParser)->parse($data[$mapping[$field] ?? ''] ?? null);
+    }
+
+    private function modernDTO(array $data, array $mapping, int $rowNumber): EstimateImportRowDTO
+    {
+        $dto = $this->mapToDTO($data, $mapping, $rowNumber, false);
+        $dto->quantity = $this->number($data, $mapping, 'quantity');
+        $dto->quantityTotal = $dto->quantity;
+        $dto->quantityCoefficient = $this->number($data, $mapping, 'quantity_coefficient');
+        $baseTotal = $this->number($data, $mapping, 'base_total_price');
+        $dto->baseUnitPrice = ($dto->quantity ?? 0) != 0 && $baseTotal !== null ? $baseTotal / $dto->quantity : null;
+        $dto->priceCoefficient = $this->number($data, $mapping, 'price_coefficient');
+        $dto->priceIndex = $this->number($data, $mapping, 'price_index');
+        $dto->currentTotalAmount = $this->number($data, $mapping, 'total_price');
+        $dto->unitPrice = ($dto->quantity ?? 0) != 0 && $dto->currentTotalAmount !== null ? $dto->currentTotalAmount / $dto->quantity : null;
+        $dto->currentUnitPrice = $dto->unitPrice;
+        $dto->worksheetIndex = $this->worksheetIndex;
+        $dto->worksheetName = $this->worksheetName;
+        $dto->rawData['source_identity'] = $this->worksheetIndex.':'.$rowNumber;
+        $dto->rawData['base_total_amount'] = $this->number($data, $mapping, 'base_total_price');
+        $dto->rawData['source_unit_price'] = $this->number($data, $mapping, 'base_unit_price');
+        $dto->rawData['total_source'] = $dto->currentTotalAmount !== null ? 'declared_current_total' : null;
+        $dto->isNotAccounted = mb_strtoupper(trim((string) ($data[$mapping['position_number']] ?? ''))) === 'Н' && $dto->currentTotalAmount === null;
+        if (preg_match('/^(?:тц_|тсц|фссц|фсбц|фсрц|01\.)/iu', $dto->code ?? '') === 1) {
+            $dto->itemType = 'material';
+        }
+
+        return $dto;
+    }
+
+    private function processModernFooter(string $label, array $data, array $mapping): void
+    {
+        if (in_array($label, ['строительные работы', 'монтажные работы'], true)) {
+            $this->footerScope = $label;
+        }
+        $category = match ($label) {
+            'эксплуатация машин и механизмов', 'эксплуатация машин' => 'machinery',
+            'материалы' => 'materials',
+            default => null,
+        };
+        $index = $this->number($data, $mapping, 'price_index');
+        $base = $this->number($data, $mapping, 'base_total_price');
+        $total = $this->number($data, $mapping, 'total_price');
+        if ($category !== null && $index !== null && $base !== null && $total !== null && $this->footerScope !== '') {
+            $this->indexGroups[$category][$this->footerScope] = ['base' => $base, 'index' => $index, 'current' => $total];
+        }
+        if ($total === null) {
+            return;
+        }
+        if (preg_match('/^(?:(?:в том числе|в\s*т\.?\s*ч\.?|сумма)\s*)?ндс\s*(\d+(?:[.,]\d+)?)?\s*%?$/u', $label, $matches) === 1) {
+            $this->footerData['vat_amount'] = $total;
+            if (($matches[1] ?? '') !== '') {
+                $this->footerData['vat_rate'] = (float) str_replace(',', '.', $matches[1]);
+            }
+
+            return;
+        }
+        if (preg_match('/^(?:всего|итого)(?:\s+(?:по смете|по акту|с учетом доп\. работ и затрат|без ндс|с учетом ндс))?$/u', $label) === 1) {
+            $isGross = str_contains($label, 'с учетом ндс') || (isset($this->footerData['vat_amount']) && !str_contains($label, 'без ндс'));
+            $this->footerData[$isGross ? 'total_with_vat' : 'total_estimate_cost'] = $total;
+
+            return;
+        }
+        if ($this->footerScope !== '' && !str_starts_with($label, 'всего ')) {
+            return;
+        }
+        $this->processFooterRow($label, $data, $mapping);
+    }
+
+    private function finalizeModernPositions(): void
+    {
+        if (!$this->modern || $this->modernFinalized) {
+            return;
+        }
+        $this->modernFinalized = true;
+        foreach ($this->indexGroups as $category => $groups) {
+            $componentName = $category === 'machinery' ? 'машин и механизмов' : 'материалов';
+            $indices = array_unique(array_column($groups, 'index'));
+            if (count($indices) !== 1) {
+                continue;
+            }
+            $index = (float) reset($indices);
+            $parts = [];
+            $known = 0.0;
+            $actualBase = 0.0;
+            foreach ($this->modernPositions as $position) {
+                $sources = $position->rawData['component_sources'];
+                $base = $sources['base'][$category] ?? null;
+                $current = $sources['current'][$category] ?? null;
+                if ($category === 'materials' && $position->itemType === 'material' && $sources['base'] === []) {
+                    $base = $position->rawData['base_total_amount'];
+                    $current = $position->currentTotalAmount;
+                }
+                if ($base === null) {
+                    continue;
+                }
+                $actualBase += $base;
+                if ($current !== null) {
+                    $known += $current;
+                } else {
+                    $parts[$position->rowNumber] = BigDecimal::of((string) $base)->multipliedBy((string) $index);
+                }
+            }
+            $sourceBase = array_sum(array_column($groups, 'base'));
+            if (abs($actualBase - $sourceBase) >= 0.000001) {
+                $this->errors[] = ['key' => 'estimate.import_grand_component_mismatch', 'params' => ['component' => $componentName, 'computed' => round($actualBase, 2), 'source' => $sourceBase]];
+
+                continue;
+            }
+            $target = BigDecimal::zero();
+            $groupsValid = true;
+            foreach ($groups as $scope => $group) {
+                $computed = BigDecimal::of((string) $group['base'])->multipliedBy((string) $index)->toScale(2, RoundingMode::HalfUp);
+                if ($computed->compareTo((string) $group['current']) !== 0) {
+                    $this->errors[] = ['key' => 'estimate.import_grand_component_mismatch', 'params' => ['component' => $componentName.' ('.$scope.')', 'computed' => $computed->toFloat(), 'source' => $group['current']]];
+                    $groupsValid = false;
+                }
+                $target = $target->plus((string) $group['current']);
+            }
+            if (!$groupsValid) {
+                continue;
+            }
+            if ($parts === []) {
+                continue;
+            }
+            $allocated = [];
+            $sum = BigDecimal::zero();
+            foreach ($parts as $rowNumber => $exact) {
+                $allocated[$rowNumber] = $exact->toScale(2, RoundingMode::Floor);
+                $sum = $sum->plus($allocated[$rowNumber]);
+            }
+            $remainder = $target->minus((string) $known)->minus($sum)->multipliedBy(100)->toScale(0, RoundingMode::HalfUp)->toInt();
+            if ($remainder < 0 || $remainder > count($parts)) {
+                $this->errors[] = ['key' => 'estimate.import_grand_component_mismatch', 'params' => ['component' => $componentName, 'computed' => $known + $sum->toFloat(), 'source' => $target->toFloat()]];
+
+                continue;
+            }
+            uksort($parts, static fn ($left, $right): int => $parts[$right]->minus($allocated[$right])->compareTo($parts[$left]->minus($allocated[$left])) ?: $left <=> $right);
+            foreach (array_keys($parts) as $offset => $rowNumber) {
+                if ($offset < $remainder) {
+                    $allocated[$rowNumber] = $allocated[$rowNumber]->plus('0.01');
+                }
+            }
+            foreach ($this->modernPositions as $position) {
+                if (!isset($allocated[$position->rowNumber])) {
+                    continue;
+                }
+                $value = $allocated[$position->rowNumber]->toFloat();
+                if ($category === 'materials' && $position->itemType === 'material' && $position->rawData['component_sources']['base'] === []) {
+                    $position->currentTotalAmount = $value;
+                } else {
+                    $position->rawData['component_sources']['current'][$category] = $value;
+                    $property = $category === 'machinery' ? 'machineryCost' : 'materialsCost';
+                    $position->{$property} = $value;
+                }
+                $position->rawData['index_provenance'][$category] = ['groups' => $groups, 'index' => $index, 'exact_amount' => (string) $parts[$position->rowNumber]];
+            }
+        }
+        foreach ($this->modernPositions as $position) {
+            $sources = $position->rawData['component_sources'];
+            if ($position->currentTotalAmount === null && isset($sources['current']['labor'], $sources['current']['machinery'], $sources['current']['materials'])
+                && !in_array(null, $sources['current'], true) && $sources['base_direct_total'] !== null
+                && abs(array_sum($sources['base']) - $sources['base_direct_total']) < 0.000001) {
+                $position->currentTotalAmount = round(array_sum($sources['current']) + $position->overheadAmount + $position->profitAmount, 2);
+                $position->rawData['total_source'] = 'indexed_current_components';
+            }
+            if ($position->currentTotalAmount === null) {
+                $this->errors[] = ['key' => 'estimate.import_grand_missing_current_total', 'params' => ['worksheet' => $this->worksheetName, 'row' => $position->rowNumber]];
+            } elseif (($position->quantity ?? 0) != 0) {
+                $position->unitPrice = ($position->currentTotalAmount - $position->overheadAmount - $position->profitAmount) / $position->quantity;
+                $position->currentUnitPrice = $position->unitPrice;
+                $position->rawData['financial_structure']['effective_unit_price'] = $position->currentTotalAmount / $position->quantity;
+            }
+        }
     }
 
     private function processFooterRow(string $name, array $rowData, array $mapping): void
@@ -382,7 +727,9 @@ class StatefulGrandSmetaProcessor
             priceIndex: $priceIndex != 0.0 ? $priceIndex : null,
             currentUnitPrice: $currentPrice != 0.0 ? $currentPrice : null,
             currentTotalAmount: $total != 0.0 ? $total : null,
-            rawData: $data
+            rawData: $data + ['source_identity' => $this->worksheetIndex.':'.$rowNumber],
+            worksheetIndex: $this->worksheetIndex,
+            worksheetName: $this->worksheetName,
         );
     }
 

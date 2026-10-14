@@ -695,7 +695,7 @@ class ImportPipelineService
             : $totalAmount;
 
         // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
-        $isNotAccounted = $isInformative || $isSubItem;
+        $isNotAccounted = $isInformative || $isSubItem || $dto->isNotAccounted;
 
         $metadata = [
             'original_unit' => $dto->unit,

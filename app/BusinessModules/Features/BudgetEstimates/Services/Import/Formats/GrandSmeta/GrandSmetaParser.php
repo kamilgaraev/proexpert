@@ -61,6 +61,8 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
             ]);
 
             $this->processor->reset();
+            $this->processor->setWorksheet($spreadsheet->getIndex($sheet), $sheet->getTitle());
+            $this->processor->setLayout(($options['layout'] ?? null) === 'modern_2020');
 
             $rawRowIndex = 0;
             foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
@@ -197,5 +199,10 @@ class GrandSmetaParser implements EstimateImportParserInterface, StreamParserInt
     public function getFooterData(): array
     {
         return $this->processor->getResult()['footer'] ?? [];
+    }
+
+    public function getValidationErrors(): array
+    {
+        return $this->processor->getResult()['errors'] ?? [];
     }
 }

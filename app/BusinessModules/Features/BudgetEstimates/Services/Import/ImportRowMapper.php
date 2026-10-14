@@ -500,7 +500,7 @@ class ImportRowMapper
 
     public function isTechnicalRow(array $row): bool
     {
-        $nonEmpty = array_filter($row, fn($v) => $v !== null && $v !== '');
+        $nonEmpty = array_filter($row, fn($v) => is_scalar($v) && $v !== '');
         if (count($nonEmpty) < 3) return false;
 
         $numericCount = 0;
