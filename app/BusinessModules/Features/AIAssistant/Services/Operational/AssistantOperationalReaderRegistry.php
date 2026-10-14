@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
+
 final class AssistantOperationalReaderRegistry
 {
     private const STAFF_TOPIC = '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu';
@@ -82,6 +84,9 @@ final class AssistantOperationalReaderRegistry
             return null;
         }
         if (AssistantReportDeliverySummaryReader::matches($query)) {
+            foreach (AssistantRequiredProjectRead::READERS as $reader) {
+                if (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : $reader::matches($query)) { return null; }
+            }
             foreach (self::TOPICS as $pattern) {
                 if (in_array($pattern, [AssistantProjectExportHistoryReader::INTENT_PATTERN, AssistantProjectReportCatalogReader::INTENT_PATTERN], true)) { continue; }
                 if (preg_match($pattern, $query) === 1) { return null; }

@@ -37,7 +37,10 @@ final class AssistantMutationIntent
             'подтверди', 'подтвердите', 'подтвердить', 'отправь', 'отправьте', 'отправить', 'уведомите', 'уведомить', 'оплати', 'оплатите', 'оплатить']);
         $normalized = self::normalize($message);
         foreach ($commands as $command) {
-            if (preg_match('/(?<![\pL\pN])'.preg_quote($command, '/').'(?![\pL\pN])/u', $normalized) === 1) {
+            $prefix = str_ends_with($command, 'ть') || str_ends_with($command, 'ти')
+                ? '(?:^(?:(?:пожалуйста|прошу|хочу|надо|нужно|давай) )?| (?:и|затем|потом) (?:(?:пожалуйста|прошу) )?)'
+                : '(?<![\pL\pN])';
+            if (preg_match('/'.$prefix.preg_quote($command, '/').'(?![\pL\pN])/u', $normalized) === 1) {
                 return true;
             }
         }

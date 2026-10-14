@@ -8,24 +8,25 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResol
 
 final readonly class AssistantRequiredProjectRead
 {
+    public const READERS = [
+        'get_project_finance_overview' => AssistantProjectFinanceOverview::class,
+        'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::class,
+        'get_project_workforce_summary' => AssistantProjectWorkforceReader::class,
+        'get_project_payment_readiness' => AssistantProjectPaymentReader::class,
+        'get_project_machinery_summary' => AssistantProjectMachineryReader::class,
+        'get_project_handover_summary' => AssistantProjectHandoverReader::class,
+        'get_project_contract_roster' => AssistantProjectContractRosterReader::class,
+        'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class,
+    ];
+
     public static function decisionReader(string $toolName, string $query): ?string
     {
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
         if ($operational !== null) { return $operational['name'] === $toolName ? $operational['reader'] : null; }
         if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::hasIntent($query)) { return null; }
         if ($toolName !== 'get_project_handover_summary' && AssistantProjectHandoverReader::hasIntent($query)) { return null; }
-        return match ($toolName) {
-            'get_project_finance_overview' => AssistantProjectFinanceOverview::matches($query) ? AssistantProjectFinanceOverview::class : null,
-            'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::matches($query) ? AssistantProjectScheduleImpactReader::class : null,
-            'get_project_workforce_summary' => AssistantProjectWorkforceReader::matches($query) ? AssistantProjectWorkforceReader::class : null,
-            'get_project_payment_readiness' => AssistantProjectPaymentReader::matches($query) ? AssistantProjectPaymentReader::class : null,
-            'get_project_machinery_summary' => AssistantProjectMachineryReader::matches($query) ? AssistantProjectMachineryReader::class : null,
-            'get_project_handover_summary' => AssistantProjectHandoverReader::matches($query) ? AssistantProjectHandoverReader::class : null,
-            'get_project_contract_roster' => AssistantProjectContractRosterReader::matches($query) ? AssistantProjectContractRosterReader::class : null,
-            'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
-                ? \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class : null,
-            default => null,
-        };
+        $reader = self::READERS[$toolName] ?? null;
+        return $reader !== null && $reader::matches($query) ? $reader : null;
     }
 
     public static function fromPlan(array $plan): ?array

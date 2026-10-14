@@ -14,7 +14,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 final readonly class AssistantReportDeliverySummaryReader extends AssistantProjectOperationalReader
 {
     public const TYPE = 'live_project_report_delivery_summary_projection';
-    private const FINANCIAL_TOPICS = '/бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еь]г|финанс|валют|цен|сумм|стоим|оплат|оплач|плат[её]ж|сч[её]т|смет|долг|накладн|ндс|налог|кредит|займ/iu';
+    private const FINANCIAL_TOPICS = '/бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еь]г|финанс|валют|(?<![\pL\pN])цен(?:а|ы|е|у|ой|ою|ам|ами|ах|ов[а-яё]*|ообразован[а-яё]*)?(?![\pL\pN])|сумм|стоим|оплат|оплач|плат[её]ж|сч[её]т|смет|долг|накладн|ндс|налог|кредит|займ/iu';
 
     public function __construct(AssistantDataAccessPolicy $access, private AssistantReportSubscriptionsReader $subscriptions,
         private AssistantProjectExportHistoryReader $exports)

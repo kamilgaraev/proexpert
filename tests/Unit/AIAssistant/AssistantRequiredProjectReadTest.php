@@ -221,6 +221,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие счета по нашему объекту готовы к оплате?',
             'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен бюджетный лимит?',
             'Какие счета нашего объекта готовы к оплате и у каких превышен лимит бюджета?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и кто должен их подтвердить?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и кто должен их одобрить?',
         ] as $query) {
             self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]],
                 AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
@@ -237,6 +239,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи неоплаченные счета нашего объекта и перечисли все бюджетные лимиты по всем статьям организации',
             'Какие счета нашего объекта готовы к оплате и каковы все бюджетные лимиты по всем статьям организации?',
             'Какие счета нашего объекта готовы к оплате и покажи список бюджетных лимитов?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен кредитный лимит?',
+            'Какие неоплаченные счета нашего объекта ждут оплаты и у каких превышен лимит контрагента?',
         ] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectPaymentReader::matches($query), $query);
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_payment_readiness', $query), $query);

@@ -20,6 +20,10 @@ final class AssistantExportHistoryIntentTest extends TestCase
         self::assertSame(['name' => 'get_project_report_delivery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertContains('get_project_report_delivery_summary', AssistantToolSurface::names(['get_project_report_delivery_summary'], $plan));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_report_delivery_summary', ['project_id' => 999]));
+        foreach (['Хочу оценить, есть ли активные регулярные отчёты и готовые выгрузки по объекту?',
+            'Для оценки: есть ли активные регулярные отчёты и готовые выгрузки по объекту?'] as $readQuery) {
+            self::assertSame('get_project_report_delivery_summary', AssistantOperationalReaderRegistry::intent($readQuery)['name'] ?? null);
+        }
         foreach ([$query.' И какие у меня права?', $query.' И что с бюджетом?', $query.' И сколько насосов в BIM?',
             $query.' И какие сделки CRM?', $query.' И что с охраной труда?', $query.' И какие платежи нужно оплатить?',
             $query.' И сколько расходов?', $query.' И какие долги?', 'Создай регулярные отчёты и скачай готовые выгрузки.'] as $mixed) {
@@ -29,7 +33,8 @@ final class AssistantExportHistoryIntentTest extends TestCase
             'какой НДС', 'какие накладные расходы', 'есть ли кредит', 'какие сроки задач', 'какие контакты организации',
             'есть ли непрочитанные уведомления', 'какие камеры объекта', 'какие вопросы проектировщикам без ответа',
             'какие отчёты есть в каталоге', 'какой критический путь графика проекта', 'каковы сроки проекта',
-            'обнови регулярные отчёты', 'согласуйте документы'] as $topic) {
+            'обнови регулярные отчёты', 'согласуйте документы', 'каково ценообразование услуг',
+            'какие зоны готовы к приёмке'] as $topic) {
             $mixed = $query.' И '.$topic.'?';
             $mixedPlan = ['request' => ['message' => $mixed, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertNull(AssistantOperationalReaderRegistry::intent($mixed), $topic);
