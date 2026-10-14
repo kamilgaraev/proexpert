@@ -83,6 +83,12 @@ final class GeometryInventory
             'completeness_confirmed' => false];
     }
 
+    public static function entityFingerprint(Entity $entity, array $documentAnchors): string
+    {
+        return hash('sha256', CanonicalPipelineJson::encode(['contract' => 'geometry-entity:v1',
+            'entity' => self::identity($entity), 'document_anchor' => $documentAnchors[$entity->id] ?? null]));
+    }
+
     private static function identity(Entity $entity): array
     {
         return ['id' => $entity->id, 'source_version' => $entity->sourceVersion,

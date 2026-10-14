@@ -69,6 +69,10 @@ final readonly class DerivedQuantity
                 throw new InvalidArgumentException('Derived quantity operand is invalid.');
             }
             ProjectModelInvariant::id($operand['fact_id'], 'Derived quantity operand fact');
+            if (isset($operand['source_version']) && (! is_string($operand['source_version'])
+                || preg_match('/\Asha256:[a-f0-9]{64}\z/', $operand['source_version']) !== 1)) {
+                throw new InvalidArgumentException('Derived quantity operand source version is invalid.');
+            }
             $operand['value'] = DecimalValue::canonical($operand['value']);
             if (isset($operand['source_value'])) {
                 if (! is_string($operand['source_value'])) {

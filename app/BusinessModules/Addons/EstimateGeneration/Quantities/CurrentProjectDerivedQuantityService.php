@@ -164,6 +164,9 @@ final readonly class CurrentProjectDerivedQuantityService
         ?array $completeness,
         array $decisions,
     ): array {
+        if (GeometryRelationOverlay::factIds($snapshot) !== []) {
+            $snapshot = GeometryRelationOverlay::apply($snapshot, $decisions, GeometryInventory::currentDocumentVersions($snapshot));
+        }
         $requests = $this->requests($snapshot, $projectModelToken, $technology, $completeness, $decisions);
         if (count($requests) > self::MAX_FORMULAS) {
             return [
@@ -537,30 +540,7 @@ final readonly class CurrentProjectDerivedQuantityService
 
     private function coverageConfirmed(Fact $fact, ProjectModelSnapshot $snapshot, array $decisions): bool
     {
-        if ($fact->origin !== 'user_input' || $fact->status !== 'confirmed' || $fact->evidenceIds === []) {
-            return false;
-        }
-        $evidence = array_column($snapshot->evidence, null, 'id');
-        foreach ($fact->evidenceIds as $id) {
-            $proof = $evidence[$id] ?? null;
-            if ($proof === null || $proof->sourceType !== 'user_input'
-                || [$proof->organizationId, $proof->projectId, $proof->sessionId, $proof->sourceVersion]
-                    !== [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
-                return false;
-            }
-        }
-        foreach ($decisions as $decision) {
-            if ($decision instanceof Decision && $decision->actorType === 'user' && ctype_digit($decision->actorId)
-                && (int) $decision->actorId > 0 && $decision->selectedFactId === $fact->id
-                && $decision->targetType === 'fact' && $decision->targetId === ($fact->supersedesFactId ?? $fact->id)
-                && [$decision->organizationId, $decision->projectId, $decision->sessionId, $decision->sourceVersion]
-                    === [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
-                && array_diff($fact->evidenceIds, $decision->evidenceIds) === []) {
-                return true;
-            }
-        }
-
-        return false;
+        return GeometryCoverage::isUserConfirmed($fact, $snapshot, $decisions);
     }
 
     /** @return list<Decision> */

@@ -44,6 +44,11 @@ final readonly class GetGeometryInventory
             }
             $inventory = null;
             $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
+            $relationFactIds = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($snapshot);
+            if ($relationFactIds !== []) {
+                $snapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot,
+                    $this->models->decisionsForSelectedFacts((int) $session->organization_id, $projectId, $sessionId, $relationFactIds), $documentVersions);
+            }
             if ($available && $parentId !== null) {
                 try {
                     $inventory = GeometryInventory::capture($snapshot, $parentId, $relation, $documentVersions);
@@ -59,17 +64,16 @@ final readonly class GetGeometryInventory
             $visible = $inventory === null ? null : array_fill_keys([$parentId, ...$inventory['member_ids'], ...$inventory['unassigned_ids']], true);
             $rows = [];
             foreach (GeometryInventory::entities($snapshot, $documentVersions) as $entity) {
-                if ($visible !== null && ! isset($visible[$entity->id])) {
+                if ($visible !== null && ! isset($visible[$entity->id])
+                    && GeometryInventory::type($entity) !== GeometryInventory::RELATIONS[$inventory['relation']][1]) {
                     continue;
                 }
                 $type = GeometryInventory::type($entity);
                 $name = $entity->attributes['name'] ?? $entity->attributes['properties']['name'] ?? null;
-                $name = is_string($name) && trim($name) !== '' ? mb_substr($name, 0, 160) : trans_message('estimate_generation.geometry_inventory.types.'.$type);
+                $explicitName = is_string($name) && trim($name) !== '';
+                $name = $explicitName ? mb_substr($name, 0, 160) : trans_message('estimate_generation.geometry_inventory.types.'.$type);
                 $floor = $entity->attributes['floor_id'] ?? $entity->attributes['properties']['floor_id'] ?? null;
                 $zone = $entity->attributes['zone_id'] ?? $entity->attributes['properties']['zone_id'] ?? null;
-                if ($search !== '' && mb_stripos($name.' '.($floor ?? '').' '.($zone ?? ''), $search) === false) {
-                    continue;
-                }
                 $locators = $documentVersions[$entity->id]['evidence'] ?? [];
                 foreach ($byEntity[$entity->id] ?? [] as $fact) {
                     foreach ($fact->evidenceIds as $id) {
@@ -82,7 +86,26 @@ final readonly class GetGeometryInventory
                             'page' => $proof->page, 'region' => $proof->region, 'native_reference' => $proof->nativeReference];
                     }
                 }
+                if (! $explicitName) {
+                    $manualKey = $entity->attributes['identity']['manual_key'] ?? $entity->attributes['properties']['identity']['manual_key'] ?? null;
+                    $first = array_values($locators)[0] ?? null;
+                    if (is_string($manualKey)) {
+                        $name .= ' · '.mb_substr($manualKey, 0, 100);
+                    } elseif ($first !== null) {
+                        $name .= ' · '.trans_message('estimate_generation.geometry_inventory.document_label', ['id' => $first['document_id']]);
+                        if (is_string($first['native_reference'])) {
+                            $name .= ' · '.mb_substr(preg_replace('/\Axlsx:sheet:/', '', $first['native_reference']), 0, 80);
+                        } elseif ($first['page'] !== null) {
+                            $name .= ' · '.trans_message('estimate_generation.geometry_inventory.page_label', ['page' => $first['page']]);
+                        }
+                    }
+                    $name = mb_substr($name, 0, 160);
+                }
+                if ($search !== '' && mb_stripos($name.' '.($floor ?? '').' '.($zone ?? ''), $search) === false) {
+                    continue;
+                }
                 $rows[] = ['entity_id' => $entity->id, 'type' => $type, 'name' => $name, 'floor' => $floor, 'zone' => $zone,
+                    'fingerprint' => GeometryInventory::entityFingerprint($entity, $documentVersions),
                     'source_version' => $entity->sourceVersion, 'parent_entity_id' => $entity->attributes['room_id'] ?? $entity->attributes['wall_id'] ?? $entity->attributes['roof_id'] ?? null,
                     'relations' => array_keys(array_filter(GeometryInventory::RELATIONS, static fn (array $definition): bool => $definition[0] === $type)),
                     'evidence' => array_values($locators)];

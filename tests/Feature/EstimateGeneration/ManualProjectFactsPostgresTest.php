@@ -20,6 +20,217 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_reparenting_invalidates_both_coverages_and_only_changes_relation_facts(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $save = app(SaveManualProjectFacts::class);
+        $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            [...$this->entity('wall', 'wall-1', ['length' => '3', 'height' => '2']), 'coverage' => ['wall_openings' => 'incomplete']],
+            [...$this->entity('wall', 'wall-2', ['length' => '4', 'height' => '2']), 'coverage' => ['wall_openings' => 'incomplete']],
+            [...$this->entity('opening', 'opening-1', ['width' => '1', 'height' => '2']), 'parent_key' => 'wall-1'],
+        ]]);
+        $models = app(ProjectModelRepository::class);
+        $entities = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->entities;
+        $byKey = [];
+        foreach ($entities as $entity) {
+            $byKey[$entity->attributes['identity']['manual_key']] = $entity;
+        }
+        $get = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class);
+        $savedQuantity = null;
+        foreach (['wall-1' => [1, '4'], 'wall-2' => [3, '6']] as $key => [$stateVersion, $amount]) {
+            $listing = $get->handle($actor, $scope[1], $scope[2], ['parent_entity_id' => $byKey[$key]->id, 'relation' => 'wall_openings']);
+            $child = array_values(array_filter($listing['entities'], static fn ($entity): bool => $entity['entity_id'] === $byKey['opening-1']->id))[0];
+            if ($key === 'wall-2') {
+                self::assertSame($byKey['wall-1']->id, $child['parent_entity_id']);
+            }
+            $linked = $save->handle($actor, $scope[1], $scope[2], $stateVersion, (string) Str::uuid(), ['entities' => [[
+                'key' => 'parent', 'type' => 'opening', 'existing_entity_id' => $child['entity_id'], 'parent_choice' => [
+                    'relation' => 'wall_openings', 'parent_entity_id' => $byKey[$key]->id, 'inventory_fingerprint' => $listing['inventory']['fingerprint'],
+                    'child_fingerprint' => $child['fingerprint'], 'reason' => 'Проверена принадлежность проёма выбранной стене',
+                ],
+            ]]]);
+            self::assertSame([], $linked['quantities']);
+            if ($savedQuantity !== null) {
+                self::assertSame([], $models->currentDerivedQuantities(...[...$scope, $savedQuantity->sourceVersion]));
+                try {
+                    $models->appendDerivedQuantities([$savedQuantity]);
+                    self::fail('Stale relation replay was persisted.');
+                } catch (\InvalidArgumentException $error) {
+                    self::assertMatchesRegularExpression('/Geometry (?:relation|coverage).*stale/', $error->getMessage());
+                }
+            }
+            $current = $get->handle($actor, $scope[1], $scope[2], ['parent_entity_id' => $byKey[$key]->id, 'relation' => 'wall_openings']);
+            $result = $save->handle($actor, $scope[1], $scope[2], $stateVersion + 1, (string) Str::uuid(), ['entities' => [[
+                'key' => 'coverage', 'type' => 'wall', 'existing_entity_id' => $byKey[$key]->id,
+                'coverage' => ['wall_openings' => 'covered_with_entities'], 'coverage_fingerprints' => ['wall_openings' => $current['inventory']['fingerprint']],
+            ]]]);
+            $quantityKey = 'quantity:wall_net_area:'.$byKey[$key]->id;
+            self::assertArrayHasKey($quantityKey, $result['quantities'], json_encode($result['warnings'], JSON_THROW_ON_ERROR));
+            self::assertSame($amount, $result['quantities'][$quantityKey]['amount']);
+            $savedQuantity = $this->persistWallPreview($scope, $models, $byKey[$key], $byKey['opening-1'], $result['quantities'][$quantityKey]);
+        }
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertEquals($entities, $after->entities);
+        $relations = array_values(array_filter($after->facts, static fn ($fact): bool => $fact->type === 'geometry_parent_wall_openings'));
+        self::assertCount(1, $relations);
+        self::assertSame(2, $relations[0]->version);
+        self::assertNotNull($relations[0]->supersedesFactId);
+        self::assertSame($byKey['wall-2']->id, $relations[0]->value['parent_entity_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
+    public function test_native_opening_parent_choice_preserves_source_entity_and_requires_new_coverage(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+            'session_id' => $scope[2], 'organization_id' => $scope[0], 'project_id' => $scope[1], 'user_id' => $actor->id,
+            'filename' => 'wall-openings.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'storage_path' => 'org-'.$scope[0].'/fixture-wall-openings.xlsx', 'file_size_bytes' => 100,
+            'checksum_sha256' => str_repeat('d', 64), 'status' => 'ready', 'page_count' => 1,
+        ]);
+        $version = \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion::fromDocument($document);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+            1, ...[...$scope, (int) $document->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                1, $version, [], $document->storage_path, $document->mime_type, $document->filename, 'fixture-claim', 1, 0, 'draft']);
+        $native = ['sheet' => 'Стены', 'header_cells' => [
+            ['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
+            ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.'],
+        ], 'cells' => []];
+        foreach ([['wall.w1', 'length', '3', 'm'], ['wall.w1', 'height', '2', 'm']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($publication->claims, $publication->decisions, (int) $document->id, 1, $publication->numericSources);
+        $openingDocument = $document->replicate();
+        $openingDocument->checksum_sha256 = str_repeat('f', 64);
+        $openingDocument->filename = 'openings.xlsx';
+        $openingDocument->save();
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext(
+            1, ...[...$scope, (int) $openingDocument->id, \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::SpreadsheetSheet,
+                1, 'sha256:'.str_repeat('f', 64), [], $openingDocument->storage_path, $openingDocument->mime_type, $openingDocument->filename, 'fixture-claim', 1, 0, 'draft']);
+        $native['cells'] = [];
+        foreach ([['opening.o1', 'width', '1', 'm'], ['opening.o1', 'height', '2', 'm']] as $index => $row) {
+            foreach ($row as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory)->spreadsheet($context, $native);
+        app(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter::class)
+            ->writeArbitration($publication->claims, $publication->decisions, (int) $openingDocument->id, 1, $publication->numericSources);
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $wall = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->type === 'wall'))[0];
+        $opening = array_values(array_filter($snapshot->entities, static fn ($entity): bool => $entity->type === 'opening'))[0];
+        $get = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory::class);
+        $query = ['parent_entity_id' => $wall->id, 'relation' => 'wall_openings'];
+        $listing = $get->handle($actor, $scope[1], $scope[2], $query);
+        self::assertSame([$opening->id], $listing['inventory']['unassigned_ids']);
+        $child = array_values(array_filter($listing['entities'], static fn ($entity): bool => $entity['entity_id'] === $opening->id))[0];
+        $coverage = ['entities' => [['key' => 'wall-review', 'type' => 'wall', 'existing_entity_id' => $wall->id,
+            'coverage' => ['wall_openings' => 'incomplete'], 'coverage_fingerprints' => ['wall_openings' => $listing['inventory']['fingerprint']]]]];
+        $save = app(SaveManualProjectFacts::class);
+        $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), $coverage);
+        $input = ['entities' => [['key' => 'opening-parent', 'type' => 'opening', 'existing_entity_id' => $opening->id,
+            'parent_choice' => ['relation' => 'wall_openings', 'parent_entity_id' => $wall->id,
+                'inventory_fingerprint' => $listing['inventory']['fingerprint'], 'child_fingerprint' => $child['fingerprint'],
+                'reason' => 'Принадлежность проёма проверена по исходному листу']]]];
+        $requestId = (string) Str::uuid();
+        $result = $save->handle($actor, $scope[1], $scope[2], 1, $requestId, $input);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame([], $result['quantities']);
+        self::assertEquals($result, $save->handle($actor, $scope[1], $scope[2], 1, $requestId, $input));
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertEquals($opening, array_values(array_filter($after->entities, static fn ($entity): bool => $entity->id === $opening->id))[0]);
+        $link = array_values(array_filter($after->facts, static fn ($fact): bool => $fact->type === 'geometry_parent_wall_openings'))[0];
+        self::assertSame($opening->sourceVersion, $link->sourceVersion);
+        self::assertNotSame($wall->sourceVersion, $link->sourceVersion);
+        self::assertSame($wall->id, $link->value['parent_entity_id']);
+        self::assertCount(1, $models->decisionsForSelectedFacts(...[...$scope, [$link->id]]));
+        $updated = $get->handle($actor, $scope[1], $scope[2], $query);
+        self::assertSame([$opening->id], $updated['inventory']['member_ids']);
+        self::assertSame([], $updated['inventory']['unassigned_ids']);
+        self::assertNotSame($listing['inventory']['fingerprint'], $updated['inventory']['fingerprint']);
+        $coverage['entities'][0]['coverage']['wall_openings'] = 'covered_with_entities';
+        try {
+            $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $coverage);
+            self::fail('Old coverage fingerprint survived a parent decision.');
+        } catch (ValidationException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        $coverage['entities'][0]['coverage_fingerprints']['wall_openings'] = $updated['inventory']['fingerprint'];
+        $confirmed = $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $coverage);
+        self::assertArrayHasKey('net_wall_area', $confirmed['quantities'], json_encode($confirmed['warnings'], JSON_THROW_ON_ERROR));
+        self::assertSame('4', $confirmed['quantities']['net_wall_area']['amount']);
+        self::assertContains($link->evidenceIds[0], $confirmed['quantities']['net_wall_area']['evidence_ids']);
+        self::assertStringContainsString($link->id, json_encode($confirmed['quantities']['net_wall_area']['formula_inputs'], JSON_THROW_ON_ERROR));
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'wall:1', 'quantity' => '4', 'unit' => 'm2', 'metadata' => ['quantity_key' => 'net_wall_area'],
+            'quantity_evidence' => $confirmed['quantities']['net_wall_area'],
+        ]]]]]]];
+        $applyGuard = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class);
+        DB::transaction(fn () => $applyGuard->assertCurrent(...[...$scope, $draft]));
+        self::addToAssertionCount(1);
+        $derived = $this->persistWallPreview($scope, $models, $wall, $opening, $confirmed['quantities']['net_wall_area']);
+        self::assertSame('4', $derived->value);
+        $models->replaceDerivedQuantityProjection(...[...$scope, $wall->sourceVersion, [$derived], []]);
+        self::assertSame(1, DB::table('estimate_generation_project_model_derived_quantities')->where('session_id', $scope[2])->count());
+        self::assertSame(2, DB::table('estimate_generation_project_model_derived_operands')->where('session_id', $scope[2])->distinct()->count('source_version'));
+        self::assertSame('4', $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion])[0]->value);
+        foreach (['child_fingerprint', 'inventory_fingerprint', 'parent_entity_id'] as $field) {
+            $invalid = $input;
+            $invalid['entities'][0]['parent_choice'][$field] = str_repeat('f', 64);
+            try {
+                $save->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), $invalid);
+                self::fail('Invalid parent decision was accepted.');
+            } catch (ValidationException) {
+                self::assertSame(3, $session->fresh()->state_version);
+            }
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+        config(['estimate-generation.universal_enabled' => false]);
+        try {
+            $save->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), $input);
+            self::fail('Disabled universal mode accepted a parent decision.');
+        } catch (ValidationException) {
+            self::assertSame(3, $session->fresh()->state_version);
+        }
+        config(['estimate-generation.universal_enabled' => true]);
+        $coverage['entities'][0]['coverage']['wall_openings'] = 'incomplete';
+        $save->handle($actor, $scope[1], $scope[2], 3, (string) Str::uuid(), $coverage);
+        try {
+            DB::transaction(fn () => $applyGuard->assertCurrent(...[...$scope, $draft]));
+            self::fail('Incomplete coverage reused the old apply basis.');
+        } catch (ValidationException) {
+            self::addToAssertionCount(1);
+        }
+        self::assertSame([], $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion]));
+        self::assertSame('4', $models->derivedQuantityHistory(...[...$scope, $wall->sourceVersion, $derived->logicalId])[0]->value);
+        try {
+            $models->appendDerivedQuantities([$derived]);
+            self::fail('A result with outdated coverage was persisted.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertStringContainsString('coverage', $error->getMessage());
+        }
+        $coverage['entities'][0]['coverage']['wall_openings'] = 'covered_with_entities';
+        $reconfirmed = $save->handle($actor, $scope[1], $scope[2], 4, (string) Str::uuid(), $coverage);
+        $this->persistWallPreview($scope, $models, $wall, $opening, $reconfirmed['quantities']['net_wall_area']);
+        self::assertSame('4', $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion])[0]->value);
+        $openingDocument->update(['ignored_at' => now(), 'status' => 'ignored']);
+        self::assertSame([], app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities']);
+        self::assertSame([], $models->currentDerivedQuantities(...[...$scope, $wall->sourceVersion]));
+        self::assertSame([], $models->currentDerivedQuantitiesForFormulaVersion(...[...$scope, '1']));
+        self::assertSame('4', $models->derivedQuantityHistory(...[...$scope, $wall->sourceVersion, $derived->logicalId])[0]->value);
+    }
+
     public function test_geometry_inventory_keeps_native_document_versions_and_locators_separate(): void
     {
         [$actor, $session] = $this->fixture();
@@ -426,6 +637,32 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
                 self::assertSame($assertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
             }
         }
+    }
+
+    private function persistWallPreview(array $scope, ProjectModelRepository $models, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity $wall,
+        \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity $opening, array $quantity): \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity
+    {
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $view = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($snapshot, $decisions,
+            \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($snapshot));
+        $operands = [];
+        foreach ($quantity['formula_inputs']['operands'] as $operand) {
+            $operands[$operand['role']][] = $operand['fact_id'];
+        }
+        $ready = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory)->derive($view, $decisions, [
+            'quantity_id' => 'quantity:wall_net_area:'.$wall->id, 'entity_id' => $wall->id,
+            'formula_identity' => 'wall_net_area', 'formula_version' => '1', 'output_unit' => 'm2', 'rounding_mode' => 'half_up', 'rounding_scale' => 2,
+            'snapshot' => $quantity['formula_inputs']['snapshot_identity'], 'operands' => $operands,
+            'geometry_inputs' => [['entity_id' => $opening->id, 'kind' => 'wall_opening', 'operands' => [
+                'width' => $operands['opening_widths'][0], 'height' => $operands['opening_heights'][0],
+            ]]],
+        ]);
+        self::assertTrue($ready->isReady(), json_encode($ready->unresolvedInputs, JSON_THROW_ON_ERROR));
+        self::assertSame($quantity['amount'], $ready->quantity->value);
+        $models->replaceDerivedQuantityProjection(...[...$scope, $wall->sourceVersion, [$ready->quantity], []]);
+
+        return $ready->quantity;
     }
 
     private function fixture(): array

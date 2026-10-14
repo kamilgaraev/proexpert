@@ -8,6 +8,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Proj
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyRecommendation;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryCoverage;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay;
 use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use JsonException;
@@ -740,6 +743,7 @@ SQL, [
         foreach (array_chunk($quantities, $chunkSize) as $chunk) {
             $this->database->connection()->transaction(function () use ($chunk): void {
                 $this->assertDerivedOperands($chunk);
+                $lockedContexts = [];
                 foreach ($chunk as $quantity) {
                     if (! $quantity instanceof DerivedQuantity) {
                         throw new InvalidArgumentException('Derived quantity batch is invalid.');
@@ -763,6 +767,10 @@ SQL, [
                         $quantity->projectId,
                         $quantity->sessionId,
                     );
+                    if ($this->hasGuardedGeometry($quantity)) {
+                        // A relation may have changed while waiting for the shared project-model lock.
+                        $this->assertDerivedOperands([$quantity], $lockedContexts);
+                    }
                     $scopeQuery = $this->database->table('estimate_generation_project_model_derived_quantities')
                         ->where('organization_id', $quantity->organizationId)
                         ->where('project_id', $quantity->projectId)
@@ -804,11 +812,12 @@ SQL, [
                     foreach ($quantity->operands as $ordinal => $operand) {
                         $this->database->table('estimate_generation_project_model_derived_operands')->insert([
                             'derived_quantity_id' => (int) $quantityId,
-                            'fact_id' => $this->factDatabaseId($quantity, $operand['fact_id']),
+                            'fact_id' => $this->factDatabaseId((object) ['organizationId' => $quantity->organizationId, 'projectId' => $quantity->projectId,
+                                'sessionId' => $quantity->sessionId, 'sourceVersion' => $operand['source_version'] ?? $quantity->sourceVersion], $operand['fact_id']),
                             'organization_id' => $quantity->organizationId,
                             'project_id' => $quantity->projectId,
                             'session_id' => $quantity->sessionId,
-                            'source_version' => $quantity->sourceVersion,
+                            'source_version' => $operand['source_version'] ?? $quantity->sourceVersion,
                             'operand_ordinal' => $ordinal,
                             'operand_snapshot' => $this->json($operand),
                         ]);
@@ -875,7 +884,7 @@ SQL, [
             ->limit($limit)
             ->get('quantity.*');
 
-        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+        return $this->readCurrentDerivedRows($rows);
     }
 
     public function replaceDerivedQuantityFormulaProjectionSet(
@@ -936,7 +945,7 @@ SQL, [
             ->limit($limit)
             ->get('quantity.*');
 
-        return $rows->map(fn (object $row): DerivedQuantity => $this->derivedQuantityFromRow($row))->all();
+        return $this->readCurrentDerivedRows($rows);
     }
 
     public function currentDerivedQuantityLogicalIdsByFormulaVersion(
@@ -2805,7 +2814,25 @@ SQL, [
         return is_string($stableKey) ? $stableKey : null;
     }
 
-    private function assertDerivedOperands(array $quantities): void
+    private function readCurrentDerivedRows(iterable $rows): array
+    {
+        $result = $contexts = [];
+        foreach ($rows as $row) {
+            $quantity = $this->derivedQuantityFromRow($row);
+            if ($this->hasGuardedGeometry($quantity)) {
+                try {
+                    $this->assertDerivedOperands([$quantity], $contexts);
+                } catch (InvalidArgumentException) {
+                    continue;
+                }
+            }
+            $result[] = $quantity;
+        }
+
+        return $result;
+    }
+
+    private function assertDerivedOperands(array $quantities, array &$contexts = []): void
     {
         $factIds = [];
         $scopes = [];
@@ -2815,13 +2842,10 @@ SQL, [
             }
             foreach ($quantity->operands as $operand) {
                 $factIds[] = $operand['fact_id'];
+                $scopes[] = [$quantity->organizationId, $quantity->projectId, $quantity->sessionId,
+                    $operand['source_version'] ?? $quantity->sourceVersion];
             }
-            $scopes[] = [
-                $quantity->organizationId,
-                $quantity->projectId,
-                $quantity->sessionId,
-                $quantity->sourceVersion,
-            ];
+            $this->assertGeometryRelationOperands($quantity, $contexts);
         }
         $factIds = array_values(array_unique($factIds));
         $rows = $this->database->table('estimate_generation_project_model_fact_projections as projection')
@@ -2922,7 +2946,7 @@ SQL, [
                     $quantity->organizationId,
                     $quantity->projectId,
                     $quantity->sessionId,
-                    $quantity->sourceVersion,
+                    $operand['source_version'] ?? $quantity->sourceVersion,
                     $operand['fact_id'],
                 ]);
                 $fact = $ready[$key] ?? null;
@@ -2936,6 +2960,114 @@ SQL, [
                     || ! $operand['current'] || $operand['status'] !== 'confirmed' || ! $hasLineage) {
                     throw new InvalidArgumentException('Confirmed derived quantity has a non-current or untrusted operand.');
                 }
+            }
+        }
+    }
+
+    private function hasGuardedGeometry(DerivedQuantity $quantity): bool
+    {
+        foreach ($quantity->operands as $operand) {
+            if (($operand['geometry_relations'] ?? []) !== [] || ($operand['source_version'] ?? $quantity->sourceVersion) !== $quantity->sourceVersion) {
+                return true;
+            }
+        }
+        foreach ($quantity->snapshotIdentity['geometry_coverages'] ?? [] as $coverage) {
+            if (($coverage['representation']['inventory_contract'] ?? null) === 'geometry-inventory:v1') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function assertGeometryRelationOperands(DerivedQuantity $quantity, array &$contexts): void
+    {
+        $crossSource = array_values(array_filter($quantity->operands,
+            static fn (array $operand): bool => ($operand['source_version'] ?? $quantity->sourceVersion) !== $quantity->sourceVersion));
+        if (! $this->hasGuardedGeometry($quantity)) {
+            return;
+        }
+        $scopeKey = implode(':', [$quantity->organizationId, $quantity->projectId, $quantity->sessionId]);
+        if (! isset($contexts[$scopeKey])) {
+            $snapshot = $this->snapshotForPlanning($quantity->organizationId, $quantity->projectId, $quantity->sessionId, 10001)['snapshot'];
+            if (count($snapshot->facts) > 10000) {
+                throw new InvalidArgumentException('Cross-source derived quantity input limit exceeded.');
+            }
+            $decisionIds = array_values(array_unique([...GeometryRelationOverlay::factIds($snapshot),
+                ...array_column(array_filter($snapshot->facts, static fn (Fact $fact): bool => str_starts_with($fact->type, 'geometry_coverage')), 'id')]));
+            $decisions = $this->decisionsForSelectedFacts($quantity->organizationId, $quantity->projectId, $quantity->sessionId, $decisionIds);
+            $anchors = GeometryInventory::currentDocumentVersions($snapshot);
+            $view = GeometryRelationOverlay::apply($snapshot, $decisions, $anchors);
+            $contexts[$scopeKey] = ['view' => $view, 'decisions' => $decisions, 'anchors' => $anchors, 'entities' => GeometryInventory::entities($view, $anchors),
+                'facts' => array_column($snapshot->facts, null, 'id')];
+        }
+        ['view' => $view, 'decisions' => $decisions, 'anchors' => $anchors, 'entities' => $entities, 'facts' => $facts] = $contexts[$scopeKey];
+        $target = $entities[$quantity->entityId] ?? null;
+        if ($target === null || $target->sourceVersion !== $quantity->sourceVersion) {
+            throw new InvalidArgumentException('Cross-source derived quantity target is unavailable.');
+        }
+        $requiredCoverages = match ($quantity->formulaIdentity) {
+            'wall_net_area' => ['wall_openings'], 'sloped_roof_area' => ['roof_facets', 'roof_openings'], default => [],
+        };
+        foreach ($requiredCoverages as $relation) {
+            $identities = array_values(array_filter($quantity->snapshotIdentity['geometry_coverages'] ?? [],
+                static fn (array $coverage): bool => ($coverage['relation'] ?? null) === $relation));
+            $fact = count($identities) === 1 ? ($facts[$identities[0]['fact_id'] ?? ''] ?? null) : null;
+            $coverage = $fact === null ? null : GeometryCoverage::fromFact($fact, $relation);
+            if ($coverage === null || $fact->entityId !== $target->id || ! GeometryCoverage::isUserConfirmed($fact, $view, $decisions)
+                || ! hash_equals(DerivedQuantityIdentity::canonicalJson($coverage->identity()), DerivedQuantityIdentity::canonicalJson($identities[0]))) {
+                throw new InvalidArgumentException('Geometry coverage lineage is missing or stale.');
+            }
+            $inventory = GeometryInventory::capture($view, $target->id, $relation, $anchors);
+            if ($inventory['unassigned_ids'] !== [] || $coverage->issue($fact->status, count($inventory['member_ids'])) !== null
+                || ($coverage->representation['inventory_contract'] ?? null) !== 'geometry-inventory:v1'
+                || ($coverage->representation['inventory_fingerprint'] ?? null) !== $inventory['fingerprint']) {
+                throw new InvalidArgumentException('Geometry coverage inventory is missing or stale.');
+            }
+        }
+        foreach ($quantity->operands as $operand) {
+            $lineage = $operand['geometry_relations'] ?? [];
+            if (! is_array($lineage) || ! array_is_list($lineage) || count($lineage) > 10000) {
+                throw new InvalidArgumentException('Geometry relation lineage is invalid.');
+            }
+            foreach ($lineage as $link) {
+                $child = is_array($link) ? ($entities[$link['entity_id'] ?? ''] ?? null) : null;
+                $parent = is_array($link) ? ($entities[$link['parent_entity_id'] ?? ''] ?? null) : null;
+                $relation = is_array($link) ? ($link['relation'] ?? null) : null;
+                if ($child === null || $parent === null || ! is_string($relation)
+                    || ($relation === 'room_walls' ? $child->id !== $target->id : $parent->id !== $target->id)
+                    || ! GeometryRelationOverlay::authorizes($view, $decisions, $child, $parent, $relation)) {
+                    throw new InvalidArgumentException('Geometry relation lineage is missing or stale.');
+                }
+                $review = $child->attributes['geometry_relation_reviews'][$relation];
+                if (($link['fact_id'] ?? null) !== $review['fact_id'] || ($link['decision_id'] ?? null) !== $review['decision_id']
+                    || ($link['evidence_ids'] ?? null) !== $review['evidence_ids']) {
+                    throw new InvalidArgumentException('Geometry relation lineage is missing or stale.');
+                }
+            }
+        }
+        foreach ($crossSource as $operand) {
+            $role = $operand['role'] ?? null;
+            $relation = match (true) {
+                $quantity->formulaIdentity === 'wall_net_area' && in_array($role, ['opening_widths', 'opening_heights'], true) => 'wall_openings',
+                $quantity->formulaIdentity === 'sloped_roof_area' && in_array($role, ['plan_areas', 'slope_rises', 'slope_runs'], true) => 'roof_facets',
+                $quantity->formulaIdentity === 'sloped_roof_area' && $role === 'roof_opening_areas' => 'roof_openings',
+                default => null,
+            };
+            $child = $entities[$operand['entity_id'] ?? ''] ?? null;
+            $fact = $facts[$operand['fact_id']] ?? null;
+            if ($relation === null || $child === null || $fact === null || $fact->entityId !== $child->id
+                || $fact->sourceVersion !== $operand['source_version'] || $child->sourceVersion !== $operand['source_version']
+                || ! GeometryRelationOverlay::authorizes($view, $decisions, $child, $target, $relation)) {
+                throw new InvalidArgumentException('Cross-source geometry operand requires a current confirmed relation.');
+            }
+            $review = $child->attributes['geometry_relation_reviews'][$relation];
+            $lineage = array_values(array_filter($operand['geometry_relations'] ?? [], static fn (array $link): bool => ($link['entity_id'] ?? null) === $child->id && ($link['parent_entity_id'] ?? null) === $target->id
+                && ($link['relation'] ?? null) === $relation && ($link['fact_id'] ?? null) === $review['fact_id']
+                && ($link['decision_id'] ?? null) === $review['decision_id']
+                && ($link['evidence_ids'] ?? null) === $review['evidence_ids']));
+            if (count($lineage) !== 1) {
+                throw new InvalidArgumentException('Cross-source geometry relation lineage is missing or stale.');
             }
         }
     }
