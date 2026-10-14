@@ -240,7 +240,6 @@ class ContractCoreExperienceControllerTest extends TestCase
                 'gp_percentage' => 5,
                 'planned_advance_amount' => 100000,
                 'actual_advance_amount' => 25000,
-                'status' => ContractStatusEnum::ACTIVE->value,
                 'start_date' => '2026-06-05',
                 'end_date' => '2026-08-20',
                 'notes' => 'Owner contract notes',
@@ -261,6 +260,7 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->assertSame(500000.0, (float) $contract->total_amount);
         $this->assertSame(100000.0, (float) $contract->planned_advance_amount);
         $this->assertSame(25000.0, (float) $contract->actual_advance_amount);
+        self::assertSame(ContractStatusEnum::DRAFT->value, $contract->status->value);
 
         $otherProjectContract = $this->createContract($context->organization, $anotherProject, $contractor, [
             'number' => 'CON-OTHER-PROJECT',
@@ -294,7 +294,6 @@ class ContractCoreExperienceControllerTest extends TestCase
                 'total_amount' => 650000,
                 'planned_advance_amount' => 150000,
                 'actual_advance_amount' => 25000,
-                'status' => ContractStatusEnum::ON_HOLD->value,
                 'notes' => null,
             ]);
 
@@ -305,12 +304,13 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->assertSame(650000.0, (float) $contract->total_amount);
         $this->assertSame(25000.0, (float) $contract->actual_advance_amount);
         $this->assertNull($contract->notes);
+        self::assertSame(ContractStatusEnum::DRAFT->value, $contract->status->value);
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/archive");
 
         $deleteResponse->assertOk();
-        self::assertSame(ContractStatusEnum::ON_HOLD->value, $contract->fresh()->status->value);
+        self::assertSame(ContractStatusEnum::DRAFT->value, $contract->fresh()->status->value);
         self::assertSame('archived', $contract->organizationViews()
             ->where('organization_id', $context->organization->id)->firstOrFail()->visibility);
     }
