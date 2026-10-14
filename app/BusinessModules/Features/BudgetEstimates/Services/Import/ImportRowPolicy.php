@@ -19,7 +19,10 @@ final class ImportRowPolicy
         return ! $row->isFooter && ($row->isSection
             || ($row->quantity ?? 0) != 0
             || ($row->unitPrice ?? 0) != 0
-            || ($row->currentTotalAmount ?? 0) != 0);
+            || ($row->currentTotalAmount ?? 0) != 0
+            || (trim($row->itemName) !== '' && ($row->quantity !== null
+                || $row->unitPrice !== null
+                || $row->currentTotalAmount !== null)));
     }
 
     public function isInformative(EstimateImportRowDTO $row): bool
@@ -28,7 +31,8 @@ final class ImportRowPolicy
         $code = mb_strtolower($row->code ?? '');
         $aggregates = ['от(зт)', 'эм', 'отм(зтм)', 'м', 'зтм', 'зт', 'от', 'отм', 'мат'];
 
-        return (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2))
+        return $row->isNotAccounted
+            || (in_array($name, $aggregates) && (empty($code) || strlen($code) <= 2))
             || str_starts_with($code, '4-100-')
             || str_contains($name, 'всего по позиции');
     }
@@ -39,8 +43,8 @@ final class ImportRowPolicy
         $overhead ??= $row->overheadAmount ?? 0;
         $profit ??= $row->profitAmount ?? 0;
 
-        return ! $this->isInformative($row) && ! $row->isSubItem && $row->currentTotalAmount !== null && ($overhead != 0 || $profit != 0)
-            ? $amount
+        return ! $this->isInformative($row) && ! $row->isSubItem && $row->currentTotalAmount !== null
+            ? $amount + ($row->overheadAmount === null ? $overhead : 0) + ($row->profitAmount === null ? $profit : 0)
             : $amount + $overhead + $profit;
     }
 }

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 class EstimateImportSampleRowsTest extends TestCase
 {
@@ -53,11 +54,12 @@ class EstimateImportSampleRowsTest extends TestCase
         $writer->save($filePath);
 
         Storage::fake('s3');
-        $storedPath = 'org-1/estimate-imports/' . $fileName;
+        $context = EstimateImportTestContext::create();
+        $storedPath = 'org-' . $context->organization->id . '/estimate-imports/' . $fileName;
         Storage::disk('s3')->put($storedPath, file_get_contents($filePath));
 
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create();
+        $organization = $context->organization;
+        $user = $context->user;
 
         $session = ImportSession::create([
             'user_id' => $user->id,
@@ -67,7 +69,7 @@ class EstimateImportSampleRowsTest extends TestCase
             'file_name' => $fileName,
             'file_size' => filesize($filePath),
             'file_format' => 'xlsx',
-            'options' => [],
+            'options' => ['project_id' => $context->project->id],
             'stats' => ['progress' => 0],
         ]);
 
@@ -77,7 +79,7 @@ class EstimateImportSampleRowsTest extends TestCase
 
         // 4. Call detectFormat
         try {
-            $result = $service->detectFormat($session->id);
+            $result = $service->detectFormat($session->id, null, $context->access());
             
             // 5. Assertions
             $this->assertArrayHasKey('sample_rows', $result);

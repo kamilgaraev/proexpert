@@ -5,21 +5,26 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\Models\EstimateItem;
+use Illuminate\Support\Collection;
 
 class EstimateLaborHoursService
 {
-    public function calculate(EstimateItem $item): float
+    public function calculate(EstimateItem $item, ?Collection $loadedChildren = null): float
     {
         $workersSummary = 0.0;
         $workersDetails = 0.0;
         $operatorsSummary = 0.0;
         $operatorsDetails = 0.0;
 
-        $children = EstimateItem::query()
-            ->where('estimate_id', $item->estimate_id)
-            ->where('parent_work_id', $item->id)
-            ->where('item_type', 'labor')
-            ->get();
+        $children = $loadedChildren !== null
+            ? $loadedChildren->filter(static fn (EstimateItem $child): bool => (string) $child->estimate_id === (string) $item->estimate_id
+                && (string) $child->parent_work_id === (string) $item->id
+                && ($child->item_type->value ?? $child->item_type) === 'labor')
+            : EstimateItem::query()
+                ->where('estimate_id', $item->estimate_id)
+                ->where('parent_work_id', $item->id)
+                ->where('item_type', 'labor')
+                ->get();
 
         foreach ($children as $child) {
             $imported = $child->is_manual && array_key_exists('raw_data', $child->metadata ?? []);

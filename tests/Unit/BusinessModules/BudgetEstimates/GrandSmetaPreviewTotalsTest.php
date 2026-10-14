@@ -57,6 +57,22 @@ final class GrandSmetaPreviewTotalsTest extends TestCase
         self::assertEquals(100, $preview->totals['total_amount']);
     }
 
+    public function test_explicit_informative_root_stays_visible_without_increasing_net(): void
+    {
+        $informative = new EstimateImportRowDTO(itemName: 'Справочная стоимость', quantity: 1, currentTotalAmount: 999, isNotAccounted: true);
+        $policy = new ImportRowPolicy;
+        self::assertTrue($policy->shouldImport($informative));
+        self::assertTrue($policy->isInformative($informative));
+        $preview = $this->preview([
+            new EstimateImportRowDTO(itemName: 'Work', quantity: 1, currentTotalAmount: 100),
+            $informative,
+            new EstimateImportRowDTO(itemName: 'Resource', currentTotalAmount: 30, isSubItem: true),
+        ]);
+
+        self::assertCount(3, $preview->items);
+        self::assertEquals(100, $preview->totals['total_amount']);
+    }
+
     public function test_row_policy_keeps_sections_negative_adjustments_and_zero_price_resources(): void
     {
         $policy = new ImportRowPolicy;
@@ -73,6 +89,16 @@ final class GrandSmetaPreviewTotalsTest extends TestCase
         $mapper->expects(self::once())->method('isTechnicalRow')->with([1, 2, 3, 4])->willReturn(true);
         $policy = new ImportRowPolicy($mapper);
         self::assertFalse($policy->shouldImport(new EstimateImportRowDTO(quantity: 4, rawData: [1, 2, 3, 4])));
+    }
+
+    public function test_nested_financial_structure_does_not_hide_a_real_source_row(): void
+    {
+        $row = new EstimateImportRowDTO(itemName: 'Работа', quantity: 1, currentTotalAmount: 125, rawData: [
+            'A' => 1, 'B' => 'ГЭСН1', 'C' => 'Работа', 'F' => 'шт', 'I' => 1, 'N' => 125,
+            'financial_structure' => ['layout' => 'grand_modern_2020'],
+        ]);
+
+        self::assertTrue((new ImportRowPolicy)->shouldImport($row));
     }
 
     public function test_position_total_does_not_add_included_overhead_twice(): void
@@ -107,6 +133,17 @@ final class GrandSmetaPreviewTotalsTest extends TestCase
         self::assertEquals(80, $preview->totals['total_amount']);
     }
 
+    public function test_informative_root_charges_do_not_reduce_unallocated_footer_charges(): void
+    {
+        $preview = $this->preview([
+            new EstimateImportRowDTO(itemName: 'Работа', quantity: 1, currentTotalAmount: 100),
+            new EstimateImportRowDTO(itemName: 'Справочная стоимость', quantity: 1, currentTotalAmount: 999, overheadAmount: 50, isNotAccounted: true),
+        ], ['total_estimate_cost' => 120, 'overhead_cost' => 20, 'profit_cost' => 0]);
+
+        self::assertSame(120.0, $preview->totals['total_amount']);
+        self::assertTrue($preview->validation['is_valid']);
+    }
+
     private function preview(array $rows, array $footer = []): \App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult
     {
         $parser = $this->createMock(GrandSmetaParser::class);
@@ -116,6 +153,6 @@ final class GrandSmetaPreviewTotalsTest extends TestCase
         $parser->method('getFooterData')->willReturn($footer);
         $bridge = new GrandSmetaRuntimeBridge(new GrandSmetaHandler, $parser, new GrandSmetaXMLParser);
 
-        return $bridge->preview(new ImportSession, 'estimate.xlsx', new ImportStructureResult('grandsmeta'));
+        return $bridge->preview(new ImportSession, 'estimate.xlsx', new ImportStructureResult('grandsmeta', metadata: ['header_confirmed' => true]));
     }
 }

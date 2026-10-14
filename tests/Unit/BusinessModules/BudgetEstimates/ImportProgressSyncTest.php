@@ -1,48 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
-use Tests\TestCase;
 use App\Models\ImportSession;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery;
+use Tests\TestCase;
 
-class ImportProgressSyncTest extends TestCase
+final class ImportProgressSyncTest extends TestCase
 {
-    // Не используем RefreshDatabase здесь, если не хотим сносить базу, 
-    // но для чистого теста модели она полезна.
-    // Однако по правилам пользователя мы не запускаем миграции.
-    // Используем существующую сессию или мокаем.
-
-    public function test_get_import_status_prioritizes_cache()
+    public function test_processing_progress_uses_cache_but_terminal_progress_uses_persisted_state(): void
     {
-        $sessionId = 'test-session-' . uniqid();
-        
-        // Мокаем сессию
-        $session = new ImportSession([
-            'id' => $sessionId,
-            'status' => 'processing',
-            'stats' => ['progress' => 10, 'message' => 'Initial']
-        ]);
-        
-        // Мы не можем легко сохранить в реальную БД без миграций, 
-        // поэтому мокаем репозиторий/модель если это критично, 
-        // но здесь проверим логику сервиса.
-        
-        $service = app(EstimateImportService::class);
-        
-        // 1. Без кеша - должно быть 10% (это не сработает без записи в БД, 
-        // поэтому проверим именно ПРИОРИТЕТ если кеш ЕСТЬ)
-        
-        Cache::put("import_session_progress_{$sessionId}", 45, 60);
-        
-        // Нам нужно чтобы find($id) вернул что-то. 
-        // В реальном окружении мы бы создали запись. 
-        // Для юнит-теста проверим что сервис обращается к кешу.
-        
-        // Если мы не можем писать в БД, проверим Tinker-ом или просто логикой.
-        $this->assertTrue(Cache::has("import_session_progress_{$sessionId}"));
-        $this->assertEquals(45, Cache::get("import_session_progress_{$sessionId}"));
+        foreach (['processing' => 45, 'completed' => 100, 'validated' => 100, 'failed' => 10] as $status => $expected) {
+            $session = new ImportSession(['status' => $status, 'stats' => ['progress' => in_array($status, ['completed', 'validated'], true) ? 100 : 10]]);
+            $session->id = '11111111-1111-4111-8111-111111111111';
+            $session->created_at = now();
+            $service = Mockery::mock(EstimateImportService::class)->makePartial();
+            $service->shouldReceive('getSession')->once()->with($session->id, null)->andReturn($session);
+            Cache::put("import_session_progress_{$session->id}", 45, 60);
+            $result = $service->getImportStatus($session->id);
+            self::assertSame($expected, $result['progress']);
+            self::assertSame($status, $result['status']);
+        }
     }
 }

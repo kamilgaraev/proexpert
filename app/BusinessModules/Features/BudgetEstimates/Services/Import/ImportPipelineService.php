@@ -28,18 +28,6 @@ class ImportPipelineService
 
     private array $unitCache = [];
 
-    private array $unitAliases = [
-        'м2' => 'м²',  'м^2' => 'м²',  'кв.м' => 'м²',
-        'кв. м' => 'м²',  'кв м' => 'м²',  'м.кв' => 'м²',
-        'м3' => 'м³',  'куб.м' => 'м³',  'куб. м' => 'м³',
-        'куб м' => 'м³',  'м.куб' => 'м³',
-        'чел-час' => 'чел-ч', 'чел.ч' => 'чел-ч', 'ч-ч' => 'чел-ч', 'чел. ч' => 'чел-ч', 'чел.-ч' => 'чел-ч',
-        'маш-час' => 'маш-ч', 'маш.ч' => 'маш-ч', 'маш. ч' => 'маш-ч', 'маш.-ч' => 'маш-ч',
-        'погон.м' => 'пог. м', 'пог.м' => 'пог. м',
-        'кг.' => 'кг',   'т.' => 'т',    'шт.' => 'шт',
-        'м.' => 'м',
-    ];
-
     private array $workUnitKeywords = [
         'чел-ч', 'маш-ч', 'смн', 'чел-дн', 'маш-смн', 'рейс', 'усл', 'этап', 'час',
     ];
@@ -53,7 +41,6 @@ class ImportPipelineService
         private NormativeMatchingService $matcher,
         private SemanticMatchingService $semanticMatcher,
         private SubItemGroupingService $subItemGrouper,
-        private FormulaAwarenessService $formulaAwareness,
         private \App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService $calculationService,
         private MaterialMatchingService $materialMatcher,
         private EstimateImportFinancialSettingsResolver $financialSettingsResolver,
@@ -87,12 +74,18 @@ class ImportPipelineService
 
     private function runWithLocalCopy(ImportSession $session, string $filePath): void
     {
+        $this->subItemState = [];
+        $runToken = $session->options['run_token'] ?? null;
         Log::info("[ImportPipeline] Started for session {$session->id}");
 
-        $session->update([
-            'status' => 'parsing',
-            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => trans_message('estimate.import_processing_started')]),
-        ]);
+        DB::transaction(function () use ($session, $runToken): void {
+            $lockedSession = ImportSession::query()->whereKey($session->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkerClaim($lockedSession, $runToken);
+            $session->update([
+                'status' => 'parsing',
+                'stats' => array_merge($lockedSession->stats ?? [], ['progress' => 5, 'message' => trans_message('estimate.import_processing_started')]),
+            ]);
+        });
 
         $handlerSlug = (string) ($session->options['format_handler'] ?? '');
         if ($handlerSlug === '') {
@@ -103,10 +96,14 @@ class ImportPipelineService
         $structureResult = $this->structureFromSession($handler->slug(), $session)
             ?? $handler->detectStructure($session, $filePath);
 
-        $sessionOptions = $session->options ?? [];
-        $sessionOptions['format_handler'] = $handler->slug();
-        $sessionOptions['structure'] = $structureResult->toArray();
-        $session->update(['options' => $sessionOptions]);
+        DB::transaction(function () use ($session, $runToken, $handler, $structureResult): void {
+            $lockedSession = ImportSession::query()->whereKey($session->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkerClaim($lockedSession, $runToken);
+            $sessionOptions = $lockedSession->options ?? [];
+            $sessionOptions['format_handler'] = $handler->slug();
+            $sessionOptions['structure'] = $structureResult->toArray();
+            $session->update(['options' => $sessionOptions]);
+        });
         $session = $session->fresh();
 
         $preview = $handler->preview($session, $filePath, $structureResult);
@@ -125,20 +122,26 @@ class ImportPipelineService
         ]);
 
         if (($session->options['validate_only'] ?? false) === true) {
-            $session->update([
-                'status' => 'validated',
-                'stats' => array_merge($session->fresh()->stats ?? [], [
-                    'progress' => 100,
-                    'result' => [
-                        'processed_rows' => $totalRows,
-                        'sections_created' => 0,
-                        'items_created' => 0,
-                        'total_rows' => $totalRows,
-                        'validation' => $validation->toArray(),
-                    ],
-                    'message' => trans_message('estimate.import_validated'),
-                ]),
-            ]);
+            DB::transaction(function () use ($session, $runToken, $totalRows, $validation): void {
+                $lockedSession = ImportSession::query()->whereKey($session->id)->lockForUpdate()->firstOrFail();
+                $this->assertWorkerClaim($lockedSession, $runToken);
+                $session->update([
+                    'status' => 'validated',
+                    'stats' => array_merge($lockedSession->stats ?? [], [
+                        'progress' => 100,
+                        'result' => [
+                            'processed_rows' => $totalRows,
+                            'sections_created' => 0,
+                            'items_created' => 0,
+                            'total_rows' => $totalRows,
+                            'validation' => $validation->toArray(),
+                        ],
+                        'message' => trans_message('estimate.import_validated'),
+                    ]),
+                ]);
+            });
+
+            Cache::put("import_session_progress_{$session->id}", 100, 3600);
 
             return;
         }
@@ -165,6 +168,8 @@ class ImportPipelineService
 
         DB::beginTransaction();
         try {
+            $lockedSession = ImportSession::query()->whereKey($session->id)->lockForUpdate()->firstOrFail();
+            $this->assertWorkerClaim($lockedSession, $runToken);
             $estimate = $this->resolveEstimate($session);
             $this->processStream($stream, $estimate, $stats, $session);
             $removedEmptySections = $this->pruneEmptyLeafSections($estimate, $handler->slug());
@@ -176,33 +181,19 @@ class ImportPipelineService
             if (method_exists($handler, 'getFooterData')) {
                 $footerData = $handler->getFooterData();
                 if (! empty($footerData)) {
-                    Log::info("[ImportPipeline] Found footer data for session {$session->id}", $footerData);
+                    Log::info('[ImportPipeline] Found footer data', [
+                        'session_id' => $session->id,
+                        'fields_count' => count($footerData),
+                    ]);
 
                     // Update estimate with footer values
                     $meta = $estimate->metadata ?? [];
                     $meta['footer'] = $footerData;
-                    // ⭐ КАЛИБРОВКА СТАВОК (CALIBRATION)
-                    // Если в подвале удалось найти ФОТ и НР/СП - доверяем им,
-                    // так как это единственный способ попасть в математику Гранд-Сметы.
-                    $directCosts = (float) ($footerData['direct_costs'] ?? 0);
-                    $laborCostFromFooter = (float) ($footerData['labor_cost'] ?? 0); // ФОТ
-                    $overheadFromFooter = (float) ($footerData['overhead_cost'] ?? 0);
-                    $profitFromFooter = (float) ($footerData['profit_cost'] ?? 0);
-
-                    $baseForCalibration = $laborCostFromFooter > 0 ? $laborCostFromFooter : ($directCosts > 0 ? $directCosts : 0);
-
-                    if ($this->shouldPreserveImportedTotals($session) && $baseForCalibration > 0) {
-                        Log::info("[ImportPipeline] Calibrating rates using footer: base={$baseForCalibration}, OH={$overheadFromFooter}, P={$profitFromFooter}");
-                        if ($overheadFromFooter > 0) {
-                            $estimate->overhead_rate = round(($overheadFromFooter / $baseForCalibration) * 100, 2);
-                        }
-                        if ($profitFromFooter > 0) {
-                            $estimate->profit_rate = round(($profitFromFooter / $baseForCalibration) * 100, 2);
-                        }
-                    }
+                    $meta['import_source_charges_preserved'] = true;
 
                     $estimate->metadata = $meta;
                     $estimate->save();
+                    $this->persistFooterCharges($estimate, $footerData);
                 }
             }
 
@@ -210,30 +201,20 @@ class ImportPipelineService
             $this->updateProgress($session, 90, trans_message('estimate.import_recalculating_totals'));
             $this->calculationService->recalculateAll($estimate);
 
-            // ⭐ OVERRIDE ШАПКИ СМЕТЫ ТОЧНЫМИ ЗНАЧЕНИЯМИ ИЗ FOOTER
-            // GrandSmeta не хранит НР/СП построчно — только итоговые суммы в подвале.
-            // recalculateAll даёт ~99.99% точность, но накопленное округление per-position
-            // даёт расхождение в ~64 руб. Берём точные значения из подвала файла.
-            $savedFooter = $estimate->fresh()->metadata['footer'] ?? [];
-            $footerTotal = (float) ($savedFooter['total_estimate_cost'] ?? 0);
-            $footerOverhead = (float) ($savedFooter['overhead_cost'] ?? 0);
-            $footerProfit = (float) ($savedFooter['profit_cost'] ?? 0);
-            $importedTotals = $this->financialSettingsResolver->resolveImportedTotals($savedFooter);
+            $this->assertWorkerClaim($session->fresh(), $runToken);
 
-            if ($this->shouldPreserveImportedTotals($session) && $importedTotals !== null) {
-                $footerDirect = $importedTotals['total_direct_costs'];
-                $estimate->update($importedTotals + [
-                    'total_amount_with_vat' => round($footerTotal * (1 + $estimate->vat_rate / 100), 2),
-                ]);
-                Log::info("[ImportPipeline] Footer override applied for estimate #{$estimate->id}", [
-                    'total' => $footerTotal,
-                    'overhead' => $footerOverhead,
-                    'profit' => $footerProfit,
-                    'direct' => $footerDirect,
-                ]);
-            }
+            $session->update([
+                'status' => 'completed',
+                'stats' => array_merge($session->fresh()->stats ?? [], [
+                    'progress' => 100,
+                    'estimate_id' => $estimate->id,
+                    'result' => $stats,
+                    'message' => trans_message('estimate.import_completed'),
+                ]),
+            ]);
 
             DB::commit();
+            Cache::put("import_session_progress_{$session->id}", 100, 3600);
 
             try {
                 $freshEstimate = $estimate->fresh() ?? $estimate;
@@ -250,12 +231,8 @@ class ImportPipelineService
             Log::info("[ImportPipeline] Finished for session {$session->id}", $stats);
 
             $session->update([
-                'status' => 'completed',
                 'stats' => array_merge($session->fresh()->stats ?? [], [
-                    'progress' => 100,
                     'result' => $stats,
-                    'estimate_id' => $estimate->id,
-                    'message' => trans_message('estimate.import_completed'),
                 ]),
             ]);
 
@@ -292,6 +269,65 @@ class ImportPipelineService
             metadata: $structure['metadata'] ?? [],
             aiMappingApplied: (bool) ($structure['ai_mapping_applied'] ?? false),
         );
+    }
+
+    private function assertWorkerClaim(ImportSession $current, ?string $runToken): void
+    {
+        if (! $current->isActive()
+            || ($current->options['run_token'] ?? null) !== $runToken
+            || isset($current->stats['estimate_id'])
+            || (isset($current->stats['worker_deadline_at']) && now()->greaterThanOrEqualTo(\Illuminate\Support\Carbon::parse($current->stats['worker_deadline_at'])))) {
+            throw new \RuntimeException('estimate_import_worker_claim_expired');
+        }
+        app(EstimateImportService::class)->assertExecutionAccess($current);
+    }
+
+    private function persistFooterCharges(Estimate $estimate, array $footer): void
+    {
+        foreach (['overhead_cost', 'profit_cost'] as $key) {
+            if ((float) ($footer[$key] ?? 0) == 0
+                && empty($footer[$key.'_declared']) && ! array_key_exists('global_'.$key, $footer)) {
+                unset($footer[$key]);
+            }
+        }
+        if (! array_key_exists('overhead_cost', $footer) && ! array_key_exists('profit_cost', $footer)) {
+            return;
+        }
+        $items = EstimateItem::query()
+            ->where('estimate_id', $estimate->id)
+            ->whereNull('parent_work_id')
+            ->where('is_not_accounted', false)
+            ->orderBy('id')
+            ->get();
+        $components = [];
+        foreach ($items as $item) {
+            $components[$item->id] = [
+                'current_total_amount' => $item->current_total_amount,
+                'direct_costs' => $item->direct_costs,
+                'labor_cost' => $item->labor_cost,
+                'overhead_amount' => $item->overhead_amount,
+                'profit_amount' => $item->profit_amount,
+                'has_source_overhead_amount' => $item->metadata['import_has_source_overhead'] ?? false,
+                'has_source_profit_amount' => $item->metadata['import_has_source_profit'] ?? false,
+            ];
+        }
+        $distributed = (new ImportedEstimateChargeDistributor)->distribute($components, $footer);
+        foreach ($items as $item) {
+            $values = $distributed[$item->id];
+            if (! isset($values['footer_components'])) {
+                continue;
+            }
+            $metadata = $item->metadata ?? [];
+            $metadata['import_source_components_preserved'] = true;
+            $metadata['import_footer_charges'] = $values['footer_components'];
+            $item->update([
+                'current_total_amount' => $values['current_total_amount'],
+                'total_amount' => $values['current_total_amount'],
+                'overhead_amount' => $values['overhead_amount'],
+                'profit_amount' => $values['profit_amount'],
+                'metadata' => $metadata,
+            ]);
+        }
     }
 
     private function validationFailureMessage(ImportValidationResult $validation): string
@@ -341,16 +377,10 @@ class ImportPipelineService
             'profit_rate' => $financialSettings['profit_rate'],
             'metadata' => [
                 'import_financial_mode' => $settings['financial_mode'] ?? 'plain',
+                'import_execution_user_id' => (int) ($session->options['execution_user_id'] ?? $session->user_id),
+                'import_source_user_id' => (int) $session->user_id,
             ],
         ]);
-    }
-
-    private function shouldPreserveImportedTotals(ImportSession $session): bool
-    {
-        $settings = $session->fresh()->options['estimate_settings'] ?? [];
-        $financialSettings = $this->financialSettingsResolver->resolve($settings);
-
-        return $financialSettings['preserve_imported_totals'];
     }
 
     private array $subItemState = [];
@@ -369,6 +399,18 @@ class ImportPipelineService
 
             if (!$rowPolicy->shouldImport($rowDTO)) {
                 continue;
+            }
+
+            if (! $rowDTO->isSection) {
+                $warnings = array_values(array_unique($rowDTO->warnings));
+                if ($warnings !== []) {
+                    $stats['row_warnings'][] = [
+                        'row_number' => $rowDTO->rowNumber,
+                        'worksheet_index' => $rowDTO->worksheetIndex,
+                        'worksheet_name' => $rowDTO->worksheetName,
+                        'warnings' => $warnings,
+                    ];
+                }
             }
 
             if ($rowDTO->isSection) {
@@ -502,9 +544,6 @@ class ImportPipelineService
         // Step 3: Sub-item Grouping (XML Parity)
         $preparedRows = array_column($batch, 'prepared_data');
         $groupedRows = $this->subItemGrouper->groupItems($preparedRows, $this->subItemState);
-
-        // Step 4: Formula Validation
-        $this->formulaAwareness->annotate($groupedRows);
 
         // Step 5: Global Insert with Hierarchy Awareness
         $childrenBatch = [];
@@ -641,29 +680,39 @@ class ImportPipelineService
         $profitAmount = isset($dto->profitAmount) ? (float) $dto->profitAmount : 0;
 
         // 2. Fallback: если парсер не нашел суммы, но есть ФОТ и настройки сметы
-        if ($overheadAmount == 0 && $profitAmount == 0 && ! $isInformative && $laborCost > 0) {
-            $overheadAmount = round($laborCost * ($estimate->overhead_rate / 100), 2);
-            $profitAmount = round($laborCost * ($estimate->profit_rate / 100), 2);
+        if (! $isInformative && ! $isSubItem && $laborCost != 0) {
+            if ($dto->overheadAmount === null) {
+                $overheadAmount = round($laborCost * ($estimate->overhead_rate / 100), 2);
+            }
+            if ($dto->profitAmount === null) {
+                $profitAmount = round($laborCost * ($estimate->profit_rate / 100), 2);
+            }
         }
 
         // 3. В Гранд-Смете сумма позиции из колонки "Всего" - это Прямые Затраты!
-        $directCosts = (! $isInformative && ! $isSubItem && $dto->currentTotalAmount !== null && ($overheadAmount != 0 || $profitAmount != 0))
-            ? $totalAmount - $overheadAmount - $profitAmount
-            : $totalAmount;
-
         // Значит Итог с учетом налогов (полная стоимость) - это ПЗ + НР + СП
         // Для подпунктов математика налогов не применяется (их сумма заложена в ПЗ родителя)
         $actualTotalAmount = (new ImportRowPolicy($this->rowMapper))->totalAmount($dto, $overheadAmount, $profitAmount);
+        $directCosts = ! $isInformative && ! $isSubItem
+            ? $actualTotalAmount - $overheadAmount - $profitAmount
+            : $totalAmount;
 
         // 4. Все подпункты делают задвоение, поэтому их исключаем из учета итоговых сумм
-        $isNotAccounted = $isInformative || $isSubItem;
+        $isNotAccounted = $isInformative || $isSubItem || $dto->isNotAccounted;
 
         $metadata = [
             'original_unit' => $dto->unit,
             'raw_data' => $dto->rawData,
+            'source_row_number' => $dto->rowNumber,
+            'source_worksheet_index' => $dto->worksheetIndex,
+            'source_worksheet_name' => $dto->worksheetName,
             'overhead_rate' => $estimate->overhead_rate,
             'profit_rate' => $estimate->profit_rate,
             'is_informative_row' => $isInformative,
+            'import_has_source_charges' => $dto->overheadAmount !== null || $dto->profitAmount !== null,
+            'import_has_source_overhead' => $dto->overheadAmount !== null,
+            'import_has_source_profit' => $dto->profitAmount !== null,
+            'import_source_components_preserved' => $dto->overheadAmount !== null || $dto->profitAmount !== null || $dto->itemType === 'equipment',
         ];
 
         // ⭐ АВТОМАТИЧЕСКАЯ РЕГИСТРАЦИЯ АКТИВОВ:
@@ -711,7 +760,7 @@ class ImportPipelineService
 
             'materials_cost' => $dto->materialsCost ?? 0,
             'machinery_cost' => $dto->machineryCost ?? 0,
-            'equipment_cost' => $dto->itemType === 'equipment' ? $actualTotalAmount : 0,
+            'equipment_cost' => $dto->itemType === 'equipment' ? $actualTotalAmount - $overheadAmount - $profitAmount : 0,
             'labor_hours' => $this->detectLaborHours($dto),
             'machinery_hours' => $this->detectMachineryHours($dto),
 
@@ -777,7 +826,7 @@ class ImportPipelineService
      */
     private function detectLaborCost($dto): float
     {
-        if (isset($dto->laborCost) && (float) $dto->laborCost > 0) {
+        if (isset($dto->laborCost) && (float) $dto->laborCost != 0) {
             return (float) $dto->laborCost;
         }
 
@@ -857,9 +906,7 @@ class ImportPipelineService
 
     private function normalizeUnitName(string $unitName): string
     {
-        $normalized = mb_strtolower(trim($unitName));
-
-        return $this->unitAliases[$normalized] ?? $normalized;
+        return mb_strtolower((new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation\UnitNormalizationService)->normalizeForEstimateImport($unitName) ?? '');
     }
 
     private function resolveUnitId(?string $unitName, int $organizationId): ?int

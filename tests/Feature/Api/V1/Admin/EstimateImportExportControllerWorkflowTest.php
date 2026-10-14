@@ -26,9 +26,23 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_unknown_import_status_is_a_real_404_with_safe_reason_and_correlation_id(): void
+    {
+        $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/estimates/import/status/11111111-1111-4111-8111-111111111111");
+        $response->assertStatus(404)->assertJsonPath('code', 'import_session_not_found');
+        self::assertTrue(\Ramsey\Uuid\Uuid::isValid($response->json('correlation_id')));
+        self::assertStringNotContainsString('ModelNotFoundException', json_encode($response->json()));
+    }
+
     public function test_import_status_validation_is_localized_and_does_not_call_service_without_job_id(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
@@ -54,13 +68,14 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_import_history_normalizes_admin_limit_before_service_call(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
         $this->mock(EstimateImportService::class, function (MockInterface $mock) use ($context): void {
             $mock->shouldReceive('getImportHistory')
                 ->once()
-                ->with($context->organization->id, 100)
+                ->with($context->organization->id, 100, \Mockery::type(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportAccessContext::class))
                 ->andReturn(collect());
         });
 
@@ -75,19 +90,20 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_detect_type_returns_business_error_for_unsupported_format(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
         $this->mock(EstimateImportService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('detectEstimateType')
                 ->once()
-                ->with('session-1')
+                ->with('11111111-1111-4111-8111-111111111111', \Mockery::type(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportAccessContext::class))
                 ->andThrow(UnsupportedEstimateImportFormatException::create());
         });
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/estimates/import/detect-type", [
-                'file_id' => 'session-1',
+                'file_id' => '11111111-1111-4111-8111-111111111111',
             ]);
 
         $response->assertStatus(422)
@@ -98,13 +114,14 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_import_map_returns_preview_validation_and_file_totals(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
         $this->mock(EstimateImportService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('preview')
                 ->once()
-                ->with('session-1', [])
+                ->with('11111111-1111-4111-8111-111111111111', [], \Mockery::type(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportAccessContext::class), [])
                 ->andReturn(new EstimateImportDTO(
                     fileName: 'estimate.xlsx',
                     fileSize: 1024,
@@ -133,7 +150,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/estimates/import/map", [
-                'file_id' => 'session-1',
+                'file_id' => '11111111-1111-4111-8111-111111111111',
                 'column_mapping' => [],
             ]);
 
@@ -147,6 +164,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_staging_and_voice_command_errors_are_localized_without_broken_text(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
 
@@ -158,7 +176,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
 
         $staging = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/estimates/import/staging", [
-                'session_id' => 'session-1',
+                'session_id' => '11111111-1111-4111-8111-111111111111',
             ]);
         $staging->assertStatus(500)
             ->assertJsonPath('message', 'Не удалось получить предварительный просмотр импорта.');
@@ -182,6 +200,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_excel_export_failure_returns_generic_message_without_exception_leak(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project);
         $this->allowAdminAccess();
@@ -204,6 +223,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
     public function test_official_form_exports_require_contract_act_with_business_messages(): void
     {
         $context = AdminApiTestContext::create();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $estimate = $this->createEstimate($context->organization, $project, ['contract_id' => null]);
         $this->allowAdminAccess();
@@ -249,6 +269,7 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

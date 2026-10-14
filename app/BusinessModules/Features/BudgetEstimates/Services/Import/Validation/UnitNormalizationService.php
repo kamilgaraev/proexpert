@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation;
 
 class UnitNormalizationService
@@ -7,6 +9,8 @@ class UnitNormalizationService
     private array $normalizationMap = [
         // Площадь
         'м2' => 'м²',
+        'm2' => 'м²',
+        'm²' => 'м²',
         'м^2' => 'м²',
         'м.кв' => 'м²',
         'кв.м' => 'м²',
@@ -16,6 +20,8 @@ class UnitNormalizationService
         
         // Объем
         'м3' => 'м³',
+        'm3' => 'м³',
+        'm³' => 'м³',
         'м^3' => 'м³',
         'м.куб' => 'м³',
         'куб.м' => 'м³',
@@ -30,7 +36,7 @@ class UnitNormalizationService
         'п.м.' => 'м',
         'км' => 'км',
         '100 м' => '100 м',
-        '1000 м' => '1 км',
+        '1000 м' => '1000 м',
         
         // Вес
         'т.' => 'т',
@@ -49,12 +55,21 @@ class UnitNormalizationService
         'упаковка' => 'упак',
         
         // Трудозатраты
-        'чел-ч' => 'чел.час',
-        'чел/час' => 'чел.час',
-        'чел.ч' => 'чел.час',
-        'маш-ч' => 'маш.час',
-        'маш/час' => 'маш.час',
-        'маш.ч' => 'маш.час',
+        'чел-ч' => 'чел-ч',
+        'чел/час' => 'чел-ч',
+        'чел.ч' => 'чел-ч',
+        'чел.-ч' => 'чел-ч',
+        'чел-час' => 'чел-ч',
+        'чел.час' => 'чел-ч',
+        'чел/ч' => 'чел-ч',
+        'ч-ч' => 'чел-ч',
+        'маш-ч' => 'маш-ч',
+        'маш/час' => 'маш-ч',
+        'маш.ч' => 'маш-ч',
+        'маш.-ч' => 'маш-ч',
+        'маш-час' => 'маш-ч',
+        'маш.час' => 'маш-ч',
+        'маш/ч' => 'маш-ч',
     ];
 
     public function normalize(?string $unit): ?string
@@ -85,6 +100,14 @@ class UnitNormalizationService
             'кг' => 'кг',
             'т' => 'т',
             'тн' => 'т',
+            'челч' => 'чел-ч',
+            'чел-ч' => 'чел-ч',
+            'чел-час' => 'чел-ч',
+            'челчас' => 'чел-ч',
+            'машч' => 'маш-ч',
+            'маш-ч' => 'маш-ч',
+            'маш-час' => 'маш-ч',
+            'машчас' => 'маш-ч',
         ];
         
         if (isset($mapClean[$cleanUnit])) {
@@ -99,11 +122,21 @@ class UnitNormalizationService
             // Рекурсивно нормализуем базовую часть
             $normalizedBase = $this->normalize($baseUnit);
             
-            if ($normalizedBase && $normalizedBase !== $baseUnit) {
+            if ($normalizedBase) {
                 return "{$multiplier} {$normalizedBase}";
             }
         }
 
         return $original;
+    }
+
+    public function normalizeForEstimateImport(?string $unit): ?string
+    {
+        $lowerUnit = mb_strtolower(trim((string) $unit));
+        if (preg_match('/^(?:(\d+)\s*)?пог(?:он)?[.\s]*м\.?$/u', $lowerUnit, $matches) === 1) {
+            return isset($matches[1]) && $matches[1] !== '' ? $matches[1].' пог. м' : 'пог. м';
+        }
+
+        return $this->normalize($unit);
     }
 }

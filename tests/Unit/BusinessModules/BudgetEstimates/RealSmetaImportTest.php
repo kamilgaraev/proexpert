@@ -4,16 +4,14 @@ namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\Models\Estimate;
-use App\Models\EstimateSection;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
-use App\Models\Organization;
-use App\Models\User;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 class RealSmetaImportTest extends TestCase
 {
@@ -39,14 +37,12 @@ class RealSmetaImportTest extends TestCase
         Queue::fake();
         Storage::fake('s3');
 
-        $user = User::factory()->create();
-        $organization = Organization::factory()->create();
+        $context = EstimateImportTestContext::create();
+        $user = $context->user;
+        $organization = $context->organization;
         
         // Смете ТРЕБУЕТСЯ проект по ограничениям БД
-        $project = \App\Models\Project::first() ?: \App\Models\Project::factory()->create([
-            'organization_id' => $organization->id,
-            'name' => 'Тестовый проект для импорта'
-        ]);
+        $project = $context->project;
         
         /** @var EstimateImportService $importService */
         $importService = app(EstimateImportService::class);
@@ -62,13 +58,13 @@ class RealSmetaImportTest extends TestCase
             'file_name' => basename($filePath),
             'file_size' => filesize($filePath),
             'file_format' => 'xlsx',
-            'options' => [],
+            'options' => ['project_id' => $project->id],
             'stats' => ['progress' => 0],
         ]);
         $fileId = $session->id;
 
         // 3. Детекция формата и маппинг
-        $format = $importService->detectFormat($fileId);
+        $format = $importService->detectFormat($fileId, null, $context->access());
         $mapping = $format['detected_columns'];
         
         // 4. Выполнение импорта (синхронно для теста)
@@ -86,6 +82,7 @@ class RealSmetaImportTest extends TestCase
         $options['matching_config'] = $mapping;
         $options['estimate_settings'] = $settings;
         $options['validate_only'] = false;
+        $options['execution_user_id'] = $user->id;
         $session->update([
             'options' => $options,
             'status' => 'queued',

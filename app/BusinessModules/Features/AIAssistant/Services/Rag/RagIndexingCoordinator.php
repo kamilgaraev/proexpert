@@ -303,6 +303,68 @@ class RagIndexingCoordinator
             $archive ? RagIndexRun::MODE_SCHEDULED : RagIndexRun::MODE_ASYNC);
     }
 
+    public function queueEntityGroups(int $organizationId, ?int $projectId, string $sourceType, array $groups): void
+    {
+        $entities = [];
+        foreach ($groups as $type => $ids) {
+            foreach ($ids as $id) {
+                $id = (string) $id;
+                $entities[$type."\0".$id] = ['entity_type' => (string) $type, 'entity_id' => $id];
+            }
+        }
+        if ($entities === []) {
+            return;
+        }
+        if (count($entities) > 500) {
+            throw new \InvalidArgumentException('RAG entity batch exceeds 500 items.');
+        }
+
+        DB::transaction(function () use ($organizationId, $projectId, $sourceType, $groups, $entities): void {
+            Organization::query()->whereKey($organizationId)->lock('FOR NO KEY UPDATE')->firstOrFail(['id']);
+            $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
+                ->where('status', RagIndexRun::STATUS_QUEUED)
+                ->where(function (Builder $query) use ($groups): void {
+                    foreach ($groups as $type => $ids) {
+                        if ($ids !== []) {
+                            $query->orWhere(static fn (Builder $group): Builder => $group->where('entity_type', $type)->whereIn('entity_id', $ids));
+                        }
+                    }
+                })->get(['id', 'entity_type', 'entity_id', 'mode']);
+            $pendingKeys = $pending->mapWithKeys(static fn (RagIndexRun $run): array => [$run->entity_type."\0".$run->entity_id => true])->all();
+            $newEntities = array_diff_key($entities, $pendingKeys);
+            $scheduledIds = $pending->where('mode', RagIndexRun::MODE_SCHEDULED)->pluck('id')->all();
+            $marker = RagDispatchIntent::pending();
+            $timestamp = now();
+            if ($newEntities !== []) {
+                RagIndexRun::query()->insert(array_map(static fn (array $entity): array => [
+                    'organization_id' => $organizationId,
+                    'project_id' => $projectId,
+                    'source_type' => $sourceType,
+                    'entity_type' => $entity['entity_type'],
+                    'entity_id' => $entity['entity_id'],
+                    'status' => RagIndexRun::STATUS_QUEUED,
+                    'mode' => RagIndexRun::MODE_ASYNC,
+                    'queued_at' => $timestamp,
+                    'last_error' => $marker,
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ], array_values($newEntities)));
+            }
+            if ($scheduledIds !== []) {
+                RagIndexRun::query()->whereIn('id', $scheduledIds)->update([
+                    'mode' => RagIndexRun::MODE_ASYNC,
+                    'last_error' => $marker,
+                    'queued_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ]);
+            }
+            $this->invalidateCoverageAfterCommit($organizationId);
+            if ($newEntities !== [] || $scheduledIds !== []) {
+                $this->dispatchEntityBatchAfterCommit($organizationId, $marker);
+            }
+        });
+    }
+
     private function queueEntityRun(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId, string $mode): RagIndexRun
     {
         return DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityId, $mode): RagIndexRun {

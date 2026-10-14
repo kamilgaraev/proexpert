@@ -9,6 +9,7 @@ use App\Repositories\EstimateItemRepository;
 use App\Repositories\EstimateSectionRepository;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class EstimateCalculationService
@@ -19,7 +20,7 @@ class EstimateCalculationService
         protected EstimateCacheService $cacheService
     ) {}
 
-    public function calculateItemTotal(EstimateItem $item, Estimate $estimate): float
+    public function calculateItemTotal(EstimateItem $item, Estimate $estimate, ?Collection $loadedChildren = null): float
     {
         if (($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
             return (new GeneratedEstimateDecimalCalculation)->calculate($item, $estimate);
@@ -50,21 +51,24 @@ class EstimateCalculationService
         $equipmentSum = 0;
         $resourcesSum = 0;
 
-        $hasChildren = EstimateItem::where('parent_work_id', $item->id)->exists();
+        $hasChildren = $loadedChildren !== null ? $loadedChildren->isNotEmpty()
+            : EstimateItem::where('parent_work_id', $item->id)->exists();
 
         if ($item->isWork() || $item->isMaterial()) {
             // ⭐ Находим сумму ПЗ из дочерних ресурсов.
             // Чтобы избежать двойного счета (сумма заголовков + сумма деталей),
             // суммируем только "листовые" записи (у которых нет своих детей).
-            $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                ->where('is_not_accounted', false)
-                ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                ->whereDoesntHave('childItems')
-                ->sum('total_amount');
+            if ($loadedChildren === null || $hasChildren) {
+                $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                    ->where('is_not_accounted', false)
+                    ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                    ->whereDoesntHave('childItems')
+                    ->sum('total_amount');
+            }
 
             // Если ресурсов много, а сумма 0 — пробуем все-таки суммировать всё (кроме оборудования),
             // на случай если иерархия не проставилась.
-            if ($resourcesSum <= 0 && $hasChildren) {
+            if ($resourcesSum == 0 && $hasChildren) {
                 $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
                     ->where('is_not_accounted', false)
                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
@@ -72,10 +76,12 @@ class EstimateCalculationService
             }
 
             // Оборудование всегда считаем отдельно (оно не база для НР/СП)
-            $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                ->where('is_not_accounted', false)
-                ->sum('total_amount');
+            if ($loadedChildren === null || $hasChildren) {
+                $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                    ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                    ->where('is_not_accounted', false)
+                    ->sum('total_amount');
+            }
 
             // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
             $fotOtAgg = 0;
@@ -84,9 +90,10 @@ class EstimateCalculationService
             $fotOtmDet = 0;
             $machineryHours = 0;
 
-            $allChildren = EstimateItem::where('parent_work_id', $item->id)
-                ->where('is_not_accounted', false)
-                ->get();
+            $allChildren = $loadedChildren !== null ? $loadedChildren->where('is_not_accounted', false)
+                : EstimateItem::where('parent_work_id', $item->id)
+                    ->where('is_not_accounted', false)
+                    ->get();
 
             foreach ($allChildren as $child) {
                 $code = trim($child->normative_rate_code ?? '');
@@ -116,10 +123,16 @@ class EstimateCalculationService
             }
 
             // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
-            $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
-            $finalHours = (new EstimateLaborHoursService)->calculate($item);
+            $finalFot = (abs($fotOtAgg) >= abs($fotOtDet) ? $fotOtAgg : $fotOtDet)
+                + (abs($fotOtmAgg) >= abs($fotOtmDet) ? $fotOtmAgg : $fotOtmDet);
+            $finalHours = (new EstimateLaborHoursService)->calculate($item, $loadedChildren);
 
-            if ($hasChildren || $finalFot > 0) {
+            $sourceStructure = $item->metadata['raw_data']['financial_structure'] ?? [];
+            $hasSourceLabor = $hasImportedTotal && is_array($sourceStructure)
+                && ($sourceStructure['layout'] ?? null) === 'grand_modern_2020'
+                && ($sourceStructure['labor_cost_declared'] ?? false) === true
+                && is_numeric($sourceStructure['labor_cost'] ?? null);
+            if (! $hasSourceLabor && ($hasChildren || $finalFot > 0)) {
                 $item->labor_cost = $finalFot;
             }
             if ($hasChildren || $finalHours > 0) {
@@ -151,7 +164,10 @@ class EstimateCalculationService
             $overheadAmount = (float) ($item->overhead_amount ?? 0);
             $profitAmount = (float) ($item->profit_amount ?? 0);
 
-            if ($isEquipment) {
+            if ($hasImportedTotal && ($item->metadata['import_source_components_preserved'] ?? false)) {
+                $equipmentSum = (float) ($item->equipment_cost ?? 0);
+                $directCosts = $totalAmount - $equipmentSum - $overheadAmount - $profitAmount;
+            } elseif ($isEquipment) {
                 // Прямые Затраты для оборудования — это только РЕСУРСЫ (труд/маш).
                 // Сумма самой "железки" - это оборудование.
                 if (! $hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
@@ -180,7 +196,7 @@ class EstimateCalculationService
                 }
 
                 // ⭐ Если НР и СП уже есть (пришли из парсера), НЕ пересчитываем их по процентам
-                if ($overheadAmount > 0 || $profitAmount > 0) {
+                if ($overheadAmount != 0 || $profitAmount != 0) {
                     // Доверяем данным в БД (они уже в рублях)
                 } else {
                     // Только если рублёвых сумм НЕТ, пробуем считать от ФОТ (базовая логика)
@@ -235,24 +251,6 @@ class EstimateCalculationService
         ]);
 
         return $totalAmount;
-    }
-
-    private function parseAttributesFromName(?string $name): array
-    {
-        $res = ['overhead' => 0, 'profit' => 0];
-        if (empty($name)) {
-            return $res;
-        }
-
-        // Поиск конструкций типа "НР ( 123,45 руб )"
-        if (preg_match('/(?:нр|накладные).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['overhead'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
-        }
-        if (preg_match('/(?:сп|сметная).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['profit'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
-        }
-
-        return $res;
     }
 
     public function calculateSectionTotal(EstimateSection $section): float
@@ -316,7 +314,7 @@ class EstimateCalculationService
 
         // Прямые затраты в шапке — это то, что осталось от общего Итога за вычетом ОБ, НР и СП.
         // Такая формула физически исключает расхождение шапки с разделами.
-        $totalDirectCosts = BigDecimal::max('0', $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit));
+        $totalDirectCosts = $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit);
 
         $totalAmountWithVat = (new EstimateSourceVatCalculator)->gross($estimate, $totalAmount);
 
@@ -368,6 +366,18 @@ class EstimateCalculationService
         $startTime = microtime(true);
 
         $items = $this->itemRepository->getAllByEstimate($estimate->id)->keyBy('id');
+
+        return app(\App\BusinessModules\Features\AIAssistant\Services\Rag\EstimateRagMutationBatch::class)->run(
+            $estimate,
+            $items,
+            fn (): array => $this->recalculateLoadedItems($estimate, $items, $startTime),
+        );
+    }
+
+    private function recalculateLoadedItems(Estimate $estimate, Collection $items, float $startTime): array
+    {
+        $childrenByParent = $items->filter(static fn (EstimateItem $item): bool => $item->parent_work_id !== null)
+            ->groupBy('parent_work_id');
         $remainingChildren = array_fill_keys($items->keys()->all(), 0);
         foreach ($items as $item) {
             if ($item->parent_work_id !== null && $items->has($item->parent_work_id)) {
@@ -388,7 +398,7 @@ class EstimateCalculationService
             throw new \LogicException('Estimate item hierarchy contains a cycle.');
         }
         foreach ($orderedIds as $itemId) {
-            $this->calculateItemTotal($items[$itemId], $estimate);
+            $this->calculateItemTotal($items[$itemId], $estimate, $childrenByParent->get($itemId, new Collection));
         }
 
         $rootSections = $this->sectionRepository->getRootSections($estimate->id);

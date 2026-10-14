@@ -18,20 +18,21 @@ class ExecuteEstimateImportRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_id' => ['required'],
+            'file_id' => ['required', 'string', 'uuid'],
             'matching_config' => ['required', 'array'],
             'matching_config.create_new_work_types' => ['required', 'boolean'],
             'matching_config.skip_unmatched' => ['sometimes', 'boolean'],
             'estimate_settings' => ['required', 'array'],
             'estimate_settings.name' => ['required', 'string', 'max:255'],
             'estimate_settings.type' => ['required', 'string', 'in:local,object,summary,contractual'],
-            'estimate_settings.project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
-            'estimate_settings.contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id'],
+            'estimate_settings.project_id' => ['sometimes', 'nullable', 'integer'],
+            'estimate_settings.contract_id' => ['sometimes', 'nullable', 'integer'],
             'estimate_settings.financial_mode' => ['sometimes', 'string', 'in:plain,organization_defaults,custom'],
             'estimate_settings.vat_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'estimate_settings.overhead_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'estimate_settings.profit_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'validate_only' => ['sometimes', 'boolean'],
+            'retry' => ['sometimes', 'boolean'],
         ];
     }
     

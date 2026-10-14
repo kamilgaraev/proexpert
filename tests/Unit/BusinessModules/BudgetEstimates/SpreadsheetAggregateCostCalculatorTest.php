@@ -61,6 +61,21 @@ final class SpreadsheetAggregateCostCalculatorTest extends TestCase
         self::assertSame(178.0, $invalid['footer']['total_estimate_cost']);
     }
 
+    public function test_base_subtotal_is_checked_before_the_global_index(): void
+    {
+        $rows = $this->rows();
+        $rows[13] = $rows[12];
+        $rows[12] = ['Итого', null, null, null, null, null, null, null, 152];
+        $parser = new SpreadsheetCostBlockParser;
+        $valid = $parser->analyze($rows, $this->mapping(), 0);
+        self::assertFalse($valid['total_mismatch']);
+        self::assertSame(178.0, $valid['footer']['total_estimate_cost']);
+        $rows[12][8] = 151;
+        $invalid = $parser->analyze($rows, $this->mapping(), 0);
+        self::assertTrue($invalid['total_mismatch']);
+        self::assertSame($valid['positions'], $invalid['positions']);
+    }
+
     public function test_currency_formatting_does_not_change_rounding(): void
     {
         $rows = $this->rows();

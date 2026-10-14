@@ -5,16 +5,170 @@ declare(strict_types=1);
 namespace Tests\Feature\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
+use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\EstimateRagMutationBatch;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateItemResource;
+use App\Models\EstimateSection;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class EstimateCalculationClassificationTest extends TestCase
 {
     use RefreshDatabase;
+
+    public static function bulkItemCounts(): array
+    {
+        return ['small' => [10], 'bulk' => [150]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('bulkItemCounts')]
+    public function test_bulk_recalculation_without_children_uses_bounded_select_count(int $itemCount): void
+    {
+        Queue::fake();
+        $estimate = $this->createEstimate();
+        for ($index = 1; $index <= $itemCount; $index++) {
+            $this->createItem($estimate, ['position_number' => (string) $index]);
+        }
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $result = app(EstimateCalculationService::class)->recalculateAll($estimate);
+            $selects = array_filter(DB::getQueryLog(), static fn (array $query): bool => preg_match('/^\s*select\b/i', $query['query']) === 1);
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $distribution = array_count_values(array_map(static function (array $query): string {
+            $template = preg_replace("/'(?:''|[^'])*'/", '?', $query['query']);
+            $template = preg_replace('/\b\d+\b/', '#', $template ?? '');
+
+            return substr(preg_replace('/\s+/', ' ', $template ?? '') ?? '', 0, 300);
+        }, $selects));
+        arsort($distribution);
+        $this->assertLessThanOrEqual(12, count($selects), 'SELECT distribution: '.json_encode($distribution));
+        $this->assertEquals($itemCount * 127, $result['total_amount']);
+        $this->assertEquals($itemCount * 100, $result['total_direct_costs']);
+        $this->assertEquals($itemCount, EstimateItem::query()->where('estimate_id', $estimate->id)->count());
+    }
+
+    public function test_bulk_recalculation_preserves_signed_children_and_aggregates_loaded_hours(): void
+    {
+        Queue::fake();
+        $estimate = $this->createEstimate();
+        $work = $this->createItem($estimate, ['unit_price' => 999]);
+        $labor = $this->createItem($estimate, [
+            'parent_work_id' => $work->id,
+            'item_type' => 'labor',
+            'normative_rate_code' => '1-100-01',
+            'quantity' => -2,
+            'unit_price' => 100,
+            'total_amount' => 999,
+            'current_total_amount' => -200,
+            'is_manual' => true,
+            'labor_cost' => -200,
+            'labor_hours' => 3,
+            'metadata' => ['raw_data' => []],
+        ]);
+        $machinery = $this->createItem($estimate, [
+            'parent_work_id' => $work->id,
+            'item_type' => 'machinery',
+            'quantity' => 2,
+            'unit_price' => 30,
+            'total_amount' => 999,
+            'machinery_hours' => 2,
+        ]);
+
+        app(EstimateCalculationService::class)->recalculateAll($estimate);
+        $work->refresh();
+        $this->assertEquals(-200, $labor->fresh()->total_amount);
+        $this->assertEquals(60, $machinery->fresh()->total_amount);
+        $this->assertEquals(-140, $work->direct_costs);
+        $this->assertEquals(-21, $work->overhead_amount);
+        $this->assertEquals(-16.8, $work->profit_amount);
+        $this->assertEquals(-177.8, $work->total_amount);
+        $this->assertEquals(-200, $work->labor_cost);
+        $this->assertEquals(3, $work->labor_hours);
+        $this->assertEquals(2, $work->machinery_hours);
+        $this->assertEquals(-177.8, $estimate->fresh()->total_amount);
+    }
+
+    public function test_bulk_recalculation_preserves_indexing_entities_and_tenant_isolation(): void
+    {
+        Queue::fake();
+        $estimate = $this->createEstimate();
+        $root = EstimateSection::create(['estimate_id' => $estimate->id, 'section_number' => '1', 'name' => 'Корневой раздел', 'sort_order' => 1]);
+        $section = EstimateSection::create(['estimate_id' => $estimate->id, 'parent_section_id' => $root->id, 'section_number' => '1.1', 'name' => 'Вложенный раздел', 'sort_order' => 1]);
+        $items = [];
+        for ($index = 1; $index <= 3; $index++) {
+            $items[] = $this->createItem($estimate, ['estimate_section_id' => $section->id, 'position_number' => (string) $index]);
+        }
+        $resource = EstimateItemResource::create(['estimate_item_id' => $items[0]->id, 'resource_type' => 'material', 'name' => 'Ресурс', 'total_quantity' => 1, 'unit_price' => 10, 'total_amount' => 10]);
+        $foreign = $this->createEstimate();
+        $this->createItem($foreign);
+        $foreignRuns = RagIndexRun::query()->where('organization_id', $foreign->organization_id)->count();
+        RagIndexRun::query()->where('organization_id', $estimate->organization_id)->where('source_type', 'estimate')->delete();
+
+        $calculator = app(EstimateCalculationService::class);
+        DB::transaction(function () use ($estimate, $items, $resource, $calculator): void {
+            app(EstimateRagMutationBatch::class)->run($estimate, collect($items), static function () use ($estimate, $resource, $calculator): void {
+                $resource->update(['unit_price' => 20, 'total_amount' => 20]);
+                $calculator->recalculateAll($estimate);
+            });
+        });
+        $calculator->recalculateAll($estimate);
+        $runs = RagIndexRun::query()->where('organization_id', $estimate->organization_id)->where('source_type', 'estimate')->get();
+        $actual = $runs->map(static fn (RagIndexRun $run): string => $run->entity_type.':'.$run->entity_id)->sort()->values()->all();
+        $expected = [
+            'estimate:'.$estimate->id,
+            'estimate_summary:'.$estimate->id,
+            'estimate_section:'.$root->id,
+            'estimate_section:'.$section->id,
+            'estimate_item_resource:'.$resource->id,
+            ...array_map(static fn (EstimateItem $item): string => 'estimate_item:'.$item->id, $items),
+        ];
+        sort($expected);
+        $this->assertSame($expected, $actual);
+        $this->assertTrue($runs->every(static fn (RagIndexRun $run): bool => (int) $run->project_id === (int) $estimate->project_id));
+        $this->assertEquals($foreignRuns, RagIndexRun::query()->where('organization_id', $foreign->organization_id)->count());
+    }
+
+    public function test_failed_bulk_mutation_rolls_back_indexing_and_clears_scoped_batch(): void
+    {
+        Queue::fake();
+        $estimate = $this->createEstimate();
+        $item = $this->createItem($estimate);
+        $resource = EstimateItemResource::create(['estimate_item_id' => $item->id, 'resource_type' => 'material', 'name' => 'Ресурс', 'total_quantity' => 1, 'unit_price' => 10, 'total_amount' => 10]);
+        RagIndexRun::query()->where('organization_id', $estimate->organization_id)->where('source_type', 'estimate')->delete();
+        Queue::fake();
+        try {
+            DB::transaction(function () use ($estimate, $item, $resource): void {
+                app(EstimateRagMutationBatch::class)->run($estimate, collect([$item]), static function () use ($item, $resource): void {
+                    $item->update(['quantity' => 2]);
+                    $resource->update(['unit_price' => 20, 'total_amount' => 20]);
+                    throw new \RuntimeException('synthetic_calculation_failure');
+                });
+            });
+            $this->fail('Bulk mutation must fail.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('synthetic_calculation_failure', $exception->getMessage());
+        }
+
+        $this->assertEquals(1, $item->fresh()->quantity);
+        $this->assertEquals(10, $resource->fresh()->total_amount);
+        $this->assertSame(0, RagIndexRun::query()->where('organization_id', $estimate->organization_id)->where('source_type', 'estimate')->count());
+        Queue::assertNotPushed(IndexRagSourceJob::class);
+        $item->refresh()->update(['quantity' => 3]);
+        $this->assertSame(2, RagIndexRun::query()->where('organization_id', $estimate->organization_id)->where('source_type', 'estimate')->count());
+    }
 
     public function test_price_does_not_change_work_or_material_into_equipment(): void
     {

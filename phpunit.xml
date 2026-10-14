@@ -290,6 +290,31 @@
             <file>tests/Unit/AIAssistant/Reports/AssistantReportFileServiceTest.php</file>
             <file>tests/Unit/Billing/CommercialQuotaServiceTest.php</file>
         </testsuite>
+        <testsuite name="EstimateImportReliability">
+            <file>tests/Unit/BusinessModules/BudgetEstimates/ImportFormatReliabilityTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/ImportedFinancialStructureTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/CustomExcelNumericImportTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/SpreadsheetAggregateCostCalculatorTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/CustomExcelWorksheetDetectionTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/SpecificExcelFormatDetectionTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/GrandSmetaPreviewTotalsTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/GrandSmetaModern2020Test.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/EstimateImportSampleRowsTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/ImportDetectionStateTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/ImportDetectionRecoveryTest.php</file>
+            <file>tests/Unit/BusinessModules/BudgetEstimates/ImportProgressSyncTest.php</file>
+            <file>tests/Unit/BusinessModules/Features/BudgetEstimates/Import/ImportContractCleanupTest.php</file>
+            <file>tests/Unit/BusinessModules/Features/BudgetEstimates/Import/PdfEstimateTableNormalizerTest.php</file>
+            <file>tests/Unit/BusinessModules/Features/BudgetEstimates/Services/Import/EstimateImportFinancialSettingsResolverTest.php</file>
+            <file>tests/Unit/Http/Requests/Admin/Estimate/UploadEstimateImportRequestTest.php</file>
+            <file>tests/Feature/BudgetEstimates/EstimateCalculationClassificationTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportExportControllerWorkflowTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportLifecycleTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportFinancialPersistenceTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportSafeErrorTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportGrandSmetaGoldenTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/EstimateImportGrandSmetaModernPersistenceTest.php</file>
+        </testsuite>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>

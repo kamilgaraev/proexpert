@@ -15,9 +15,13 @@ class StagingAreaService
         private readonly SubItemGroupingService $subItemGrouper,
     ) {}
 
-    public function buildPreview(string $sessionId, int $organizationId): array
+    public function buildPreview(string $sessionId, int $organizationId, ?ImportAccessContext $context = null): array
     {
-        $preview = $this->importService->preview($sessionId);
+        $session = $this->importService->getSession($sessionId, $context, true);
+        if ((int) $session->organization_id !== $organizationId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException;
+        }
+        $preview = $this->importService->preview($sessionId, null, $context);
         $rows = array_merge($preview->sections, $preview->items);
 
         usort(

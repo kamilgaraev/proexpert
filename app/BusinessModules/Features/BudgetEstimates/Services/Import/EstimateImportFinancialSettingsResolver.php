@@ -12,7 +12,7 @@ class EstimateImportFinancialSettingsResolver
         $overhead = (float) ($footer['overhead_cost'] ?? 0);
         $profit = (float) ($footer['profit_cost'] ?? 0);
 
-        if ($total <= 0 || ($overhead <= 0 && $profit <= 0)) {
+        if (! array_key_exists('total_estimate_cost', $footer) || ($overhead == 0 && $profit == 0)) {
             return null;
         }
 
