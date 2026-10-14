@@ -165,6 +165,9 @@ final readonly class ProjectModelEvidenceWriter
                         (string) $pageNumber,
                     ]));
                 if ($decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact) {
+                    // Entity rows and fact bindings belong to one source version. Reuse old keys only within that version.
+                    $legacyCanonicalEntityId = $entityId;
+                    $entityId = 'entity:'.hash('sha256', implode('|', [$projection['type'], $scope->sourceVersion, $entityIdentity]));
                     $legacyIdentities = [$claim->entityKey];
                     if (! $visualInventoryFact) {
                         $normalizedIdentity = (new VisualObjectIdentity)->normalizeEntityKey($entityIdentity);
@@ -187,7 +190,8 @@ final readonly class ProjectModelEvidenceWriter
                         $scope->sourceVersion,
                         $projection['type'],
                         $entityId,
-                        $entityScope === '' && ! $roomIdentityFact && ! $documentEngineering ? $legacyEntityIds : [],
+                        array_values(array_unique([$legacyCanonicalEntityId,
+                            ...($entityScope === '' && ! $roomIdentityFact && ! $documentEngineering ? $legacyEntityIds : [])])),
                     );
                 }
                 $entities[$entityId] = new Entity(
