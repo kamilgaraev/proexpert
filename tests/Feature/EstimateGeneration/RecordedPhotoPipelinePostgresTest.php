@@ -83,6 +83,46 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         self::assertSame(0, DB::table('ai_credit_provider_cost_allocations')->where('session_id', $session->id)->count());
     }
 
+    public function test_a_saved_quantitative_photo_gets_a_new_quote_without_resending_models_or_rebilling_documents(): void
+    {
+        $run = $this->replayPhoto('photo-document-cost-v1.json', 0, 1, '20', 150);
+        $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()->findOrFail($run['session_id']);
+        $saved = $session->draft_payload;
+        $actor = \App\Models\User::query()->findOrFail($session->user_id);
+        $id = (string) \Illuminate\Support\Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, (int) $session->project_id, (int) $session->id, (int) $session->state_version, $id, 'generation');
+        self::assertSame($quote, $operations->quote($actor, (int) $session->project_id, (int) $session->id, (int) $session->state_version, $id, 'generation'));
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame('business:v1', $plan['text_payload_policy']['audit_draft_view']);
+        self::assertSame(hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($saved)), $plan['known_context']['saved_draft_hash']);
+        self::assertSame(0, $plan['document_costs']['cost_micro_rub']);
+        self::assertSame($saved, $session->fresh()->draft_payload);
+        self::assertSame(3, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(1, DB::table('ai_credit_provider_cost_allocations')->where('session_id', $session->id)->count());
+        self::assertSame(1, DB::table('ai_credit_ledger_entries')->where('organization_id', $session->organization_id)->where('type', 'consume')->where('amount_minor', '<', 0)->count());
+        self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+        DB::transaction(fn () => $operations->begin($actor, $session, (int) $session->state_version, $id, $quote['quote_id'], 'generation'));
+        try {
+            $input = app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory::class)->capture(
+                (int) $session->organization_id, (int) $session->project_id, (int) $session->id, $saved,
+                new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope((int) $session->state_version, null, $id));
+            self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::project($saved, 'business:v1'), $input->draft);
+            self::assertArrayNotHasKey('evaluation_result', $input->draft);
+            self::assertArrayNotHasKey('quality_summary', $input->draft);
+            self::assertNotEmpty($input->facts);
+            self::assertNotEmpty($input->derivedQuantities);
+            self::assertNotEmpty($input->evidence);
+            self::assertSame($saved, $session->fresh()->draft_payload);
+            self::assertSame(3, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        } finally {
+            DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                ->abort($session->fresh(), $id, 'fixture_finished'));
+        }
+        $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
+        self::assertSame(1000000 - 150, app(\App\Services\Credits\AICreditService::class)->balance($organization)['available_minor']);
+    }
+
     public function test_allocation_rolls_back_and_cannot_commit_without_a_paid_published_result(): void
     {
         $run = $this->replayPhoto('photo-document-cost-info-v1.json', 0, 1);

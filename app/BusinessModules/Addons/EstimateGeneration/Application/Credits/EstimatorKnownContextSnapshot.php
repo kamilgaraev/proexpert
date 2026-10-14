@@ -50,6 +50,7 @@ final readonly class EstimatorKnownContextSnapshot
 
     private function captureCurrent(EstimateGenerationSession $session, bool $complex, ?array $wirePolicy, ?string $localEstimateKey, ?array $roleLimits): array
     {
+        $wirePolicy = EstimatorTextWirePolicy::validate($wirePolicy ?? EstimatorTextWirePolicy::capture());
         $organizationId = (int) $session->organization_id;
         $projectId = (int) $session->project_id;
         $sessionId = (int) $session->id;
@@ -100,7 +101,8 @@ final readonly class EstimatorKnownContextSnapshot
             : $this->composer->capture($organizationId, $projectId, $sessionId, $currentCandidates, $quantities, [],
                 allowedWorkSections: ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
                     ? ($session->input_payload['selected_sections'] ?? []) : []);
-        $auditInput = $staleDraft || $workCount === 0 ? null : $this->audit->capture($organizationId, $projectId, $sessionId, $draft);
+        $auditInput = $staleDraft || $workCount === 0 ? null : $this->audit->capture($organizationId, $projectId, $sessionId, $draft,
+            draftView: $wirePolicy['audit_draft_view'] ?? \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftView::LEGACY);
         $links = $questions = [];
         if ($complex && $synthesisInput !== null) {
             // No arbitrator is constructed: quote preparation has no paid side effects.
@@ -124,7 +126,7 @@ final readonly class EstimatorKnownContextSnapshot
             $questions = array_values($byConflict);
         }
         $measured = $this->parts->measure($composerInput, $auditInput, $complex ? $synthesisInput : null, $links, $questions,
-            $wirePolicy ?? EstimatorTextWirePolicy::capture(), $roleLimits);
+            $wirePolicy, $roleLimits);
         $this->assertWithinBudget($organizationId, $projectId, $sessionId);
         $verified = $this->models->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $this->budget->maxFacts + 1);
         if (! hash_equals((string) $capture['token'], (string) $verified['token'])) {
