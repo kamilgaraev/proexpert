@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
@@ -439,6 +440,10 @@ final readonly class ProjectModelEvidenceWriter
                 $locator[$field] = $claim->locator[$field];
             }
         }
+        $documentRole = SourceDocumentRole::normalize($claim->locator['document_role'] ?? null);
+        if ($documentRole !== null) {
+            $locator['document_role'] = $documentRole;
+        }
 
         return $locator;
     }
@@ -701,6 +706,7 @@ final readonly class ProjectModelEvidenceWriter
             $node->producerName,
             $node->sourceRef,
             fingerprint: $node->fingerprint,
+            documentRole: SourceDocumentRole::normalize($node->locator['document_role'] ?? null),
         );
     }
 }

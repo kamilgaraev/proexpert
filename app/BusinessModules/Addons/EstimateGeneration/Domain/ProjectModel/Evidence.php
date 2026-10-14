@@ -23,6 +23,7 @@ final readonly class Evidence
         public ?string $sourceReference = null,
         public ?string $choiceHash = null,
         public ?string $fingerprint = null,
+        public ?string $documentRole = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Evidence');
@@ -45,6 +46,9 @@ final readonly class Evidence
         }
         if ($fingerprint !== null && preg_match('/\A[a-f0-9]{64}\z/', $fingerprint) !== 1) {
             throw new InvalidArgumentException('Evidence fingerprint is invalid.');
+        }
+        if ($documentRole !== null && SourceDocumentRole::normalize($documentRole) !== $documentRole) {
+            throw new InvalidArgumentException('Evidence document role is invalid.');
         }
     }
 
