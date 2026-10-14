@@ -837,6 +837,10 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, но не показывай свойства', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, свойства не нужны', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, но без сметных связей в BIM-модели', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы без связей со сметными позициями', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, сметные связи не нужны', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы и сметные связи', 'elements', true],
             ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
@@ -868,9 +872,11 @@ class AIAssistantServiceBudgetTest extends TestCase
 
     public function test_negated_organization_scope_keeps_selected_bim_project(): void
     {
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::organizationWide('Не меняй настройки, покажи во всех проектах'));
         foreach (['Покажи вентиляторы, но не во всех проектах', 'Покажи вентиляторы, не по всем объектам',
             'Покажи вентиляторы, не во всей организации', 'Не ищи по всем проектам, покажи только текущий',
-            'Не надо искать по всем проектам, покажи текущий проект'] as $query) {
+            'Не надо искать по всем проектам, покажи текущий проект', 'Не работай по всем проектам',
+            'Не выполняй поиск по всем проектам'] as $query) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
