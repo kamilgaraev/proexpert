@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SessionProcessingStopper;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
@@ -48,7 +50,9 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
             $session = $this->session($from, $resume);
             $action = $this->action($session, $event);
 
-            $result = $action->handle($session, 3, $event, new User(['current_organization_id' => 10, 'is_active' => true]));
+            $actor = new User(['current_organization_id' => 10, 'is_active' => true]);
+            $actor->id = 9;
+            $result = $action->handle($session, 3, $event, $actor);
 
             self::assertSame($to, $result->status);
             self::assertSame(4, $result->state_version);
@@ -77,7 +81,9 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
         $quota->expects(self::never())->method('releaseCancelledReservation');
         $repository = $this->createMock(RetryableEstimateGenerationSessionRepository::class);
         $repository->method('withLockedSession')->willReturnCallback(static fn (int $id, int $organizationId, int $projectId, callable $callback): EstimateGenerationSession => $callback($session));
-        $action = new TransitionEstimateGenerationSession(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new TransitionTestStateStore($session)), $authorization, $stopper, $repository, $quota);
+        $planning = $this->createMock(PlanningReanalysisTrigger::class);
+        $planning->expects(self::never())->method('trigger');
+        $action = new TransitionEstimateGenerationSession(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new TransitionTestStateStore($session)), $authorization, $stopper, $repository, $quota, $planning);
         try {
             $action->handle($session, 3, EstimateGenerationEvent::Cancelled, new User(['current_organization_id' => 10, 'is_active' => true]));
             self::fail('An unauthorized actor changed the session.');
@@ -102,8 +108,13 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
         $quota->expects($willTransition && in_array($event, [EstimateGenerationEvent::Cancelled, EstimateGenerationEvent::Archived], true)
             ? self::once() : self::never())->method('releaseCancelledReservation')->with(self::identicalTo($session));
 
+        $planning = $this->createMock(PlanningReanalysisTrigger::class);
+        $planning->expects($willTransition && $event === EstimateGenerationEvent::InputConfirmed ? self::once() : self::never())
+            ->method('trigger')->with(71, self::callback(static fn (ActorContext $context): bool => $context->organizationId === 10
+                && $context->projectId === 20 && $context->actorId === 9 && $context->idempotencyKey === 'input-confirmed:71:4'));
+
         return new TransitionEstimateGenerationSession(new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new TransitionTestStateStore($session)),
-            $authorization, $stopper, $repository, $quota);
+            $authorization, $stopper, $repository, $quota, $planning);
     }
 
     private function session(EstimateGenerationStatus $status, ?EstimateGenerationStatus $resume = null): EstimateGenerationSession

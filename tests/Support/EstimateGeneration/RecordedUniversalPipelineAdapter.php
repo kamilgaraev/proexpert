@@ -75,6 +75,10 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             || ($fixture['accuracy_calibrated'] ?? null) !== false || count($fixture['recordings'] ?? []) !== 2) {
             throw new BenchmarkContractException('recorded_replay_descriptor_invalid');
         }
+        $initialInput = $fixture['initial_input'] ?? [];
+        if (! is_array($initialInput) || array_diff(array_keys($initialInput), ['area', 'floors', 'height']) !== []) {
+            throw new BenchmarkContractException('recorded_replay_initial_input_invalid');
+        }
         $source = $this->objects->read($case, 'input', $case->sourceType === BenchmarkSourceType::SitePhoto ? 1000000 : 65536);
         if (! hash_equals($case->inputSha256, hash('sha256', $source))) {
             throw new BenchmarkContractException('recorded_replay_source_mismatch');
@@ -104,7 +108,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             'organization_id' => $rights->organization->id, 'project_id' => $project->id,
             'input_payload' => ['description' => $description, 'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal',
                 'profile_id' => $fixture['profile_id'], 'construction_type' => $fixture['construction_type'],
-                'price_policy' => 'catalog', 'selected_sections' => $fixture['selected_sections']],
+                'price_policy' => 'catalog', 'selected_sections' => $fixture['selected_sections'], ...$initialInput],
         ], $actor);
         $credits = $this->app->make(AICreditService::class);
         $credits->grant($rights->organization, 1000000, 'purchase', null, 'test:recorded-universal-replay');
@@ -202,6 +206,8 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             'applicable_item_ids' => [], 'evidence_ids_by_item' => [], 'model_schema_version' => 'recorded-universal-test:v1'];
         $this->lastRun = ['session_id' => (int) $session->id, 'evaluation' => $evaluation, 'usage' => $usage->all(),
             'description_fact_count' => count($descriptionFacts),
+            'confirmed_numeric_facts' => array_values(array_map(static fn ($fact): array => ['type' => $fact->type, 'value' => $fact->value],
+                array_filter($current->facts, static fn ($fact): bool => $fact->status === 'confirmed' && is_numeric($fact->value)))),
             'provider_requests' => count($this->history) - $historyStart, 'consumed_units_minor' => (int) $operation->consumed_units_minor,
             'available_minor' => $credits->balance($rights->organization)['available_minor'], 'recording_sha256' => $this->recordingSha256];
         $this->lastRun['document_run'] = $documentRun;

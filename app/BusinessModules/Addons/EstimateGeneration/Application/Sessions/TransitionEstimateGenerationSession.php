@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SessionProcessingStopper;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\PlanningReanalysisTrigger;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
@@ -21,6 +23,7 @@ final class TransitionEstimateGenerationSession
         private SessionProcessingStopper $documents,
         private RetryableEstimateGenerationSessionRepository $repository,
         private \App\BusinessModules\Addons\EstimateGeneration\Services\Billing\StoppedSessionQuotaReleaser $quota,
+        private PlanningReanalysisTrigger $planning,
     ) {}
 
     public function handle(
@@ -40,6 +43,12 @@ final class TransitionEstimateGenerationSession
                     throw new StaleEstimateGenerationState((int) $locked->getKey(), $expectedVersion);
                 }
                 $updated = $this->workflow->transition($locked, $event);
+                if ($event === EstimateGenerationEvent::InputConfirmed) {
+                    $this->planning->trigger((int) $updated->getKey(), new ActorContext(
+                        (int) $updated->organization_id, (int) $updated->project_id, (int) $actor->getKey(),
+                        'input-confirmed:'.$updated->getKey().':'.$updated->state_version,
+                    ));
+                }
                 if (in_array($event, [EstimateGenerationEvent::Cancelled, EstimateGenerationEvent::Archived], true)) {
                     $this->documents->haltForSession($updated, $actor);
                     $this->quota->releaseCancelledReservation($updated);
