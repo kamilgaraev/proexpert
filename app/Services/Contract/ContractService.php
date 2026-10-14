@@ -108,8 +108,7 @@ class ContractService
         // Загружаем акты с фильтрацией по project_id если указан
         if ($projectId !== null) {
             $contract->load(['performanceActs' => function ($query) use ($projectId) {
-                $query->where('project_id', $projectId)
-                    ->select('id', 'contract_id', 'project_id', 'act_document_number', 'act_date', 'amount', 'description', 'is_approved', 'approval_date');
+                $query->where('project_id', $projectId);
             },
                 'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date,additional_info',
                 'performanceActs.completedWorks.workType:id,name',
@@ -117,7 +116,7 @@ class ContractService
                 'performanceActs.lines.completedWork:id,additional_info']);
         } else {
             $contract->load([
-                'performanceActs:id,contract_id,project_id,act_document_number,act_date,amount,description,is_approved,approval_date',
+                'performanceActs',
                 'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date,additional_info',
                 'performanceActs.completedWorks.workType:id,name',
                 'performanceActs.completedWorks.user:id,name',
