@@ -315,6 +315,7 @@ class ContractPerformanceActController extends Controller
             'contract.contractor',
             'completedWorks.workType',
             'completedWorks.user',
+            'lines.completedWork:id,additional_info',
             'files.user',
         ])->find($actId);
 

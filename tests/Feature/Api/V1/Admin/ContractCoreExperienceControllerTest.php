@@ -652,20 +652,30 @@ class ContractCoreExperienceControllerTest extends TestCase
         $this->allowAdminAccess();
 
         foreach ([
-            ["/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", 'data.performance_acts', 1],
-            ["/api/v1/admin/contracts/{$contract->id}", 'data.performance_acts', 2],
-            ["/api/v1/admin/contracts/{$contract->id}/full", 'data.performance_acts', 2],
-        ] as [$url, $actsPath, $expectedCount]) {
+            ['get', "/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}", 'data.performance_acts', 1],
+            ['get', "/api/v1/admin/contracts/{$contract->id}", 'data.performance_acts', 2],
+            ['get', "/api/v1/admin/contracts/{$contract->id}/full", 'data.performance_acts', 2],
+            ['get', "/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/performance-acts", 'data', 1],
+            ['get', "/api/v1/admin/contracts/{$contract->id}/performance-acts", 'data', 2],
+            ['get', "/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/performance-acts/{$act->id}", null, 1],
+            ['get', "/api/v1/admin/performance-acts/{$act->id}", null, 1],
+            ['patch', "/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}/performance-acts/{$act->id}", null, 1],
+            ['patch', "/api/v1/admin/performance-acts/{$act->id}", null, 1],
+        ] as [$method, $url, $actsPath, $expectedCount]) {
             DB::flushQueryLog();
             DB::enableQueryLog();
             try {
-                $response = $this->withHeaders($context->authHeaders())->getJson($url);
+                $response = $method === 'patch'
+                    ? $this->withHeaders($context->authHeaders())->patchJson($url, ['description' => 'Updated act description'])
+                    : $this->withHeaders($context->authHeaders())->getJson($url);
                 $response->assertOk();
                 $queries = DB::getQueryLog();
             } finally {
                 DB::disableQueryLog();
             }
-            $acts = collect($response->json($actsPath));
+            $acts = $actsPath === null
+                ? collect([$response->json('data')])
+                : collect($response->json($actsPath));
             if (str_ends_with($url, '/full')) {
                 $response->assertJsonPath('data.child_contracts', [])
                     ->assertJsonPath('data.analytics.financial.child_contracts_amount', 0)
@@ -686,9 +696,11 @@ class ContractCoreExperienceControllerTest extends TestCase
                 self::assertSame(5, $works[$workId]['included_quantity']);
                 self::assertSame(500, $works[$workId]['included_amount']);
             }
-            $lazyWorkQueries = array_filter($queries, static fn (array $query): bool =>
-                str_contains($query['query'], 'from "completed_works" where "completed_works"."id" = ?'));
-            self::assertCount(0, $lazyWorkQueries);
+            if ($method === 'get') {
+                $lazyWorkQueries = array_filter($queries, static fn (array $query): bool =>
+                    str_contains($query['query'], 'from "completed_works" where "completed_works"."id" = ?'));
+                self::assertCount(0, $lazyWorkQueries);
+            }
         }
         self::assertSame(2500.0, (float) $act->fresh()->amount);
         self::assertSame(3, PerformanceActLine::where('performance_act_id', $act->id)->whereNull('unit')->count());
