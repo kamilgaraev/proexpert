@@ -22,6 +22,7 @@ final class EmploymentRelationService
     {
         $this->access->assert($organizationId, $actor);
         $employee = $this->employee($organizationId, $employeeId);
+
         return [
             'reconciliation_status' => $employee->hr_reconciliation_status,
             'relations' => EmploymentContract::query()->where('organization_id', $organizationId)->where('employee_id', $employeeId)->orderBy('start_date')->get()->map(fn (EmploymentContract $relation): array => $this->safeState($relation->toArray())),
@@ -50,6 +51,7 @@ final class EmploymentRelationService
         if (! in_array($payload['event_type'] ?? '', ['hire', 'change', 'transfer', 'reconcile'], true) || empty($payload['basis_reference'])) {
             throw new DomainException(trans_message('workforce.errors.hr_basis_required'));
         }
+
         return DB::transaction(function () use ($organizationId, $employeeId, $payload, $actor): EmploymentContract {
             Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
             $employee = $this->employee($organizationId, $employeeId);
@@ -72,17 +74,28 @@ final class EmploymentRelationService
             if (in_array($payload['event_type'], ['change', 'transfer'], true) && $previous === null) {
                 throw new DomainException(trans_message('workforce.errors.hr_relation_invalid'));
             }
-            // Frozen payroll periods retain their effective source; retrospective changes require an explicit correction workflow.
+            $affectedUntil = $payload['end_date'] ?? null;
+            if ($previous !== null) {
+                $previousUntil = $previous->end_date?->toDateString();
+                // Closing/superseding the old relation removes its tail even beyond the new relation's end.
+                $affectedUntil = $affectedUntil === null || $previousUntil === null ? null : max($affectedUntil, $previousUntil);
+            }
+            // Payroll protects civil and employment sources across the entire old/new affected interval.
             if (DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('status', 'locked')
-                ->whereDate('period_end', '>=', $payload['start_date'])->exists()) {
+                ->whereDate('period_end', '>=', $payload['start_date'])
+                ->when($affectedUntil !== null, fn ($period) => $period->whereDate('period_start', '<=', $affectedUntil))->exists()) {
                 throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
             }
-            $this->assertTimekeepingHistoryMutable($organizationId, $employeeId, $payload['start_date'], $payload['end_date'] ?? null);
+            if ($payload['relation_type'] === 'employment' || ($previous !== null && $previous->relation_type !== 'civil')) {
+                $this->assertTimekeepingHistoryMutable($organizationId, $employeeId, $payload['start_date'], $affectedUntil, true);
+            }
             $conflict = EmploymentContract::query()->where('organization_id', $organizationId)->where('employee_id', $employeeId)
                 ->where('status', 'active')->where('relation_type', $payload['relation_type'])
                 ->when($payload['relation_type'] === 'employment', fn ($query) => $query->where('employment_mode', $payload['employment_mode']))
                 ->when($previous, fn ($query) => $query->whereKeyNot($previous->id))
-                ->where(function ($query) use ($payload): void { $query->whereNull('end_date')->orWhereDate('end_date', '>=', $payload['start_date']); })
+                ->where(function ($query) use ($payload): void {
+                    $query->whereNull('end_date')->orWhereDate('end_date', '>=', $payload['start_date']);
+                })
                 ->when(! empty($payload['end_date']), fn ($query) => $query->whereDate('start_date', '<=', $payload['end_date']))->exists();
             if ($conflict) {
                 throw new DomainException(trans_message('workforce.errors.hr_relation_overlap'));
@@ -100,6 +113,7 @@ final class EmploymentRelationService
                 ->where('status', 'active')->whereNull('relation_type')->exists();
             $employee->update(['hr_reconciliation_status' => $legacyRemaining ? 'needs_reconciliation' : 'reconciled']);
             $this->event($organizationId, $employeeId, $payload['event_type'], $payload['start_date'], $payload['basis_reference'], $payload['basis_document_id'] ?? null, $actor, $before, $relation->toArray(), (int) $relation->id);
+
             return $relation;
         });
     }
@@ -125,10 +139,11 @@ final class EmploymentRelationService
         if (trim($basis) === '') {
             throw new DomainException(trans_message('workforce.errors.hr_basis_required'));
         }
+
         return HrEvent::create(['organization_id' => $organizationId, 'employee_id' => $employeeId, 'relation_id' => $relationId, 'event_type' => $type, 'effective_date' => $date, 'basis_reference' => $basis, 'basis_document_id' => $documentId, 'before_state' => $before !== null ? $this->safeState($before) : null, 'after_state' => $after !== null ? $this->safeState($after) : null, 'recorded_by' => $actor->id, 'recorded_at' => now()]);
     }
 
-    public function assertTimekeepingHistoryMutable(int $organizationId, int $employeeId, string $from, ?string $to = null): void
+    public function assertTimekeepingHistoryMutable(int $organizationId, int $employeeId, ?string $from, ?string $to = null, bool $includePotentialRows = false): void
     {
         $query = DB::table('workforce_timekeeping_periods')->where('organization_id', $organizationId)
             ->whereIn('status', ['approved', 'closed'])
@@ -137,8 +152,25 @@ final class EmploymentRelationService
                     ->whereColumn('successor.supersedes_id', 'workforce_timekeeping_periods.id')
                     ->whereColumn('successor.organization_id', 'workforce_timekeeping_periods.organization_id');
             })
-            ->whereDate('month', '>=', \Carbon\CarbonImmutable::parse($from)->startOfMonth()->toDateString())
-            ->whereJsonContains('snapshot->rows', [['employee_id' => $employeeId]]);
+            ->where(function ($scope) use ($employeeId, $includePotentialRows): void {
+                $scope->whereJsonContains('snapshot->rows', [['employee_id' => $employeeId]]);
+                if ($includePotentialRows) {
+                    // New terms can add a missing employee to an organization-wide or assigned-project month.
+                    $scope->orWhereNull('project_id')->orWhereExists(function ($assignment) use ($employeeId): void {
+                        $assignment->selectRaw('1')->from('workforce_employee_assignments as assignment')
+                            ->whereColumn('assignment.organization_id', 'workforce_timekeeping_periods.organization_id')
+                            ->whereColumn('assignment.project_id', 'workforce_timekeeping_periods.project_id')
+                            ->where('assignment.employee_id', $employeeId)->where('assignment.status', 'active')->whereNull('assignment.deleted_at')
+                            ->whereRaw("assignment.valid_from < (workforce_timekeeping_periods.month + interval '1 month')")
+                            ->where(function ($dates): void {
+                                $dates->whereNull('assignment.valid_to')->orWhereColumn('assignment.valid_to', '>=', 'workforce_timekeeping_periods.month');
+                            });
+                    });
+                }
+            });
+        if ($from !== null) {
+            $query->whereDate('month', '>=', \Carbon\CarbonImmutable::parse($from)->startOfMonth()->toDateString());
+        }
         if ($to !== null) {
             $query->whereDate('month', '<=', \Carbon\CarbonImmutable::parse($to)->startOfMonth()->toDateString());
         }
@@ -150,6 +182,7 @@ final class EmploymentRelationService
     private function safeState(array $state): array
     {
         unset($state['metadata'], $state['phone'], $state['email'], $state['external_payroll_ref'], $state['user']);
+
         return $state;
     }
 

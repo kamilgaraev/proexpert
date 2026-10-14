@@ -73,6 +73,35 @@ final class TimeTrackingClosedPeriodWorkflowTest extends TestCase
         self::assertTrue($entry->custom_fields['mobile_time_tracking']['active_timer']);
     }
 
+    public function test_civil_contract_first_day_is_not_blocked_by_previous_tk_month_but_legacy_candidate_keeps_guard(): void
+    {
+        [$context, $project] = $this->context();
+        $civilRelation = EmploymentContract::query()->where('organization_id', $context->organization->id)->firstOrFail();
+        $civilRelation->update([
+            'relation_type' => 'civil', 'start_date' => '2026-05-01', 'end_date' => '2026-05-01',
+            'employment_mode' => null, 'job_share' => null, 'weekly_norm_hours' => null,
+            'summed_accounting_period' => null, 'calendar_profile' => null,
+        ]);
+        $this->period($context, null, 'closed', null, '2026-04-01');
+        $fact = $this->fact($context, $project);
+        foreach (['start_at', 'end_at', 'start_time', 'end_time', 'timezone', 'net_microseconds', 'net_minutes'] as $field) {
+            unset($fact[$field]);
+        }
+        $fact['work_date'] = '2026-05-01';
+        $service = app(TimeTrackingService::class);
+        $entry = $service->createTimeEntry($fact);
+        self::assertSame('2026-05-01', $entry->work_date->format('Y-m-d'));
+        self::assertSame('draft', $entry->status);
+
+        EmploymentContract::create([
+            'organization_id' => $context->organization->id, 'employee_id' => $civilRelation->employee_id,
+            'contract_number' => 'UNKNOWN-BOUNDARY', 'contract_date' => '2026-04-30',
+            'start_date' => '2026-04-30', 'end_date' => '2026-04-30', 'status' => 'closed', 'relation_type' => null,
+        ]);
+        $this->denied(fn () => $service->createTimeEntry($fact));
+        self::assertDatabaseCount('time_entries', 1);
+    }
+
     public function test_reopened_successor_allows_correction_but_newly_approved_successor_blocks_again(): void
     {
         [$context, $project] = $this->context();
@@ -193,9 +222,9 @@ final class TimeTrackingClosedPeriodWorkflowTest extends TestCase
         return ['organization_id' => $context->organization->id, 'user_id' => $context->user->id, 'worker_type' => 'user', 'project_id' => $project->id, 'work_date' => '2026-05-12', 'start_time' => '08:00', 'end_time' => '09:00', 'start_at' => '2026-05-12T05:00:00Z', 'end_at' => '2026-05-12T06:00:00Z', 'timezone' => 'Europe/Moscow', 'net_microseconds' => 3_600_000_000, 'net_minutes' => 60, 'hours_worked' => 1, 'title' => 'Measured fact', 'is_billable' => true];
     }
 
-    private function period(AdminApiTestContext $context, ?Project $project, string $status = 'closed', ?int $supersedes = null): TimekeepingPeriod
+    private function period(AdminApiTestContext $context, ?Project $project, string $status = 'closed', ?int $supersedes = null, string $month = '2026-05-01'): TimekeepingPeriod
     {
-        return TimekeepingPeriod::create(['organization_id' => $context->organization->id, 'project_id' => $project?->id, 'month' => '2026-05-01', 'status' => $status, 'revision' => 1, 'supersedes_id' => $supersedes, 'rule_snapshot' => [], 'snapshot' => [], 'snapshot_sha256' => hash('sha256', '[]'), 'created_by' => $context->user->id]);
+        return TimekeepingPeriod::create(['organization_id' => $context->organization->id, 'project_id' => $project?->id, 'month' => $month, 'status' => $status, 'revision' => 1, 'supersedes_id' => $supersedes, 'rule_snapshot' => [], 'snapshot' => [], 'snapshot_sha256' => hash('sha256', '[]'), 'created_by' => $context->user->id]);
     }
 
     private function denied(callable $mutation, string $errorKey = 'workforce.errors.timekeeping_closed'): void

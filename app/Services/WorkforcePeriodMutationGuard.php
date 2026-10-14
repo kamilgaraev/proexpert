@@ -81,8 +81,23 @@ final class WorkforcePeriodMutationGuard
             return false;
         }
 
-        return (clone $contracts)->where('relation_type', 'civil')->whereDate('start_date', '<=', $from)
-            ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $to))->exists();
+        // Civil coverage follows the declared engineering dates, not hypothetical TK dates.
+        $declaredFrom = substr((string) ($fact['work_date'] ?? $fact['shift_date']), 0, 10);
+        $declaredTo = $declaredFrom;
+        if (! empty($fact['start_at']) && ! empty($fact['end_at'])) {
+            $start = new DateTimeImmutable((string) $fact['start_at']);
+            $zone = ! empty($fact['timezone']) && in_array($fact['timezone'], DateTimeZone::listIdentifiers(DateTimeZone::ALL_WITH_BC), true)
+                ? new DateTimeZone((string) $fact['timezone']) : $start->getTimezone();
+            $startDate = $start->setTimezone($zone)->setTime(0, 0);
+            $lastDate = (new DateTimeImmutable((string) $fact['end_at']))->modify('-1 microsecond')->setTimezone($zone)->setTime(0, 0);
+            $days = max(0, (int) $startDate->diff($lastDate)->format('%r%a'));
+            $declaredTo = (new DateTimeImmutable($declaredFrom))->modify('+'.$days.' days')->format('Y-m-d');
+        } elseif (! empty($fact['start_time']) && ! empty($fact['end_time']) && substr((string) $fact['end_time'], 0, 5) < substr((string) $fact['start_time'], 0, 5) && substr((string) $fact['end_time'], 0, 5) !== '00:00') {
+            $declaredTo = (new DateTimeImmutable($declaredFrom))->modify('+1 day')->format('Y-m-d');
+        }
+
+        return (clone $contracts)->where('relation_type', 'civil')->whereDate('start_date', '<=', $declaredFrom)
+            ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $declaredTo))->exists();
     }
 
     private function dateBounds(int $organizationId, array $fact): array
