@@ -338,6 +338,49 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame(2, $archive->versions()->count());
     }
 
+    public function test_legacy_upload_keeps_bound_contract_pdf_current_when_an_additional_version_is_requested(): void
+    {
+        [$actor, $input] = $this->fixture();
+        $this->fakeRevisionStorage();
+        $contractId = $this->createTemplateContract($input);
+        $organizationId = (int) $actor->current_organization_id;
+        $revision = app(ContractBuilderInstanceService::class)->read($actor, $organizationId, $contractId, 1);
+        $prepared = app(\App\Services\Contract\ContractRevisionLegalArchiveService::class)
+            ->prepare($actor, $organizationId, $contractId, 1, $revision['content_hash']);
+        $binding = DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->firstOrFail();
+        $document = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument::findOrFail($binding->document_id);
+        $pdf = \Illuminate\Support\Facades\Storage::disk('revision-tests')->get($binding->storage_path);
+        $url = '/api/v1/admin/legal-archive/documents/'.$document->id.'/versions';
+        $payload = [
+            'file' => \Illuminate\Http\UploadedFile::fake()->createWithContent('additional.pdf', $pdf),
+            'version_number' => '2',
+            'version_label' => 'Неактуальная учебная копия',
+            'make_current' => '0',
+            'lock_version' => (int) $document->lock_version,
+        ];
+
+        $created = $this->post($url, $payload, ['Accept' => 'application/json'])
+            ->assertCreated()->assertJsonPath('data.is_current', false)->json('data.id');
+        self::assertNotSame((int) $binding->document_version_id, $created);
+        self::assertSame((int) $binding->document_version_id, (int) $document->fresh()->current_primary_version_id);
+        self::assertSame(2, $document->versions()->count());
+        self::assertSame($prepared['binding']['document_version_id'], (int) DB::table('contract_revision_legal_bindings')
+            ->where('id', $binding->id)->value('document_version_id'));
+
+        foreach (['1', null] as $makeCurrent) {
+            $replacement = [...$payload, 'version_number' => '3', 'lock_version' => (int) $document->fresh()->lock_version];
+            if ($makeCurrent === null) {
+                unset($replacement['make_current']);
+            } else {
+                $replacement['make_current'] = $makeCurrent;
+            }
+            $this->post($url, $replacement, ['Accept' => 'application/json'])->assertConflict()
+                ->assertJsonPath('message', 'Актуальный файл защищён от изменения. Замена недоступна.');
+            self::assertSame((int) $binding->document_version_id, (int) $document->fresh()->current_primary_version_id);
+            self::assertSame(2, $document->versions()->count());
+        }
+    }
+
     public function test_rich_frozen_revision_uses_real_pdf_archive_and_docx_pipeline(): void
     {
         [$actor, $input] = $this->fixture(true, false, true);
