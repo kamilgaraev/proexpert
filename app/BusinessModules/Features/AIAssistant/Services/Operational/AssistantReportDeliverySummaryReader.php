@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 
@@ -23,10 +24,11 @@ final readonly class AssistantReportDeliverySummaryReader extends AssistantProje
 
     public static function matches(string $query): bool
     {
-        return AssistantReportSubscriptionsReader::matches($query) && AssistantProjectExportHistoryReader::matches($query)
+        return ! AssistantMutationIntent::containsRequest($query)
+            && AssistantReportSubscriptionsReader::matches($query) && AssistantProjectExportHistoryReader::matches($query)
             && preg_match(self::FINANCIAL_TOPICS, $query) !== 1
             && preg_match('/покажи|есть\s+ли|каки[её]|провер|посмотр/iu', $query) === 1
-            && preg_match('/настрой|скачай|измени|запусти|добавь|сохрани|назначь|создай|отправь|удали|уведомлен|избран|представлен|права|рол[ьи]|задач|комплект|журнал|договор|ifc|bim|бим|модел|насос|кондиционер|вентиляц|crm|rfi|сделк|безопасност|охран|происшеств|техник|сотрудник|материал|поставк|закуп|тендер|заявк|(?<![\p{L}\p{N}_])акт(?:ы|а|ов|ам|ами|ах|ом|у|е)?(?![\p{L}\p{N}_])/iu', $query) !== 1;
+            && preg_match('/настрой|скачай|измени|запусти|добавь|сохрани|назначь|создай|отправь|удали|уведомлен|избран|представлен|права|рол[ьи]|задач|график|срок|критическ|комплект|журнал|договор|ifc|bim|бим|модел|насос|кондиционер|вентиляц|crm|rfi|сделк|безопасност|охран|происшеств|техник|сотрудник|материал|поставк|закуп|тендер|заявк|(?<![\p{L}\p{N}_])акт(?:ы|а|ов|ам|ами|ах|ом|у|е)?(?![\p{L}\p{N}_])/iu', $query) !== 1;
     }
 
     protected function domain(): string { return 'assistant'; }

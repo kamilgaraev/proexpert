@@ -709,6 +709,36 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertFalse($seen['include_quantities']);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('singleEquipmentWithEstimateLinks')]
+    public function test_model_catalog_with_equipment_count_does_not_discard_the_count(string $equipment, string $kind): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Какие версии BIM-моделей нашего объекта доступны и сколько '.$equipment.' найдено?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $args = ['project_id' => 52, 'model_query' => null, 'answer_kind' => 'elements', 'limit' => 20,
+            'equipment_kind' => $kind === 'ventilation_unit' ? null : $kind,
+            'equipment_kinds' => $kind === 'ventilation_unit' ? [$kind] : null, 'include_estimate_links' => true];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'catalog-and-count', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode($args, JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('elements', $seen['answer_kind']);
+        self::assertSame($kind, $seen['equipment_kind'] ?? $seen['equipment_kinds'][0]);
+        self::assertSame(52, $seen['project_id']);
+    }
+
     public function test_current_ifc_catalog_discards_stale_element_and_version_filters(): void
     {
         $tool = $this->createMock(AIToolInterface::class);

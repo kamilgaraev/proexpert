@@ -262,6 +262,33 @@ final class AssistantDirectorDecisionsTest extends TestCase
         self::assertFalse($reader->matchesReference($this->fixture->owner, $organizationId, $overridden['source_refs'][0]));
         $available = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
         self::assertSame('allow', $available['data']['items'][0]['budget_limit_check']['decision']);
+        $budget->updateQuietly(['plan_amount' => '500.00']);
+        $document->updateQuietly(['budget_limit_override_reason' => null]);
+        for ($i = 0; $i < 20; $i++) {
+            Model::withoutEvents(fn () => PaymentDocument::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $this->project->id, 'document_type' => 'invoice',
+                'document_number' => 'EARLIER-'.$i, 'document_date' => today(), 'direction' => 'outgoing', 'invoice_type' => 'other',
+                'amount' => '1.00', 'paid_amount' => '0.00', 'remaining_amount' => '1.00', 'currency' => 'RUB', 'status' => 'draft',
+                'due_date' => today()->subDay(),
+            ]));
+        }
+        $firstPage = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id]);
+        self::assertSame(21, $firstPage['data']['total']);
+        self::assertSame(20, $firstPage['data']['next_offset']);
+        self::assertSame(1, $firstPage['data']['budget_check_coverage']['outside_page']);
+        self::assertNull($firstPage['data']['items'][0]['budget_limit_check']['excess_amount']);
+        self::assertStringContainsString('начиная с 21-го', $firstPage['server_formatted_answer']);
+        self::assertStringContainsString('не входят в эту проверку', $firstPage['server_formatted_answer']);
+        self::assertNotContains($document->id, array_column($firstPage['data']['items'], 'id'));
+        $lastPage = $reader->read($this->fixture->owner, $organizationId, ['project_id' => $this->project->id, 'offset' => 20]);
+        self::assertSame($document->id, $lastPage['data']['items'][0]['id']);
+        self::assertSame('500.00', $lastPage['data']['items'][0]['budget_limit_check']['excess_amount']);
+        self::assertNull($lastPage['data']['next_offset']);
+        self::assertFalse($lastPage['data']['has_more']);
+        self::assertNotNull($reader->verifiedAnswer($lastPage, $this->fixture->owner, $organizationId));
+        $wrongPage = $lastPage['source_refs'][0]; $wrongPage['offset'] = 0;
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $organizationId, $wrongPage));
+        self::assertSame($checkCount, \App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck::query()->count());
     }
 
     public function test_payment_deadline_directions_and_bounded_approval_unknown_preserve_invoice_totals(): void

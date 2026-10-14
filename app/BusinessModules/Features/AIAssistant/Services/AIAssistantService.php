@@ -2110,7 +2110,8 @@ class AIAssistantService
                 if (preg_match('/(?:ifc|bim|бим|модел)/iu', $requestQuery) === 1
                     && (AssistantBimModelSelector::hasProjectScope($requestQuery) || preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1)
                     && preg_match('/каки[её].*верси|верси.*(?:текущ|актуальн|доступн)/iu', $requestQuery) === 1
-                    && preg_match('/сравни|разниц|изменен|элемент|насос|кондиционер|вентиляц|материал|свойств|объ[её]м/iu', $requestQuery) !== 1) {
+                    && $requestedKind === null
+                    && preg_match('/сравни|разниц|изменен|элемент|вентиляц|приточ|вытяжн|материал|свойств|объ[её]м/iu', $requestQuery) !== 1) {
                     $args['answer_kind'] = 'models';
                     $args['model_query'] = null;
                     $args['offset'] = 0;

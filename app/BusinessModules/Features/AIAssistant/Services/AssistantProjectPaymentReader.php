@@ -34,8 +34,10 @@ final readonly class AssistantProjectPaymentReader
     public function read(User $actor, int $organizationId, array $arguments): array
     {
         $projectId = $arguments['project_id'] ?? null;
-        if (! is_int($projectId) || $projectId < 1 || array_keys($arguments) !== ['project_id']) { throw new \InvalidArgumentException('invalid_payment_readiness_scope'); }
-        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $projectId): array {
+        $offset = $arguments['offset'] ?? 0;
+        if (! is_int($projectId) || $projectId < 1 || ! is_int($offset) || $offset < 0 || $offset > 9999
+            || array_diff(array_keys($arguments), ['project_id', 'offset']) !== []) { throw new \InvalidArgumentException('invalid_payment_readiness_scope'); }
+        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $projectId, $offset): array {
             if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')
                 || (! $this->access->canCurrentPermission($actor, $organizationId, 'payments.invoice.view')
                     && ! $this->access->canCurrentPermission($actor, $organizationId, 'payments.invoice.view_all'))
@@ -61,7 +63,7 @@ final readonly class AssistantProjectPaymentReader
                         'status_allows_payment' => $status?->canBePaid() ?? false, 'is_overdue' => (bool) $row['is_overdue']];
                 }
             }
-            $window = array_slice($items, 0, 20);
+            $window = array_slice($items, $offset, 20);
             $budgetChecks = $this->budgetChecks($actor, $organizationId, $projectId, array_column($window, 'id'));
             $approvals = $this->pendingApprovals($actor, $organizationId, array_column($window, 'id'));
             foreach ($window as &$item) {
@@ -73,10 +75,15 @@ final readonly class AssistantProjectPaymentReader
                 'total' => count($rows) <= 10000 ? count($items) : null, 'unknown_balance_count' => count($rows) <= 10000 ? $unknown : null, 'items' => $window,
                 'overdue_outgoing' => count($rows) <= 10000 ? count(array_filter($items, static fn (array $item): bool => $item['is_overdue'] && $item['direction'] === 'outgoing')) : null,
                 'overdue_incoming' => count($rows) <= 10000 ? count(array_filter($items, static fn (array $item): bool => $item['is_overdue'] && $item['direction'] === 'incoming')) : null,
-                'approval_read_available' => $approvals['available']];
+                'approval_read_available' => $approvals['available'],
+                'offset' => $offset, 'has_more' => count($rows) <= 10000 && $offset + count($window) < count($items),
+                'next_offset' => count($rows) <= 10000 && $offset + count($window) < count($items) ? $offset + count($window) : null,
+                'budget_check_coverage' => ['attempted' => count($window), 'available' => count(array_filter($budgetChecks, static fn (?array $check): bool => $check !== null)),
+                    'outside_page' => count($rows) <= 10000 ? count($items) - count($window) : null]];
             $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
+            $ref['offset'] = $offset;
             return ['status' => 'partial', 'source_refs' => [$ref], 'data' => $payload, 'server_formatted_answer' => self::format($payload)];
         }, true);
     }
@@ -84,8 +91,9 @@ final readonly class AssistantProjectPaymentReader
     public function matchesReference(User $actor, int $organizationId, array $ref): bool
     {
         if (($ref['entity_type'] ?? null) !== self::TYPE || ($ref['organization_id'] ?? null) !== $organizationId || ($ref['actor_id'] ?? null) !== (int) $actor->id
-            || ($ref['project_id'] ?? null) !== ($ref['entity_id'] ?? null) || ! is_int($ref['entity_id'] ?? null) || ! is_string($ref['source_version'] ?? null)) { return false; }
-        try { return $this->read($actor, $organizationId, ['project_id' => $ref['entity_id']])['source_refs'][0]['source_version'] === $ref['source_version']; }
+            || ($ref['project_id'] ?? null) !== ($ref['entity_id'] ?? null) || ! is_int($ref['entity_id'] ?? null) || ! is_string($ref['source_version'] ?? null)
+            || ! is_int($ref['offset'] ?? 0) || ($ref['offset'] ?? 0) < 0 || ($ref['offset'] ?? 0) > 9999) { return false; }
+        try { return $this->read($actor, $organizationId, ['project_id' => $ref['entity_id'], 'offset' => $ref['offset'] ?? 0])['source_refs'][0]['source_version'] === $ref['source_version']; }
         catch (\Throwable) { return false; }
     }
 
@@ -93,7 +101,7 @@ final readonly class AssistantProjectPaymentReader
     {
         $ref = $result['source_refs'][0] ?? null;
         if (! is_array($ref) || ! $this->matchesReference($actor, $organizationId, $ref)) { return null; }
-        $current = $this->read($actor, $organizationId, ['project_id' => $ref['entity_id']]);
+        $current = $this->read($actor, $organizationId, ['project_id' => $ref['entity_id'], 'offset' => $ref['offset'] ?? 0]);
         if ($current['source_refs'][0]['source_version'] !== $ref['source_version']) { return null; }
         return ['text' => $current['server_formatted_answer'], 'source_refs' => $current['source_refs'], 'validation_status' => 'partial', 'replaced' => true, 'needs_clarification' => false];
     }
@@ -104,6 +112,11 @@ final readonly class AssistantProjectPaymentReader
         if (! $data['complete']) { $lines[] = trans_message('ai_assistant_decisions.payment_limit'); return implode("\n", $lines); }
         $lines[] = trans_message('ai_assistant_decisions.payment_count', ['total' => $data['total'], 'shown' => count($data['items']), 'unknown' => $data['unknown_balance_count']]);
         $lines[] = trans_message('ai_assistant_decisions.payment_overdue_counts', ['outgoing' => $data['overdue_outgoing'], 'incoming' => $data['overdue_incoming']]);
+        $lines[] = trans_message('ai_assistant_decisions.payment_budget_coverage', ['attempted' => $data['budget_check_coverage']['attempted'],
+            'available' => $data['budget_check_coverage']['available'], 'outside' => $data['budget_check_coverage']['outside_page']]);
+        if ($data['next_offset'] !== null) {
+            $lines[] = trans_message('ai_assistant_decisions.payment_next_page', ['next' => $data['next_offset'] + 1]);
+        }
         foreach ($data['items'] as $item) {
             $lines[] = '- '.self::text((string) $item['number']).' (#'.$item['id'].'): '.trans_message('ai_assistant_decisions.payment_amounts',
                 ['amount' => $item['amount'], 'paid' => $item['paid_amount'], 'remaining' => $item['remaining_amount'], 'currency' => self::text((string) $item['currency'])]);
@@ -147,7 +160,7 @@ final readonly class AssistantProjectPaymentReader
         foreach ($documents ?? [] as $document) {
             try {
                 $result = $this->budgetLimits->check($document, $actor);
-                $excess = $result['summary']['excess_amount'] ?? null;
+                $excess = ($result['limit']['has_approved_budget'] ?? false) === true ? ($result['summary']['excess_amount'] ?? null) : null;
                 $checks[(int) $document->id] = ['status' => $result['status'], 'decision' => $result['decision'],
                     'message' => mb_substr((string) $result['message'], 0, 500),
                     'excess_amount' => self::money($excess) ? $excess : null,

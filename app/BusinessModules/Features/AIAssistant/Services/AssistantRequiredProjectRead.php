@@ -78,7 +78,12 @@ final readonly class AssistantRequiredProjectRead
             return ['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => $scope->projectId]];
         }
         if (AssistantProjectPaymentReader::matches($query)) {
-            return ['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => $scope->projectId]];
+            $arguments = ['project_id' => $scope->projectId];
+            if (preg_match('/начиная\s+с\s+([0-9]+)(?:\s*-\s*го)?/iu', $query, $page) === 1) {
+                if (strlen($page[1]) > 5 || (int) $page[1] < 1 || (int) $page[1] > 10000) { return null; }
+                $arguments['offset'] = (int) $page[1] - 1;
+            }
+            return ['name' => 'get_project_payment_readiness', 'arguments' => $arguments];
         }
         if (AssistantProjectWorkforceReader::matches($query)) {
             $period = (new AssistantPeriodResolver)->resolve($query);
@@ -143,6 +148,8 @@ final readonly class AssistantRequiredProjectRead
             || $toolName === 'assistant_domain_search' && ($bound['predicate'] ?? null) !== 'overdue')
             && is_string($arguments['cursor'] ?? null)) { $bound['cursor'] = $arguments['cursor']; }
         if ($toolName === 'get_project_material_stock' && is_int($arguments['offset'] ?? null)) { $bound['offset'] = $arguments['offset']; }
+        if ($toolName === 'get_project_payment_readiness' && is_int($arguments['offset'] ?? null)
+            && $arguments['offset'] >= 0 && $arguments['offset'] <= 9999 && ! array_key_exists('offset', $bound)) { $bound['offset'] = $arguments['offset']; }
         if ($toolName === 'search_assistant_documents' && is_int($arguments['metadata_offset'] ?? null)) { $bound['metadata_offset'] = $arguments['metadata_offset']; }
         return $bound;
     }

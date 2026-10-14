@@ -125,6 +125,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $payment = $this->plan('Какие счета по нашему объекту ещё не оплачены, сколько по каждому и что мне проверить перед оплатой?');
         self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($payment));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999]));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($payment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 20]));
+        $nextPayment = $this->plan('Покажи неоплаченные счета нашего объекта, начиная с 21-го. Что проверить перед оплатой?');
+        self::assertSame(['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => 52, 'offset' => 20]], AssistantRequiredProjectRead::fromPlan($nextPayment));
+        self::assertSame(['project_id' => 52, 'offset' => 20], AssistantRequiredProjectRead::bindArguments($nextPayment, 'get_project_payment_readiness', ['project_id' => 999, 'offset' => 0]));
         self::assertSame('procurement', AssistantRequiredProjectRead::fromPlan($this->plan('Что со снабжением нашего объекта: какие поставки и заявки требуют решения сегодня, что может помешать ближайшим работам?'))['arguments']['focus']);
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan('Измени зависимости задач нашего проекта.')));
         foreach (['Какие задачи влияют на сроки нашего проекта и сколько потрачено за сентябрь 2026?',
