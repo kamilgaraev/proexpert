@@ -6,6 +6,8 @@ namespace Tests\Unit\Admin;
 
 use App\Http\Resources\Api\V1\Admin\Contract\ContractResource;
 use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\Organization;
 use App\Models\Supplier;
 use App\Services\Contract\ContractSideResolverService;
 use Illuminate\Http\Request;
@@ -86,6 +88,51 @@ final class ContractResourcePartyTest extends TestCase
         self::assertSame(114, $payload['supplier_id'] ?? null);
         self::assertArrayNotHasKey('supplier', $payload);
         self::assertFalse($contract->relationLoaded('supplier'));
+    }
+
+    #[DataProvider('organizationRegistrationNumbers')]
+    public function test_it_separates_organization_kpp_and_ogrn(?string $registrationNumber, ?string $kpp, ?string $ogrn): void
+    {
+        $contract = $this->contract([]);
+        $organization = new Organization;
+        $organization->setRawAttributes(['id' => 38, 'name' => 'Учебная организация', 'tax_number' => '6658522310', 'registration_number' => $registrationNumber]);
+        $contract->setRelation('organization', $organization);
+
+        $payload = (new ContractResource($contract))->resolve(Request::create('/'));
+
+        self::assertSame('6658522310', $payload['organization_details']['inn']);
+        self::assertSame($kpp, $payload['organization_details']['kpp']);
+        self::assertArrayHasKey('ogrn', $payload['organization_details']);
+        self::assertSame($ogrn, $payload['organization_details']['ogrn']);
+        self::assertSame($registrationNumber, $organization->registration_number);
+    }
+
+    public static function organizationRegistrationNumbers(): array
+    {
+        return [
+            ['1196658003277', null, '1196658003277'],
+            ['325169000191393', null, '325169000191393'],
+            ['770201001', '770201001', null],
+            ['007 201 001', '007201001', null],
+            ['ОГРН 119 665 800 3277', null, '1196658003277'],
+            ['1234567890', null, null],
+            ['', null, null],
+            [null, null, null],
+        ];
+    }
+
+    public function test_it_keeps_the_contractor_dedicated_kpp_separate_from_organization_registration(): void
+    {
+        $contract = $this->contract(['contractor_id' => 251]);
+        $contractor = new Contractor;
+        $contractor->setRawAttributes(['id' => 251, 'name' => 'Учебный подрядчик', 'inn' => '7702000002', 'kpp' => '770201001']);
+        $contract->setRelation('contractor', $contractor);
+
+        $payload = (new ContractResource($contract))->resolve(Request::create('/'));
+
+        self::assertSame('770201001', $payload['contractor_details']['kpp']);
+        self::assertArrayNotHasKey('organization_details', $payload);
+        self::assertFalse($contract->relationLoaded('organization'));
     }
 
     private function contract(array $attributes): Contract
