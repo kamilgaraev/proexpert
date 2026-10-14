@@ -25,6 +25,14 @@ final class EstimateOperationService
     {
         $organizationId = (int) $actor->current_organization_id;
         $this->access->project($actor, $organizationId, $projectId);
+        $quantityMode = $parameters['subtraction_quantity_mode'] ?? 'positive';
+        if (! in_array($parameters['mode'] ?? null, ['adjust', 'consolidate', 'reprice'], true) || ! in_array($quantityMode, ['positive', 'signed'], true)
+            || (array_key_exists('subtraction_quantity_mode', $parameters) && ($parameters['mode'] !== 'adjust' || ! in_array($parameters['reprice'] ?? false, [false, 0, '0'], true)))) {
+            $this->invalid('invalid');
+        }
+        if ($parameters['mode'] === 'adjust' && ! ($parameters['reprice'] ?? false)) {
+            $parameters['subtraction_quantity_mode'] = $quantityMode;
+        }
         $ids = $parameters['mode'] === 'adjust'
             ? array_merge([$parameters['base_id']], $parameters['addition_ids'] ?? [], $parameters['subtraction_ids'] ?? [])
             : $parameters['source_ids'];

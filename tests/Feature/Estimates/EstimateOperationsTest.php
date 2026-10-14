@@ -86,6 +86,78 @@ final class EstimateOperationsTest extends TestCase
         $this->operations->apply($this->actor, $this->project->id, $operation->id, 'blocked');
     }
 
+    public function test_signed_adjustment_preserves_negative_components_resources_and_a_single_vat(): void
+    {
+        [$base, $baseItem] = $this->source('-10', '10');
+        $base->update(['vat_rate' => '22']);
+        $baseItem->update(['direct_costs' => '-100', 'overhead_amount' => '-10', 'profit_amount' => '-5',
+            'total_amount' => '-115', 'current_total_amount' => '-115']);
+        $baseItem->forceFill(['base_machinery_labor_cost' => '-2'])->save();
+        $child = $baseItem->replicate(['stable_key']);
+        $child->fill(['parent_work_id' => $baseItem->id, 'item_type' => 'material', 'normative_rate_code' => 'MAT-001',
+            'quantity' => '-20', 'quantity_total' => '-20', 'unit_price' => '3', 'current_unit_price' => '3',
+            'direct_costs' => '-60', 'materials_cost' => '-60', 'overhead_amount' => '0', 'profit_amount' => '0', 'other_cost' => '0',
+            'total_amount' => '-60', 'current_total_amount' => '-60']);
+        $child->save();
+        $resource = \App\Models\EstimateItemResource::query()->create(['estimate_item_id' => $baseItem->id,
+            'resource_type' => 'material', 'name' => 'Материал', 'measurement_unit_id' => $this->unit->id,
+            'quantity_per_unit' => '2', 'total_quantity' => '-20', 'unit_price' => '3', 'total_amount' => '-60']);
+        [$add] = $this->source('2', '15');
+        [$subtract] = $this->source('4', '99');
+        $before = $baseItem->fresh()->attributesToArray();
+        $operation = $this->operations->create($this->actor, $this->project->id, [
+            'mode' => 'adjust', 'base_id' => $base->id, 'addition_ids' => [$add->id], 'subtraction_ids' => [$subtract->id],
+            'reprice' => false, 'subtraction_quantity_mode' => 'signed',
+        ]);
+        $this->preview($operation);
+        $operation = $this->operations->resolve($this->actor, $this->project->id, $operation->id, [
+            'match:'.$subtract->id.':'.$subtract->items()->firstOrFail()->id => ['target_key' => $base->id.':'.$baseItem->id],
+        ]);
+        $this->preview($operation);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('-39.00', $operation->fresh()->summary['total_amount']);
+        self::assertSame('-47.58', $operation->fresh()->summary['total_amount_with_vat']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'signed-components');
+        $this->operations->process($operation->id, $operation->generation, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        $negative = $result->items()->whereNull('parent_work_id')->where('quantity_total', '<', 0)->firstOrFail();
+        self::assertSame('-6.00000000', $negative->quantity_total);
+        self::assertSame('-60.0000', $negative->direct_costs);
+        self::assertSame('-6.00', $negative->overhead_amount);
+        self::assertSame('-3.00', $negative->profit_amount);
+        self::assertSame('-69.00', $negative->total_amount);
+        self::assertSame('-1.20', $negative->base_machinery_labor_cost);
+        self::assertSame('-12.00000000', $result->items()->where('parent_work_id', $negative->id)->firstOrFail()->quantity_total);
+        self::assertSame('-12.000000000000000000', $negative->resources()->firstOrFail()->total_quantity);
+        self::assertSame('-36.00', $negative->resources()->firstOrFail()->total_amount);
+        self::assertSame('-39.00', $result->total_amount);
+        self::assertSame('-47.58', $result->total_amount_with_vat);
+        self::assertSame('signed', $result->metadata['operation']['subtraction_quantity_mode']);
+        self::assertSame($before, $baseItem->fresh()->attributesToArray());
+        self::assertSame('-20.000000000000000000', $resource->fresh()->total_quantity);
+    }
+
+    public function test_signed_operation_parameters_are_validated_in_service_and_request(): void
+    {
+        [$base] = $this->source('100');
+        [$subtract] = $this->source('-30');
+        $valid = ['mode' => 'adjust', 'base_id' => $base->id, 'subtraction_ids' => [$subtract->id],
+            'reprice' => false, 'subtraction_quantity_mode' => 'signed'];
+        $request = \App\Http\Requests\Admin\Estimate\StoreEstimateOperationRequest::create('/', 'POST', $valid);
+        self::assertTrue(app('validator')->make($valid, $request->rules())->passes());
+        foreach ([['subtraction_quantity_mode' => 'unknown'], ['reprice' => true], ['mode' => 'consolidate'], ['mode' => 'unknown']] as $changes) {
+            $parameters = array_replace($valid, $changes);
+            $request = \App\Http\Requests\Admin\Estimate\StoreEstimateOperationRequest::create('/', 'POST', $parameters);
+            self::assertTrue(app('validator')->make($parameters, $request->rules())->fails());
+            try {
+                $this->operations->create($this->actor, $this->project->id, $parameters);
+                self::fail('Invalid signed parameters were accepted');
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('operation', $exception->errors());
+            }
+        }
+    }
+
     public function test_excluding_exact_remainder_is_allowed_and_annulled_acts_are_ignored(): void
     {
         [$base, $item] = $this->source('100');
