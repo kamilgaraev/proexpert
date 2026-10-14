@@ -879,6 +879,54 @@ final class AtomicDocumentUnitPublicationPostgresTest extends EstimateGeneration
     }
 
     #[Test]
+    public function shared_geometry_key_keeps_source_versions_separate_and_replays_legacy_identity(): void
+    {
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('d', 1);
+            $now = now()->toDateTimeImmutable();
+            $claimed = $store->claim((int) $unit->id, $sourceVersion, $now, $now->modify('+120 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+            $first = $store->executionContext($claimed);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $first);
+            $legacyId = 'entity:'.hash('sha256', 'wall|wall.w1');
+            $models = new EloquentProjectModelRepository(app('db'));
+            $models->saveSourceModel([new Entity($legacyId, $first->organizationId, $first->projectId,
+                $first->sessionId, $sourceVersion, 'wall', $legacyId, ['semantic_type' => 'wall'])], [], []);
+            $source = EstimateGenerationDocument::query()->findOrFail($first->documentId);
+            $source->update(['checksum_sha256' => str_repeat('d', 64)]);
+            $document = $source->replicate();
+            $document->source_version = 'sha256:'.str_repeat('f', 64);
+            $document->checksum_sha256 = str_repeat('f', 64);
+            $document->save();
+            $second = new DocumentUnitExecutionContext($first->unitId, $first->organizationId, $first->projectId,
+                $first->sessionId, (int) $document->id, $first->type, $first->index, $document->source_version,
+                $first->locator, $first->storagePath, $first->mimeType, $first->filename, $first->claimToken,
+                $first->unitAttemptCount, $first->sessionStateVersion, $first->sessionStatus);
+            foreach ([$first, $second, $first, $second] as $context) {
+                $claim = $this->numericObservation($context, 'wall.w1', '3', 'length', 'm');
+                $writer->writeArbitration([$claim], [$this->acceptedDecision($claim)], $context->documentId, 1, $this->nativeProof([$claim]));
+            }
+            $entities = DB::table('estimate_generation_project_model_entities')->where('session_id', $first->sessionId)->get();
+            self::assertCount(2, $entities);
+            self::assertSame($legacyId, $entities->firstWhere('source_version', $first->sourceVersion)->stable_key);
+            self::assertNotSame($legacyId, $entities->firstWhere('source_version', $second->sourceVersion)->stable_key);
+            self::assertSame(2, DB::table('estimate_generation_project_model_assertions')->where('session_id', $first->sessionId)->count());
+            self::assertSame(2, DB::table('estimate_generation_evidence')->where('session_id', $first->sessionId)->count());
+            $snapshot = $models->snapshotForPlanning($first->organizationId, $first->projectId, $first->sessionId, 10001)['snapshot'];
+            self::assertCount(2, $snapshot->entities);
+            self::assertCount(2, $snapshot->facts);
+            foreach ($snapshot->facts as $fact) {
+                $entity = array_values(array_filter($snapshot->entities, static fn ($item): bool => $item->id === $fact->entityId))[0];
+                self::assertSame($entity->sourceVersion, $fact->sourceVersion);
+                self::assertSame('3', $fact->value);
+                self::assertCount(1, $fact->nativeNumericProofs);
+            }
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function replay_reuses_a_legacy_fact_dependent_room_entity_without_identity_collision(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
