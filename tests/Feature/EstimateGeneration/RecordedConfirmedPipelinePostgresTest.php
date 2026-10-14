@@ -32,6 +32,7 @@ use App\Models\MeasurementUnit;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 use Tests\Support\EstimateGeneration\RecordedUniversalPipelineAdapter;
 
@@ -71,6 +72,26 @@ final class RecordedConfirmedPipelinePostgresTest extends EstimateGenerationCano
         self::assertNull($source['evidence']['document_id']);
         self::assertNull($source['evidence']['page']);
         self::assertFalse($source['dimensions_confirmed']);
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], (int) $session->fresh()->state_version, (string) Str::uuid(),
+            ['entities' => [['key' => 'room', 'type' => 'room', 'name' => 'Комната после уточнения']]]);
+        $currentVersion = (int) $session->fresh()->state_version;
+        try {
+            app(BindEvaluationWorkEntity::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+                'state_version' => $currentVersion, 'work_item_key' => $originalKeys[0],
+                'source_fact_id' => $source['source_fact_id'], 'source_fact_version' => $source['source_fact_version'],
+                'source_value_hash' => $source['source_value_hash'], 'reason' => 'Попытка использовать прежнее подтверждение после переименования.']);
+            self::fail('The old manual identity must not be accepted with the current session version.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('entity', $exception->errors());
+        }
+        self::assertSame($currentVersion, (int) $session->fresh()->state_version);
+        $currentSources = app(GetRoomIdentitySources::class)->handle($actor, $scope[1], $scope[2], includeManual: true)['sources'];
+        self::assertCount(1, $currentSources);
+        self::assertSame($source['entity_id'], $currentSources[0]['entity_id']);
+        self::assertNotSame($source['source_fact_id'], $currentSources[0]['source_fact_id']);
+        self::assertNotSame($source['source_value_hash'], $currentSources[0]['source_value_hash']);
+        self::assertSame('Комната после уточнения', $currentSources[0]['name']);
+        $source = $currentSources[0];
         app(SaveEvaluationScopeSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
             'state_version' => $session->fresh()->state_version, 'selected_sections' => ['finishing'], 'profile_id' => 'construction',
             'construction_type' => 'new_construction', 'price_policy' => 'catalog']);
