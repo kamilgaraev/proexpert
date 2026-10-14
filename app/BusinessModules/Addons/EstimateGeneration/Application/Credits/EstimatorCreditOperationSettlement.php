@@ -92,19 +92,30 @@ final readonly class EstimatorCreditOperationSettlement
         if ($usages->count() !== $attempts->count()) {
             throw new UsageInvariantViolation('estimator_credit_publication_usage_not_reconciled');
         }
+        $carry = $useful ? app(EstimatorDocumentCostAllocation::class)->validate($session,
+            json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR)) : ['items' => [], 'cost_micro_rub' => 0];
         $cost = BigDecimal::zero();
         foreach ($usages as $usage) {
             $cost = $cost->plus((string) $usage->cost_micro_rub);
         }
+        $ownCost = $cost->toInt();
+        $cost = $cost->plus((string) $carry['cost_micro_rub']);
         if ($cost->isGreaterThan((string) $operation->maximum_provider_cost_micro_rub)) {
             throw new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached('estimator_credit_supplier_limit_reached');
         }
-        $consumed = $this->credits->finalize($reservation, useful: $useful && $usages->where('is_successful', true)->isNotEmpty());
+        foreach ($carry['items'] as $pin) {
+            $this->credits->allocateEstimatorDocumentCost($reservation, $operationId, $pin, $revisionId, $contentHash);
+        }
+        $consumed = $this->credits->finalize($reservation, useful: $useful && ($usages->where('is_successful', true)->isNotEmpty() || $carry['items'] !== []));
+        if ($carry['items'] !== [] && $consumed === 0) {
+            throw new UsageInvariantViolation('estimator_credit_allocation_without_charge');
+        }
         $unknown = $attempts->where('status', 'unavailable')->count();
         $receipt = ['operation_id' => $operationId, 'status' => 'settled', 'revision_id' => $revisionId, 'useful_result' => $useful,
             'result_content_hash' => $contentHash,
             'consumed_units_minor' => $consumed, 'charged_units' => (string) BigDecimal::of((string) $consumed)->withPointMovedLeft(2),
             'measured_supplier_cost_micro_rub' => $cost->toInt(), 'supplier_cost_micro_rub' => $unknown === 0 ? $cost->toInt() : null,
+            'own_supplier_cost_micro_rub' => $ownCost, 'carried_document_cost_micro_rub' => $carry['cost_micro_rub'],
             'unavailable_physical_costs' => $unknown, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna'];
         $this->database->table('estimate_generation_credit_operations')->where('operation_id', $operationId)->update([
             'status' => 'settled', 'consumed_units_minor' => $consumed, 'result_revision_id' => $revisionId,

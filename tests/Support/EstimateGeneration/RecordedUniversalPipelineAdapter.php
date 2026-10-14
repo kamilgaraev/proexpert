@@ -49,7 +49,8 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
     private ?InMemoryS3HttpStorage $storage = null;
 
     public function __construct(private readonly Application $app, private readonly BenchmarkObjectReader $objects,
-        private readonly string $recordingPath, private readonly string $recordingSha256) {}
+        private readonly string $recordingPath, private readonly string $recordingSha256,
+        private readonly ?\Closure $afterDocumentUnits = null) {}
 
     public function id(): string
     {
@@ -262,6 +263,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         foreach ($units as $unit) {
             $processor->handle((int) $unit->id, $unit->source_version);
         }
+        ($this->afterDocumentUnits)?->__invoke($session->fresh(), $id);
         $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class)->handle($session->fresh());
         $session->refresh();
         $run = ['document_id' => (int) $document->id, 'operation_id' => $id, 'vision_requests' => Http::recorded()->count(),

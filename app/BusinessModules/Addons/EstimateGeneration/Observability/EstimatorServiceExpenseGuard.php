@@ -28,6 +28,7 @@ final readonly class EstimatorServiceExpenseGuard
             }
             $risk = $this->database->selectOne(<<<'SQL'
 SELECT COALESCE(SUM(CASE
+    WHEN allocation.source_provider_usage_id IS NOT NULL THEN 0
     WHEN attempts.status <> 'recorded' OR usages.id IS NULL THEN attempts.maximum_cost_micro_rub
     WHEN NOT usages.is_successful OR operations.status IN ('cancelled','failed')
        OR (operations.status='settled' AND operations.consumed_units_minor=0)
@@ -37,6 +38,7 @@ FROM estimate_generation_credit_attempts attempts
 JOIN estimate_generation_credit_operations operations ON operations.operation_id=attempts.operation_id
 LEFT JOIN ai_credit_provider_usages usages ON usages.ai_credit_reservation_id=attempts.reservation_id
     AND usages.usage_key=attempts.attempt_id::text
+LEFT JOIN ai_credit_provider_cost_allocations allocation ON allocation.source_provider_usage_id=usages.id
 WHERE attempts.organization_id=?
   AND (attempts.status <> 'recorded' OR usages.id IS NULL OR usages.occurred_at >= ?)
 SQL, [$organizationId, $start]);

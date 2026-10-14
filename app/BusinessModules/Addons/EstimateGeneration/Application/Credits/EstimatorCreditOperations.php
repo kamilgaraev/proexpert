@@ -120,6 +120,7 @@ final readonly class EstimatorCreditOperations
         if ($operation->status !== 'quoted') {
             return (string) $operation->operation_id;
         }
+        app(EstimatorDocumentCostAllocation::class)->validate($session, $plan);
         if ((int) $session->state_version !== $stateVersion || ! hash_equals($operation->input_hash, $this->inputs->fromSession($session))) {
             throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
         }
@@ -169,6 +170,11 @@ final readonly class EstimatorCreditOperations
             $plan['known_context'] = $known;
         }
         $plan['documents'] = $manifest;
+        if (! in_array($kind, ['documents', 'dialogue'], true)) {
+            $plan['document_costs'] = app(EstimatorDocumentCostAllocation::class)->capture($session);
+            $plan['maximum_provider_cost_micro_rub'] = \Brick\Math\BigInteger::of($plan['maximum_provider_cost_micro_rub'])
+                ->plus($plan['document_costs']['cost_micro_rub'])->toInt();
+        }
         if ($parameters !== []) {
             $plan['operation_parameters'] = $parameters;
         }
@@ -234,6 +240,7 @@ final readonly class EstimatorCreditOperations
         if (! hash_equals($request->inputHash, $this->inputs->fromSession($session))) {
             throw new StaleEstimateGenerationState((int) $session->id, $request->stateVersion);
         }
+        app(EstimatorDocumentCostAllocation::class)->validate($session, $plan);
         [$manifest] = $this->manifest($session, $kind);
         if (! hash_equals($request->manifestHash, $operation->manifest_hash)
             || ! hash_equals($request->manifestHash, hash('sha256', CanonicalPipelineJson::encode($manifest)))) {
