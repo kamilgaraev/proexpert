@@ -700,6 +700,12 @@ class ContractCoreExperienceControllerTest extends TestCase
                 $lazyWorkQueries = array_filter($queries, static fn (array $query): bool =>
                     str_contains($query['query'], 'from "completed_works" where "completed_works"."id" = ?'));
                 self::assertCount(0, $lazyWorkQueries);
+                if (str_ends_with($url, '/performance-acts')) {
+                    $actLineQueries = array_filter($queries, static fn (array $query): bool =>
+                        str_contains($query['query'], 'from "performance_act_lines"')
+                        && str_contains($query['query'], '"performance_act_lines"."performance_act_id" in ('));
+                    self::assertCount(1, $actLineQueries);
+                }
             }
         }
         self::assertSame(2500.0, (float) $act->fresh()->amount);
