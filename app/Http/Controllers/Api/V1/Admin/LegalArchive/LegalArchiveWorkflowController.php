@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Admin\LegalArchive;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\DecideLegalArchiveWorkflowRequest;
+use App\Http\Requests\Api\V1\Admin\LegalArchive\PreviewLegalArchiveWorkflowRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\SubmitLegalArchiveWorkflowRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveWorkflowResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveWorkflowSubmitPreviewResource;
@@ -17,7 +18,6 @@ use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowSubmissionPreviewService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Throwable;
 
 use function trans_message;
@@ -29,7 +29,7 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
         private readonly LegalDocumentWorkflowService $workflow,
     ) {}
 
-    public function submitPreview(Request $request, string $legalDocument, LegalWorkflowSubmissionPreviewService $preview): JsonResponse
+    public function submitPreview(PreviewLegalArchiveWorkflowRequest $request, string $legalDocument, LegalWorkflowSubmissionPreviewService $preview): JsonResponse
     {
         try {
             $document = $this->registry->findForOrganization($this->organizationId($request), (int) $legalDocument);

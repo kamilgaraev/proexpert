@@ -169,6 +169,19 @@ final class LegalArchiveApiContractTest extends TestCase
             ->assertJsonPath('data.template.version', 1)
             ->assertJsonCount(3, 'data.steps');
         $steps = collect($response->json('data.steps'))->keyBy('key');
+        foreach ([
+            'template_id' => (int) $template->id + 1,
+            'step_overrides' => ['owner' => ['actor_type' => 'user', 'actor_reference' => '7']],
+            'additional_steps' => [['key' => 'extra', 'label' => 'Дополнительная проверка', 'sequence' => 30, 'actor_type' => 'user', 'actor_reference' => '7', 'required' => false]],
+        ] as $parameter => $value) {
+            foreach ([$value, ''] as $input) {
+                $invalid = $this->getJson($url.'?'.http_build_query([$parameter => $input]), $headers)->assertStatus(422);
+                self::assertStringContainsString(
+                    trans_message('legal_archive.messages.workflow_preview_default_route_only'),
+                    json_encode($invalid->json(), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                );
+            }
+        }
         self::assertTrue($steps['owner']['starts_immediately']);
         self::assertTrue($steps['project']['starts_immediately']);
         self::assertFalse($steps['final']['starts_immediately']);
