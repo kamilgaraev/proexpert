@@ -110,16 +110,11 @@ class ExcelExporterService
 
                     // Запись данных и стилизация строк
                     $rowIndex = 2;
-                    $rowLogged = 0;
                     foreach ($data as $rowArray) {
                         $colIndex = 0;
                         foreach ($rowArray as $value) {
                             $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . $rowIndex;
-                            if (is_string($value)) {
-                                $sheet->setCellValueExplicit($cell, $value, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                            } else {
-                                $sheet->setCellValue($cell, $value);
-                            }
+                            $sheet->setCellValue($cell, $value);
                             // Форматирование чисел и дат
                             if (is_numeric($value) && $colIndex > 0) {
                                 $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('#,##0.00');

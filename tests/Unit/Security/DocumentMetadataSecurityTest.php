@@ -94,7 +94,7 @@ final class DocumentMetadataSecurityTest extends TestCase
     {
         $spreadsheet = (new Spreadsheet)->setValueBinder(new ExportValueBinder);
         $sheet = $spreadsheet->getActiveSheet();
-        foreach (['=HYPERLINK("https://attacker.test","x")', '=1+1', '+123', '@name'] as $index => $text) {
+        foreach (['=HYPERLINK("https://attacker.test","x")', '=1+1', '+123', '@name', '00123', '12,50', '1e999'] as $index => $text) {
             $sheet->setCellValue('A'.($index + 1), $text);
             self::assertSame(DataType::TYPE_STRING, $sheet->getCell('A'.($index + 1))->getDataType());
             self::assertSame($text, $sheet->getCell('A'.($index + 1))->getValue());
@@ -103,6 +103,11 @@ final class DocumentMetadataSecurityTest extends TestCase
         $sheet->setCellValue('B2', 45.67);
         self::assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('B1')->getDataType());
         self::assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('B2')->getDataType());
+        foreach (['12.50', '-45.67', '0.00', '123'] as $index => $number) {
+            $sheet->setCellValue('C'.($index + 1), $number);
+            self::assertSame(DataType::TYPE_NUMERIC, $sheet->getCell('C'.($index + 1))->getDataType());
+            self::assertEquals((float) $number, $sheet->getCell('C'.($index + 1))->getValue());
+        }
         $path = tempnam(sys_get_temp_dir(), 'most-export-');
         try {
             (new Xlsx($spreadsheet))->save($path);
@@ -110,6 +115,13 @@ final class DocumentMetadataSecurityTest extends TestCase
             self::assertTrue($zip->open($path) === true);
             self::assertStringNotContainsString('<f', $zip->getFromName('xl/worksheets/sheet1.xml'));
             $zip->close();
+            $reopened = (new \PhpOffice\PhpSpreadsheet\Reader\Xlsx)->load($path);
+            foreach (['12.50', '-45.67', '0.00', '123'] as $index => $number) {
+                $cell = $reopened->getActiveSheet()->getCell('C'.($index + 1));
+                self::assertSame(DataType::TYPE_NUMERIC, $cell->getDataType());
+                self::assertEquals((float) $number, $cell->getValue());
+            }
+            $reopened->disconnectWorksheets();
         } finally {
             $spreadsheet->disconnectWorksheets();
             unlink($path);
