@@ -328,7 +328,7 @@ final class EstimateAuditTest extends TestCase
                     'operation' => 'add_work',
                     'finding_id' => $finding['finding_id'],
                     'work_key' => 'finish.floor',
-                    'name' => 'Устройство покрытия пола',
+                    'name' => 'Монтаж труб отопления',
                     'derived_quantity_id' => 'quantity:corrected',
                     'source_fact_ids' => ['fact:floor-area'],
                 ]
@@ -343,19 +343,22 @@ final class EstimateAuditTest extends TestCase
                 ['accepted' => false, 'findings' => [$finding]],
                 ['accepted' => true, 'findings' => []],
             ]);
+            $correctionRuns = new InMemoryAiRoleRunRepository;
+            $correctionModel = new RecordedEstimateComposerCorrectionModel([$correction]);
             $cycles = new ApplyComposerCorrectionCycle(
                 new RunEstimateAudit(new InMemoryAiRoleRunRepository, $auditor, 'openai/gpt-5-mini'),
-                $this->corrector([$correction]),
+                new RunEstimateComposerCorrection($correctionRuns, $correctionModel, 'openai/gpt-6-luna'),
             );
 
-            $result = $cycles->apply($this->input(
+            $input = $this->input(
                 $this->draft([$item]),
                 derivedQuantities: [['id' => 'quantity:corrected', 'value' => '12.7500', 'unit' => 'м2', 'entity_id' => 'entity:room',
                     'operand_fact_ids' => ['fact:floor-area'], 'formula_key' => 'direct_floor_area', 'source' => 'evidenced',
                     'quantity_basis' => $basis]],
                 facts: [['id' => 'fact:foundation', 'status' => 'confirmed'], ['id' => 'fact:floor-area', 'entity_id' => 'entity:room',
                     'value' => '12.7500', 'unit' => 'm2', 'status' => 'confirmed']],
-            ));
+            );
+            $result = $cycles->apply($input);
 
             self::assertSame('accepted', $result['audit']['status'], $operation);
             self::assertSame(1, $result['audit']['correction_cycles'], $operation);
@@ -368,6 +371,7 @@ final class EstimateAuditTest extends TestCase
             ));
             if ($operation === 'add_work') {
                 self::assertContains('finish.floor', array_column($items, 'key'));
+                self::assertSame('Чистовое покрытие пола', $items[1]['name']);
             } elseif ($operation === 'replace_quantity') {
                 self::assertSame('12.7500', $items[0]['quantity']);
             } else {
@@ -398,6 +402,17 @@ final class EstimateAuditTest extends TestCase
             self::assertNull($position['price_snapshot']);
             self::assertNull($position['total_cost']);
             self::assertSame('direct_floor_area', $position['quantity_formula']);
+            if ($operation === 'add_work') {
+                self::assertSame('Чистовое покрытие пола', $position['name']);
+                // Simulate a historical stored correction with a model-owned label.
+                $legacy = $correctionRuns->claim($correctionRuns->inputs[0], 'fixture:legacy-label');
+                self::assertNotNull($legacy->result);
+                $payload = $legacy->result->payload;
+                $payload['corrections'][0]['name'] = 'Монтаж труб отопления';
+                $correctionRuns->complete($legacy->runId, 'fixture:legacy-label',
+                    new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult($payload, $legacy->result->physicalAttemptId));
+            }
+            self::assertSame($result, $cycles->apply($input), 'Stored correction must preserve the same source-bound work label.');
         }
     }
 
