@@ -22,6 +22,14 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new \App\Models\Module(['slug' => 'brigades'])]));
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
+    }
+
     public function test_brigade_requests_are_created_listed_closed_and_scoped_to_current_organization(): void
     {
         $context = AdminApiTestContext::create();
@@ -95,8 +103,8 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
                 'brigade_id' => $brigade->id,
                 'project_id' => $project->id,
                 'message' => 'Приглашаем на объект',
-                'starts_at' => '2026-05-20',
-                'expires_at' => '2026-05-25',
+                'starts_at' => now()->addDay()->toDateString(),
+                'expires_at' => now()->addWeek()->toDateString(),
             ]);
 
         $createResponse->assertCreated();
@@ -253,8 +261,14 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
 
     private function brigadeAuthHeaders(BrigadeProfile $brigade): array
     {
+        $sessionUuid = (string) Str::uuid();
+        \App\Models\UserAuthSession::query()->create([
+            'user_id' => $brigade->owner_user_id, 'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid), 'device_name' => 'Brigade workflow test',
+            'status' => \App\Enums\AuthSessionStatus::Active, 'first_seen_at' => now(), 'last_seen_at' => now(),
+        ]);
         return [
-            'Authorization' => 'Bearer ' . JWTAuth::claims(['brigade_id' => $brigade->id])->fromUser($brigade->owner),
+            'Authorization' => 'Bearer ' . JWTAuth::claims(['brigade_id' => $brigade->id, 'session_uuid' => $sessionUuid])->fromUser($brigade->owner),
             'Accept' => 'application/json',
         ];
     }

@@ -76,6 +76,8 @@ class CustomRoleController extends Controller
      */
     public function show(Request $request, OrganizationCustomRole $role): JsonResponse
     {
+        $this->roleService->assertRoleAccess($role, $request->user(), $this->getOrganizationId($request), 'roles.view_custom');
+
         return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($role->load(['createdBy', 'assignments.user']))
         ]);
@@ -86,7 +88,7 @@ class CustomRoleController extends Controller
      */
     public function update(UpdateCustomRoleRequest $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->roleService->updateRole($role, $request->validated(), $request->user());
+        $this->roleService->updateRole($role, $request->validated(), $request->user(), $this->getOrganizationId($request));
         
         return \App\Http\Responses\LandingResponse::fromPayload([
             'data' => new CustomRoleResource($role->fresh()),
@@ -99,7 +101,7 @@ class CustomRoleController extends Controller
      */
     public function destroy(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->roleService->deleteRole($role);
+        $this->roleService->deleteRole($role, $request->user(), $this->getOrganizationId($request));
         
         return \App\Http\Responses\LandingResponse::fromPayload([
             'message' => 'Роль успешно удалена'
@@ -122,7 +124,8 @@ class CustomRoleController extends Controller
             $role,
             $targetOrganizationId,
             $request->input('name'),
-            $request->user()
+            $request->user(),
+            $this->getOrganizationId($request)
         );
         
         return \App\Http\Responses\LandingResponse::fromPayload([
@@ -164,16 +167,16 @@ class CustomRoleController extends Controller
      */
     public function getUsers(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $users = $this->roleService->getRoleUsers($role);
+        $users = $this->roleService->getRoleUsers($role, $request->user(), $this->getOrganizationId($request));
         
         return \App\Http\Responses\LandingResponse::fromPayload([
-            'data' => $users->map(function ($user) {
+            'data' => $users->map(function ($user) use ($role) {
                 return [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
                     'assigned_at' => $user->roleAssignments()
-                        ->where('role_slug', request()->route('role')->slug)
+                        ->where('custom_role_id', $role->id)
                         ->first()?->created_at
                 ];
             })

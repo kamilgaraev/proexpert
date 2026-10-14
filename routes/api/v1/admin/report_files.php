@@ -5,7 +5,7 @@ use App\Http\Controllers\Api\V1\Admin\ReportFileController;
 
 // Группа уже защищена middleware в RouteServiceProvider
 Route::prefix('report-files')->name('report_files.')->group(function () {
-    Route::get('/', [ReportFileController::class, 'index'])->name('index');
-    Route::delete('{id}', [ReportFileController::class, 'destroy'])->name('destroy');
-    Route::patch('{id}', [ReportFileController::class, 'update'])->name('update');
+    Route::get('/', [ReportFileController::class, 'index'])->middleware('authorize:report_files.view')->name('index');
+    Route::delete('{id}', [ReportFileController::class, 'destroy'])->middleware('authorize:report_files.delete')->name('destroy');
+    Route::patch('{id}', [ReportFileController::class, 'update'])->middleware('authorize:report_files.update')->name('update');
 }); 

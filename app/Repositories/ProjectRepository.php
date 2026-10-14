@@ -138,16 +138,13 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         int $perPage = 15,
         array $filters = [],
         string $sortBy = 'created_at',
-        string $sortDirection = 'desc'
+        string $sortDirection = 'desc',
+        ?\App\Models\User $actor = null
     ): LengthAwarePaginator
     {
-        $query = $this->model->where(function($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId)
-              ->orWhereHas('organizations', function($sub) use ($organizationId) {
-                  $sub->where('organizations.id', $organizationId)
-                      ->where('project_organization.is_active', true);
-              });
-        });
+        $query = $actor ? app(\App\Services\Project\UserProjectAccessService::class)
+            ->queryAccessibleProjects($actor, $organizationId, true)
+            : $this->model->accessibleByOrganization($organizationId);
 
         // Применяем фильтры
         if (!empty($filters['name'])) {

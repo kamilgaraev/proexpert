@@ -26,6 +26,7 @@ class UserRoleAssignment extends Model
         'user_id',
         'role_slug',
         'role_type',
+        'custom_role_id',
         'context_id',
         'assigned_by',
         'expires_at',
@@ -80,7 +81,44 @@ class UserRoleAssignment extends Model
      */
     public function customRole(): BelongsTo
     {
-        return $this->belongsTo(OrganizationCustomRole::class, 'role_slug', 'slug');
+        return $this->belongsTo(OrganizationCustomRole::class, 'custom_role_id');
+    }
+
+    protected static function booted(): void
+    {
+        static::saving(static function (self $assignment): void {
+            if (! $assignment->isDirty(['role_type', 'role_slug', 'context_id', 'custom_role_id'])) {
+                return;
+            }
+
+            if ($assignment->role_type !== self::TYPE_CUSTOM) {
+                if (array_key_exists('custom_role_id', $assignment->getAttributes())) {
+                    $assignment->custom_role_id = null;
+                }
+
+                return;
+            }
+
+            $context = AuthorizationContext::query()->with('parentContext')->find($assignment->context_id);
+            $organizationId = $context?->type === AuthorizationContext::TYPE_ORGANIZATION
+                ? $context->resource_id
+                : ($context?->type === AuthorizationContext::TYPE_PROJECT
+                    && $context->parentContext?->type === AuthorizationContext::TYPE_ORGANIZATION
+                        ? $context->parentContext->resource_id : null);
+            $roleId = $organizationId ? OrganizationCustomRole::query()
+                ->where('organization_id', $organizationId)
+                ->where('slug', $assignment->role_slug)
+                ->where('is_active', true)
+                ->value('id') : null;
+
+            if ($roleId === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'custom_role_ids' => trans_message('permissions.invalid_custom_roles'),
+                ]);
+            }
+
+            $assignment->custom_role_id = $roleId;
+        });
     }
 
     /**

@@ -8,7 +8,9 @@ use App\Models\EstimateLibraryItem;
 use App\Models\EstimateLibraryItemPosition;
 use App\Models\EstimateLibraryUsage;
 use App\Models\EstimateItem;
+use App\Models\User;
 use App\Repositories\EstimateLibraryRepository;
+use App\Repositories\EstimateItemRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Collection;
 
@@ -117,7 +119,7 @@ class EstimateLibraryService
     public function applyLibraryItemToEstimate(
         EstimateLibraryItem $libraryItem,
         Estimate $estimate,
-        int $userId,
+        User $actor,
         array $parameters = [],
         ?int $sectionId = null
     ): array {
@@ -125,8 +127,11 @@ class EstimateLibraryService
             throw new \InvalidArgumentException('Отсутствуют обязательные параметры для применения типового решения');
         }
 
-        return DB::transaction(function () use ($libraryItem, $estimate, $userId, $parameters, $sectionId) {
+        return DB::transaction(function () use ($libraryItem, $estimate, $actor, $parameters, $sectionId) {
             $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            if (!app(\App\BusinessModules\Features\BudgetEstimates\Policies\EstimatePolicy::class)->update($actor, $estimate)) {
+                throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('permissions.access_denied'));
+            }
             (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             $addedItems = [];
             $positions = $libraryItem->positions()->ordered()->get();
@@ -137,6 +142,7 @@ class EstimateLibraryService
                 $item = new EstimateItem([
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
+                    'position_number' => app(EstimateItemRepository::class)->getNextPositionNumber($estimate->id),
                     'normative_rate_id' => $position->normative_rate_id,
                     'normative_rate_code' => $position->normative_rate_code,
                     'name' => $position->name,
@@ -158,7 +164,7 @@ class EstimateLibraryService
             EstimateLibraryUsage::create([
                 'library_item_id' => $libraryItem->id,
                 'estimate_id' => $estimate->id,
-                'user_id' => $userId,
+                'user_id' => $actor->id,
                 'applied_parameters' => $parameters,
                 'positions_added' => count($addedItems),
                 'used_at' => now(),

@@ -32,15 +32,16 @@ class NotificationTrackingController extends Controller
     {
         $url = $request->query('url');
 
-        if (!$url) {
-            abort(400, 'URL parameter is required');
+        if (!$request->hasValidSignature() || !is_string($url) || !filter_var($url, FILTER_VALIDATE_URL)
+            || !in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true)) {
+            abort(403);
         }
 
-        $decodedUrl = urldecode($url);
+        if (!$this->analyticsService->trackClick($trackingId, $url)) {
+            abort(404);
+        }
 
-        $this->analyticsService->trackClick($trackingId, $decodedUrl);
-
-        return redirect()->away($decodedUrl);
+        return redirect()->away($url);
     }
 }
 

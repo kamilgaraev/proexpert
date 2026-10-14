@@ -104,7 +104,7 @@ class CreateCustomRoleRequest extends FormRequest
         $availableSystemPermissions = array_keys($roleService->getAvailableSystemPermissions($organizationId));
         
         foreach ($systemPermissions as $permission) {
-            if ($permission !== '*' && !in_array($permission, $availableSystemPermissions)) {
+            if (!in_array($permission, $availableSystemPermissions, true)) {
                 $validator->errors()->add('system_permissions', "Недопустимое системное право: $permission");
             }
         }

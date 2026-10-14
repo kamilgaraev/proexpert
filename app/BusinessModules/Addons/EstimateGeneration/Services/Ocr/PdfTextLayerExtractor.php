@@ -7,7 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use Illuminate\Support\Facades\Log;
-use Smalot\PdfParser\Parser;
+use App\Services\Documents\BoundedPdfParser;
 use Throwable;
 
 class PdfTextLayerExtractor
@@ -16,14 +16,12 @@ class PdfTextLayerExtractor
 
     public const MODEL = 'embedded_text';
 
-    public function __construct(private readonly PdfParserRuntime $pdfParserRuntime) {}
+    public function __construct(private readonly BoundedPdfParser $pdfParser) {}
 
     public function extract(string $content, ?string $filename = null): ?OcrRecognitionResult
     {
         try {
-            $pages = $this->pdfParserRuntime->withRaisedMemoryLimit(
-                static fn (): array => (new Parser)->parseContent($content)->getPages()
-            );
+            $pages = $this->pdfParser->inspectContent($content)['pages'];
         } catch (Throwable $exception) {
             Log::info('[EstimateGeneration OCR] PDF text layer extraction skipped', [
                 'failure_code' => 'pdf_text_layer_unreadable',
@@ -39,9 +37,7 @@ class PdfTextLayerExtractor
     public function extractFile(string $path, ?string $filename = null): ?OcrRecognitionResult
     {
         try {
-            $pages = $this->pdfParserRuntime->withRaisedMemoryLimit(
-                static fn (): array => (new Parser)->parseFile($path)->getPages()
-            );
+            $pages = $this->pdfParser->inspectFile($path)['pages'];
         } catch (Throwable $exception) {
             Log::info('[EstimateGeneration OCR] PDF text layer extraction skipped', [
                 'failure_code' => 'pdf_text_layer_unreadable',
@@ -63,7 +59,7 @@ class PdfTextLayerExtractor
         $pageResults = [];
 
         foreach ($pages as $index => $page) {
-            $text = trim($page->getText());
+            $text = trim($page);
 
             $pageResults[] = new OcrPageResult(
                 pageNumber: $index + 1,

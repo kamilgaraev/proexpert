@@ -48,6 +48,10 @@ class CustomRoleService
         ?string $description = null,
         ?User $createdBy = null
     ): OrganizationCustomRole {
+        if ($createdBy instanceof User) {
+            $this->assertOrganizationPermission($createdBy, $organizationId, 'roles.create_custom');
+        }
+
         $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
         $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($modulePermissions);
 
@@ -80,8 +84,11 @@ class CustomRoleService
     public function updateRole(
         OrganizationCustomRole $role,
         array $data,
-        ?User $updatedBy = null
+        ?User $updatedBy = null,
+        ?int $organizationId = null
     ): bool {
+        $this->assertRoleAccess($role, $updatedBy, $organizationId);
+
         // Валидируем новые права, если они переданы
         $shouldValidatePermissions = isset($data['system_permissions'])
             || isset($data['module_permissions'])
@@ -117,8 +124,10 @@ class CustomRoleService
     /**
      * Удалить кастомную роль
      */
-    public function deleteRole(OrganizationCustomRole $role): bool
+    public function deleteRole(OrganizationCustomRole $role, ?User $actor = null, ?int $organizationId = null): bool
     {
+        $this->assertRoleAccess($role, $actor, $organizationId);
+
         $userIds = $this->roleAssignmentUserIds($role);
 
         $deleted = DB::transaction(function () use ($role) {
@@ -143,8 +152,12 @@ class CustomRoleService
         OrganizationCustomRole $sourceRole,
         int $targetOrganizationId,
         ?string $newName = null,
-        ?User $createdBy = null
+        ?User $createdBy = null,
+        ?int $sourceOrganizationId = null
     ): OrganizationCustomRole {
+        $this->assertRoleAccess($sourceRole, $createdBy, $sourceOrganizationId);
+        $this->assertOrganizationPermission($createdBy, $targetOrganizationId, 'roles.create_custom');
+
         $name = $newName ?? ($sourceRole->name.' (копия)');
 
         return $this->createRole(
@@ -277,13 +290,38 @@ class CustomRoleService
     /**
      * Получить пользователей с указанной ролью
      */
-    public function getRoleUsers(OrganizationCustomRole $role): Collection
+    public function getRoleUsers(OrganizationCustomRole $role, ?User $actor = null, ?int $organizationId = null): Collection
     {
+        $this->assertRoleAccess($role, $actor, $organizationId, 'roles.view_custom');
+
         return User::whereHas('roleAssignments', function ($query) use ($role) {
-            $query->where('role_slug', $role->slug)
+            $query->where('custom_role_id', $role->id)
                 ->where('role_type', UserRoleAssignment::TYPE_CUSTOM)
                 ->active();
         })->get();
+    }
+
+    public function assertRoleAccess(
+        OrganizationCustomRole $role,
+        ?User $actor,
+        ?int $organizationId = null,
+        string $permission = 'roles.manage_custom'
+    ): void {
+        if ($organizationId !== null && (int) $role->organization_id !== $organizationId) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('permissions.access_denied'));
+        }
+
+        $this->assertOrganizationPermission($actor, (int) $role->organization_id, $permission);
+    }
+
+    private function assertOrganizationPermission(?User $actor, int $organizationId, string $permission): void
+    {
+        if (! $actor instanceof User || $organizationId <= 0
+            || ! $actor->organizations()->where('organizations.id', $organizationId)
+                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()
+            || ! $this->authService->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('permissions.access_denied'));
+        }
     }
 
     /**
@@ -390,7 +428,7 @@ class CustomRoleService
         if (! empty($systemPermissions)) {
             $availableSystemPermissions = array_keys($this->getAvailableSystemPermissions($organizationId));
             foreach ($systemPermissions as $permission) {
-                if ($permission !== '*' && ! in_array($permission, $availableSystemPermissions)) {
+                if (! in_array($permission, $availableSystemPermissions, true)) {
                     throw ValidationException::withMessages([
                         'system_permissions' => "Недопустимое системное право: $permission",
                     ]);

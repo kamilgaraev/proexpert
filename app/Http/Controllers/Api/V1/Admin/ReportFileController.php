@@ -37,6 +37,7 @@ class ReportFileController extends Controller
             $organizationId = (int) $user->current_organization_id;
 
             $query = ReportFile::query()
+                ->where('user_id', $user->id)
                 ->where(function ($query) use ($organizationId, $user) {
                     $query->where('organization_id', $organizationId)
                         ->orWhere(function ($query) use ($user) {
@@ -166,6 +167,7 @@ class ReportFileController extends Controller
     {
         return ReportFile::query()
             ->where('id', $id)
+            ->where('user_id', $userId)
             ->where(function ($query) use ($organizationId, $userId) {
                 $query->where('organization_id', $organizationId)
                     ->orWhere(function ($query) use ($userId) {

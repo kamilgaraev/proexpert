@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfParserRuntime;
+use App\Services\Documents\BoundedPdfParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Dompdf\Dompdf;
 use Illuminate\Config\Repository;
@@ -24,7 +24,6 @@ final class PdfTextLayerFileExtractorTest extends TestCase
         $container->instance('config', new Repository([
             'estimate-generation' => [
                 'ocr' => [
-                    'pdf_parser_memory_limit' => '512M',
                     'pdf_text_layer_min_chars' => 3,
                 ],
             ],
@@ -53,7 +52,7 @@ final class PdfTextLayerFileExtractorTest extends TestCase
             $path = stream_get_meta_data($source)['uri'] ?? null;
             self::assertIsString($path);
 
-            $result = (new PdfTextLayerExtractor(new PdfParserRuntime))->extractFile($path, 'plan.pdf');
+            $result = (new PdfTextLayerExtractor(new BoundedPdfParser))->extractFile($path, 'plan.pdf');
 
             self::assertNotNull($result);
             self::assertStringContainsString('house plan 151', $result->pages[0]->text);

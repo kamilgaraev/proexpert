@@ -1654,7 +1654,8 @@ class CustomerPortalService
                 'id' => $project->id,
                 'name' => $project->name,
             ])->all(),
-            'has_full_project_access' => $assignedProjects->isEmpty(),
+            'has_full_project_access' => app(\App\Services\Project\UserProjectAccessService::class)
+                ->modeFor($member, $organizationId) === \App\Enums\UserProjectAccessMode::ALL_PROJECTS,
             'access_history' => $withDetails ? $accessHistory : [],
             'available_project_count' => $accessibleProjects->count(),
         ];
@@ -2200,26 +2201,13 @@ class CustomerPortalService
             return null;
         }
 
-        $assignedProjectIds = $user->assignedProjects()
-            ->where(function (Builder $builder) use ($organizationId): void {
-                $builder
-                    ->where('projects.organization_id', $organizationId)
-                    ->orWhereExists(function ($subQuery) use ($organizationId): void {
-                        $subQuery
-                            ->selectRaw('1')
-                            ->from('project_organization')
-                            ->whereColumn('project_organization.project_id', 'projects.id')
-                            ->where('project_organization.organization_id', $organizationId)
-                            ->where('project_organization.is_active', true);
-                    });
-            })
-            ->pluck('projects.id');
-
-        if ($assignedProjectIds->isEmpty()) {
+        $access = app(\App\Services\Project\UserProjectAccessService::class);
+        if ($access->modeFor($user, $organizationId) === \App\Enums\UserProjectAccessMode::ALL_PROJECTS) {
             return null;
         }
 
-        return $assignedProjectIds->map(fn ($id): int => (int) $id)->values();
+        return $access->queryAccessibleProjects($user, $organizationId)
+            ->pluck('projects.id')->map(fn ($id): int => (int) $id)->values();
     }
 
     private function resolveContractProjectIds(Contract $contract): Collection

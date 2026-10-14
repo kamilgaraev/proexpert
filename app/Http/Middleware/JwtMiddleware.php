@@ -79,7 +79,7 @@ class JwtMiddleware
 
             $user = $this->authenticateRequestUser($request, $guard);
 
-            if (! $user) {
+            if (! $user || !$user->is_active) {
                 LogService::authLog('auth_failed', [
                     'token_present' => true,
                     'reason' => 'user_not_found',
@@ -120,7 +120,8 @@ class JwtMiddleware
                         auth()->shouldUse($guard);
                     }
 
-                    if (! $this->authenticateRequestUser($request, $guard)) {
+                    $refreshUser = $this->authenticateRequestUser($request, $guard);
+                    if (! $refreshUser || !$refreshUser->is_active) {
                         return $this->errorResponse($request, $guard, 'auth.not_authenticated', Response::HTTP_UNAUTHORIZED);
                     }
 
@@ -144,7 +145,9 @@ class JwtMiddleware
                     'uri' => $request->getRequestUri(),
                 ]);
 
-                return $next($request);
+                return $guard === 'api_mobile'
+                    ? app(EnsureAuthSessionIsActive::class)->handle($request, $next)
+                    : $next($request);
             }
 
             LogService::authLog('token_rejected', [
@@ -173,7 +176,9 @@ class JwtMiddleware
             return $this->errorResponse($request, $guard, 'auth.token_error', Response::HTTP_UNAUTHORIZED);
         }
 
-        return $next($request);
+        return $guard === 'api_mobile'
+            ? app(EnsureAuthSessionIsActive::class)->handle($request, $next)
+            : $next($request);
     }
 
     private function authenticateRequestUser(Request $request, ?string $guard): ?Authenticatable

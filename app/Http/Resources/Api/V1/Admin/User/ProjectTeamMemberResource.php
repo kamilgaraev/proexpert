@@ -44,6 +44,9 @@ class ProjectTeamMemberResource extends JsonResource
         $roleLabels = $rolePolicy->labelsFor($roles);
         $primaryRole = $this->resolvePrimaryRole($roles);
         $assignedProjects = $this->resolveAssignedProjects();
+        $membership = $organizationId > 0 ? ($this->resource->relationLoaded('organizations')
+            ? $this->resource->organizations->firstWhere('id', $organizationId)
+            : $this->resource->organizations()->where('organizations.id', $organizationId)->first()) : null;
 
         return [
             'id' => $this->resource->id,
@@ -53,7 +56,7 @@ class ProjectTeamMemberResource extends JsonResource
             'position' => $this->resource->position,
             'avatar_path' => $this->resource->avatar_path,
             'avatar_url' => $this->resource->avatar_url,
-            'is_active' => (bool) $this->resource->is_active,
+            'is_active' => (bool) $this->resource->is_active && (bool) ($membership?->pivot?->is_active ?? false),
             'roles' => $roles,
             'role_labels' => $roleLabels,
             'primary_role' => $primaryRole,

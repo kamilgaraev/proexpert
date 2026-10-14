@@ -21,13 +21,12 @@ class EnsureAuthSessionIsActive
     public function handle(Request $request, Closure $next): Response
     {
         $isWebRequest = $request->attributes->has('web_auth_audience');
-
-        if (! $isWebRequest && ! (bool) config('auth_tokens.sessions.enabled', true)) {
-            return $next($request);
-        }
-
         $payload = $request->attributes->get('token_payload');
         $sessionUuid = $payload?->get('session_uuid');
+
+        if (! $isWebRequest && ! (bool) config('auth_tokens.sessions.enabled', true) && $sessionUuid === null) {
+            return $next($request);
+        }
 
         $authSession = $this->sessions->findActiveByUuid($sessionUuid);
 

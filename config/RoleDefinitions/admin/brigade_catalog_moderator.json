@@ -16,6 +16,7 @@
       "brigades.view",
       "brigades.catalog.view",
       "brigades.catalog.moderate",
+      "brigades.documents.verify",
       "brigades.requests.view",
       "brigades.invitations.view",
       "brigades.assignments.view"

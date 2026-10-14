@@ -330,7 +330,7 @@ class UserManagementControllerTest extends TestCase
         $this->assertDatabaseMissing('users', ['email' => 'escalation-attempt@example.test']);
     }
 
-    public function test_update_replaces_manageable_role_and_preserves_protected_assignment(): void
+    public function test_update_cannot_change_a_user_with_a_protected_assignment(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $target = $this->createOrganizationUser($context->organization, 'foreman', [
@@ -350,10 +350,7 @@ class UserManagementControllerTest extends TestCase
                 'role_slug' => 'accountant',
             ]);
 
-        $response->assertOk();
-        $response->assertJsonPath('success', true);
-        $response->assertJsonPath('data.primary_role', 'super_admin');
-        $response->assertJsonPath('data.primary_role_label', 'Суперадминистратор');
+        $response->assertForbidden();
 
         $activeRoles = UserRoleAssignment::query()
             ->where('user_id', $target->id)
@@ -362,9 +359,22 @@ class UserManagementControllerTest extends TestCase
             ->pluck('role_slug')
             ->all();
 
-        $this->assertContains('accountant', $activeRoles);
+        $this->assertNotContains('accountant', $activeRoles);
         $this->assertContains('super_admin', $activeRoles);
-        $this->assertNotContains('foreman', $activeRoles);
+        $this->assertContains('foreman', $activeRoles);
+    }
+
+    public function test_owner_can_update_an_ordinary_member_and_replace_their_role(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $target = $this->createOrganizationUser($context->organization, 'foreman', [
+            'name' => 'Ordinary Member', 'email' => 'ordinary-role-change@example.test',
+        ]);
+        $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/users/{$target->id}", [
+            'name' => 'Updated Member', 'role_slug' => 'accountant',
+        ])->assertOk()->assertJsonPath('data.primary_role', 'accountant');
+        self::assertSame('Updated Member', $target->fresh()->name);
+        self::assertSame(['accountant'], $target->roleAssignments()->active()->pluck('role_slug')->all());
     }
 
     public function test_user_payload_contains_human_readable_role_labels(): void
@@ -387,8 +397,7 @@ class UserManagementControllerTest extends TestCase
 
     public function test_block_and_unblock_change_only_current_organization_user_status(): void
     {
-        $context = AdminApiTestContext::create();
-        $this->allowAdminUserPermissions($context->user->id);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $ownUser = $this->createOrganizationUser($context->organization, 'foreman', [
             'name' => 'Block Target',
             'email' => 'block-target@example.test',
@@ -405,7 +414,14 @@ class UserManagementControllerTest extends TestCase
 
         $blockResponse->assertOk();
         $blockResponse->assertJsonPath('success', true);
-        $this->assertFalse((bool) $ownUser->fresh()->is_active);
+        $this->assertTrue((bool) $ownUser->fresh()->is_active);
+        $this->assertFalse((bool) $ownUser->organizations()->whereKey($context->organization->id)->first()->pivot->is_active);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/users/{$ownUser->id}")
+            ->assertOk()->assertJsonPath('data.is_active', false);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/users?is_active=false')
+            ->assertOk()->assertJsonCount(1, 'data.data')->assertJsonPath('data.data.0.id', $ownUser->id)->assertJsonPath('data.data.0.is_active', false);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/users?include_all_types=true&is_active=false')
+            ->assertOk()->assertJsonCount(1, 'data.data')->assertJsonPath('data.data.0.id', $ownUser->id);
         $this->assertTrue((bool) $foreignUser->fresh()->is_active);
 
         $foreignBlockResponse = $this->withHeaders($context->authHeaders())
@@ -421,6 +437,9 @@ class UserManagementControllerTest extends TestCase
         $unblockResponse->assertOk();
         $unblockResponse->assertJsonPath('success', true);
         $this->assertTrue((bool) $ownUser->fresh()->is_active);
+        $this->assertTrue((bool) $ownUser->organizations()->whereKey($context->organization->id)->first()->pivot->is_active);
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/users/{$ownUser->id}")
+            ->assertOk()->assertJsonPath('data.is_active', true);
     }
 
     public function test_block_rejects_self_blocking_with_readable_error(): void

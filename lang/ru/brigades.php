@@ -23,6 +23,7 @@ return [
     'invitation_accepted' => 'Приглашение принято.',
     'invitation_declined' => 'Приглашение отклонено.',
     'invitation_cancelled' => 'Приглашение отменено.',
+    'invitation_invalid_status' => 'Приглашение уже обработано или срок его действия истёк.',
     'invitation_brigade_not_available' => 'Приглашать можно только проверенные бригады.',
     'invitation_already_pending' => 'Для этой бригады уже отправлено приглашение по проекту.',
     'request_created' => 'Запрос на бригаду создан.',

@@ -20,7 +20,6 @@ class ProductionLoadTestSeeder extends Seeder
 {
     private const CONFIRM_ENV = 'MOST_LOAD_TEST_SEEDER_CONFIRM';
     private const CONFIRM_VALUE = 'yes';
-    private const PASSWORD = 'LoadTest123!';
 
     private Carbon $now;
 
@@ -154,7 +153,7 @@ class ProductionLoadTestSeeder extends Seeder
         $this->command?->newLine();
         $this->command?->info('Load-test accounts:');
         $this->command?->table(
-            ['Organization', 'Role', 'Email', 'Password'],
+            ['Organization', 'Role', 'Email'],
             $result['accounts']
         );
     }
@@ -228,7 +227,7 @@ class ProductionLoadTestSeeder extends Seeder
             $userId = $this->upsert('users', ['email' => $email], [
                 'name' => sprintf('LT%02d %s', $organizationIndex, $role['name']),
                 'email_verified_at' => $this->now,
-                'password' => Hash::make(self::PASSWORD),
+                'password' => Hash::make(bin2hex(random_bytes(32))),
                 'phone' => sprintf('+7 916 %03d-%02d-%02d', $organizationIndex, $userIndex, $userIndex),
                 'position' => $role['position'],
                 'is_active' => true,
@@ -258,8 +257,7 @@ class ProductionLoadTestSeeder extends Seeder
                 sprintf('LT%02d', $organizationIndex),
                 $role['role'],
                 $email,
-                self::PASSWORD,
-            ];
+                ];
         }
 
         return $users;

@@ -310,12 +310,14 @@ class ProjectController extends Controller
             ?? 0);
     }
 
-    public function statistics(int $id): JsonResponse
+    public function statistics(Request $request, int $id): JsonResponse
     {
         try {
-            $statistics = $this->projectService->getProjectStatistics($id);
+            $statistics = $this->projectService->getProjectStatistics($id, $request);
 
             return AdminResponse::success($statistics);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 403);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@statistics', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine(),
@@ -353,7 +355,8 @@ class ProjectController extends Controller
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
-                $request->get('sort_direction', 'desc')
+                $request->get('sort_direction', 'desc'),
+                $request
             );
 
             return AdminResponse::success($materials);
@@ -374,7 +377,8 @@ class ProjectController extends Controller
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
-                $request->get('sort_direction', 'desc')
+                $request->get('sort_direction', 'desc'),
+                $request
             );
 
             return AdminResponse::success($workTypes);
