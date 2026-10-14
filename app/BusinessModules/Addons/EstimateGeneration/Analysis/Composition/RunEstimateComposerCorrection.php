@@ -113,6 +113,7 @@ final readonly class RunEstimateComposerCorrection
             $operation = $correction['operation'] ?? null;
             if ($operation === 'add_work') {
                 $this->validateAddWork($correction, $factIds, $quantityIds, $items);
+                $correction['name'] = (new WorkIntentSourceClassifier)->canonicalName($correction['work_key']) ?? $correction['name'];
             } elseif (in_array($operation, ['replace_quantity', 'replace_unit'], true)) {
                 $this->validateReplacement($correction, $quantityIds, $items);
             } else {
