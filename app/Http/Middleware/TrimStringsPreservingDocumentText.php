@@ -10,7 +10,8 @@ final class TrimStringsPreservingDocumentText extends TrimStrings
 {
     protected function transform($key, $value)
     {
-        if (preg_match('/^(?:content\.)?document\.content\.\d+(?:\.content\.\d+)*\.text$/D', $key) === 1) {
+        if (preg_match('/^(?:content\.)?document\.content\.\d+(?:\.content\.\d+)*\.text$/D', $key) === 1
+            || preg_match('/^content\.(?:columns\.\d+\.definition\.)*display\.presentation\.(?:prefix|suffix)$/D', $key) === 1) {
             return $value;
         }
 
