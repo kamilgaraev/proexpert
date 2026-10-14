@@ -65,7 +65,11 @@ final class ContractDocumentRenderer
                     $value = $row['values'][$attrs['columnId']] ?? null;
                 }
 
-                return [['type' => 'text', 'text' => $this->format($definition, $value, $entitySnapshots)]];
+                return [[
+                    'type' => 'text',
+                    'text' => $this->format($definition, $value, $entitySnapshots),
+                    ...isset($node['marks']) ? ['marks' => $node['marks']] : [],
+                ]];
             }
             if (isset($node['content'])) {
                 $children = [];

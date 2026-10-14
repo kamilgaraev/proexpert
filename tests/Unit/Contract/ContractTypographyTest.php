@@ -64,6 +64,47 @@ final class ContractTypographyTest extends TestCase
         }
     }
 
+    public function test_resolved_money_variable_preserves_inline_typography_and_escaped_presentation(): void
+    {
+        $id = '11111111-1111-4111-8111-111111111111';
+        $document = ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [
+            ['type' => 'variable', 'attrs' => ['variableId' => $id], 'marks' => [
+                ['type' => 'bold'], ['type' => 'textStyle', 'attrs' => ['fontFamily' => 'PT Serif', 'fontSize' => 12, 'color' => '#124169']],
+            ]],
+        ]]]];
+        $definitions = [$id => ['id' => $id, 'version' => 1, 'definition' => ['type' => 'money', 'display' => ['presentation' => ['prefix' => '<script>', 'suffix' => '</script>']]]]];
+        $value = ['amount' => '1000.00', 'currency' => 'RUB'];
+        $html = (new ContractDocumentRenderer)->render($document, $definitions, [$id => $value]);
+        self::assertStringContainsString('<strong>', $html);
+        self::assertStringContainsString('font-size:12pt;', $html);
+        self::assertStringContainsString('data-contract-font="PT Serif"', $html);
+        self::assertStringContainsString('color:#124169;', $html);
+        self::assertStringContainsString('1'."\u{00A0}".'000,00', $html);
+        self::assertStringContainsString('&lt;script&gt;', $html);
+        self::assertStringNotContainsString('<script>', $html);
+        self::assertSame($value, (new ContractVariableValueValidator)->validate($definitions[$id]['definition'], $value));
+    }
+
+    public function test_variable_marks_use_the_existing_safe_typography_validation(): void
+    {
+        $id = '11111111-1111-4111-8111-111111111111';
+        foreach ([
+            [['type' => 'textStyle', 'attrs' => ['fontFamily' => 'url(file:///secret)']]],
+            [['type' => 'link', 'attrs' => ['href' => 'javascript:alert(1)']]],
+            [['type' => 'bold'], ['type' => 'bold']],
+            [['type' => 'superscript'], ['type' => 'subscript']],
+            [['type' => 'unknown']],
+        ] as $marks) {
+            $document = ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $id], 'marks' => $marks]]]]];
+            try {
+                (new ContractDocumentValidator)->validate(['document' => $document, 'variables' => [$id => 1]]);
+                self::fail('Unsafe variable marks accepted');
+            } catch (ContractBuilderException $error) {
+                self::assertSame(422, $error->getCode());
+            }
+        }
+    }
+
     public function test_all_contract_profiles_are_supported_and_preserved(): void
     {
         $profiles = \App\Services\Contract\ContractDocumentProfiles::all();
