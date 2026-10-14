@@ -842,6 +842,8 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, но не показывай свойства', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, свойства не нужны', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не показывай', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не выводи', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, но без сметных связей в BIM-модели', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы без связей со сметными позициями', 'materials_and_quantities', false],
             ['Покажи материалы и объёмы, сметные связи не нужны', 'materials_and_quantities', false],
@@ -853,6 +855,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],
+            ['Покажи материалы, объёмы не показывай в BIM-модели', 'materials', false],
         ] as [$query, $expectedKind, $expectedProperties]) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn('get_bim_model_elements');
