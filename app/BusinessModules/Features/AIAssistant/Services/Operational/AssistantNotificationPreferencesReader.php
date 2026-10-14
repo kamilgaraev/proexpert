@@ -14,12 +14,14 @@ final readonly class AssistantNotificationPreferencesReader extends AssistantOrg
     public static function hasIntent(string $query): bool
     {
         return preg_match('/уведомлен/iu', $query) === 1
-            && preg_match('/канал|получаю|предпочтен|включен[а-яё]*|настро[йе]/iu', $query) === 1;
+            && preg_match('/канал|получаю|приходят|предпочтен|включен[а-яё]*|настро[йеи]|обязател|отключить/iu', $query) === 1;
     }
 
     public static function matches(string $query): bool
     {
-        return self::hasIntent($query) && preg_match('/включи|отключи|измени|отправь|удали|пометь|непрочитан|последн|сообщени[а-яё]*\s+из|сотрудник|всей\s+организац|прав[а-яё]*|сч[её]т|бюджет/iu', $query) !== 1;
+        return self::hasIntent($query)
+            && preg_match('/^\s*(?:включить|отключить|изменить|отправить|удалить|пометить|настроить)\b/iu', $query) !== 1
+            && preg_match('/\b(?:включи(?:те)?|отключи(?:те)?|измени(?:те)?|отправь(?:те)?|удали(?:те)?|пометь(?:те)?)\b|непрочитан|последн|доставлен|вчера|сегодня|журнал|истори|аудит|действи|сообщени[а-яё]*\s+из|сотрудник|всей\s+организац|\bправ[а-яё]*|сч[её]т|бюджет/iu', $query) !== 1;
     }
 
     protected function collect(User $actor, int $organizationId): array
@@ -36,7 +38,7 @@ final readonly class AssistantNotificationPreferencesReader extends AssistantOrg
         foreach ($data['items'] as $row) {
             $channels = array_map(static fn (string $channel): string => trans_message('ai_assistant_operational.notification_channel_'.(in_array($channel, ['email', 'telegram', 'in_app', 'websocket', 'push'], true) ? $channel : 'unknown')), $row['enabled_channels']);
             $lines[] = '- '.self::text($row['name']).': '.($channels === [] ? trans_message('ai_assistant_operational.notification_channels_none') : implode(', ', $channels)).'; '
-                .trans_message('ai_assistant_operational.notification_preference_'.($row['user_customizable'] ? 'customizable' : 'fixed'));
+                .trans_message('ai_assistant_operational.notification_preference_'.($row['mandatory'] ? 'mandatory' : ($row['user_customizable'] ? 'customizable' : 'fixed')));
         }
         $lines[] = trans_message('ai_assistant_operational.notification_preferences_basis');
 

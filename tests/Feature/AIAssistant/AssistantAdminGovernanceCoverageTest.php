@@ -79,6 +79,102 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         self::assertFalse($preferences->matchesReference($f->member, $org, $current['source_refs'][0]));
     }
 
+    public function test_business_profile_verification_and_own_roles_are_current_native_reads_without_private_details(): void
+    {
+        $f = $this->fixture(); $org = (int) $f->organization->id; $args = ['scope' => 'organization'];
+        $f->organization->forceFill(['capabilities' => ['general_contracting', 'design'], 'primary_business_type' => 'general_contracting',
+            'specializations' => ['Промышленное строительство'], 'certifications' => [['name' => 'private_certificate_marker']], 'profile_completeness' => 80,
+            'onboarding_completed' => true, 'tax_number' => 'invalid_private_tax_value', 'address' => null,
+            'verification_data' => ['inn_verification' => ['success' => false], 'address_verification' => ['success' => false], 'errors' => ['private_external_error_marker']]])->saveQuietly();
+        $profile = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationProfileReader::class);
+        $result = $profile->read($f->owner, $org, $args);
+        $native = app(\App\Services\Organization\OrganizationProfileService::class)->getProfile($f->organization);
+        self::assertSame($native->getProfileCompleteness(), $result['data']['profile_completeness']);
+        self::assertSame($native->getCapabilities(), $result['data']['capabilities']);
+        self::assertSame(count($native->getCertifications()), $result['data']['certifications_count']);
+        self::assertStringNotContainsString('private_certificate_marker', json_encode($result));
+        self::assertTrue($profile->matchesReference($f->owner, $org, $result['source_refs'][0]));
+        $f->organization->forceFill(['profile_completeness' => 90])->saveQuietly();
+        self::assertFalse($profile->matchesReference($f->owner, $org, $result['source_refs'][0]));
+        $verificationService = new \App\Services\OrganizationVerificationService($this->createMock(\App\Services\DaDataService::class), $this->createMock(\App\Services\Logging\LoggingService::class));
+        $this->app->instance(\App\Services\OrganizationVerificationService::class, $verificationService);
+        $verification = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationVerificationReader::class);
+        $verified = $verification->read($f->member, $org, $args);
+        $recommendations = $verificationService->getVerificationRecommendations($f->organization->fresh());
+        self::assertSame($recommendations['status'], $verified['data']['status']);
+        self::assertSame($recommendations['current_score'], $verified['data']['score']);
+        self::assertSame(1, $verified['data']['verification_issue_count']);
+        self::assertStringNotContainsString('invalid_private_tax_value', json_encode($verified));
+        self::assertStringNotContainsString('private_external_error_marker', json_encode($verified));
+        self::assertStringNotContainsString('current_value', json_encode($verified));
+        self::assertTrue($verification->matchesReference($f->member, $org, $verified['source_refs'][0]));
+        $beforeContexts = \App\Domain\Authorization\Models\AuthorizationContext::query()->count();
+        $roles = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOwnRolesReader::class);
+        $owned = $roles->read($f->owner, $org, $args);
+        self::assertContains('organization_owner', array_column($owned['data']['roles'], 'slug'));
+        self::assertFalse($roles->matchesReference($f->foreignOwner, $org, $owned['source_refs'][0]));
+        self::assertSame($beforeContexts, \App\Domain\Authorization\Models\AuthorizationContext::query()->count());
+        self::assertStringNotContainsString('assigned_by', json_encode($owned));
+        $f->ownerAssignment->updateQuietly(['expires_at' => now()->subSecond()]);
+        self::assertFalse($roles->matchesReference($f->owner, $org, $owned['source_refs'][0]));
+        self::assertSame('invalid_private_tax_value', $f->organization->fresh()->tax_number);
+        self::assertSame(0, DB::table('report_dispatch_intents')->count());
+    }
+
+    public function test_personal_report_workspace_and_subscriptions_follow_native_scope_and_remain_read_only(): void
+    {
+        $f = $this->fixture(); $org = (int) $f->organization->id; $args = ['scope' => 'organization']; $code = 'budget_plan_fact';
+        $workspace = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportWorkspaceReader::class);
+        $empty = $workspace->read($f->owner, $org, $args);
+        self::assertSame([], $empty['data']['favourites']);
+        self::assertSame(0, DB::table('report_workspace_preferences')->count());
+        $this->travel(2)->seconds();
+        self::assertTrue($workspace->matchesReference($f->owner, $org, $empty['source_refs'][0]));
+        $store = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportWorkspacePreferencesStore::class);
+        $store->updateLocked($org, (int) $f->owner->id, fn ($p) => new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportWorkspacePreferences([$code], [$code], $p->display, now()->toDateTimeImmutable()));
+        $store->updateLocked($org, (int) $f->administrator->id, fn ($p) => new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportWorkspacePreferences([], [], $p->display, now()->toDateTimeImmutable()));
+        self::assertFalse($workspace->matchesReference($f->owner, $org, $empty['source_refs'][0]));
+        $saved = $workspace->read($f->owner, $org, $args);
+        self::assertSame([$code], array_column($saved['data']['favourites'], 'code'));
+        self::assertSame([$code], array_column($saved['data']['recent'], 'code'));
+        self::assertFalse($workspace->matchesReference($f->foreignOwner, $org, $saved['source_refs'][0]));
+        $subscriptionCode = 'handover_readiness';
+        $definition = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class)->published($subscriptionCode)->payload();
+        $records = [];
+        foreach ([[$f->owner, $org], [$f->administrator, $org], [$f->foreignOwner, (int) $f->foreignOrganization->id]] as [$actor, $organization]) {
+            $view = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewRecord::query()->create([
+                'id' => (string) Str::ulid(), 'organization_id' => $organization, 'owner_id' => $actor->id, 'report_code' => $subscriptionCode,
+                'contract_version' => $definition->contractVersion, 'name' => 'Personal view', 'filters_json' => [], 'sort_json' => [], 'columns_json' => []]);
+            $bytes = '{"private_execution_marker":true}';
+            $records[] = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSubscriptionRecord::query()->create([
+                'id' => (string) Str::ulid(), 'organization_id' => $organization, 'owner_id' => $actor->id, 'saved_view_id' => $view->id,
+                'report_code' => $subscriptionCode, 'contract_version' => $definition->contractVersion, 'definition_sha256' => $definition->definitionHash->value,
+                'frequency' => 'weekly', 'weekday' => 3, 'day_of_month' => null, 'local_time' => '10:00', 'timezone' => 'UTC',
+                'period_policy_json' => ['mode' => 'previous_day'], 'format' => $definition->formats[0], 'status' => 'active', 'next_run_at' => now()->addDay(),
+                'execution_input_bytes' => $bytes, 'execution_input_sha256' => hash('sha256', $bytes)]);
+        }
+        $subscriptions = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionsReader::class);
+        $result = $subscriptions->read($f->owner, $org, $args);
+        self::assertTrue($result['data']['complete']);
+        self::assertSame([(string) $records[0]->id], array_column($result['data']['items'], 'id'));
+        self::assertSame('active', $result['data']['items'][0]['status']);
+        self::assertStringContainsString('среда', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('private_execution_marker', json_encode($result));
+        self::assertStringNotContainsString('next_cursor', json_encode($result));
+        self::assertTrue($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
+        self::assertFalse($subscriptions->matchesReference($f->foreignOwner, $org, $result['source_refs'][0]));
+        $records[0]->updateQuietly(['status' => 'paused']);
+        self::assertFalse($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
+        self::assertSame('paused', $subscriptions->read($f->owner, $org, $args)['data']['items'][0]['status']);
+        try { $subscriptions->read($f->member, $org, $args); self::fail('Report manage permission missing'); }
+        catch (AuthorizationException) { self::assertTrue(true); }
+        $f->ownerAssignment->updateQuietly(['expires_at' => now()->subSecond()]);
+        self::assertFalse($workspace->matchesReference($f->owner, $org, $saved['source_refs'][0]));
+        self::assertFalse($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
+        self::assertSame(3, DB::table('report_subscriptions')->count());
+        self::assertSame(0, DB::table('report_dispatch_intents')->count());
+    }
+
     public function test_user_counts_match_native_scope_and_do_not_hydrate_contacts_or_staff(): void
     {
         $f = $this->fixture(); $org = (int) $f->organization->id;

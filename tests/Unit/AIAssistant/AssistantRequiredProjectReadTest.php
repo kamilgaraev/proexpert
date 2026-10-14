@@ -204,6 +204,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
 
     public function test_commercial_executive_and_production_questions_bind_native_project_tools_and_keep_mixed_requests_unforced(): void
     {
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOwnRolesReader::hasIntent('Есть ли по нашему объекту открытые CRM-сделки? Какие ближайшие действия и сроки по ним нужно проконтролировать?'));
         foreach (['Какие коммерческие предложения по нашему объекту ещё ждут нашего решения или ответа заказчика? Что нужно сделать следующим шагом?' => 'get_project_proposal_readiness',
             'Что у нас по исполнительной документации объекта: какие комплекты ещё не переданы заказчику и что мешает их передать? Есть ли передачи, по которым ждём ответ?' => 'get_project_executive_readiness',
             'Какие производственные наряды по нашему объекту уже представлены, но ещё не приняты? Кто отвечает за закрытие и что надо проверить перед принятием?' => 'get_project_production_readiness',

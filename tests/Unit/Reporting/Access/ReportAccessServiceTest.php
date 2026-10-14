@@ -28,6 +28,32 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportAccessServiceTest extends TestCase
 {
+    public function test_context_without_grant_uses_current_scoped_permissions_and_does_not_reuse_revoked_decisions(): void
+    {
+        $context = $this->context([]); $definition = $this->sourceModuleDefinition();
+        $evaluator = new class($context) implements \App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer {
+            public bool $granted = true;
+            public bool $wrongOrganization = false;
+            public int $calls = 0;
+            public function __construct(private ReportExecutionContext $context) {}
+            public function authorizeExactMany(int $actorId, \App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope $requestedScope, array $targets): array
+            {
+                $this->calls++;
+                $scope = $requestedScope;
+                $decision = new \App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext('queue', $scope->organizationId + ($this->wrongOrganization ? 1 : 0), $this->wrongOrganization ? [$scope->organizationId + 1] : $scope->holdingOrganizationIds, $scope->projectIds, $scope->resources, $scope->timezone, 'fresh-test', null);
+                return [new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization($this->context->actor, $decision, new ReportVisibility($this->granted, false, false, false, false, false, false), $targets[0])];
+            }
+        };
+        $service = new ReportAccessService($this->loader([]), $this->sourceResolver(true), $this->moduleAuthorizer(), $evaluator);
+        self::assertTrue($service->assertOperation($context, $definition, ReportOperation::VIEW, null)->canView);
+        self::assertSame(1, $evaluator->calls);
+        foreach (['granted', 'wrongOrganization'] as $mode) {
+            $evaluator->granted = $mode !== 'granted'; $evaluator->wrongOrganization = $mode === 'wrongOrganization';
+            try { $service->assertOperation($context, $definition, ReportOperation::VIEW, null); self::fail('Current decision must be fresh and scope-bound'); }
+            catch (ReportContractException $error) { self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $error->errorCode); }
+        }
+    }
+
     public function test_current_authorization_grant_is_not_rejected_by_legacy_flat_permissions(): void
     {
         $definition = $this->sourceModuleDefinition();
