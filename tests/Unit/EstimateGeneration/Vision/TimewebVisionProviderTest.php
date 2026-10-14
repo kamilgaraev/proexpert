@@ -318,6 +318,28 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function literal_observer_accepts_explicit_photo_scene_contract_and_exposes_the_constraints_in_the_prompt(): void
+    {
+        Http::fake(fn () => Http::response($this->response([
+            'schema_version' => 4, 'sheet_type' => 'photo', 'elements' => [], 'scale_candidates' => [],
+            'warnings' => ['scale_missing'], 'visual_attributes' => [],
+            'project_sheet_analysis' => ['contractVersion' => 'sheet-analysis:v3', 'role' => 'unknown', 'facts' => []],
+            'analysis_routing' => ['page_kind' => 'photo_scene', 'requested_depth' => 'simple_context',
+                'information_density' => 'low', 'readability' => 'high', 'confidence' => 0.98,
+                'ambiguous' => false, 'material_risk' => 'low', 'reasons' => ['Context only.'], 'semantic_regions' => []],
+        ])));
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 204), ObserverProfile::Literal, static function (): void {},
+        ));
+        self::assertSame('photo_scene', $analysis->analysisRouting?->pageKind);
+        self::assertSame('simple_context', $analysis->analysisRouting?->effectiveRoute->value);
+        self::assertSame([], $analysis->rawObserverFacts);
+        Http::assertSent(static fn ($request): bool => str_contains((string) $request['messages'][0]['content'], 'photo_scene')
+            && str_contains((string) $request['messages'][0]['content'], 'never proves dimensions'));
+        Http::assertSentCount(1);
+    }
+
+    #[Test]
     public function independent_observer_rejects_an_effective_model_that_differs_from_authoritative_config(): void
     {
         config()->set('estimate-generation.vision.model', 'gemini/gemini-3.5-flash');

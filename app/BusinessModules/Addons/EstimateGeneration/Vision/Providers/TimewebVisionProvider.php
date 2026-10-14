@@ -948,7 +948,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 : 'Exact top-level keys are schema_version, sheet_type, evidence, elements, scale_candidates, warnings, visual_attributes, project_sheet_analysis.',
             ...($adaptiveRouting ? [
                 'analysis_routing has exactly page_kind, requested_depth, information_density, readability, confidence, ambiguous, material_risk, reasons, semantic_regions.',
-                'page_kind is title, divider, empty, cover, narrative, specification, schedule, explication, legend, index, drawing, combined or unknown. requested_depth is simple_context, structured_textual or dense_ambiguous.',
+                'page_kind is title, divider, empty, cover, narrative, specification, schedule, explication, legend, index, drawing, combined, photo_scene or unknown. requested_depth is simple_context, structured_textual or dense_ambiguous.',
+                'photo_scene is only an unambiguous low-risk context photograph with sheet_type photo, high readability, confidence at least 0.95, no extracted facts, elements, scale candidates, known roof type or semantic regions. It may request simple_context; scale_missing is allowed. Visible measurements, materials, equipment, technical detail, other warnings or uncertainty require drawing, combined or unknown with dense_ambiguous. A context photo never proves dimensions or full work scope.',
                 'information_density is low, medium or high; readability is high, medium or low; confidence is finite in [0,1]; reasons contains 1..8 concise natural-language reasons.',
                 'material_risk is exactly low, medium or high. Use low only when missing secondary interpretation cannot materially change the estimate; medium and high require arbitration.',
                 'semantic_regions contains 0..16 objects with exactly label, purpose and box. label and purpose are bounded natural language. box is normalized [left,top,right,bottom] within the full page and must cover a meaningful subdrawing or text block, not a fixed grid cell.',
@@ -1106,7 +1107,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $properties['analysis_routing'] = [
                 'type' => 'object',
                 'properties' => [
-                    'page_kind' => ['type' => 'string', 'enum' => ['title', 'divider', 'empty', 'cover', 'narrative', 'specification', 'schedule', 'explication', 'legend', 'index', 'drawing', 'combined', 'unknown']],
+                    'page_kind' => ['type' => 'string', 'enum' => ['title', 'divider', 'empty', 'cover', 'narrative', 'specification', 'schedule', 'explication', 'legend', 'index', 'drawing', 'combined', 'photo_scene', 'unknown']],
                     'requested_depth' => ['type' => 'string', 'enum' => ['simple_context', 'structured_textual', 'dense_ambiguous']],
                     'information_density' => ['type' => 'string', 'enum' => ['low', 'medium', 'high']],
                     'readability' => ['type' => 'string', 'enum' => ['high', 'medium', 'low']],
