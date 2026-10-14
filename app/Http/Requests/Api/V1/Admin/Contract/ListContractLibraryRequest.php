@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use App\Services\Contract\ContractVariableDefinitionValidator;
 
 final class ListContractLibraryRequest extends FormRequest
 {
@@ -18,6 +20,7 @@ final class ListContractLibraryRequest extends FormRequest
         return [
             'kind' => ['sometimes', 'string', 'in:template,block,variable'],
             'status' => ['sometimes', 'string', 'in:draft,published'],
+            'field_type' => ['sometimes', 'string', Rule::in(ContractVariableDefinitionValidator::TYPES)],
             'archived' => ['sometimes', 'boolean'],
             'search' => ['sometimes', 'string', 'max:255'],
             'page' => ['sometimes', 'integer', 'min:1'],

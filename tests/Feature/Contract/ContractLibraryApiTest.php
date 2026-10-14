@@ -268,6 +268,49 @@ final class ContractLibraryApiTest extends TestCase
         $this->getJson($base.'/revisions/1/preview')->assertNotFound();
     }
 
+    public function test_variable_type_filter_keeps_pagination_published_versions_and_organization_scope(): void
+    {
+        $this->withoutMiddleware();
+        $owner = Organization::factory()->create();
+        $foreign = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $owner->id]);
+        $this->actingAs($actor, 'api_admin');
+        Event::listen(RouteMatched::class, static function (RouteMatched $event) use ($actor): void {
+            $event->request->attributes->set('current_organization_id', $actor->current_organization_id);
+        });
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $service = app(ContractLibraryService::class);
+        $published = [];
+        foreach (['boolean', 'boolean', 'text', 'money'] as $index => $type) {
+            $created = $service->create($actor, $owner->id, 'variable', 'Поле '.$index, ['type' => $type], 'type-'.$index);
+            $published[] = $service->publish($actor, $owner->id, $created['item']['id'], 1, 1);
+        }
+        $foreignActor = User::factory()->create(['current_organization_id' => $foreign->id]);
+        $foreignField = $service->create($foreignActor, $foreign->id, 'variable', 'Чужое логическое поле', ['type' => 'boolean'], 'foreign-type');
+        $service->publish($foreignActor, $foreign->id, $foreignField['item']['id'], 1, 1);
+        $base = '/api/v1/admin/contract-library';
+        $first = $this->getJson($base.'?kind=variable&status=published&field_type=boolean&per_page=1')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('meta.total', 2)
+            ->assertJsonPath('meta.last_page', 2)->assertJsonPath('data.0.field_type', 'boolean')->json('data.0');
+        self::assertArrayNotHasKey('content', $first);
+        $second = $this->getJson($base.'?kind=variable&status=published&field_type=boolean&per_page=1&page=2')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.field_type', 'boolean')->json('data.0');
+        self::assertNotSame($first['id'], $second['id']);
+        self::assertEqualsCanonicalizing([$published[0]['item']['id'], $published[1]['item']['id']], [$first['id'], $second['id']]);
+        $id = $published[0]['item']['id'];
+        $this->postJson($base.'/'.$id.'/versions', [
+            'title' => 'Изменённый тип', 'content' => ['type' => 'money'],
+            'request_key' => 'type-next', 'expected_version' => $published[0]['item']['lock_version'],
+        ])->assertOk();
+        $this->getJson($base.'?kind=variable&status=published&field_type=boolean')->assertOk()->assertJsonPath('meta.total', 2);
+        $this->getJson($base.'?kind=variable&field_type=boolean')->assertOk()->assertJsonPath('meta.total', 1);
+        $this->getJson($base.'?field_type=boolean')->assertOk()->assertJsonPath('meta.total', 1);
+        $this->getJson($base.'?kind=template&field_type=boolean')->assertUnprocessable();
+        $this->getJson($base.'?kind=variable&field_type=unknown')->assertUnprocessable()->assertJsonValidationErrors('field_type');
+    }
+
     public function test_library_http_validation_pagination_versions_and_organization_boundary(): void
     {
         $this->withoutMiddleware();
