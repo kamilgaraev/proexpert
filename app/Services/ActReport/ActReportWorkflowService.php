@@ -257,6 +257,7 @@ class ActReportWorkflowService
                     'contract.project',
                     'contract.contractor',
                     'completedWorks',
+                    'lines.completedWork:id,additional_info',
                 ]);
             });
 

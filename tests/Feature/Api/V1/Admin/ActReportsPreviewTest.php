@@ -1605,9 +1605,19 @@ class ActReportsPreviewTest extends TestCase
         ])->assertCreated()->assertJsonPath('data.lines.0.unit', 'м²');
         $actId = $response->json('data.id');
         self::assertSame('м²', PerformanceActLine::where('performance_act_id', $actId)->firstOrFail()->getRawOriginal('unit'));
-        DB::table('performance_act_lines')->where('performance_act_id', $actId)->update(['unit' => null]);
+        $originalAmount = ContractPerformanceAct::findOrFail($actId)->getRawOriginal('amount');
+        $work->update(['additional_info' => ['unit_of_measurement' => 'шт']]);
         $this->withMiddleware();
         $this->useActHttpBindings();
+        $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$actId}")
+            ->assertOk()->assertJsonPath('data.completed_works.0.unit', 'м²');
+        $this->actingAs($user, 'api_admin')->putJson("/api/v1/admin/act-reports/{$actId}", ['description' => 'Updated metadata'])
+            ->assertOk()->assertJsonPath('data.completed_works.0.unit', 'м²')
+            ->assertJsonPath('data.description', 'Updated metadata');
+        self::assertSame($originalAmount, ContractPerformanceAct::findOrFail($actId)->getRawOriginal('amount'));
+        self::assertSame('м²', PerformanceActLine::where('performance_act_id', $actId)->firstOrFail()->getRawOriginal('unit'));
+        $work->update(['additional_info' => ['unit_of_measurement' => 'м²']]);
+        DB::table('performance_act_lines')->where('performance_act_id', $actId)->update(['unit' => null]);
         $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/act-reports/{$actId}")->assertOk()->assertJsonPath('data.lines.0.unit', 'м²');
         self::assertNull(PerformanceActLine::where('performance_act_id', $actId)->firstOrFail()->getRawOriginal('unit'));
     }
