@@ -823,6 +823,18 @@ final class AssistantBimModelReaderTest extends TestCase
             self::assertSame(['pump' => 1, 'ventilation_unit' => 0], $model['equipment_counts']);
             self::assertSame('complete', $model['semantic_coverage']['status']);
         }
+        $single = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
+        self::assertCount(7, $single['models']);
+        self::assertFalse($single['bim_evidence']['too_many_models']);
+        foreach ($single['models'] as $model) {
+            self::assertSame(1, $model['total']);
+            self::assertSame('complete', $model['semantic_coverage']['status']);
+            self::assertSame('unavailable', $model['estimate_link_coverage']);
+        }
+        $this->allowEstimateLinks();
+        $authorized = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
+        self::assertCount(7, $authorized['models']);
+        foreach ($authorized['models'] as $model) { self::assertSame('page_limited', $model['estimate_link_coverage']); }
         \App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion::query()->whereKey($ids[0])->update(['is_current' => false]);
         self::assertNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
     }

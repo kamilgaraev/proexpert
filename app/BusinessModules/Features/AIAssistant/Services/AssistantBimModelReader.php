@@ -132,7 +132,7 @@ final readonly class AssistantBimModelReader
         if ($filters['version_id'] === null) {
             $this->lookup->apply($versions, $artifactScope, $packageScope, $projectScope, $filters['model_query']);
         }
-        $modelLimit = $filters['answer_kind'] === 'models' ? 100 : ($filters['equipment_kinds'] !== null ? 20 : 5);
+        $modelLimit = $filters['answer_kind'] === 'models' ? 100 : ($filters['equipment_kinds'] !== null || $filters['equipment_kind'] !== null ? 20 : 5);
         $candidates = $versions->select(array_map(static fn (string $field): string => 'design_artifact_versions.'.$field, self::VERSION_FIELDS))
             ->orderBy('design_artifact_versions.id')->limit($modelLimit + 1)->get();
         $models = [];
@@ -615,7 +615,8 @@ final readonly class AssistantBimModelReader
             }
         }
         if ($tooMany) {
-            $lines[] = trans_message($filters['equipment_kinds'] !== null ? 'ai_assistant_bim.too_many_equipment_models' : 'ai_assistant_bim.too_many_models');
+            $lines[] = trans_message($filters['equipment_kinds'] !== null || $filters['equipment_kind'] !== null
+                ? 'ai_assistant_bim.too_many_equipment_models' : 'ai_assistant_bim.too_many_models');
         }
 
         return implode("\n\n", $lines);

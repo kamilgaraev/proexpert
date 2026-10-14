@@ -17,7 +17,13 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие задачи нашего объекта задерживают работы?'] as $query) {
             self::assertSame(['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => 52, 'focus' => 'overdue_impact']], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
-        foreach (['Перенеси просроченные задачи нашего объекта.', 'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
+        foreach (['Перенеси просроченные задачи нашего объекта.',
+            'Перенести задачи нашего объекта, задерживающие работы, на завтра',
+            'Перенесите задачи нашего объекта, задерживающие этапы, на завтра',
+            'Хочу перенести задачи нашего объекта, задерживающие сроки, на завтра',
+            'Сдвинь задачи нашего объекта, задерживающие этапы, на завтра',
+            'Переносим задачи нашего объекта, задерживающие сроки, на завтра',
+            'Какие просроченные задачи нашего объекта и сколько расходов?'] as $query) {
             self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectScheduleImpactReader::matches($query));
         }
     }

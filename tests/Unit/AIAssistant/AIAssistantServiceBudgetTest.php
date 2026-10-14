@@ -692,14 +692,16 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
         $service = $this->makeService($registry, true);
-        $query = 'Сколько '.$equipment.' найдено и есть ли связи со сметными позициями?';
+        $query = 'Сколько '.$equipment.' найдено в BIM-моделях нашего объекта и есть ли связи со сметными позициями?';
         $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
             'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
         $failures = [];
         $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'single', 'name' => 'get_bim_model_elements',
-            'arguments' => json_encode(['project_id' => 52, 'equipment_kind' => 'air_conditioner',
-                'include_estimate_links' => false, 'offset' => 20, 'limit' => 1], JSON_THROW_ON_ERROR)], $plan, $failures);
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
+                'answer_kind' => 'models', 'include_estimate_links' => false, 'offset' => 20, 'limit' => 1], JSON_THROW_ON_ERROR)], $plan, $failures);
         self::assertSame($kind, $seen['equipment_kind'] ?? $seen['equipment_kinds'][0]);
+        self::assertSame('elements', $seen['answer_kind']);
+        self::assertNull($seen['model_query']);
         self::assertTrue($seen['include_estimate_links']);
         self::assertSame(20, $seen['limit']);
         self::assertSame(0, $seen['offset']);

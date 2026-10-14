@@ -2124,7 +2124,9 @@ class AIAssistantService
             if ($requestedKind !== null && isset($bimSchema['equipment_kind'])
                 && $this->simpleBimEquipmentQuestion($requestQuery, $namedProject ?? '')) {
                 $args['equipment_kind'] = $requestedKind;
+                if (isset($bimSchema['answer_kind'])) { $args['answer_kind'] = 'elements'; }
                 if (isset($bimSchema['equipment_kinds'])) { $args['equipment_kinds'] = null; }
+                if (preg_match('/наш[а-яё]*\s+объект/iu', $requestQuery) === 1) { $args['model_query'] = null; }
                 foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
                     'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
                     if (isset($bimSchema[$field])) { $args[$field] = null; }
