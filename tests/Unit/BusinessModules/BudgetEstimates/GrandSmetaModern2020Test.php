@@ -355,6 +355,18 @@ final class GrandSmetaModern2020Test extends TestCase
         self::assertSame(0.15, (new ImportRowPolicy)->totalAmount($row));
     }
 
+    public function test_export_accounting_state_supports_an_omitted_optional_quantity_coefficient(): void
+    {
+        $this->withInactiveWorkbook(true, true, true, function ($bridge, $path, $structure): void {
+            self::assertSame('', $structure->columnMapping['quantity_coefficient']);
+            $preview = $bridge->preview(new ImportSession, $path, $structure);
+            self::assertTrue($preview->validation['is_valid'], json_encode($preview->validation));
+            self::assertSame(0.11, $preview->totals['total_amount']);
+            $roots = array_values(array_filter($preview->items, fn ($row) => !$row['is_sub_item']));
+            self::assertSame([false, true, false], array_column($roots, 'is_not_accounted'));
+        }, quantityCoefficient: false);
+    }
+
     public function test_gray_font_or_helper_mirror_alone_cannot_exclude_positions(): void
     {
         foreach ([[true, false, true], [false, true, true], ['partial', true, true], [true, true, false]] as [$gray, $mirrors, $producer]) {
@@ -367,7 +379,7 @@ final class GrandSmetaModern2020Test extends TestCase
         }
     }
 
-    private function withInactiveWorkbook(bool|string $gray, bool $mirrors, bool $producer, \Closure $assert): void
+    private function withInactiveWorkbook(bool|string $gray, bool $mirrors, bool $producer, \Closure $assert, bool $quantityCoefficient = true): void
     {
         $book = new Spreadsheet;
         $sheet = $book->getActiveSheet();
@@ -375,7 +387,7 @@ final class GrandSmetaModern2020Test extends TestCase
         $sheet->setCellValue('J1', 'Сметная стоимость в базисном уровне цен');
         $sheet->setCellValue('M1', 'Индексы');
         $sheet->setCellValue('N1', 'Сметная стоимость в текущем уровне цен');
-        $sheet->fromArray([1, 2, 3, null, null, 4, 5, 6, 7, 8, 9, 10, 11, 12], null, 'A3', true);
+        $sheet->fromArray([1, 2, 3, null, null, 4, 5, $quantityCoefficient ? 6 : null, 7, 8, 9, 10, 11, 12], null, 'A3', true);
         foreach ([4 => 'Работа один', 7 => 'Неучтённая работа', 10 => 'Работа два'] as $row => $name) {
             foreach (['A' => $row === 4 ? 1 : 2, 'B' => 'ГЭСН-'.$row, 'C' => $name, 'I' => 1] as $column => $value) {
                 $sheet->setCellValue($column.$row, $value);

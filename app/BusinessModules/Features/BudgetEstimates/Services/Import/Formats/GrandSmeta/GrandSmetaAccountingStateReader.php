@@ -13,6 +13,7 @@ final class GrandSmetaAccountingStateReader
 {
     public function detect(string $filePath, Worksheet $sheet, array $mapping, int $headerRow): array
     {
+        $mapping = array_filter($mapping, static fn (mixed $column): bool => is_string($column) && trim($column) !== '');
         if (!isset($mapping['position_number'], $mapping['code'], $mapping['name'])) {
             return [];
         }
