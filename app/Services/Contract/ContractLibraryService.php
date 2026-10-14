@@ -27,6 +27,8 @@ final class ContractLibraryService
         if ($perPage < 1 || $perPage > 100 || $page < 1
             || (isset($filters['kind']) && !in_array($filters['kind'], ['template', 'block', 'variable'], true))
             || (isset($filters['status']) && !in_array($filters['status'], ['draft', 'published'], true))
+            || (isset($filters['field_type']) && (!in_array($filters['field_type'], ContractVariableDefinitionValidator::TYPES, true)
+                || (isset($filters['kind']) && $filters['kind'] !== 'variable')))
             || (isset($filters['search']) && (!is_string($filters['search']) || mb_strlen($filters['search']) > 255))) {
             throw new ContractBuilderException('contracts.library_input_invalid', 422);
         }
@@ -44,9 +46,13 @@ final class ContractLibraryService
             ->where('items.creation_key', 'not like', ContractStandardTemplates::PREFIX.'%')
             ->where('items.is_archived', (bool) ($filters['archived'] ?? false))
             ->select(['items.id', 'items.organization_id', 'items.kind', 'items.is_archived', 'items.lock_version', 'items.updated_at',
-                'versions.version_number', 'versions.title', 'versions.status']);
+                'versions.version_number', 'versions.title', 'versions.status'])
+            ->selectRaw("CASE WHEN items.kind = 'variable' THEN versions.content->>'type' ELSE NULL END AS field_type");
         if (isset($filters['kind'])) {
             $query->where('items.kind', $filters['kind']);
+        }
+        if (isset($filters['field_type'])) {
+            $query->where('items.kind', 'variable')->whereRaw("versions.content->>'type' = ?", [$filters['field_type']]);
         }
         if (isset($filters['search']) && trim($filters['search']) !== '') {
             $query->where('versions.title', 'ilike', '%'.addcslashes($filters['search'], '%_\\').'%');

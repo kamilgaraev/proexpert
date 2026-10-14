@@ -8,7 +8,7 @@ use App\Exceptions\ContractBuilderException;
 
 final class ContractVariableDefinitionValidator
 {
-    private const TYPES = ['text', 'number', 'money', 'percentage', 'date', 'boolean', 'choice', 'entity', 'table'];
+    public const TYPES = ['text', 'number', 'money', 'percentage', 'date', 'boolean', 'choice', 'entity', 'table'];
 
     public function validate(array $definition, int $depth = 0): void
     {
