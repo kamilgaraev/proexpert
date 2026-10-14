@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\ServiceProvider;
 use RuntimeException;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 require_once dirname(__DIR__, 3).'/vendor/autoload.php';
 require_once __DIR__.'/LocalAcceptanceDisk.php';
@@ -32,7 +33,7 @@ function descriptor(): array
     $data = json_decode((string) file_get_contents($path), true, 64, JSON_THROW_ON_ERROR);
     $env = $data['environment'];
     if ($env['APP_ENV'] !== 'testing' || $env['DB_CONNECTION'] !== 'pgsql'
-        || $env['DB_HOST'] !== '127.0.0.1' || $env['DB_PORT'] !== '55433'
+        || $env['DB_HOST'] !== '127.0.0.1' || $env['DB_PORT'] !== (string) IsolatedPostgresTestDatabase::profilePort()
         || preg_match('/^most_phpunit_[a-f0-9]{24}_testing$/D', $env['DB_DATABASE']) !== 1
         || $env['DB_USERNAME'] !== 'most_testing' || $env['DB_PASSWORD'] !== 'most_testing_password'
         || $data['runtime_directory'] !== $root || time() >= $data['expires_at']
@@ -211,7 +212,7 @@ function beginStages(array $data, string $method, string $path): ?array
     $path = parse_url($path, PHP_URL_PATH);
     if (($data['schema_version'] ?? null) !== 1 || ($data['expires_at'] ?? 0) < time()
         || ($environment['APP_ENV'] ?? null) !== 'testing' || ($environment['DB_CONNECTION'] ?? null) !== 'pgsql'
-        || ($environment['DB_HOST'] ?? null) !== '127.0.0.1' || (string) ($environment['DB_PORT'] ?? '') !== '55433'
+        || ($environment['DB_HOST'] ?? null) !== '127.0.0.1' || (string) ($environment['DB_PORT'] ?? '') !== (string) IsolatedPostgresTestDatabase::profilePort()
         || preg_match('/^most_phpunit_[a-f0-9]{24}_testing$/D', $environment['DB_DATABASE'] ?? '') !== 1
         || ! empty($environment['DB_URL']) || $directory === false || $temporary === false
         || dirname($directory) !== $temporary || preg_match('/^most-bim-device-[a-f0-9]{24}$/D', basename($directory)) !== 1
@@ -390,7 +391,7 @@ function archiveFailure(array $data, \Throwable $exception): ?string
         $environment = $data['environment'] ?? [];
         if (($data['schema_version'] ?? null) !== 1 || ($environment['APP_ENV'] ?? null) !== 'testing'
             || ($environment['DB_CONNECTION'] ?? null) !== 'pgsql' || ($environment['DB_HOST'] ?? null) !== '127.0.0.1'
-            || (string) ($environment['DB_PORT'] ?? '') !== '55433' || ! empty($environment['DB_URL'])
+            || (string) ($environment['DB_PORT'] ?? '') !== (string) IsolatedPostgresTestDatabase::profilePort() || ! empty($environment['DB_URL'])
             || preg_match('/^most_phpunit_[a-f0-9]{24}_testing$/D', $environment['DB_DATABASE'] ?? '') !== 1
             || $directory === false || $temporary === false || dirname($directory) !== $temporary
             || preg_match('/^most-bim-device-[a-f0-9]{24}$/D', basename($directory)) !== 1) {

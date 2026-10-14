@@ -478,6 +478,8 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
             'APP_KEY' => $this->appKey,
             'APP_CONFIG_CACHE' => $this->runtimeDirectory.DIRECTORY_SEPARATOR.'no-config-cache',
             'MOST_POSTGRES_TEST_PROFILE' => 'ai-assistant',
+            'MOST_POSTGRES_TEST_PORT' => (string) (getenv('MOST_POSTGRES_TEST_PORT') ?: ''),
+            'MOST_POSTGRES_TEST_PROJECT' => (string) (getenv('MOST_POSTGRES_TEST_PROJECT') ?: ''),
             'ESTIMATE_GENERATION_MODULAR_CONTRACT_BOOTSTRAP' => '1',
             'CACHE_STORE' => 'array',
             'SESSION_DRIVER' => 'array',

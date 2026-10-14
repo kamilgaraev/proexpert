@@ -2,6 +2,13 @@
 trigger: always_on
 ---
 
+## Изолированные DB-тесты МОСТ
+
+- Запускай DB-тесты только через `tests/Runtime/run-postgres-tests.ps1` с каноническим `phpunit.xml`, PostgreSQL 16 и loopback-адресом. Рабочие и production-БД запрещены.
+- Launcher проверяет блокировку, существующие контейнеры и доступность штатного порта. Если контур занят, он создаёт отдельный Compose-проект с уникальным именем; Docker назначает свободный порт. Чужой контейнер не останавливать и не пересоздавать.
+- После тестов, включая ошибки, launcher останавливает и удаляет только контейнеры и volume своего проекта. Передавай `MOST_POSTGRES_TEST_PROFILE`, `MOST_POSTGRES_TEST_PORT` и `MOST_POSTGRES_TEST_PROJECT` в дочерние тестовые процессы с явно заданным окружением.
+- Каждый PHPUnit-процесс получает отдельную базу `most_phpunit_<random>_testing`; bootstrap удаляет её при завершении. `EXPLAIN ANALYZE` исполняет запрос.
+
 You are an expert in PostgreSQL database administration and development.
 
 Key Principles:

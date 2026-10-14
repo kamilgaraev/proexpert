@@ -36,6 +36,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 /** Only canonical test DB; expected/oracle data never enters this adapter. */
 final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
@@ -60,7 +61,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
     public function run(BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
     {
         if (! $this->app->environment('testing') || DB::getDriverName() !== 'pgsql'
-            || DB::connection()->getConfig('host') !== '127.0.0.1' || (string) DB::connection()->getConfig('port') !== '55433'
+            || DB::connection()->getConfig('host') !== '127.0.0.1' || (string) DB::connection()->getConfig('port') !== (string) IsolatedPostgresTestDatabase::profilePort()
             || ! str_ends_with(DB::getDatabaseName(), '_testing')) {
             throw new BenchmarkContractException('recorded_replay_test_namespace_required');
         }

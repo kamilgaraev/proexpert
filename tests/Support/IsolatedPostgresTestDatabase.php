@@ -33,11 +33,27 @@ final class IsolatedPostgresTestDatabase
     public static function profilePort(?string $profile = null): int
     {
         $profile ??= (string) ($_ENV['MOST_POSTGRES_TEST_PROFILE'] ?? $_SERVER['MOST_POSTGRES_TEST_PROFILE'] ?? getenv('MOST_POSTGRES_TEST_PROFILE') ?: '');
-        return match ($profile) {
+        $defaultPort = match ($profile) {
             '' => 55433,
             'ai-assistant' => 55443,
             default => throw new RuntimeException('postgres_test_profile_unsafe'),
         };
+
+        $runtimePort = (string) ($_ENV['MOST_POSTGRES_TEST_PORT'] ?? $_SERVER['MOST_POSTGRES_TEST_PORT'] ?? getenv('MOST_POSTGRES_TEST_PORT') ?: '');
+        $runtimeProject = (string) ($_ENV['MOST_POSTGRES_TEST_PROJECT'] ?? $_SERVER['MOST_POSTGRES_TEST_PROJECT'] ?? getenv('MOST_POSTGRES_TEST_PROJECT') ?: '');
+        if ($runtimePort === '' && $runtimeProject === '') {
+            return $defaultPort;
+        }
+
+        $baseProject = $profile === 'ai-assistant' ? 'most-ai-assistant-tests' : 'most-postgres-tests';
+        $port = filter_var($runtimePort, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1024, 'max_range' => 65535]]);
+        if ($port === false || $port === 5432
+            || preg_match('/^'.$baseProject.'(?:-[a-f0-9]{32})?$/D', $runtimeProject) !== 1
+            || ($runtimeProject === $baseProject && $port !== $defaultPort)) {
+            throw new RuntimeException('postgres_test_runtime_environment_unsafe');
+        }
+
+        return $port;
     }
 
     public static function assertSafeConfiguration(array $configuration, ?string $profile = null): void

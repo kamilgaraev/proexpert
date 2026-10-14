@@ -43,6 +43,7 @@ use Symfony\Component\Process\Process;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 use Tymon\JWTAuth\Factory as JwtPayloadFactory;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
 {
@@ -70,7 +71,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
         self::assertSame('testing', app()->environment());
         self::assertSame('pgsql', $connection->getDriverName());
         self::assertSame('127.0.0.1', $connection->getConfig('host'));
-        self::assertSame('55433', (string) $connection->getConfig('port'));
+        self::assertSame((string) IsolatedPostgresTestDatabase::profilePort(), (string) $connection->getConfig('port'));
         self::assertMatchesRegularExpression('/^most_phpunit_[a-f0-9]{24}_testing$/D', $connection->getDatabaseName());
         self::assertSame('most_testing', $connection->getConfig('username'));
         self::assertSame(1, $connection->transactionLevel());
@@ -134,6 +135,10 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             $controlBase = 'http://127.0.0.1:'.$controlPort;
             $environment = array_replace($environment, [
                 'DB_DATABASE' => DB::connection()->getDatabaseName(),
+                'DB_PORT' => (string) DB::connection()->getConfig('port'),
+                'MOST_POSTGRES_TEST_PROFILE' => (string) (getenv('MOST_POSTGRES_TEST_PROFILE') ?: ''),
+                'MOST_POSTGRES_TEST_PORT' => (string) (getenv('MOST_POSTGRES_TEST_PORT') ?: ''),
+                'MOST_POSTGRES_TEST_PROJECT' => (string) (getenv('MOST_POSTGRES_TEST_PROJECT') ?: ''),
                 'APP_URL' => $base, 'APP_KEY' => 'base64:'.base64_encode(random_bytes(32)),
                 'WEB_AUTH_ISSUER' => 'https://bim-device-acceptance.invalid',
                 'WEB_AUTH_ACCESS_TTL_MINUTES' => (string) self::TOKEN_TTL_MINUTES, 'JWT_TTL' => (string) self::TOKEN_TTL_MINUTES,

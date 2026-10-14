@@ -125,6 +125,8 @@ final class AICreditConcurrencyTest extends TestCase
         $barrier = $this->runtimeDirectory.DIRECTORY_SEPARATOR.'start';
         $connection = DB::connection()->getConfig();
         $environment = ['MOST_POSTGRES_TEST_PROFILE' => (string) (getenv('MOST_POSTGRES_TEST_PROFILE') ?: ''),
+            'MOST_POSTGRES_TEST_PORT' => (string) (getenv('MOST_POSTGRES_TEST_PORT') ?: ''),
+            'MOST_POSTGRES_TEST_PROJECT' => (string) (getenv('MOST_POSTGRES_TEST_PROJECT') ?: ''),
             'APP_ENV' => 'testing', 'APP_KEY' => (string) config('app.key'), 'APP_CONFIG_CACHE' => $this->runtimeDirectory.DIRECTORY_SEPARATOR.'no-config-cache',
             'ESTIMATE_GENERATION_MODULAR_CONTRACT_BOOTSTRAP' => '1', 'LOG_CHANNEL' => 'stderr', 'CACHE_STORE' => 'array', 'SESSION_DRIVER' => 'array', 'QUEUE_CONNECTION' => 'sync', 'MAIL_MAILER' => 'array',
             'DB_CONNECTION' => 'pgsql', 'DB_HOST' => (string) $connection['host'], 'DB_PORT' => (string) $connection['port'], 'DB_DATABASE' => (string) $connection['database'],

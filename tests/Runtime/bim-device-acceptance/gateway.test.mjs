@@ -41,7 +41,7 @@ function fetch(port, path, method = 'GET', body = null) {
   });
 }
 
-test('gateway forwards streamed bytes and cookies, dispatches four workers, and never retries POST', { timeout: 20_000 }, async () => {
+async function checkGateway(databasePort) {
   const nonce = randomBytes(12).toString('hex');
   const directory = join(realpathSync(tmpdir()), `most-bim-device-${nonce}`);
   mkdirSync(directory, { mode: 0o700 });
@@ -87,12 +87,15 @@ test('gateway forwards streamed bytes and cookies, dispatches four workers, and 
       ui_origin: 'http://127.0.0.1:31391', admin_base_url: `http://127.0.0.1:${gatewayPort}`,
       control_base_url: `http://127.0.0.1:${controlPort}`, control_port: controlPort,
       http_port: httpPort, admin_http_port: gatewayPort, reverb_port: reverbPort, redis_port: redisPort, admin_worker_ports: workerPorts,
-      environment: { APP_ENV: 'testing', DB_CONNECTION: 'pgsql', DB_HOST: '127.0.0.1', DB_PORT: '55433',
+      environment: { APP_ENV: 'testing', DB_CONNECTION: 'pgsql', DB_HOST: '127.0.0.1', DB_PORT: databasePort,
         DB_DATABASE: `most_phpunit_${nonce}_testing`, DB_USERNAME: 'most_testing', DB_PASSWORD: 'most_testing_password',
         WEB_AUTH_ADMIN_ALLOWED_ORIGINS: 'http://127.0.0.1:31391' },
     }), { mode: 0o600 });
     gateway = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'gateway.mjs')], {
-      env: { ...process.env, BIM_DEVICE_ACCEPTANCE_DESCRIPTOR: descriptorPath }, stdio: 'ignore', windowsHide: true,
+      env: { ...process.env, BIM_DEVICE_ACCEPTANCE_DESCRIPTOR: descriptorPath, MOST_POSTGRES_TEST_PROFILE: '',
+        MOST_POSTGRES_TEST_PORT: databasePort === '55433' ? '' : databasePort,
+        MOST_POSTGRES_TEST_PROJECT: databasePort === '55433' ? '' : `most-postgres-tests-${'a'.repeat(32)}` },
+      stdio: 'ignore', windowsHide: true,
     });
     let ready = false;
     for (let attempt = 0; attempt < 40 && !ready; attempt++) {
@@ -123,4 +126,9 @@ test('gateway forwards streamed bytes and cookies, dispatches four workers, and 
     if (dirname(realpathSync(directory)) !== realpathSync(tmpdir()) || !/^most-bim-device-[a-f0-9]{24}$/.test(directory.split(/[\\/]/).at(-1))) throw new Error('transport_cleanup_path_invalid');
     rmSync(directory, { recursive: true });
   }
-});
+}
+
+for (const databasePort of ['55433', '41321']) {
+  test(`gateway forwards bytes and cookies, dispatches four workers, and never retries POST on DB port ${databasePort}`,
+    { timeout: 20_000 }, () => checkGateway(databasePort));
+}
