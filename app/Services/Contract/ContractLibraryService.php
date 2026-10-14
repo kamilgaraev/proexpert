@@ -145,12 +145,15 @@ final class ContractLibraryService
         return $this->result($item, $number);
     }
 
-    public function calculateTemplate(User $actor, int $organizationId, string $itemId, int $number, array $input): array
+    public function calculateTemplate(User $actor, int $organizationId, string $itemId, int $number, array $input, ?int $contractId = null): array
     {
         $resolved = $this->resolveTemplate($actor, $organizationId, $itemId, $number);
+        $context = $contractId === null ? [] : ContractContextSourceFields::forContract(
+            app(ContractOrganizationViewService::class)->find($actor, $organizationId, $contractId)->contract,
+        );
         $types = array_column($resolved['definitions'], 'definition', 'id');
         $snapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $input);
-        $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $input);
+        $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $input, null, $context);
         $values = (new ContractFormulaEngine)->calculate($types, $input, ContractEntityCatalog::accessible($snapshots), static fn (string $id): mixed => $sourceValues[$id]);
 
         return [

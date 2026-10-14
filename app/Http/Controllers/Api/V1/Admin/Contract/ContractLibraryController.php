@@ -31,7 +31,8 @@ final class ContractLibraryController extends Controller
 
     public function calculate(\App\Http\Requests\Api\V1\Admin\Contract\CalculateContractTemplateRequest $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
-        $result = $service->calculateTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion, $request->validated('values'));
+        $contractId = $request->validated('contract_id');
+        $result = $service->calculateTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion, $request->validated('values'), $contractId === null ? null : (int) $contractId);
 
         return AdminResponse::success((new \App\Http\Resources\Api\V1\Admin\Contract\CalculatedContractTemplateResource($result))->resolve($request));
     }
