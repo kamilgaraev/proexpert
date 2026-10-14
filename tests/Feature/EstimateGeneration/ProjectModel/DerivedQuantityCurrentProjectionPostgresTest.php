@@ -20,34 +20,21 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Brick\Math\BigDecimal;
-use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\QueryException;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class DerivedQuantityCurrentProjectionPostgresTest extends TestCase
+final class DerivedQuantityCurrentProjectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function createApplication()
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-
-        return $app;
-    }
-
     #[Test]
     public function production_schema_has_a_scoped_current_derived_quantity_projection(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertTrue(
-            DB::getDatabaseName() === 'most_backend_testing'
-                || (DB::getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        // The canonical base verifies environment, host, port and the configured *_testing database.
         if (! Schema::hasColumn('estimate_generation_sessions', 'state_version')) {
             DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN state_version bigint NOT NULL DEFAULT 0');
         }

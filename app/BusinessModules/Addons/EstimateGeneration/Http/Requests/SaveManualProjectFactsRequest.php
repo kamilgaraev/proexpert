@@ -21,7 +21,7 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints'],
+            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice'],
             'entities.*.existing_entity_id' => ['sometimes', 'required', 'string', 'max:160'],
             'entities.*.key' => ['required', 'string', 'max:120'],
             'entities.*.name' => ['sometimes', 'required', 'string', 'max:160'],
@@ -37,6 +37,12 @@ final class SaveManualProjectFactsRequest extends FormRequest
             'entities.*.coverage.*' => ['required', 'in:covered_empty,covered_with_entities,incomplete,unknown'],
             'entities.*.coverage_fingerprints' => ['sometimes', 'array:room_walls,wall_openings,roof_facets,roof_openings'],
             'entities.*.coverage_fingerprints.*' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.parent_choice' => ['sometimes', 'required', 'array:relation,parent_entity_id,inventory_fingerprint,child_fingerprint,reason'],
+            'entities.*.parent_choice.relation' => ['required_with:entities.*.parent_choice', 'in:room_walls,wall_openings,roof_facets,roof_openings'],
+            'entities.*.parent_choice.parent_entity_id' => ['required_with:entities.*.parent_choice', 'string', 'max:160'],
+            'entities.*.parent_choice.inventory_fingerprint' => ['required_with:entities.*.parent_choice', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.parent_choice.child_fingerprint' => ['required_with:entities.*.parent_choice', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.parent_choice.reason' => ['required_with:entities.*.parent_choice', 'string', 'max:1000'],
         ];
     }
 }

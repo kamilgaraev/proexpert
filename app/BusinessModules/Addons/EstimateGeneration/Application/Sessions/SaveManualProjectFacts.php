@@ -67,6 +67,12 @@ final readonly class SaveManualProjectFacts
             }
             $activeEntities = array_column($active->entities, null, 'id');
             $inventoryDocumentVersions = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::currentDocumentVersions($active);
+            $inventorySnapshot = $active;
+            $relationFactIds = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::factIds($active);
+            if ($relationFactIds !== []) {
+                $inventorySnapshot = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryRelationOverlay::apply($active,
+                    $this->models->decisionsForSelectedFacts(...[...$scope, $relationFactIds]), $inventoryDocumentVersions);
+            }
             $entities = [];
             $byKey = [];
             $seenIds = [];
@@ -79,7 +85,7 @@ final readonly class SaveManualProjectFacts
                 if (isset($row['existing_entity_id'])) {
                     $existing = $activeEntities[$row['existing_entity_id']] ?? null;
                     if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->attributes['properties']['semantic_type'] ?? $existing->type) !== $row['type']
-                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [])
+                        || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']))
                         || array_intersect(['name', 'floor', 'zone', 'parent_key'], array_keys($row)) !== []) {
                         throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
                     }
@@ -136,7 +142,17 @@ final readonly class SaveManualProjectFacts
                 $entity = $entities[$byKey[$row['key']]];
                 $sourceVersion = $entity->sourceVersion;
                 $parameters = [];
-                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [])) {
+                if (isset($row['parent_choice'])) {
+                    if (! config('estimate-generation.universal_enabled', false) || ($payload['evaluation_mode'] ?? null) !== 'universal'
+                        || ! isset($row['existing_entity_id']) || count($input['entities']) !== 1
+                        || ($row['parameters'] ?? []) !== [] || ($row['coverage'] ?? []) !== []) {
+                        throw ValidationException::withMessages(['entities' => trans_message('estimate_generation.geometry_inventory.relation_invalid')]);
+                    }
+                    [$fact, $proof] = $this->parentChoice($scope, $entity, $row['parent_choice'], $inventorySnapshot, $inventoryDocumentVersions, $requestId);
+                    $facts[] = $fact;
+                    $proofs[$proof->id] = $proof;
+                }
+                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [] && ! isset($row['parent_choice']))) {
                     $name = $row['name'] ?? $row['key'];
                     if (! is_string($name) || trim($name) === '' || mb_strlen($name) > 160) {
                         throw ValidationException::withMessages(['entities.'.$index.'.name' => 'Введите название объекта, не более 160 символов.']);
@@ -192,7 +208,7 @@ final readonly class SaveManualProjectFacts
                     $inventory = null;
                     if (isset($row['existing_entity_id'])) {
                         try {
-                            $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($active, $entity->id, $relation, $inventoryDocumentVersions);
+                            $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($inventorySnapshot, $entity->id, $relation, $inventoryDocumentVersions);
                         } catch (\InvalidArgumentException) {
                             throw ValidationException::withMessages(['entities.'.$index.'.coverage' => trans_message('estimate_generation.geometry_inventory.entity_invalid')]);
                         }
@@ -249,7 +265,8 @@ final readonly class SaveManualProjectFacts
             }
             foreach ($facts as $fact) {
                 $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $fact->sourceVersion,
-                    'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id, 'Пользователь подтвердил ручные исходные данные', $fact->version, $fact->evidenceIds]), $fact);
+                    'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id,
+                    str_starts_with($fact->type, 'geometry_parent_') ? $fact->value['reason'] : 'Пользователь подтвердил ручные исходные данные', $fact->version, $fact->evidenceIds]), $fact);
             }
             $preview = $this->quantities->previewInput(...$scope);
             $result = ['request_id' => $requestId, 'state_version' => $expectedVersion + 1, 'fact_ids' => array_column($facts, 'id'),
@@ -264,6 +281,44 @@ final readonly class SaveManualProjectFacts
 
             return $result;
         }, 3);
+    }
+
+    private function parentChoice(array $scope, Entity $child, array $input, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot $snapshot,
+        array $documentAnchors, string $requestId): array
+    {
+        $relation = $input['relation'] ?? null;
+        $definition = is_string($relation) ? (\App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::RELATIONS[$relation] ?? null) : null;
+        $current = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entities($snapshot, $documentAnchors);
+        $effectiveChild = $current[$child->id] ?? null;
+        $parentId = $input['parent_entity_id'] ?? null;
+        $parent = is_string($parentId) ? ($current[$parentId] ?? null) : null;
+        $reason = $input['reason'] ?? null;
+        if ($definition === null || $effectiveChild === null || $parent === null || $child->id === $parent->id
+            || \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::type($child) !== $definition[1]
+            || \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::type($parent) !== $definition[0]
+            || ! is_string($reason) || trim($reason) === '' || strlen(trim($reason)) > 1000) {
+            throw ValidationException::withMessages(['entities' => trans_message('estimate_generation.geometry_inventory.relation_invalid')]);
+        }
+        $inventory = \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::capture($snapshot, $parent->id, $relation, $documentAnchors);
+        if (($input['inventory_fingerprint'] ?? null) !== $inventory['fingerprint']
+            || ($input['child_fingerprint'] ?? null) !== \App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::entityFingerprint($effectiveChild, $documentAnchors)) {
+            throw ValidationException::withMessages(['entities' => trans_message('estimate_generation.geometry_inventory.changed')]);
+        }
+        $parameter = 'geometry_parent_'.$relation;
+        $factId = 'fact:'.hash('sha256', $requestId.'|'.$child->id.'|'.$parameter);
+        $value = ['relation' => $relation, 'parent_entity_id' => $parent->id, 'parent_source_version' => $parent->sourceVersion,
+            'inventory_fingerprint' => $inventory['fingerprint'], 'child_fingerprint' => $input['child_fingerprint'],
+            'decision_id' => 'decision:'.hash('sha256', $requestId.'|'.$factId), 'reason' => trim($reason)];
+        $hash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value));
+        $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
+            'input:'.$scope[2], $child->sourceVersion, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.manual_facts'],
+            ['fact_key' => 'evaluation_choice', 'fact_value' => $hash], 0.0, EvidenceProducer::UserInputNormalizer->value,
+            'sha256:'.hash('sha256', 'geometry-parent-choice:v1')]));
+        $proof = new Evidence('evidence:'.$node->id, ...[...$scope, $child->sourceVersion, 'input:'.$scope[2], 'user_input', null, null,
+            'input_payload.manual_facts', EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2], $hash]);
+        $fact = $this->fact($scope, $child->sourceVersion, $child, $parameter, $value, null, 'user_input', [$proof->id], $requestId);
+
+        return [$fact, $proof];
     }
 
     private function fact(array $scope, string $version, Entity $entity, string $parameter, mixed $value, ?string $unit, string $origin, array $evidence, string $requestId): Fact

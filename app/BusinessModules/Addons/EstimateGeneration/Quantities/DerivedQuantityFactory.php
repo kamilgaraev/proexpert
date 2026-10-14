@@ -123,6 +123,8 @@ final class DerivedQuantityFactory
             $entities,
             $facts,
             $evidence,
+            $snapshot,
+            $decisions,
         );
         if ($geometryIssues !== []) {
             return $this->issues($geometryIssues);
@@ -175,8 +177,20 @@ final class DerivedQuantityFactory
 
                     continue;
                 }
+                $operandTarget = $target;
+                $sourceEntity = $entities[$facts[$id]->entityId] ?? null;
+                $relation = match (true) {
+                    $formula === 'wall_net_area' && in_array($role, ['opening_widths', 'opening_heights'], true) => 'wall_openings',
+                    $formula === 'sloped_roof_area' && in_array($role, ['plan_areas', 'slope_rises', 'slope_runs'], true) => 'roof_facets',
+                    $formula === 'sloped_roof_area' && $role === 'roof_opening_areas' => 'roof_openings',
+                    default => null,
+                };
+                if ($sourceEntity !== null && $relation !== null && $facts[$id]->sourceVersion !== $target->sourceVersion
+                    && GeometryRelationOverlay::authorizes($snapshot, $decisions, $sourceEntity, $target, $relation)) {
+                    $operandTarget = $sourceEntity;
+                }
                 $resolvedOperand = $this->resolveOperand(
-                    $facts[$id], $role, $target, $evidence, $decisionIndex, $formula,
+                    $facts[$id], $role, $operandTarget, $evidence, $decisionIndex, $formula,
                     is_string($request['output_unit'] ?? null) ? $request['output_unit'] : null,
                 );
                 if (isset($resolvedOperand['issue'])) {
@@ -235,6 +249,29 @@ final class DerivedQuantityFactory
             $right['projection_version'],
         ]);
         $evidenceIds = [];
+        $relationProofs = [];
+        foreach (array_values(array_unique([$target->id, ...array_column($geometryInputs, 'entity_id')])) as $relatedId) {
+            $related = $entities[$relatedId] ?? null;
+            foreach ($related?->attributes['geometry_relation_reviews'] ?? [] as $relation => $review) {
+                if (($review['status'] ?? null) !== 'confirmed') {
+                    continue;
+                }
+                $link = $facts[$review['fact_id'] ?? ''] ?? null;
+                $decision = $decisionIndex[$review['decision_id'] ?? ''] ?? null;
+                $definition = GeometryInventory::RELATIONS[$relation] ?? null;
+                $parent = $entities[$related->attributes[$definition[2] ?? ''] ?? ''] ?? null;
+                if ($definition === null || ! $link instanceof Fact || ! $decision instanceof Decision || $parent === null
+                    || $link->entityId !== $relatedId || $link->sourceVersion !== $related->sourceVersion
+                    || $link->type !== 'geometry_parent_'.$relation || ($link->value['parent_entity_id'] ?? null) !== $parent->id
+                    || ($link->value['parent_source_version'] ?? null) !== $parent->sourceVersion
+                    || ! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationChoiceProof)->accepted($snapshot, $link, $decision)) {
+                    return $this->unresolved('geometry_relation_unverified', 'geometry', $relatedId);
+                }
+                $relationProofs[] = ['entity_id' => $relatedId, 'parent_entity_id' => $parent->id, 'relation' => $relation,
+                    'fact_id' => $link->id, 'decision_id' => $decision->id, 'evidence_ids' => $link->evidenceIds];
+                $evidenceIds = [...$evidenceIds, ...$link->evidenceIds];
+            }
+        }
         foreach ($flatOperands as $operand) {
             $evidenceIds = [...$evidenceIds, ...$operand['evidence_ids']];
         }
@@ -264,6 +301,9 @@ final class DerivedQuantityFactory
             ];
             $operand['snapshot_identity'] = $snapshotIdentity;
             $operand['technology_decision_id'] = $technologyDecisionId;
+            if ($relationProofs !== []) {
+                $operand['geometry_relations'] = $relationProofs;
+            }
             if ($quantityBinding instanceof Fact && $quantityBindingDecision instanceof Decision) {
                 $operand['quantity_binding'] = ['fact_id' => $quantityBinding->id, 'fact_version' => $quantityBinding->version,
                     'decision_id' => $quantityBindingDecision->id, 'work_item_key' => $quantityBinding->value['work_item_key'],
@@ -512,6 +552,8 @@ final class DerivedQuantityFactory
         array $entities,
         array $facts,
         array $evidence,
+        ProjectModelSnapshot $snapshot,
+        array $decisions,
     ): array {
         $expectedKinds = match ($formula) {
             'wall_net_area' => [
@@ -568,7 +610,19 @@ final class DerivedQuantityFactory
                     continue;
                 }
                 $fact = $facts[$factId];
-                $reason = $this->geometryFactIssue($fact, $target, $operand, $evidence);
+                $operandTarget = $target;
+                if ($entity->sourceVersion !== $target->sourceVersion) {
+                    $relation = match ($input['kind']) {
+                        'wall_opening' => 'wall_openings', 'roof_facet' => 'roof_facets', 'roof_opening' => 'roof_openings',
+                    };
+                    if ($fact->entityId !== $entity->id || ! GeometryRelationOverlay::authorizes($snapshot, $decisions, $entity, $target, $relation)) {
+                        $issues[] = $this->geometryIssue('geometry_relation_unverified', 'geometry', $entityId, $operand, $locator);
+
+                        continue;
+                    }
+                    $operandTarget = $entity;
+                }
+                $reason = $this->geometryFactIssue($fact, $operandTarget, $operand, $evidence);
                 if ($reason !== null) {
                     $issues[] = [
                         ...$this->geometryIssue(
