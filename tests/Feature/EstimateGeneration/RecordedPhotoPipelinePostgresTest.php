@@ -17,6 +17,16 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
 {
     public function test_actual_photo_upload_quote_vision_publication_and_generation_preserve_unknown_sizes(): void
     {
+        $this->replayPhoto('photo-no-scale-v1.json', 1);
+    }
+
+    public function test_photo_without_a_description_uses_only_the_selected_scope_and_never_fabricates_measurements_or_a_description_fact(): void
+    {
+        $this->replayPhoto('photo-only-empty-context-v1.json', 0);
+    }
+
+    private function replayPhoto(string $recording, int $descriptionFacts): void
+    {
         $image = imagecreatetruecolor(32, 24);
         imagefill($image, 0, 0, imagecolorallocate($image, 235, 235, 235));
         ob_start();
@@ -36,11 +46,17 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
                 return $this->png;
             }
         };
-        $fixture = base_path('tests/Fixtures/EstimateGeneration/universal-replay/photo-no-scale-v1.json');
+        $fixture = base_path('tests/Fixtures/EstimateGeneration/universal-replay/'.$recording);
         $adapter = new RecordedUniversalPipelineAdapter($this->app, $objects, $fixture, hash_file('sha256', $fixture));
         $result = $adapter->run(new BenchmarkPredictionCaseData('photo-no-scale', BenchmarkDatasetType::Regression, BenchmarkSourceType::SitePhoto,
             'room.png', hash('sha256', $png), ['photo_no_scale', 'current_repair'], []), 300000);
         self::assertSame('success', $result->status);
+        self::assertSame($descriptionFacts, $adapter->lastRun['description_fact_count']);
+        if ($descriptionFacts === 0) {
+            self::assertNotContains('painting-from-description', $result->prediction['work_ids']);
+            self::assertNotEmpty($result->prediction['work_ids']);
+            self::assertFalse($adapter->lastRun['evaluation']['can_confirm_for_apply']);
+        }
         self::assertSame([], $result->prediction['areas']);
         self::assertSame([], $result->prediction['quantities']);
         self::assertSame([], $result->prediction['costs']);

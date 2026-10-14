@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic_transport_fixture",
+  "accuracy_calibrated": false,
+  "tags": [
+    "photo_no_scale",
+    "incomplete_project",
+    "current_repair"
+  ],
+  "description": null,
+  "profile_id": "renovation",
+  "construction_type": "current_repair",
+  "selected_sections": [
+    "finishing"
+  ],
+  "recordings": [
+    {
+      "role": "estimate_composition",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"work_intents\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    },
+    {
+      "role": "estimate_audit",
+      "response": {
+        "id": "chatcmpl-synthetic-universal-replay",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "openai/gpt-6-luna",
+        "choices": [
+          {
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "{\"findings\":[]}"
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 100,
+          "completion_tokens": 50,
+          "total_tokens": 150
+        }
+      }
+    }
+  ],
+  "vision_response": {
+    "id": "chatcmpl-synthetic-photo-no-scale",
+    "model": "openai/gpt-6-luna",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"schema_version\":4,\"sheet_type\":\"photo\",\"evidence\":[{\"key\":\"photo_page\",\"locator\":{}}],\"elements\":[],\"scale_candidates\":[],\"warnings\":[\"scale_missing\"],\"project_sheet_analysis\":{\"contractVersion\":\"sheet-analysis:v3\",\"role\":\"unknown\",\"facts\":[]},\"visual_attributes\":{},\"analysis_routing\":{\"page_kind\":\"unknown\",\"requested_depth\":\"dense_ambiguous\",\"information_density\":\"low\",\"readability\":\"high\",\"confidence\":0.7,\"ambiguous\":true,\"material_risk\":\"low\",\"reasons\":[\"Photo has no dimension or scale evidence.\"],\"semantic_regions\":[]}}"
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 50,
+      "total_tokens": 150
+    }
+  },
+  "input_note": "No user description and no vision measurements. Finishing section is explicitly selected by the user; baseline worklist is not a recognition accuracy oracle."
+}
