@@ -83,7 +83,7 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
     {
         $f = $this->fixture(); $org = (int) $f->organization->id; $args = ['scope' => 'organization'];
         $f->organization->forceFill(['capabilities' => ['general_contracting', 'design'], 'primary_business_type' => 'general_contracting',
-            'specializations' => ['Промышленное строительство'], 'certifications' => [['name' => 'private_certificate_marker']], 'profile_completeness' => 80,
+            'specializations' => ['building_construction', 'plumbing_works', 'Промышленное строительство'], 'certifications' => [['name' => 'private_certificate_marker']], 'profile_completeness' => 80,
             'onboarding_completed' => true, 'tax_number' => 'invalid_private_tax_value', 'address' => null,
             'verification_data' => ['inn_verification' => ['success' => false], 'address_verification' => ['success' => false], 'errors' => ['private_external_error_marker']]])->saveQuietly();
         $profile = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationProfileReader::class);
@@ -92,6 +92,10 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         self::assertSame($native->getProfileCompleteness(), $result['data']['profile_completeness']);
         self::assertSame($native->getCapabilities(), $result['data']['capabilities']);
         self::assertSame(count($native->getCertifications()), $result['data']['certifications_count']);
+        self::assertStringContainsString('Промышленное и гражданское строительство', $result['server_formatted_answer']);
+        self::assertStringContainsString('Сантехнические работы', $result['server_formatted_answer']);
+        self::assertStringContainsString('первичная настройка завершена: да', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('building_construction', $result['server_formatted_answer']);
         self::assertStringNotContainsString('private_certificate_marker', json_encode($result));
         self::assertTrue($profile->matchesReference($f->owner, $org, $result['source_refs'][0]));
         $f->organization->forceFill(['profile_completeness' => 90])->saveQuietly();

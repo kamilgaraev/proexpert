@@ -34,6 +34,8 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             ['Подтверждена ли наша организация? Какой сейчас статус проверки и что руководителю ещё нужно заполнить?', 'get_organization_verification'],
             ['Какая у меня сейчас роль в нашей организации? До какой даты действует мой доступ?', 'get_own_organization_roles'],
             ['Какие модули сейчас включены у нашей организации? Покажи действующие возможности, чтобы понимать, чем команда может пользоваться.', 'get_organization_effective_modules'],
+            ['Какие функциональные модули сейчас реально доступны нашей организации? Перечисли разделы, без платёжных подробностей.', 'get_organization_effective_modules'],
+            ['Что я могу делать с пользователями и договорами: только просматривать или также создавать и менять?', 'get_own_admin_permissions'],
         ] as [$query, $name]) {
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertSame(['name' => $name, 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
@@ -65,6 +67,8 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             'Какие у меня права на уведомления и покажи непрочитанные сообщения?',
             'Какие у меня права на отчёты и покажи готовую выгрузку?',
             'Какие пакеты МОСТ сейчас действуют и покажи расходы организации?',
+            'Какие функциональные модули доступны без платёжных подробностей и сколько расходов у нашей организации?',
+            'Что я могу делать с пользователями и договорами и сколько просроченных счетов?',
             'Сколько единиц МОСТ доступно для помощника и покажи расходы организации?',
         ] as $query) {
             self::assertNull(AssistantOperationalReaderRegistry::intent($query), $query);

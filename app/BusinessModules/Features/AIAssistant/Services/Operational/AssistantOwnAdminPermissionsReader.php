@@ -23,7 +23,7 @@ final readonly class AssistantOwnAdminPermissionsReader extends AssistantOrganiz
 
     public static function hasIntent(string $query): bool
     {
-        return preg_match('/(?:у\s+меня|мои|мо[её]|\bя\s+|могу\s+ли\s+я).*\bправ|\bправ[а-яё]*.*(?:у\s+меня|мне)|могу\s+ли\s+я\s+управлять/iu', $query) === 1;
+        return preg_match('/(?:у\s+меня|мои|мо[её]|\bя\s+|могу\s+ли\s+я).*\bправ|\bправ[а-яё]*.*(?:у\s+меня|мне)|могу\s+ли\s+я\s+управлять|\bчто\s+я\s+могу\s+(?:делать|выполнять)\s+с\s+(?:пользовател|договор)/iu', $query) === 1;
     }
 
     public static function matches(string $query): bool

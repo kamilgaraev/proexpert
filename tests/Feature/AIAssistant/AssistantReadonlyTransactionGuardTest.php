@@ -127,6 +127,22 @@ final class AssistantReadonlyTransactionGuardTest extends TestCase
         self::assertSame(0, DB::transactionLevel());
     }
 
+    public function test_native_export_history_runs_under_the_real_assistant_operation_guard(): void
+    {
+        self::assertSame(0, DB::transactionLevel());
+        DB::statement('CREATE TEMPORARY TABLE report_exports (id varchar(26), organization_id bigint, scope_project_ids jsonb)');
+        try {
+            $this->activate();
+            $result = app(\App\BusinessModules\Core\Reporting\Application\Queries\ProjectReportExportHistory::class)->read(1, 1, 1);
+            self::assertSame([], $result['items']);
+            self::assertTrue($result['complete']);
+            self::assertSame(0, DB::transactionLevel());
+        } finally {
+            $this->context?->restoreDatabaseStatementTimeouts();
+            DB::statement('DROP TABLE report_exports');
+        }
+    }
+
     private function activate(): void
     {
         $lifecycle = (new \ReflectionClass(AssistantRequestLifecycle::class))->newInstanceWithoutConstructor();
