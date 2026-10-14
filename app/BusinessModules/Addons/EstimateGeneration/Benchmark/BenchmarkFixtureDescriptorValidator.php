@@ -20,6 +20,9 @@ final class BenchmarkFixtureDescriptorValidator
         'undimensioned_sketch' => 'svg',
         'dwg' => 'dwg',
         'dxf' => 'dxf',
+        'site_photo' => 'png',
+        'xlsx' => 'xlsx',
+        'text_description' => 'txt',
     ];
 
     /** @param list<string> $allowedCapabilities */
@@ -39,7 +42,67 @@ final class BenchmarkFixtureDescriptorValidator
             BenchmarkSourceType::DimensionedSketch, BenchmarkSourceType::UndimensionedSketch => $this->svg($content),
             BenchmarkSourceType::Dxf => $this->dxf($content),
             BenchmarkSourceType::Dwg => $this->dwg($content, $allowedCapabilities),
+            BenchmarkSourceType::SitePhoto => $this->sitePhoto($content),
+            BenchmarkSourceType::Spreadsheet => $this->spreadsheetContainer($content),
+            BenchmarkSourceType::TextDescription => $this->textDescription($content),
         };
+    }
+
+    private function textDescription(string $content): void
+    {
+        if (strlen($content) > 65536 || ! mb_check_encoding($content, 'UTF-8')
+            || str_contains($content, "\0") || trim($content) === '') {
+            throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+        }
+    }
+
+    private function sitePhoto(string $content): void
+    {
+        $size = @getimagesizefromstring($content);
+        if (! is_array($size) || ($size[2] ?? null) !== IMAGETYPE_PNG || $size[0] < 1 || $size[1] < 1
+            || $size[0] > 20000 || $size[1] > 20000 || $size[0] * $size[1] > 40000000) {
+            throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+        }
+    }
+
+    private function spreadsheetContainer(string $content): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-benchmark-xlsx-');
+        if (! is_string($path)) {
+            throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+        }
+        $zip = new \ZipArchive;
+        $opened = false;
+        try {
+            if (file_put_contents($path, $content) !== strlen($content) || $zip->open($path) !== true) {
+                throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+            }
+            $opened = true;
+            if ($zip->numFiles < 3 || $zip->numFiles > 2000
+                || $zip->locateName('[Content_Types].xml') === false || $zip->locateName('xl/workbook.xml') === false
+                || $zip->locateName('_rels/.rels') === false) {
+                throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+            }
+            $bytes = 0;
+            for ($index = 0; $index < $zip->numFiles; $index++) {
+                $stat = $zip->statIndex($index);
+                if (! is_array($stat) || ! is_int($stat['size'] ?? null) || $stat['size'] < 0
+                    || $stat['size'] > 10000000 || ! is_string($stat['name'] ?? null)
+                    || str_contains($stat['name'], '..') || str_contains($stat['name'], '\\')
+                    || str_starts_with($stat['name'], '/')) {
+                    throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+                }
+                $bytes += $stat['size'];
+                if ($bytes > 20000000) {
+                    throw new BenchmarkManifestException('fixture_descriptor_mismatch');
+                }
+            }
+        } finally {
+            if ($opened) {
+                $zip->close();
+            }
+            unlink($path);
+        }
     }
 
     /** @return array{page_count: int, has_text: bool, has_raster_image: bool} */

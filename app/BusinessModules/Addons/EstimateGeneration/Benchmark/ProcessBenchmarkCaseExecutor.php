@@ -21,7 +21,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         private string $phpBinary,
         private string $artisanPath,
         private int $maxOutputBytes = 1_048_576,
-        private string $memoryLimit = '128M',
+        private string $memoryLimit = '256M',
         ?UnixProcessGroupRuntime $unixRuntime = null,
         ?WindowsProcessTreeRuntime $windowsRuntime = null,
     ) {
