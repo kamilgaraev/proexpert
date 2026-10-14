@@ -39,6 +39,46 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         return Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
     }
 
+    public function test_contacts_and_notification_preferences_use_native_personal_scope_and_fresh_authorization(): void
+    {
+        $f = $this->fixture(); $org = (int) $f->organization->id; $args = ['scope' => 'organization'];
+        $f->organization->updateQuietly(['phone' => '+70000000000', 'email' => 'office@example.test', 'address' => 'Адрес профиля', 'postal_code' => '420000']);
+        $contacts = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOrganizationContactsReader::class);
+        $contact = $contacts->read($f->owner, $org, $args);
+        self::assertSame('office@example.test', $contact['data']['email']);
+        self::assertSame('Адрес профиля', $contact['data']['address']);
+        self::assertStringContainsString('профиля', $contact['server_formatted_answer']);
+        $f->organization->updateQuietly(['phone' => '+71111111111']);
+        self::assertFalse($contacts->matchesReference($f->owner, $org, $contact['source_refs'][0]));
+        try { $contacts->read($f->member, $org, $args); self::fail('Contact permission missing'); }
+        catch (AuthorizationException) { self::assertTrue(true); }
+        self::assertFalse($contacts->matchesReference($f->foreignOwner, $org, $contact['source_refs'][0]));
+        config(['notifications.channels' => ['email' => ['enabled' => true], 'in_app' => ['enabled' => true]],
+            'notifications.types' => ['custom' => ['name' => 'Личные события', 'description' => 'Тест', 'mandatory' => false, 'user_customizable' => true, 'default_channels' => ['email']],
+                'fixed' => ['name' => 'Обязательные события', 'description' => 'Тест', 'mandatory' => true, 'user_customizable' => true, 'default_channels' => ['in_app']]]]);
+        $preferences = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantNotificationPreferencesReader::class);
+        $native = app(\App\BusinessModules\Features\Notifications\Services\LandingNotificationPreferencesService::class);
+        $beforeCount = \App\BusinessModules\Features\Notifications\Models\NotificationPreference::query()->count();
+        $result = $preferences->read($f->member, $org, $args);
+        self::assertSame($native->read($f->member, $org)['items'][0]['enabled_channels'], $result['data']['items'][0]['enabled_channels']);
+        self::assertFalse($result['data']['items'][1]['user_customizable']);
+        self::assertSame($beforeCount, \App\BusinessModules\Features\Notifications\Models\NotificationPreference::query()->count());
+        $native->update($f->owner, $org, 'custom', ['in_app']);
+        self::assertTrue($preferences->matchesReference($f->member, $org, $result['source_refs'][0]));
+        $native->update($f->member, $org, 'custom', ['in_app']);
+        self::assertFalse($preferences->matchesReference($f->member, $org, $result['source_refs'][0]));
+        $current = $preferences->read($f->member, $org, $args);
+        self::assertSame(['in_app'], $current['data']['items'][0]['enabled_channels']);
+        config(['notifications.channels.email.enabled' => false]);
+        self::assertFalse($preferences->matchesReference($f->member, $org, $current['source_refs'][0]));
+        $verifiedContact = $contacts->read($f->owner, $org, $args);
+        $f->owner->forceFill(['email_verified_at' => null])->saveQuietly();
+        self::assertFalse($contacts->matchesReference($f->owner, $org, $verifiedContact['source_refs'][0]));
+        self::assertFalse(app(AssistantOwnAdminPermissionsReader::class)->read($f->owner, $org, $args)['data']['permissions']['organization']['edit']);
+        $f->member->organizations()->updateExistingPivot($org, ['is_active' => false]);
+        self::assertFalse($preferences->matchesReference($f->member, $org, $current['source_refs'][0]));
+    }
+
     public function test_user_counts_match_native_scope_and_do_not_hydrate_contacts_or_staff(): void
     {
         $f = $this->fixture(); $org = (int) $f->organization->id;
@@ -69,9 +109,19 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         $owned = $permissions->read($f->owner, $org, $args);
         self::assertTrue($owned['data']['permissions']['users']['view']);
         self::assertTrue($owned['data']['permissions']['contracts']['edit']);
+        self::assertTrue($owned['data']['permissions']['estimates']['export']);
+        self::assertTrue($owned['data']['permissions']['warehouse']['manage_stock']);
+        self::assertTrue($owned['data']['permissions']['reports']['download']);
+        self::assertTrue($owned['data']['permissions']['organization']['edit']);
+        self::assertTrue($owned['data']['permissions']['notifications']['manage_preferences']);
+        self::assertStringContainsString('конкретный отчёт проверяются отдельно', $owned['server_formatted_answer']);
         $limited = $permissions->read($f->member, $org, $args);
         self::assertFalse($limited['data']['permissions']['users']['view']);
         self::assertFalse($limited['data']['permissions']['invoices']['view_all']);
+        self::assertFalse($limited['data']['permissions']['estimates']['export']);
+        self::assertFalse($limited['data']['permissions']['warehouse']['manage_stock']);
+        self::assertFalse($limited['data']['permissions']['reports']['download']);
+        self::assertTrue($limited['data']['permissions']['notifications']['manage_preferences']);
         $f->ownerAssignment->updateQuietly(['is_active' => false]);
         self::assertFalse($roles->matchesReference($f->owner, $org, $result['source_refs'][0]));
         self::assertFalse($permissions->matchesReference($f->owner, $org, $owned['source_refs'][0]));

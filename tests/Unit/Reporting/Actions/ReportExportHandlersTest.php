@@ -50,6 +50,49 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportExportHandlersTest extends TestCase
 {
+    #[DataProvider('exportReadCases')]
+    public function test_export_read_rechecks_full_scope_definition_and_sensitive_audit_access(string $case): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $classification = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(
+            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::SENSITIVE, ['secret'], ['audit'], false, false, false);
+        $builder = (new ReportDefinitionBuilder)->columns([['id' => 'secret'], ['id' => 'audit']])->outputClassification($classification);
+        $published = $builder->published(); $definition = $published->definition;
+        $scope = $case === 'foreign_scope' ? new ReportScope($context->scope->organizationId, $context->scope->holdingOrganizationIds, [999], [], $context->scope->timezone) : $context->scope;
+        $snapshot = new ReportSnapshotRef('materialized', 'snapshot', $scope, $definition->definitionHash, $definition->formulaVersion,
+            new Sha256Hash(str_repeat('c', 64)), new DateTimeImmutable('2026-01-01T00:00:00Z'), null, [], ReportSnapshotClassification::OPERATIONAL, null);
+        $export = (new \Tests\Support\Reporting\ReportExportBuilder)->columns(['secret', 'audit'])->queued();
+        $subject = new ReportAuthorizationSubject(ReportDispatchAggregate::EXPORT, $export->id, $definition, $scope, $snapshot, $export->runId, null, null, 'csv');
+        $subjects = $this->createMock(ReportAuthorizationSubjectReader::class);
+        $subjects->method('export')->willReturn($subject);
+        $store = $this->createMock(ReportExportStore::class);
+        $store->expects($case === 'foreign_scope' ? self::never() : self::once())->method('get')->with($context, $export->id)->willReturn($export);
+        $definitions = $this->createMock(ReportDefinitionRegistry::class);
+        $definitions->method('published')->willReturn($case === 'changed_definition' ? (new ReportDefinitionBuilder)->definitionHash(new Sha256Hash(str_repeat('f', 64)))->published() : $published);
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->expects(in_array($case, ['foreign_scope', 'changed_definition'], true) ? self::never() : self::once())
+            ->method('authorizeExactMany')->willReturnCallback(function (int $actorId, ReportScope $requestedScope, array $targets) use ($context, $case): array {
+                self::assertSame($context->actor->id, $actorId);
+                self::assertSame($context->scope->canonicalIdentity(), $requestedScope->canonicalIdentity());
+                self::assertSame(['view', 'view_sensitive', 'view_audit'], array_map(static fn ($target) => $target->operation->value, $targets));
+                if ($case === 'revoked_sensitive') {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
+                return array_map(static fn ($target) => new CurrentReportAuthorization($context->actor, $context->authorization,
+                    new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility(true, true, true, true, true, true, true), $target), $targets);
+            });
+        $handler = new GetReportExportHandler($store, $definitions, $authorizer, new ReportExecutionContextFactory, $subjects);
+        if ($case !== 'allowed') {
+            $this->expectException(ReportContractException::class);
+        }
+        self::assertSame($export, $handler->handle($context, $export->id));
+    }
+
+    public static function exportReadCases(): array
+    {
+        return ['allowed' => ['allowed'], 'scope' => ['foreign_scope'], 'definition' => ['changed_definition'], 'sensitive' => ['revoked_sensitive']];
+    }
+
     public function test_public_action_contracts_are_exact_and_handlers_expose_one_workflow_method(): void
     {
         $this->assertMethod(

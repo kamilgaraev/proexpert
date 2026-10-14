@@ -127,6 +127,9 @@ final class AssistantNativeCatalogAndOwnersTest extends TestCase
         foreach ($reports['data']['definitions'] as $row) {
             self::assertArrayHasKey($row['code'], $nativeByCode);
             self::assertSame($nativeByCode[$row['code']]->visibility->canRun, $row['can_run']);
+            self::assertSame($nativeByCode[$row['code']]->visibility->canExport, $row['can_export']);
+            self::assertSame($nativeByCode[$row['code']]->visibility->canDownload, $row['can_download']);
+            self::assertSame($nativeByCode[$row['code']]->formats, $row['formats']);
         }
         self::assertTrue($catalog->matchesReference($fixture->owner, $org, $reports['source_refs'][0]));
         $reportMember = Model::withoutEvents(fn () => $fixture->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],

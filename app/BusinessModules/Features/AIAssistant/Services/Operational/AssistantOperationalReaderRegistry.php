@@ -12,7 +12,7 @@ final class AssistantOperationalReaderRegistry
         '/проектн[а-яё]*\s+комплект|комплект[а-яё]*.*(?:выпуск|выпущ|пир)|нормконтрол/iu',
         '/коммерческ[а-яё]*\s+предложен/iu', '/исполнительн[а-яё]*\s+(?:документ|комплект)|комплект[а-яё]*\s+ид\b/iu',
         '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu', '/crm|сделк/iu',
-        AssistantProjectReportCatalogReader::INTENT_PATTERN,
+        AssistantProjectReportCatalogReader::INTENT_PATTERN, AssistantProjectExportHistoryReader::INTENT_PATTERN,
         '/материал[а-яё]*.*(?:жд[её]м|ожида|достав)|(?:жд[её]м|ожида).*материал|поставк[а-яё]*.*просроч|просроч[а-яё]*.*(?:поставк|достав)/iu',
         AssistantProjectActReader::INTENT_PATTERN, AssistantProjectCameraReader::INTENT_PATTERN,
         self::STAFF_TOPIC, '/тендер/iu',
@@ -28,6 +28,7 @@ final class AssistantOperationalReaderRegistry
         'get_project_executive_readiness' => AssistantProjectExecutiveReader::class,
         'get_project_production_readiness' => AssistantProjectProductionReader::class,
         'get_project_crm_readiness' => AssistantProjectCrmReader::class,
+        'get_project_export_history' => AssistantProjectExportHistoryReader::class,
         'get_project_report_catalog' => AssistantProjectReportCatalogReader::class,
         'get_project_site_request_queue' => AssistantProjectSiteRequestReader::class,
         'get_project_tender_decisions' => AssistantTenderReader::class,
@@ -38,6 +39,8 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_contacts' => AssistantOrganizationContactsReader::class,
+        'get_own_notification_preferences' => AssistantNotificationPreferencesReader::class,
         'get_organization_access_review_summary' => AssistantAccessRecertificationReader::class,
         'get_organization_one_c_exchange_summary' => AssistantOneCExchangeSummaryReader::class,
         'get_organization_user_counts' => AssistantOrganizationUsersReader::class,
@@ -90,13 +93,14 @@ final class AssistantOperationalReaderRegistry
             return $class::matches($query) ? ['name' => $name, 'reader' => $class] : null;
         }
         $purchaseOrders = AssistantOrganizationPurchaseOrdersReader::matches($query);
+        $ownPermissions = AssistantOwnAdminPermissionsReader::matches($query);
         $financeQuery = AssistantProjectReportCatalogReader::matches($query)
             ? preg_replace('/для\s+проверки\s+оплат(?:,?\s+работ(?:\s+и\s+остатков)?)?/iu', '', $query) ?? $query
             : $query;
         $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
         if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $financeQuery) === 1)
-            || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
-            || (! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query))
+            || (! $ownPermissions && ! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
+            || (! $ownPermissions && ! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставщик/iu', $query) === 1 && ! AssistantOrganizationSuppliersReader::matches($query))
             || (! $governance && preg_match('/договор/iu', $query) === 1 && ! AssistantProjectActReader::matches($query))) {
             return null;
         }
@@ -114,6 +118,8 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
+            if (AssistantNotificationPreferencesReader::matches($query) && $class === AssistantOrganizationNotificationsReader::class) { continue; }
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {
                 continue;
             }
