@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -20,7 +22,7 @@ class DetectEstimateTypeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_id' => ['required', 'string'],
+            'file_id' => ['required', 'string', 'uuid'],
         ];
     }
 
@@ -30,8 +32,9 @@ class DetectEstimateTypeRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'file_id.required' => 'ID файла обязателен',
-            'file_id.string' => 'ID файла должен быть строкой',
+            'file_id.required' => trans_message('estimate.import_file_id_required'),
+            'file_id.string' => trans_message('estimate.import_status_job_invalid'),
+            'file_id.uuid' => trans_message('estimate.import_status_job_invalid'),
         ];
     }
 }

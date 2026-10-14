@@ -115,7 +115,7 @@ return [
                 'timeout' => 600,
             ],
             'supervisor-imports' => [
-                'connection' => 'redis',
+                'connection' => 'redis_estimate_imports',
                 'queue' => ['imports'],
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
@@ -346,9 +346,17 @@ return [
                 'timeout' => 960,
                 'memory' => 512,
             ],
+            'supervisor-imports' => [
+                'connection' => 'redis_estimate_imports',
+                'queue' => ['imports'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 1200,
+            ],
             'supervisor-1' => [
                 'connection' => 'redis',
-                'queue' => ['imports', 'broadcast', 'notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
+                'queue' => ['broadcast', 'notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
                 'balance' => 'simple',
                 'processes' => 3,
                 'tries' => 3,

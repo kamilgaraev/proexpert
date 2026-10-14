@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSm
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportRowPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetSampleLoader;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetHeaderDetector;
 use App\Models\ImportSession;
 use Generator;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -59,7 +60,7 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             );
         }
 
-        $content = (new SpreadsheetSampleLoader)->load($filePath, 15);
+        $content = (new SpreadsheetSampleLoader)->load($filePath, 60);
         try {
             $handlerResult = $this->spreadsheetHandler->canHandle($content, $extension);
         } finally {
@@ -116,15 +117,24 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
             ], 5),
             headerCandidates: [[
                 'row_index' => $headerRow,
-                'score' => 100,
+                'score' => ($detection['header_confirmed'] ?? false) ? 100 : 0,
                 'headers' => $rawHeaders,
                 'mapping' => $mapping,
             ]],
+            warnings: ($detection['header_confirmed'] ?? false) ? [] : [trans_message('estimate.import_header_not_found')],
+            metadata: ['header_confirmed' => $detection['header_confirmed'] ?? false],
         );
     }
 
     public function preview(ImportSession $session, string $filePath, ImportStructureResult $structure): ImportPreviewResult
     {
+        if (!$this->structureConfirmed($session, $filePath, $structure)) {
+            return new ImportPreviewResult(
+                formatSlug: $this->slug(),
+                validation: ['errors' => [trans_message('estimate.import_grand_structure_unconfirmed')], 'warnings' => []],
+                metadata: ['header_confirmed' => false],
+            );
+        }
         $sections = [];
         $items = [];
         $totalAmount = 0.0;
@@ -177,7 +187,9 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
     {
         $errors = [];
 
-        if ($preview->sections === [] && $preview->items === []) {
+        if (($preview->metadata['header_confirmed'] ?? null) === false) {
+            $errors[] = trans_message('estimate.import_grand_structure_unconfirmed');
+        } elseif ($preview->sections === [] && $preview->items === []) {
             $errors[] = trans_message('estimate.import_empty_preview');
         }
 
@@ -192,6 +204,9 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
 
     public function streamRows(ImportSession $session, string $filePath, ImportStructureResult $structure): Generator
     {
+        if (!$this->structureConfirmed($session, $filePath, $structure)) {
+            throw new \InvalidArgumentException('import_grand_structure_unconfirmed');
+        }
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
 
         if (in_array($extension, ['xml', 'gsfx'], true)) {
@@ -209,6 +224,48 @@ final readonly class GrandSmetaRuntimeBridge implements RuntimeImportFormatHandl
     public function getFooterData(): array
     {
         return $this->spreadsheetParser->getFooterData();
+    }
+
+    public function detectStructureFromHeaderRow(ImportSession $session, string $filePath, int $headerRow): ImportStructureResult
+    {
+        $structure = $this->detectStructure($session, $filePath);
+        if (in_array(strtolower(pathinfo($filePath, PATHINFO_EXTENSION)), ['xml', 'gsfx'], true)) {
+            return $structure;
+        }
+        $spreadsheet = $this->loadSpreadsheet($filePath);
+        try {
+            $headers = $this->readRow($spreadsheet->getActiveSheet(), $headerRow);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
+        $confirmed = $structure->headerRow === $headerRow && ($structure->metadata['header_confirmed'] ?? false);
+        $mapping = $confirmed ? $structure->columnMapping : (new SpreadsheetHeaderDetector)->mapHeaders($headers);
+
+        return new ImportStructureResult(
+            formatSlug: $this->slug(),
+            headerRow: $headerRow,
+            columnMapping: $mapping,
+            detectedColumns: ImportStructureResult::detectedColumnsFromMapping($mapping),
+            rawHeaders: $headers,
+            sampleRows: $this->spreadsheetParser->getRawSampleRows($filePath, ['header_row' => $headerRow, 'column_mapping' => $mapping], 5),
+            warnings: $confirmed ? [] : [trans_message('estimate.import_grand_structure_unconfirmed')],
+            metadata: ['header_confirmed' => $confirmed],
+        );
+    }
+
+    private function structureConfirmed(ImportSession $session, string $filePath, ImportStructureResult $structure): bool
+    {
+        if (in_array(strtolower(pathinfo($filePath, PATHINFO_EXTENSION)), ['xml', 'gsfx'], true)) {
+            return true;
+        }
+        if (($structure->metadata['header_confirmed'] ?? false) === true) {
+            return true;
+        }
+
+        return ($session->options['manual_structure_confirmed'] ?? false)
+            && $structure->headerRow !== null && $structure->headerRow > 0
+            && isset($structure->columnMapping['name'])
+            && (isset($structure->columnMapping['quantity']) || isset($structure->columnMapping['total_price']) || isset($structure->columnMapping['unit_price']));
     }
 
     private function loadSpreadsheet(string $filePath): Spreadsheet

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -16,8 +18,9 @@ class DetectEstimateImportRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_id' => ['required'],
+            'file_id' => ['required', 'string', 'uuid'],
             'suggested_header_row' => ['nullable', 'integer', 'min:1'],
+            'worksheet_index' => ['sometimes', 'nullable', 'integer', 'min:0'],
         ];
     }
 

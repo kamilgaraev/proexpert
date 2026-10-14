@@ -54,13 +54,17 @@ class EstimateImportRowDTO
         // Вложенные данные из XML
         public ?array $worksList = null,
         public ?array $totals = null,
-        public bool $isFooter = false
+        public bool $isFooter = false,
+        public ?int $worksheetIndex = null,
+        public ?string $worksheetName = null,
     ) {}
     
     public function toArray(): array
     {
         return [
             'row_number' => $this->rowNumber,
+            'worksheet_index' => $this->worksheetIndex,
+            'worksheet_name' => $this->worksheetName,
             'section_number' => $this->sectionNumber,
             'item_name' => $this->itemName,
             'unit' => $this->unit,
@@ -168,7 +172,9 @@ class EstimateImportRowDTO
             hasMathMismatch: $data['has_math_mismatch'] ?? false,
             worksList: $data['works_list'] ?? ($data['raw_data']['works_list'] ?? null),
             totals: $data['totals'] ?? ($data['raw_data']['totals'] ?? null),
-            isFooter: $data['is_footer'] ?? false
+            isFooter: $data['is_footer'] ?? false,
+            worksheetIndex: isset($data['worksheet_index']) ? (int) $data['worksheet_index'] : null,
+            worksheetName: isset($data['worksheet_name']) ? (string) $data['worksheet_name'] : null,
         );
     }
 }

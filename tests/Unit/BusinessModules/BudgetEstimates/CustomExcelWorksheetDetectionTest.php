@@ -10,15 +10,14 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use App\Models\ImportSession;
-use App\Models\Organization;
-use App\Models\Project;
-use App\Models\User;
+use App\Jobs\ProcessEstimateImportJob;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 final class CustomExcelWorksheetDetectionTest extends TestCase
 {
@@ -31,8 +30,9 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         try {
             Storage::fake('s3');
 
-            $organization = Organization::factory()->create();
-            $user = User::factory()->create();
+            $context = EstimateImportTestContext::create();
+            $organization = $context->organization;
+            $user = $context->user;
             $storedPath = "org-{$organization->id}/estimate-imports/" . basename($filePath);
 
             Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
@@ -45,14 +45,14 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'file_name' => 'estimate.xlsx',
                 'file_size' => filesize($filePath),
                 'file_format' => 'xlsx',
-                'options' => [],
+                'options' => ['project_id' => $context->project->id],
                 'stats' => ['progress' => 0],
             ]);
 
             /** @var EstimateImportService $service */
             $service = app(EstimateImportService::class);
 
-            $detection = $service->detectEstimateType($session->id);
+            $detection = $service->detectEstimateType($session->id, $context->access());
 
             $this->assertSame('custom', $detection->detectedType);
             $this->assertSame('custom_excel', $detection->metadata['format_slug'] ?? null);
@@ -60,11 +60,12 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
             $this->assertSame([1, 2], $detection->metadata['worksheet_indices'] ?? null);
             $this->assertGreaterThan(0.5, $detection->confidence);
 
-            $structure = $service->detectFormat($session->id);
+            $structure = $service->detectFormat($session->id, null, $context->access());
 
             $this->assertSame(5, $structure['header_row']);
             $this->assertSame('Предчистовая отделка', $structure['metadata']['worksheet_title'] ?? null);
-            $this->assertCount(2, $structure['metadata']['worksheets'] ?? []);
+            $this->assertCount(3, $structure['metadata']['worksheets'] ?? []);
+            $this->assertCount(2, array_filter($structure['metadata']['worksheets'] ?? [], static fn (array $sheet): bool => $sheet['selected_for_import']));
             $this->assertSame('A', $structure['column_mapping']['position_number'] ?? null);
             $this->assertSame('C', $structure['column_mapping']['name'] ?? null);
             $this->assertSame('D', $structure['column_mapping']['unit'] ?? null);
@@ -72,7 +73,7 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
             $this->assertSame('F', $structure['column_mapping']['unit_price'] ?? null);
             $this->assertSame('G', $structure['column_mapping']['total_price'] ?? null);
 
-            $preview = $service->preview($session->id);
+            $preview = $service->preview($session->id, null, $context->access());
 
             $itemNames = array_column($preview->items, 'item_name');
             $sectionNames = array_column($preview->sections, 'item_name');
@@ -95,8 +96,9 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         try {
             Storage::fake('s3');
 
-            $organization = Organization::factory()->create();
-            $user = User::factory()->create();
+            $context = EstimateImportTestContext::create();
+            $organization = $context->organization;
+            $user = $context->user;
             $storedPath = "org-{$organization->id}/estimate-imports/" . basename($filePath);
 
             Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
@@ -109,17 +111,17 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'file_name' => 'estimate.xlsx',
                 'file_size' => filesize($filePath),
                 'file_format' => 'xlsx',
-                'options' => [],
+                'options' => ['project_id' => $context->project->id],
                 'stats' => ['progress' => 0],
             ]);
 
             /** @var EstimateImportService $service */
             $service = app(EstimateImportService::class);
 
-            $service->detectEstimateType($session->id);
-            $service->detectFormat($session->id);
+            $service->detectEstimateType($session->id, $context->access());
+            $service->detectFormat($session->id, null, $context->access());
 
-            $preview = $service->preview($session->id);
+            $preview = $service->preview($session->id, null, $context->access());
 
             self::assertSame(10800.0, $preview->getTotalAmount());
             self::assertSame(5, $preview->getItemsCount());
@@ -159,11 +161,10 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
             Queue::fake();
             Storage::fake('s3');
 
-            $organization = Organization::factory()->create();
-            $user = User::factory()->create();
-            $project = Project::factory()->create([
-                'organization_id' => $organization->id,
-            ]);
+            $context = EstimateImportTestContext::create();
+            $organization = $context->organization;
+            $user = $context->user;
+            $project = $context->project;
             $storedPath = "org-{$organization->id}/estimate-imports/" . basename($filePath);
 
             Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
@@ -176,14 +177,14 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'file_name' => 'estimate.xlsx',
                 'file_size' => filesize($filePath),
                 'file_format' => 'xlsx',
-                'options' => [],
+                'options' => ['project_id' => $project->id],
                 'stats' => ['progress' => 0],
             ]);
 
             /** @var EstimateImportService $service */
             $service = app(EstimateImportService::class);
-            $service->detectEstimateType($session->id);
-            $service->detectFormat($session->id);
+            $service->detectEstimateType($session->id, $context->access());
+            $service->detectFormat($session->id, null, $context->access());
 
             $session = $session->fresh();
             $options = $session->options ?? [];
@@ -199,7 +200,11 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'options' => $options,
             ]);
 
-            app(ImportPipelineService::class)->run($session->fresh());
+            $service->preview($session->id, null, $context->access());
+            $service->execute($session->id, [], $options['estimate_settings'], false, $context->access());
+            $session = $session->fresh();
+            self::assertSame('queued', $session->status);
+            (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle(app(ImportPipelineService::class));
 
             $estimateId = (int) ($session->fresh()->stats['estimate_id'] ?? 0);
             self::assertGreaterThan(0, $estimateId);
@@ -282,9 +287,10 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         try {
             Queue::fake();
             Storage::fake('s3');
-            $organization = Organization::factory()->create();
-            $user = User::factory()->create();
-            $project = Project::factory()->create(['organization_id' => $organization->id]);
+            $context = EstimateImportTestContext::create();
+            $organization = $context->organization;
+            $user = $context->user;
+            $project = $context->project;
             $storedPath = "org-{$organization->id}/estimate-imports/".basename($filePath);
             Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
             $session = ImportSession::create([
@@ -296,6 +302,7 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'file_size' => filesize($filePath),
                 'file_format' => 'xlsx',
                 'options' => [
+                    'project_id' => $project->id,
                     'format_handler' => 'custom_excel',
                     'structure' => [
                         'format_slug' => 'custom_excel',
@@ -312,7 +319,10 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
                 'stats' => [],
             ]);
 
-            app(ImportPipelineService::class)->run($session);
+            app(EstimateImportService::class)->execute($session->id, [], $session->options['estimate_settings'], false, $context->access());
+            $session = $session->fresh();
+            self::assertSame('queued', $session->status);
+            (new ProcessEstimateImportJob($session->id, $session->options['run_token']))->handle(app(ImportPipelineService::class));
             $estimate = Estimate::query()->findOrFail($session->fresh()->stats['estimate_id']);
             self::assertSame(0.0, (float) $estimate->vat_rate);
             self::assertSame(178.0, (float) $estimate->total_amount);

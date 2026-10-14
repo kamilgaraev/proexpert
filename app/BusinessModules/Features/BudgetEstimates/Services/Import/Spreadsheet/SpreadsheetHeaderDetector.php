@@ -230,6 +230,11 @@ final class SpreadsheetHeaderDetector
 
     private function bestFieldForHeader(string $normalized): ?array
     {
+        if (preg_match('/(?:шифр|обосновани|\bкод\b)/u', $normalized) === 1
+            || (str_contains($normalized, 'норматив') && preg_match('/(?:цена|стоимость|сумма)/u', $normalized) !== 1)) {
+            return ['field' => 'code', 'score' => 34];
+        }
+
         $bestField = null;
         $bestScore = 0;
 

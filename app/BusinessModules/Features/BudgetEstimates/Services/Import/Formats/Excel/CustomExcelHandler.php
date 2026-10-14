@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\E
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportFinancialSettingsResolver;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\FormulaAwarenessService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportDetectionResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
@@ -79,25 +80,25 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
     public function detectStructure(ImportSession $session, string $filePath): ImportStructureResult
     {
-        $worksheets = $this->selectWorksheetsForImport($filePath, 80);
+        $worksheets = $this->selectWorksheetsForImport($filePath, 80, selectedIndex: $this->normalizeWorksheetIndex($session->options['worksheet_index'] ?? null));
         $worksheet = $worksheets[0];
 
-        return $this->structureFromRows(
+        return $this->restoreWorksheetMappings($session, $this->structureFromRows(
             $worksheet['rows'],
             metadata: $this->worksheetMetadata($worksheet, $worksheets)
-        );
+        ));
     }
 
     public function detectStructureFromHeaderRow(ImportSession $session, string $filePath, int $headerRow): ImportStructureResult
     {
-        $worksheets = $this->selectWorksheetsForImport($filePath, max(80, $headerRow + 20), $headerRow);
+        $worksheets = $this->selectWorksheetsForImport($filePath, max(80, $headerRow + 20), $headerRow, $this->normalizeWorksheetIndex($session->options['worksheet_index'] ?? null));
         $worksheet = $worksheets[0];
 
-        return $this->structureFromRows(
+        return $this->restoreWorksheetMappings($session, $this->structureFromRows(
             $worksheet['rows'],
             $headerRow,
             $this->worksheetMetadata($worksheet, $worksheets)
-        );
+        ), $headerRow);
     }
 
     public function preview(ImportSession $session, string $filePath, ImportStructureResult $structure): ImportPreviewResult
@@ -141,6 +142,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 'worksheet_title' => $structure->metadata['worksheet_title'] ?? null,
                 'source_total_mismatch' => $this->sourceTotalMismatch,
                 'unsupported_expense_rule' => $this->unsupportedExpenseRule,
+                'footer' => $this->footerData,
+                'positions_total_amount' => round($totalAmount, 2),
             ],
         );
     }
@@ -176,22 +179,41 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
     public function streamRows(ImportSession $session, string $filePath, ImportStructureResult $structure): Generator
     {
-        $this->footerData = [];
-        $this->sourceTotalMismatch = false;
-        $this->unsupportedExpenseRule = false;
-        foreach ($this->worksheetDescriptorsFromStructure($structure) as $worksheet) {
+        $this->resetImportState();
+        $selectedIndex = $this->normalizeWorksheetIndex($session->options['worksheet_index'] ?? null);
+        foreach ($this->worksheetDescriptorsFromStructure($structure, $selectedIndex) as $worksheet) {
+            if ($selectedIndex !== null && $worksheet['worksheet_index'] !== $selectedIndex) {
+                continue;
+            }
+            foreach ($session->options['worksheet_mappings'] ?? [] as $override) {
+                if (!is_array($override) || $this->normalizeWorksheetIndex($override['worksheet_index'] ?? null) !== $worksheet['worksheet_index']) {
+                    continue;
+                }
+                $worksheet['column_mapping'] = ImportStructureResult::columnMappingFromArray($override);
+                $worksheet['header_row'] = $override['header_row'] ?? $worksheet['header_row'];
+                $worksheet['manual_mapping'] = $override['manual_mapping'] ?? true;
+            }
             yield from $this->rowsToDtos(
                 $this->reader->readRows($filePath, null, $worksheet['worksheet_index']),
                 $this->structureForWorksheet($structure, $worksheet)
             );
         }
 
-        yield from $this->additionalCostRowsToDtos($structure);
+        if (($session->options['worksheet_index'] ?? null) === null) {
+            yield from $this->additionalCostRowsToDtos($structure);
+        }
     }
 
     public function getFooterData(): array
     {
         return $this->footerData;
+    }
+
+    protected function resetImportState(): void
+    {
+        $this->footerData = [];
+        $this->sourceTotalMismatch = false;
+        $this->unsupportedExpenseRule = false;
     }
 
     /**
@@ -201,7 +223,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     protected function rowsToDtos(array $rows, ImportStructureResult $structure): Generator
     {
         $headerRow = $structure->headerRow ?? 0;
-        $mapping = $this->mappingForStructure($structure);
+        $mapping = $this->mappingForStructure($structure, $rows);
         $costBlocks = (new SpreadsheetCostBlockParser)->analyze($rows, $mapping, $headerRow);
         $this->sourceTotalMismatch = $this->sourceTotalMismatch || $costBlocks['total_mismatch'];
         $this->unsupportedExpenseRule = $this->unsupportedExpenseRule || ($costBlocks['unsupported_rule'] ?? false);
@@ -223,7 +245,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             if ($rowNumber <= $headerRow) {
                 $section = $this->detectStandaloneSectionRow($row);
                 $worksheetTitle = $structure->metadata['worksheet_title'] ?? $structure->metadata['worksheet_name'] ?? '';
-                $isWorksheetGroup = count($structure->metadata['worksheets'] ?? []) > 1
+                $isWorksheetGroup = count($structure->metadata['worksheet_indices'] ?? $structure->metadata['worksheets'] ?? []) > 1
                     && $worksheetTitle !== '' && $section !== null
                     && mb_strtolower(trim($section['name'])) === mb_strtolower(trim($worksheetTitle));
                 if ($section !== null && ($section['number'] !== null || $isWorksheetGroup)) {
@@ -237,6 +259,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                     );
                     $currentSectionPath = $sectionDto->sectionPath;
 
+                    $sectionDto->worksheetIndex = $structure->metadata['worksheet_index'] ?? null;
+                    $sectionDto->worksheetName = $structure->metadata['worksheet_name'] ?? null;
                     yield $sectionDto;
                 }
 
@@ -259,6 +283,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 );
                 $currentSectionPath = $sectionDto->sectionPath;
 
+                $sectionDto->worksheetIndex = $structure->metadata['worksheet_index'] ?? null;
+                $sectionDto->worksheetName = $structure->metadata['worksheet_name'] ?? null;
                 yield $sectionDto;
                 continue;
             }
@@ -290,6 +316,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 );
                 $currentSectionPath = $sectionDto->sectionPath;
 
+                $sectionDto->worksheetIndex = $structure->metadata['worksheet_index'] ?? null;
+                $sectionDto->worksheetName = $structure->metadata['worksheet_name'] ?? null;
                 yield $sectionDto;
                 continue;
             }
@@ -303,6 +331,12 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             if ($unit === null && preg_match('/\R\s*\(((?:\d+(?:[.,]\d+)?\s+)?(?:шт|м[23²³]?|км|кг|т|компл|чел|маш)[^()]*)\)\s*$/u', (string) $this->rawValue($row, $mapping['name'] ?? null), $unitMatch) === 1) {
                 $unit = trim($unitMatch[1]);
             }
+
+            $mathWarnings = (new FormulaAwarenessService)->validate([
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'current_total_amount' => $total,
+            ]);
 
             yield new EstimateImportRowDTO(
                 rowNumber: (int) $rowNumber,
@@ -322,6 +356,10 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 currentUnitPrice: $costs['current_price'] ?? $unitPrice,
                 overheadAmount: $costs['overhead'] ?? null,
                 profitAmount: $costs['profit'] ?? null,
+                warnings: $mathWarnings,
+                hasMathMismatch: $mathWarnings !== [],
+                worksheetIndex: $structure->metadata['worksheet_index'] ?? null,
+                worksheetName: $structure->metadata['worksheet_name'] ?? null,
             );
         }
     }
@@ -386,10 +424,10 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         return trim($value, "/ \t\n\r\0\x0B");
     }
 
-    protected function mappingForStructure(ImportStructureResult $structure): array
+    protected function mappingForStructure(ImportStructureResult $structure, array $rows = []): array
     {
         $mapping = $structure->columnMapping;
-        if ($structure->rawHeaders === []) {
+        if (($structure->metadata['manual_mapping'] ?? false)) {
             return $mapping;
         }
 
@@ -402,7 +440,82 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             return $detected;
         }
 
+        $usedColumns = array_flip($mapping);
+        foreach ($detected as $field => $column) {
+            if (!isset($mapping[$field]) && !isset($usedColumns[$column])) {
+                $mapping[$field] = $column;
+                $usedColumns[$column] = $field;
+            }
+        }
+
+        if (!isset($mapping['code'])) {
+            $codeColumn = $this->inferCodeColumn($structure, $mapping, $rows);
+            if ($codeColumn !== null && !isset($usedColumns[$codeColumn])) {
+                $mapping['code'] = $codeColumn;
+            }
+        }
+
         return $mapping;
+    }
+
+    private function inferCodeColumn(ImportStructureResult $structure, array $mapping, array $rows): ?string
+    {
+        $usedColumns = array_flip($mapping);
+        $headers = [$structure->rawHeaders];
+        foreach ($rows as $rowNumber => $row) {
+            if ($structure->headerRow !== null && $rowNumber >= $structure->headerRow - 3 && $rowNumber <= $structure->headerRow + 3) {
+                $headers[] = $row;
+            }
+        }
+        foreach ($headers as $header) {
+            foreach ($header as $index => $value) {
+                $column = Coordinate::stringFromColumnIndex((int) $index + 1);
+                if (isset($usedColumns[$column])) {
+                    continue;
+                }
+                $label = mb_strtolower(trim((string) $value));
+                if (preg_match('/(?:шифр|обосновани|\bкод\b|норматив)/u', $label) === 1) {
+                    return $column;
+                }
+            }
+        }
+
+        $votes = [];
+        $samples = $rows !== [] ? $rows : $structure->sampleRows;
+        $dataCount = 0;
+        foreach ($samples as $rowNumber => $row) {
+            if ($rows !== [] && $rowNumber <= ($structure->headerRow ?? 0)) {
+                continue;
+            }
+            $position = $this->value($row, $mapping['position_number'] ?? null);
+            $name = $this->value($row, $mapping['name'] ?? null);
+            if (preg_match('/^\d+(?:\.\d+)*\.?$/u', $position) !== 1 || $name === '' || $this->number($name) !== null) {
+                continue;
+            }
+            $dataCount++;
+            foreach ($row as $index => $value) {
+                $column = Coordinate::stringFromColumnIndex((int) $index + 1);
+                if (isset($usedColumns[$column])) {
+                    continue;
+                }
+                $value = trim((string) $value);
+                if ($this->number($value) === null
+                    && preg_match('/^(?:[\p{L}]{2,10}[\s-]*\d{1,4}(?:[-.]\d{1,4})+|\d{1,4}(?:[-.]\d{1,4}){2,})(?:[-\/\s].*)?$/u', $value) === 1) {
+                    $votes[$column] = ($votes[$column] ?? 0) + 1;
+                }
+            }
+            if ($dataCount >= 20) {
+                break;
+            }
+        }
+        arsort($votes);
+        $column = array_key_first($votes);
+        if ($column === null || $votes[$column] < 2 || $votes[$column] * 2 < $dataCount
+            || count(array_filter($votes, static fn (int $count): bool => $count === $votes[$column])) > 1) {
+            return null;
+        }
+
+        return $column;
     }
 
     protected function mappingCoverageScore(array $mapping): int
@@ -521,6 +634,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $detection['column_mapping'] = $resolvedMapping;
             $detection['detected_columns'] = array_flip($resolvedMapping);
         }
+        $detection = $this->withRecoveredCodeMapping($detection, $rows);
 
         return new ImportStructureResult(
             formatSlug: $this->slug(),
@@ -564,15 +678,16 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     /**
      * @return array<int, array{index: int, name: string, rows: array<int, array<int, mixed>>, detection: array<string, mixed>, score: int, confidence: float}>
      */
-    private function selectWorksheetsForImport(string $filePath, ?int $maxRows, ?int $forcedHeaderRow = null): array
+    private function selectWorksheetsForImport(string $filePath, ?int $maxRows, ?int $forcedHeaderRow = null, ?int $selectedIndex = null): array
     {
         $worksheets = $this->reader->readWorksheets($filePath, $maxRows);
         $candidates = [];
 
         foreach ($worksheets as $worksheet) {
-            $detection = $forcedHeaderRow !== null
+            $detection = $forcedHeaderRow !== null && ($selectedIndex === null || $worksheet['index'] === $selectedIndex)
                 ? $this->headerDetector->detectHeaderRow($worksheet['rows'], $forcedHeaderRow)
                 : $this->headerDetector->detect($worksheet['rows']);
+            $detection = $this->withRecoveredCodeMapping($detection, $worksheet['rows']);
             $mapping = $detection['column_mapping'] ?? [];
             $candidate = [
                 'index' => $worksheet['index'],
@@ -597,6 +712,15 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             return $right['score'] <=> $left['score'];
         });
 
+        if ($selectedIndex !== null) {
+            foreach ($candidates as $candidate) {
+                if ($candidate['index'] === $selectedIndex) {
+                    $candidate['available_worksheets'] = $candidates;
+                    return [$candidate];
+                }
+            }
+        }
+
         $selected = array_values(array_filter($candidates, function (array $candidate): bool {
             $mapping = $candidate['detection']['column_mapping'] ?? [];
 
@@ -607,10 +731,12 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         }));
 
         if ($selected !== []) {
+            $selected[0]['available_worksheets'] = $candidates;
             return $this->withAdditionalCostRows($selected, $candidates);
         }
 
         if ($candidates !== []) {
+            $candidates[0]['available_worksheets'] = $candidates;
             return [$candidates[0]];
         }
 
@@ -622,6 +748,86 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             'score' => 0,
             'confidence' => 0.0,
         ]];
+    }
+
+    private function restoreWorksheetMappings(ImportSession $session, ImportStructureResult $structure, ?int $forcedHeaderRow = null): ImportStructureResult
+    {
+        $metadata = $structure->metadata;
+        $metadata['manual_mapping'] = false;
+        $mapping = $structure->columnMapping;
+        $headerRow = $structure->headerRow;
+        $rawHeaders = $structure->rawHeaders;
+        $sampleRows = $structure->sampleRows;
+        foreach ($session->options['worksheet_mappings'] ?? [] as $override) {
+            if (!is_array($override)) {
+                continue;
+            }
+            $index = $this->normalizeWorksheetIndex($override['worksheet_index'] ?? null);
+            $manualMapping = $override['manual_mapping'] ?? true;
+            $overrideMapping = ImportStructureResult::columnMappingFromArray($override);
+            foreach ($metadata['worksheets'] ?? [] as $descriptorIndex => $descriptor) {
+                if (($descriptor['worksheet_index'] ?? null) !== $index) {
+                    continue;
+                }
+                $metadata['worksheets'][$descriptorIndex]['column_mapping'] = $overrideMapping;
+                $metadata['worksheets'][$descriptorIndex]['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($overrideMapping);
+                $metadata['worksheets'][$descriptorIndex]['manual_mapping'] = $manualMapping;
+                if (isset($override['header_row'])) {
+                    $metadata['worksheets'][$descriptorIndex]['header_row'] = $override['header_row'];
+                }
+            }
+            if ($index !== ($metadata['worksheet_index'] ?? null)) {
+                continue;
+            }
+            $mapping = $overrideMapping;
+            $headerRow = $forcedHeaderRow ?? $override['header_row'] ?? $headerRow;
+            $metadata['manual_mapping'] = $manualMapping;
+            $previewRows = $metadata['header_preview_rows'] ?? [];
+            $sampleRows = [];
+            foreach ($previewRows as $previewRow) {
+                if ($previewRow['row_number'] === $headerRow) {
+                    $rawHeaders = $previewRow['values'];
+                } elseif ($previewRow['row_number'] > $headerRow && count($sampleRows) < 8) {
+                    $sampleRows[] = $previewRow['values'];
+                }
+            }
+        }
+
+        return new ImportStructureResult(
+            formatSlug: $structure->formatSlug,
+            headerRow: $headerRow,
+            columnMapping: $mapping,
+            detectedColumns: ImportStructureResult::detectedColumnsFromMapping($mapping),
+            rawHeaders: $rawHeaders,
+            sampleRows: $sampleRows,
+            headerCandidates: $structure->headerCandidates,
+            rowStyles: $structure->rowStyles,
+            warnings: $structure->warnings,
+            metadata: $metadata,
+            aiMappingApplied: $structure->aiMappingApplied,
+        );
+    }
+
+    private function withRecoveredCodeMapping(array $detection, array $rows): array
+    {
+        $mapping = $detection['column_mapping'] ?? [];
+        if (isset($mapping['code'])) {
+            return $detection;
+        }
+        $structure = new ImportStructureResult(
+            formatSlug: $this->slug(),
+            headerRow: $detection['header_row'] ?? null,
+            columnMapping: $mapping,
+            rawHeaders: $detection['raw_headers'] ?? [],
+        );
+        $codeColumn = $this->inferCodeColumn($structure, $mapping, $rows);
+        if ($codeColumn !== null) {
+            $mapping['code'] = $codeColumn;
+            $detection['column_mapping'] = $mapping;
+            $detection['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($mapping);
+        }
+
+        return $detection;
     }
 
     private function withAdditionalCostRows(array $selected, array $candidates): array
@@ -873,6 +1079,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             level: 1,
             sectionPath: $sectionName,
             rawData: ['source' => 'title_sheet'],
+            worksheetIndex: isset($rows[0]['worksheet_index']) ? (int) $rows[0]['worksheet_index'] : null,
+            worksheetName: $rows[0]['worksheet_name'] ?? null,
         );
 
         foreach ($rows as $row) {
@@ -887,6 +1095,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
             yield new EstimateImportRowDTO(
                 rowNumber: isset($row['row_number']) ? (int) $row['row_number'] : 0,
+                worksheetIndex: isset($row['worksheet_index']) ? (int) $row['worksheet_index'] : null,
+                worksheetName: $row['worksheet_name'] ?? null,
                 sectionNumber: null,
                 itemName: (string) ($row['item_name'] ?? ''),
                 unit: null,
@@ -912,27 +1122,31 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     }
 
     /**
-     * @param array{index: int, name: string} $worksheet
-     * @param array<int, array{index: int, name: string, detection: array<string, mixed>, score: int, confidence: float}> $worksheets
+     * @param array{index: int, name: string, rows: array<int, array<int, mixed>>} $worksheet
+     * @param array<int, array{index: int, name: string, rows: array<int, array<int, mixed>>, detection: array<string, mixed>, score: int, confidence: float}> $worksheets
      * @return array<string, mixed>
      */
     private function worksheetMetadata(array $worksheet, array $worksheets = []): array
     {
         $worksheets = $worksheets !== [] ? $worksheets : [$worksheet];
         $additionalCostRows = $this->additionalCostRowsFromSelection($worksheets);
+        $availableWorksheets = $worksheet['available_worksheets'] ?? $worksheets;
+        $selectedIndices = array_column($worksheets, 'index');
 
         return [
             'worksheet_index' => $worksheet['index'],
             'worksheet_name' => $worksheet['name'],
             'worksheet_title' => $worksheet['name'],
+            'header_preview_rows' => $this->headerPreviewRows($worksheet['rows']),
             'additional_cost_rows' => $additionalCostRows,
             'worksheet_indices' => array_map(
                 static fn (array $item): int => (int) $item['index'],
                 $worksheets
             ),
             'worksheets' => array_map(
-                static fn (array $item): array => [
+                fn (array $item): array => [
                     'worksheet_index' => (int) $item['index'],
+                    'selected_for_import' => in_array($item['index'], $selectedIndices, true),
                     'worksheet_name' => (string) $item['name'],
                     'worksheet_title' => (string) $item['name'],
                     'header_row' => $item['detection']['header_row'] ?? null,
@@ -941,27 +1155,43 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                     'column_mapping' => $item['detection']['column_mapping'] ?? [],
                     'detected_columns' => $item['detection']['detected_columns'] ?? [],
                     'raw_headers' => $item['detection']['raw_headers'] ?? [],
+                    'sample_rows' => $this->sampleRows($item['rows'], $item['detection']['header_row'] ?? null),
+                    'header_candidates' => $item['detection']['header_candidates'] ?? [],
+                    'header_preview_rows' => $this->headerPreviewRows($item['rows']),
                 ],
-                $worksheets
+                $availableWorksheets
             ),
         ];
+    }
+
+    private function headerPreviewRows(array $rows): array
+    {
+        $preview = [];
+        foreach (array_slice($rows, 0, 60, true) as $rowNumber => $values) {
+            $preview[] = ['row_number' => (int) $rowNumber, 'values' => $values];
+        }
+
+        return $preview;
     }
 
     /**
      * @return array<int, array{worksheet_index: ?int, worksheet_name: ?string, header_row: ?int, column_mapping: array<string, string>, detected_columns: array<string, string>, raw_headers: array<int, mixed>}>
      */
-    private function worksheetDescriptorsFromStructure(ImportStructureResult $structure): array
+    private function worksheetDescriptorsFromStructure(ImportStructureResult $structure, ?int $selectedIndex = null): array
     {
         $worksheets = $structure->metadata['worksheets'] ?? null;
         if (is_array($worksheets) && $worksheets !== []) {
             return array_values(array_filter(array_map(
-                function (mixed $worksheet) use ($structure): ?array {
+                function (mixed $worksheet) use ($structure, $selectedIndex): ?array {
                     if (!is_array($worksheet)) {
                         return null;
                     }
 
                     $index = $this->normalizeWorksheetIndex($worksheet['worksheet_index'] ?? null);
                     if ($index === null) {
+                        return null;
+                    }
+                    if ($selectedIndex !== null ? $index !== $selectedIndex : !($worksheet['selected_for_import'] ?? true)) {
                         return null;
                     }
 
@@ -976,6 +1206,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                         'column_mapping' => $mapping,
                         'detected_columns' => is_array($worksheet['detected_columns'] ?? null) ? $worksheet['detected_columns'] : [],
                         'raw_headers' => is_array($worksheet['raw_headers'] ?? null) ? $worksheet['raw_headers'] : [],
+                        'manual_mapping' => $worksheet['manual_mapping'] ?? null,
                     ];
                 },
                 $worksheets
@@ -997,7 +1228,9 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
      */
     private function structureForWorksheet(ImportStructureResult $structure, array $worksheet): ImportStructureResult
     {
-        $mapping = $structure->columnMapping !== [] ? $structure->columnMapping : $worksheet['column_mapping'];
+        $isPrimaryWorksheet = $worksheet['worksheet_index'] === ($structure->metadata['worksheet_index'] ?? null);
+        $mapping = !($worksheet['manual_mapping'] ?? false) && $isPrimaryWorksheet && $structure->columnMapping !== []
+            ? $structure->columnMapping : $worksheet['column_mapping'];
         $detectedColumns = $mapping !== []
             ? ImportStructureResult::detectedColumnsFromMapping($mapping)
             : ($worksheet['detected_columns'] !== [] ? $worksheet['detected_columns'] : $structure->detectedColumns);
@@ -1016,6 +1249,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 'worksheet_index' => $worksheet['worksheet_index'],
                 'worksheet_name' => $worksheet['worksheet_name'],
                 'worksheet_title' => $worksheet['worksheet_name'],
+                'manual_mapping' => $worksheet['manual_mapping'] ?? ($isPrimaryWorksheet ? ($structure->metadata['manual_mapping'] ?? false) : false),
             ]),
             aiMappingApplied: $structure->aiMappingApplied,
         );

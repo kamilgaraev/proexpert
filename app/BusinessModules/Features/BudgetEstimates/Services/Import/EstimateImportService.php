@@ -12,6 +12,11 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportF
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\Models\ImportMemory;
 use App\Models\ImportSession;
+use App\Models\Contract;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\ImportSessionStateException;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -31,34 +36,62 @@ class EstimateImportService
         private ImportFormatRegistry $runtimeRegistry,
     ) {}
 
-    public function uploadFile(UploadedFile $file, int $userId, int $organizationId): string
+    public function uploadFile(UploadedFile $file, int $userId, int $organizationId, ?ImportAccessContext $context = null): string
     {
+        $context = $this->accessContext($context);
+        if ($userId !== (int) $context->actor->id || $organizationId !== $context->organizationId) {
+            throw new AuthorizationException;
+        }
         $storedFile = $this->fileStorage->store($file, $organizationId);
 
-        $session = ImportSession::create([
-            'user_id' => $userId,
-            'organization_id' => $organizationId,
-            'status' => 'uploading',
-            'file_path' => $storedFile['path'],
-            'file_name' => $storedFile['name'],
-            'file_size' => $storedFile['size'],
-            'file_format' => $storedFile['extension'],
-            'options' => [],
-            'stats' => ['progress' => 0],
-        ]);
+        try {
+            $session = ImportSession::create([
+                'user_id' => $userId,
+                'organization_id' => $organizationId,
+                'status' => 'uploading',
+                'file_path' => $storedFile['path'],
+                'file_name' => $storedFile['name'],
+                'file_size' => $storedFile['size'],
+                'file_format' => $storedFile['extension'],
+                'options' => ['project_id' => $context->projectId],
+                'stats' => ['progress' => 0],
+            ]);
+        } catch (Throwable $exception) {
+            try {
+                $this->fileStorage->delete(new ImportSession(['file_path' => $storedFile['path']]));
+            } catch (Throwable $cleanupException) {
+                Log::error('[EstimateImport] Upload compensation failed', ['organization_id' => $organizationId, 'exception_class' => $cleanupException::class]);
+            }
+            throw $exception;
+        }
 
         Log::info('[EstimateImport] Import session created', [
             'session_id' => $session->id,
-            'file_name' => $storedFile['name'],
             'file_size' => $storedFile['size'],
         ]);
 
         return $session->id;
     }
 
-    public function detectEstimateType(string $sessionId): EstimateTypeDetectionDTO
+    public function detectEstimateType(string $sessionId, ?ImportAccessContext $context = null): EstimateTypeDetectionDTO
     {
-        $session = ImportSession::findOrFail($sessionId);
+        $result = DB::transaction(function () use ($sessionId, $context): EstimateTypeDetectionDTO|Throwable {
+            try {
+                return $this->detectEstimateTypeLocked($sessionId, $context);
+            } catch (Throwable $exception) {
+                return $exception;
+            }
+        });
+        if ($result instanceof Throwable) {
+            throw $result;
+        }
+
+        return $result;
+    }
+
+    private function detectEstimateTypeLocked(string $sessionId, ?ImportAccessContext $context): EstimateTypeDetectionDTO
+    {
+        $session = $this->getSession($sessionId, $context, true);
 
         $startedAt = microtime(true);
         $phase = 'storage';
@@ -124,7 +157,7 @@ class EstimateImportService
             Log::error('[EstimateImport] Type detection failed', [
                 'session_id' => $sessionId,
                 'phase' => $phase,
-                'exception' => $e,
+                'exception_class' => $e::class,
                 'duration_ms' => (int) ((microtime(true) - $startedAt) * 1000),
             ]);
 
@@ -132,9 +165,22 @@ class EstimateImportService
         }
     }
 
-    public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null): array
+    public function detectFormat(string $sessionId, ?int $suggestedHeaderRow = null, ?ImportAccessContext $context = null, array $worksheetOptions = []): array
     {
-        $session = $this->sessionWithDetectedHandler($sessionId);
+        return DB::transaction(fn (): array => $this->detectFormatLocked($sessionId, $suggestedHeaderRow, $context, $worksheetOptions));
+    }
+
+    private function detectFormatLocked(string $sessionId, ?int $suggestedHeaderRow, ?ImportAccessContext $context, array $worksheetOptions): array
+    {
+        $session = $this->sessionWithDetectedHandler($sessionId, $context);
+        if (array_key_exists('worksheet_index', $worksheetOptions)) {
+            $options = array_merge($session->options ?? [], ['worksheet_index' => $worksheetOptions['worksheet_index']]);
+            unset($options['structure']);
+            if (($session->options['worksheet_index'] ?? null) !== $worksheetOptions['worksheet_index']) {
+                unset($options['manual_header_row'], $options['manual_structure_confirmed']);
+            }
+            $session->update(['options' => $options]);
+        }
 
         return $this->fileStorage->withLocalCopy(
             $session,
@@ -153,6 +199,9 @@ class EstimateImportService
                 $options = $session->options ?? [];
                 $options['format_handler'] = $handler->slug();
                 $options['structure'] = $structure->toArray();
+                if ($suggestedHeaderRow !== null) {
+                    $options['manual_header_row'] = $suggestedHeaderRow;
+                }
 
                 $session->update([
                     'status' => 'detecting',
@@ -164,24 +213,58 @@ class EstimateImportService
         );
     }
 
-    public function preview(string $sessionId, ?array $columnMapping = null): EstimateImportDTO
+    public function preview(string $sessionId, ?array $columnMapping = null, ?ImportAccessContext $context = null, array $worksheetOptions = []): EstimateImportDTO
     {
-        $session = $this->sessionWithDetectedHandler($sessionId);
+        return DB::transaction(fn (): EstimateImportDTO => $this->previewLocked($sessionId, $columnMapping, $context, $worksheetOptions));
+    }
+
+    private function previewLocked(string $sessionId, ?array $columnMapping, ?ImportAccessContext $context, array $worksheetOptions): EstimateImportDTO
+    {
+        $session = $this->sessionWithDetectedHandler($sessionId, $context);
+        if ($worksheetOptions !== []) {
+            $options = array_merge($session->options ?? [], array_intersect_key($worksheetOptions, array_flip(['worksheet_index', 'worksheet_mappings'])));
+            if (array_key_exists('worksheet_index', $worksheetOptions) && ($session->options['worksheet_index'] ?? null) !== $worksheetOptions['worksheet_index']) {
+                unset($options['structure'], $options['manual_header_row'], $options['manual_structure_confirmed']);
+            }
+            if (isset($worksheetOptions['worksheet_mappings']) && ($session->options['worksheet_mappings'] ?? []) !== $worksheetOptions['worksheet_mappings']) {
+                unset($options['structure']);
+            }
+            $session->update(['options' => $options]);
+        }
 
         return $this->fileStorage->withLocalCopy(
             $session,
-            function (string $fullPath) use ($session, $columnMapping): EstimateImportDTO {
+            function (string $fullPath) use ($session, $columnMapping, $worksheetOptions): EstimateImportDTO {
                 $handler = $this->runtimeRegistry->bySlug((string) $session->options['format_handler']);
                 $options = $session->options ?? [];
+                if ($this->structureFromSession($handler->slug(), $session) === null) {
+                    $options['structure'] = $handler->detectStructure($session, $fullPath)->toArray();
+                    $session->update(['options' => $options]);
+                }
 
                 if ($columnMapping !== null) {
                     $columnMapping = $this->normalizeColumnMappingInput($columnMapping);
                 }
 
-                if ($columnMapping !== null && $columnMapping !== []) {
+                $manualMapping = (bool) ($worksheetOptions['manual_mapping'] ?? ($columnMapping !== null && $columnMapping !== []));
+                if ($columnMapping !== null && ($columnMapping !== [] || $manualMapping)) {
+                    $options['manual_structure_confirmed'] = $manualMapping && isset($options['manual_header_row']);
                     $structure = $options['structure'] ?? [];
                     $structure['column_mapping'] = $columnMapping;
                     $structure['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
+                    $structure['metadata']['manual_mapping'] = $manualMapping;
+                    $selectedIndex = $options['worksheet_index'] ?? null;
+                    if ($selectedIndex === null && $manualMapping) {
+                        $selectedIndex = $structure['metadata']['worksheet_index'] ?? null;
+                    }
+                    if ($selectedIndex !== null) {
+                        $overrides = array_values(array_filter($options['worksheet_mappings'] ?? [], static fn (array $override): bool => (int) ($override['worksheet_index'] ?? -1) !== (int) $selectedIndex));
+                        $overrides[] = [
+                            'worksheet_index' => (int) $selectedIndex, 'column_mapping' => $columnMapping,
+                            'header_row' => $structure['header_row'], 'manual_mapping' => $manualMapping,
+                        ];
+                        $options['worksheet_mappings'] = $overrides;
+                    }
                     $options['structure'] = $structure;
                     $session->update(['options' => $options]);
                     $session = $session->fresh();
@@ -281,14 +364,18 @@ class EstimateImportService
         } catch (Throwable $e) {
             Log::warning('[EstimateImport] Structure learning failed', [
                 'session_id' => $session->id,
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
         }
     }
 
-    public function analyzeMatches(string $sessionId, int $organizationId): array
+    public function analyzeMatches(string $sessionId, int $organizationId, ?ImportAccessContext $context = null): array
     {
-        $preview = $this->preview($sessionId);
+        $context = $this->accessContext($context);
+        if ($organizationId !== $context->organizationId) {
+            throw new AuthorizationException;
+        }
+        $preview = $this->preview($sessionId, null, $context);
         $items = array_map(static function (array $item): array {
             return [
                 'row_number' => $item['row_number'] ?? null,
@@ -313,55 +400,58 @@ class EstimateImportService
         ];
     }
 
-    public function execute(string $sessionId, array $matchingConfig, array $estimateSettings, bool $validateOnly = false): array
+    public function execute(string $sessionId, array $matchingConfig, array $estimateSettings, bool $validateOnly = false, ?ImportAccessContext $context = null, bool $retry = false): array
     {
-        $session = $this->sessionWithDetectedHandler($sessionId);
-        $options = $session->options ?? [];
-        $options['matching_config'] = $matchingConfig;
-        $options['estimate_settings'] = $estimateSettings;
-        $options['validate_only'] = $validateOnly;
+        $context = $this->accessContext($context);
+        if (isset($estimateSettings['project_id']) && (int) $estimateSettings['project_id'] !== $context->projectId) {
+            throw new ImportSessionStateException('import_project_mismatch', 'estimate.import_project_mismatch', 422);
+        }
+        if (! empty($estimateSettings['contract_id'])) {
+            Contract::query()->where('organization_id', $context->organizationId)->where('project_id', $context->projectId)
+                ->findOrFail($estimateSettings['contract_id']);
+        }
+        $estimateSettings['organization_id'] = $context->organizationId;
+        $estimateSettings['project_id'] = $context->projectId;
+        $this->getSession($sessionId, $context);
 
-        $session->update([
-            'options' => $options,
-            'status' => 'queued',
-        ]);
+        return DB::transaction(function () use ($sessionId, $matchingConfig, $estimateSettings, $validateOnly, $context, $retry): array {
+            $session = ImportSession::query()->whereKey($sessionId)->lockForUpdate()->firstOrFail();
+            if ($session->isActive() || $session->isCompleted() || ($session->status === 'validated' && $validateOnly)) {
+                return $this->getImportStatus($sessionId, $context) + ['session_id' => $sessionId];
+            }
+            $this->ensureUnexpired($session);
+            if ($session->isFailed() && (! $retry || ! empty($session->stats['estimate_id']))) {
+                throw new ImportSessionStateException('import_retry_required', 'estimate.import_retry_required');
+            }
+            if (empty($session->options['format_handler'])) {
+                throw new ImportSessionStateException('import_format_not_detected', 'estimate.import_format_not_detected', 422);
+            }
+            $options = array_merge($session->options ?? [], [
+                'matching_config' => $matchingConfig, 'estimate_settings' => $estimateSettings,
+                'validate_only' => $validateOnly, 'run_token' => (string) Str::uuid(), 'execution_user_id' => (int) $context->actor->id,
+            ]);
+            $session->update(['options' => $options, 'status' => 'queued', 'error_message' => null, 'stats' => [
+                'progress' => 0, 'queued_deadline_at' => now()->addHours(24)->timestamp,
+            ]]);
+            Cache::forget("import_session_progress_{$sessionId}");
+            \App\Jobs\ProcessEstimateImportJob::dispatch($sessionId, $options['run_token'])->afterCommit();
 
-        \App\Jobs\ProcessEstimateImportJob::dispatch($sessionId);
-
-        return [
-            'status' => 'queued',
-            'session_id' => $sessionId,
-            'message' => trans_message('estimate.import_queued'),
-        ];
+            return ['status' => 'queued', 'session_id' => $sessionId, 'message' => trans_message('estimate.import_queued')];
+        });
     }
 
-    public function getImportStatus(string $id): array
+    public function getImportStatus(string $id, ?ImportAccessContext $context = null): array
     {
-        $session = ImportSession::find($id);
-
-        if (! $session) {
-            return [
-                'status' => 'failed',
-                'error' => trans_message('estimate.import_status_not_found'),
-            ];
-        }
-
-        $deadline = $session->stats['detection_deadline_at'] ?? null;
-        if ($session->status === 'detecting'
-            && ($session->stats['detection_phase'] ?? null) !== 'completed'
-            && is_numeric($deadline) && microtime(true) > (float) $deadline) {
-            $updated = ImportSession::query()->whereKey($session->id)
-                ->where('status', 'detecting')
-                ->where('stats->detection_deadline_at', $deadline)
-                ->where('stats->detection_phase', '!=', 'completed')
-                ->update(['status' => 'failed', 'error_message' => 'estimate.import_detection_interrupted']);
-            if ($updated > 0) {
-                Log::error('[EstimateImport] Type detection interrupted', ['session_id' => $session->id]);
-            }
+        $session = $this->getSession($id, $context);
+        $this->recoverInterruptedSession($session);
+        if (! $session->isActive() && ! $session->isTerminal()
+            && $session->created_at->copy()->addHours(24)->isPast()
+            && ($session->status !== 'detecting' || ($session->stats['detection_phase'] ?? null) === 'completed')) {
+            ImportSession::query()->whereKey($session->id)->where('status', $session->status)->update(['status' => 'expired']);
             $session->refresh();
         }
 
-        $progress = \Illuminate\Support\Facades\Cache::get("import_session_progress_{$id}");
+        $progress = $session->isTerminal() ? ($session->stats['progress'] ?? 0) : Cache::get("import_session_progress_{$id}");
         if ($progress === null) {
             $progress = $session->stats['progress'] ?? 0;
         }
@@ -376,12 +466,24 @@ class EstimateImportService
             'result' => $session->stats['result'] ?? null,
             'estimate_id' => $session->stats['estimate_id'] ?? null,
             'validation' => $session->stats['validation'] ?? ($session->options['validation'] ?? null),
+            'reason_code' => $session->stats['reason_code'] ?? null,
+            'correlation_id' => $session->stats['correlation_id'] ?? null,
+            'expires_at' => $session->created_at->copy()->addHours(24)->toIso8601String(),
         ];
     }
 
-    public function getImportHistory(int $organizationId, int $limit = 50): Collection
+    public function getImportHistory(int $organizationId, int $limit = 50, ?ImportAccessContext $context = null): Collection
     {
+        $context = $this->accessContext($context);
+        if ($organizationId !== $context->organizationId) {
+            throw new AuthorizationException;
+        }
         return ImportSession::where('organization_id', $organizationId)
+            ->where(function ($query) use ($context): void {
+                $query->where('options->project_id', $context->projectId)->orWhere(function ($legacy) use ($context): void {
+                    $legacy->whereNull('options->project_id')->where('options->estimate_settings->project_id', $context->projectId);
+                });
+            })
             ->orderBy('created_at', 'desc')
             ->limit($limit)
             ->get()
@@ -396,21 +498,128 @@ class EstimateImportService
             });
     }
 
-    public function downloadTemplate(): StreamedResponse
+    public function downloadTemplate(?ImportAccessContext $context = null): StreamedResponse
     {
+        $this->accessContext($context);
         return $this->templateService->generate();
     }
 
-    private function sessionWithDetectedHandler(string $sessionId): ImportSession
+    private function accessContext(?ImportAccessContext $context): ImportAccessContext
     {
-        $session = ImportSession::findOrFail($sessionId);
+        if ($context === null) {
+            $actor = auth()->user();
+            $project = request()->route('project');
+            $projectId = is_object($project) ? $project->id : $project;
+            if (! $actor instanceof \App\Models\User || ! is_numeric($projectId)) {
+                throw new AuthorizationException;
+            }
+            $context = new ImportAccessContext($actor, (int) $actor->current_organization_id, (int) $projectId);
+        }
+        $context->authorize();
+
+        return $context;
+    }
+
+    public function getSession(string $id, ?ImportAccessContext $context = null, bool $mutable = false): ImportSession
+    {
+        $context = $this->accessContext($context);
+        $session = ImportSession::query()->where('organization_id', $context->organizationId)
+            ->where(function ($query) use ($context): void {
+                $query->where('options->project_id', $context->projectId)->orWhere(function ($legacy) use ($context): void {
+                    $legacy->whereNull('options->project_id')->where('options->estimate_settings->project_id', $context->projectId);
+                });
+            })->when($mutable, static fn ($query) => $query->lockForUpdate())->findOrFail($id);
+        if ($mutable) {
+            $this->ensureUnexpired($session);
+            if ($session->isActive() || $session->isCompleted()) {
+                throw new ImportSessionStateException('import_session_locked', 'estimate.import_session_locked');
+            }
+        }
+
+        return $session;
+    }
+
+    private function ensureUnexpired(ImportSession $session): void
+    {
+        if ($session->created_at->copy()->addHours(24)->isPast() || $session->status === 'expired') {
+            throw new ImportSessionStateException('import_session_expired', 'estimate.import_session_expired', 410);
+        }
+    }
+
+    public function recoverInterruptedSession(ImportSession $session): void
+    {
+        $detectionDeadline = $session->stats['detection_deadline_at'] ?? null;
+        if ($session->status === 'detecting' && ($session->stats['detection_phase'] ?? null) !== 'completed'
+            && is_numeric($detectionDeadline) && now()->timestamp > (int) $detectionDeadline) {
+            $correlationId = (string) Str::uuid();
+            $updated = ImportSession::query()->whereKey($session->id)->where('status', 'detecting')
+                ->where('stats->detection_deadline_at', $detectionDeadline)->where('stats->detection_phase', '!=', 'completed')
+                ->update(['status' => 'failed', 'error_message' => 'estimate.import_detection_interrupted', 'stats' => json_encode(array_merge($session->stats ?? [], [
+                    'reason_code' => 'import_detection_interrupted', 'correlation_id' => $correlationId,
+                ]), JSON_THROW_ON_ERROR)]);
+            if ($updated > 0) {
+                Log::error('[EstimateImport] Type detection interrupted', ['session_id' => $session->id, 'correlation_id' => $correlationId, 'reason_code' => 'import_detection_interrupted']);
+            }
+            $session->refresh();
+            return;
+        }
+        $deadline = $session->status === 'queued'
+            ? ($session->stats['queued_deadline_at'] ?? null)
+            : ($session->stats['worker_deadline_at'] ?? null);
+        if (! $session->isActive() || ! is_numeric($deadline) || now()->timestamp <= (int) $deadline) {
+            return;
+        }
+        $correlationId = (string) Str::uuid();
+        $updated = ImportSession::query()->whereKey($session->id)->where('status', $session->status)
+            ->where('options->run_token', $session->options['run_token'] ?? null)
+            ->update(['status' => 'failed', 'error_message' => 'estimate.import_worker_interrupted', 'stats' => json_encode(array_merge($session->stats ?? [], [
+                'message' => 'estimate.import_worker_interrupted', 'reason_code' => 'import_worker_interrupted', 'correlation_id' => $correlationId,
+            ]), JSON_THROW_ON_ERROR)]);
+        if ($updated > 0) {
+            Cache::forget("import_session_progress_{$session->id}");
+            Log::error('[EstimateImport] Worker deadline exceeded', ['session_id' => $session->id, 'correlation_id' => $correlationId, 'reason_code' => 'import_worker_interrupted']);
+        }
+        $session->refresh();
+    }
+
+    public function cleanupInactiveSources(int $limit = 100): int
+    {
+        $count = 0;
+        $sessions = ImportSession::query()->where('created_at', '<=', now()->subHours(24))
+            ->whereNotNull('file_path')->where(function ($query): void {
+                $query->whereNotIn('status', ['queued', 'parsing', 'processing', 'enriching', 'detecting'])
+                    ->orWhere(function ($detecting): void {
+                        $detecting->where('status', 'detecting')->where('stats->detection_phase', 'completed');
+                    });
+            })
+            ->orderBy('created_at')->limit($limit)->get();
+        foreach ($sessions as $candidate) {
+            DB::transaction(function () use ($candidate, &$count): void {
+                $session = ImportSession::query()->whereKey($candidate->id)->lockForUpdate()->first();
+                if (! $session || $session->isActive()
+                    || ($session->status === 'detecting' && ($session->stats['detection_phase'] ?? null) !== 'completed') || ! $session->file_path) {
+                    return;
+                }
+                $this->fileStorage->delete($session);
+                $stats = array_merge($session->stats ?? [], ['source_deleted_at' => now()->toIso8601String()]);
+                $session->update(['file_path' => null, 'status' => $session->isTerminal() ? $session->status : 'expired', 'stats' => $stats]);
+                $count++;
+            });
+        }
+
+        return $count;
+    }
+
+    private function sessionWithDetectedHandler(string $sessionId, ?ImportAccessContext $context = null): ImportSession
+    {
+        $session = $this->getSession($sessionId, $context, true);
         if (! empty($session->options['format_handler'])) {
             return $session;
         }
 
-        $this->detectEstimateType($sessionId);
+        $this->detectEstimateType($sessionId, $context);
 
-        return ImportSession::findOrFail($sessionId);
+        return $this->getSession($sessionId, $context, true);
     }
 
     private function structureFromSession(string $formatSlug, ImportSession $session): ?ImportStructureResult
@@ -420,7 +629,9 @@ class EstimateImportService
             return null;
         }
 
-        $columnMapping = ImportStructureResult::columnMappingFromArray($structure);
+        $columnMapping = ($structure['metadata']['manual_mapping'] ?? false)
+            ? $this->normalizeColumnMappingInput($structure['column_mapping'] ?? [])
+            : ImportStructureResult::columnMappingFromArray($structure);
         $detectedColumns = $structure['detected_columns'] ?? [];
         if ((! is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
             $detectedColumns = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
@@ -471,7 +682,9 @@ class EstimateImportService
     private function mapSessionStatusToOldStatus(string $status): string
     {
         return match ($status) {
-            'uploading', 'detecting', 'mapped', 'parsing', 'processing', 'enriching', 'validated' => 'processing',
+            'uploading', 'detecting', 'mapped', 'parsing', 'processing', 'enriching' => 'processing',
+            'validated' => 'validated',
+            'expired' => 'expired',
             'completed' => 'completed',
             'failed' => 'failed',
             default => 'queued',

@@ -9,7 +9,6 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Abstrac
 use App\Models\ImportSession;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 
 class GrandSmetaHandler extends AbstractFormatHandler
@@ -41,9 +40,13 @@ class GrandSmetaHandler extends AbstractFormatHandler
                 }
             }
 
-            if ($found) {
+            $detection = $this->findHeaderAndMapping($sheet);
+            if ($found && ($detection['header_confirmed'] ?? false)) {
                 $dto->confidence = 1.0;
                 $dto->detectedType = 'grandsmeta';
+            } elseif ($found) {
+                $dto->confidence = 0.0;
+                $dto->metadata['header_confirmed'] = false;
             }
         }
 
@@ -122,19 +125,21 @@ class GrandSmetaHandler extends AbstractFormatHandler
             }
 
             // If we found at least 4 key markers (including 1, 2, 3), this is our numbering row
-            if ($foundMarkers >= 4) {
+            if ($foundMarkers >= 4 && isset($tempMapping['position_number'], $tempMapping['code'], $tempMapping['name'])
+                && (isset($tempMapping['quantity']) || isset($tempMapping['unit_price']) || isset($tempMapping['total_price']))) {
                 if (!isset($tempMapping['total_price']) && isset($tempMapping['current_unit_price'])) {
                     $tempMapping['total_price'] = $tempMapping['current_unit_price'];
                 }
 
                 return [
                     'mapping' => array_merge($this->getDefaultMapping(), $tempMapping),
-                    'header_row' => $row->getRowIndex()
+                    'header_row' => $row->getRowIndex(),
+                    'header_confirmed' => true,
                 ];
             }
         }
 
-        return ['mapping' => $mapping, 'header_row' => $headerRow];
+        return ['mapping' => $mapping, 'header_row' => $headerRow, 'header_confirmed' => false];
     }
 
     private function getDefaultMapping(): array

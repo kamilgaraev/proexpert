@@ -6,11 +6,9 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
+use App\Jobs\ProcessEstimateImportJob;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
-use App\Models\Organization;
-use App\Models\Project;
-use App\Models\User;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -22,6 +20,7 @@ use Mockery;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 final class EstimateImportGrandSmetaGoldenTest extends TestCase
 {
@@ -52,9 +51,10 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         $files->shouldReceive('readCurrent')->andReturnUsing(static fn (string $key) => $disk->readStream($key));
         $this->app->instance(FileService::class, $files);
 
-        $user = User::factory()->create();
-        $organization = Organization::factory()->create();
-        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $context = EstimateImportTestContext::create();
+        $user = $context->user;
+        $organization = $context->organization;
+        $project = $context->project;
         $filePath = $this->createGrandSmetaSpreadsheet($itemCount);
 
         $uploadedFile = new UploadedFile(
@@ -66,16 +66,16 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         );
 
         $service = app(EstimateImportService::class);
-        $sessionId = $service->uploadFile($uploadedFile, $user->id, $organization->id);
+        $sessionId = $service->uploadFile($uploadedFile, $user->id, $organization->id, $context->access());
 
-        $type = $service->detectEstimateType($sessionId);
+        $type = $service->detectEstimateType($sessionId, $context->access());
         $session = ImportSession::query()->findOrFail($sessionId);
 
         self::assertSame('grandsmeta', $type->detectedType);
         self::assertGreaterThanOrEqual(0.9, $type->confidence);
         self::assertSame('grandsmeta', $session->options['format_handler'] ?? null);
 
-        $format = $service->detectFormat($sessionId);
+        $format = $service->detectFormat($sessionId, null, $context->access());
         $session->refresh();
 
         self::assertSame('grandsmeta', $format['format']);
@@ -83,7 +83,7 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         self::assertSame(3, $session->options['structure']['header_row'] ?? null);
         self::assertNotEmpty($session->options['structure']['column_mapping'] ?? []);
 
-        $preview = $service->preview($sessionId);
+        $preview = $service->preview($sessionId, null, $context->access());
 
         self::assertSame('grandsmeta', $preview->metadata['handler'] ?? null);
         self::assertNotEmpty($preview->sections);
@@ -91,10 +91,9 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         self::assertGreaterThanOrEqual(200.0, $preview->getTotalAmount());
 
         $session->refresh();
-        $options = $session->options ?? [];
-        $options['estimate_settings'] = ['project_id' => $project->id, 'name' => 'Проверка длинного кода'];
-        $session->update(['options' => $options]);
-        app(ImportPipelineService::class)->run($session->fresh());
+        $service->execute($sessionId, [], ['project_id' => $project->id, 'name' => 'Проверка длинного кода'], false, $context->access());
+        $session->refresh();
+        (new ProcessEstimateImportJob($sessionId, $session->options['run_token']))->handle(app(ImportPipelineService::class));
         $session->refresh();
 
         self::assertSame('completed', $session->status, $session->error_message ?? '');
@@ -104,8 +103,6 @@ final class EstimateImportGrandSmetaGoldenTest extends TestCase
         self::assertSame(self::LONG_CODE, $item->metadata['raw_data']['B']);
         self::assertEquals(200, $item->total_amount);
 
-        $user->update(['current_organization_id' => $organization->id]);
-        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
         $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)->shouldReceive('can')->andReturn(true);
         $finance = app(\App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceService::class);
         \Illuminate\Support\Facades\DB::enableQueryLog();

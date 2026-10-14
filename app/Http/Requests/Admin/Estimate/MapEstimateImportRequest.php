@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
@@ -17,13 +19,21 @@ class MapEstimateImportRequest extends FormRequest
     {
         return [
             // Allow both string and array (will be normalized in controller)
-            'file_id' => ['required'],
+            'file_id' => ['required', 'string', 'uuid'],
             // column_mapping может быть пустым - тогда вернем автоматический маппинг
             'column_mapping' => ['present', 'array'],
             'column_mapping.*' => [
                 'nullable',
                 'string',
             ],
+            'worksheet_index' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'manual_mapping' => ['sometimes', 'boolean'],
+            'worksheet_mappings' => ['sometimes', 'array'],
+            'worksheet_mappings.*.worksheet_index' => ['required', 'integer', 'min:0', 'distinct'],
+            'worksheet_mappings.*.column_mapping' => ['required', 'array'],
+            'worksheet_mappings.*.column_mapping.*' => ['nullable', 'string'],
+            'worksheet_mappings.*.header_row' => ['sometimes', 'integer', 'min:1'],
+            'worksheet_mappings.*.manual_mapping' => ['sometimes', 'boolean'],
         ];
     }
     

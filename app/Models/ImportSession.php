@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -54,6 +56,21 @@ class ImportSession extends Model
     
     public function isProcessing(): bool
     {
-        return in_array($this->status, ['parsing', 'processing']);
+        return in_array($this->status, ['parsing', 'processing', 'enriching'], true);
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === 'queued' || $this->isProcessing();
+    }
+
+    public function isTerminalSuccess(): bool
+    {
+        return in_array($this->status, ['completed', 'validated'], true);
+    }
+
+    public function isTerminal(): bool
+    {
+        return $this->isTerminalSuccess() || in_array($this->status, ['failed', 'expired'], true);
     }
 }

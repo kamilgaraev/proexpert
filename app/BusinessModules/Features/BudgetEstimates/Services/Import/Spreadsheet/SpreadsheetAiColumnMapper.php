@@ -72,6 +72,13 @@ final class SpreadsheetAiColumnMapper
             }
 
             $aiMapping = $this->normalizeMapping($payload['mapping'] ?? $payload, count($headers));
+            $confidence = is_numeric($payload['confidence'] ?? null) ? (float) $payload['confidence'] : null;
+            if ($confidence === null || $confidence < 0.75 || $confidence > 1) {
+                return $this->result($currentMapping, false, 'low_confidence');
+            }
+            $aiMapping = $this->credibleMapping($aiMapping, $headers, $sampleRows);
+            $originalMapping = $currentMapping;
+            $currentMapping = $this->credibleMapping($currentMapping, $headers, $sampleRows, false);
             $merged = $this->mergeMappings($currentMapping, $aiMapping);
 
             if (!$this->isUsable($merged)) {
@@ -80,7 +87,7 @@ final class SpreadsheetAiColumnMapper
 
             return [
                 'mapping' => $merged,
-                'applied' => $aiMapping !== [],
+                'applied' => $merged !== $originalMapping,
                 'reason' => 'ok',
                 'confidence' => is_numeric($payload['confidence'] ?? null) ? (float) $payload['confidence'] : null,
                 'model' => $provider->getModel(),
@@ -130,14 +137,23 @@ final class SpreadsheetAiColumnMapper
             }
 
             $mapping = $this->normalizeMapping($payload['mapping'] ?? [], count($headers));
-            if (!$this->isUsable($mapping)) {
-                return $this->structureResult($currentDetection, false, 'mapping_unusable');
-            }
-
+            $mapping = $this->credibleMapping($mapping, $headers, array_values(array_filter(
+                $rows,
+                static fn (array $row, int $rowNumber): bool => $rowNumber > $headerRow,
+                ARRAY_FILTER_USE_BOTH
+            )));
             $currentMapping = is_array($currentDetection['column_mapping'] ?? null)
                 ? $currentDetection['column_mapping']
                 : [];
             $confidence = is_numeric($payload['confidence'] ?? null) ? (float) $payload['confidence'] : null;
+            if ($headerRow === ($currentDetection['header_row'] ?? null)) {
+                $mapping = $this->mergeMappings($this->credibleMapping($currentMapping, $headers, [], false), $mapping);
+            } elseif ($this->isUsable($currentMapping)) {
+                return $this->structureResult($currentDetection, false, 'rules_are_stronger');
+            }
+            if (!$this->isUsable($mapping)) {
+                return $this->structureResult($currentDetection, false, 'mapping_unusable');
+            }
             if (
                 !$this->shouldApplyStructureMapping($mapping, $currentMapping, $confidence)
             ) {
@@ -361,10 +377,10 @@ final class SpreadsheetAiColumnMapper
             return $currentMapping;
         }
 
-        $merged = $aiMapping;
+        $merged = $currentMapping;
         $usedColumns = array_flip($merged);
 
-        foreach ($currentMapping as $field => $column) {
+        foreach ($aiMapping as $field => $column) {
             if (isset($merged[$field]) || !is_string($field) || !is_string($column) || isset($usedColumns[$column])) {
                 continue;
             }
@@ -388,6 +404,10 @@ final class SpreadsheetAiColumnMapper
 
     private function shouldApplyStructureMapping(array $aiMapping, array $currentMapping, ?float $confidence): bool
     {
+        if ($confidence === null || $confidence < 0.75 || $confidence > 1) {
+            return false;
+        }
+
         if (!$this->isUsable($currentMapping)) {
             return true;
         }
@@ -400,6 +420,50 @@ final class SpreadsheetAiColumnMapper
         }
 
         return $confidence !== null && $confidence >= 0.75 && $aiScore >= $currentScore;
+    }
+
+    private function credibleMapping(array $mapping, array $headers, array $sampleRows, bool $validateValues = true): array
+    {
+        $heuristic = (new SpreadsheetHeaderDetector)->mapHeaders($headers);
+        $owners = array_flip($heuristic);
+        $numbers = new SpreadsheetNumberParser;
+
+        return array_filter($mapping, function (string $column, string $field) use ($owners, $sampleRows, $numbers, $validateValues): bool {
+            if (isset($owners[$column]) && $owners[$column] !== $field) {
+                return false;
+            }
+            if (!$validateValues) {
+                return true;
+            }
+
+            $index = 0;
+            foreach (str_split($column) as $letter) {
+                $index = $index * 26 + ord($letter) - 64;
+            }
+            $values = array_filter(array_map(
+                fn (array $row): string => $this->stringify($row[$index - 1] ?? null),
+                array_slice($sampleRows, 0, 8)
+            ), static fn (string $value): bool => $value !== '');
+            if ($values === []) {
+                return isset($owners[$column]);
+            }
+
+            $compatible = 0;
+            foreach ($values as $value) {
+                $isNumber = $numbers->parse($value) !== null;
+                $valid = match ($field) {
+                    'quantity', 'unit_price', 'total_price' => $isNumber,
+                    'position_number' => preg_match('/^\d+(?:\.\d+)*\.?$/u', $value) === 1,
+                    'name' => !$isNumber && preg_match('/\p{L}/u', $value) === 1,
+                    'unit' => !$isNumber && mb_strlen($value) <= 30 && preg_match('/\p{L}/u', $value) === 1,
+                    'code' => !$isNumber && (isset($owners[$column]) || preg_match('/\d/u', $value) === 1),
+                    default => false,
+                };
+                $compatible += $valid ? 1 : 0;
+            }
+
+            return $compatible * 2 >= count($values);
+        }, ARRAY_FILTER_USE_BOTH);
     }
 
     private function normalizeHeaderRow(mixed $headerRow, array $rows): ?int

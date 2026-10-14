@@ -17,10 +17,13 @@ use Mockery;
 use PDOException;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 final class EstimateImportSafeErrorTest extends TestCase
 {
     use RefreshDatabase;
+
+    private EstimateImportTestContext $context;
 
     public function test_database_failure_is_logged_but_not_returned_to_client(): void
     {
@@ -36,7 +39,7 @@ final class EstimateImportSafeErrorTest extends TestCase
         self::assertSame(trans_message('estimate.import_save_failed'), $session->error_message);
         self::assertArrayNotHasKey('technical_error_message', $session->stats);
         self::assertArrayNotHasKey('error_trace', $session->stats);
-        $status = app(EstimateImportService::class)->getImportStatus($session->id);
+        $status = app(EstimateImportService::class)->getImportStatus($session->id, $this->context->access());
         self::assertSame($session->error_message, $status['error']);
         self::assertSame($session->error_message, $status['message']);
         self::assertStringNotContainsString('private-value', json_encode($status));
@@ -48,10 +51,10 @@ final class EstimateImportSafeErrorTest extends TestCase
         $raw = 'SQLSTATE[22001]: insert into estimate_items values (private-value)';
         $session->update(['status' => 'failed', 'error_message' => $raw, 'stats' => ['message' => $raw, 'technical_error_message' => $raw, 'error_trace' => '/private/server/path']]);
         $service = app(EstimateImportService::class);
-        $status = $service->getImportStatus($session->id);
+        $status = $service->getImportStatus($session->id, $this->context->access());
         self::assertSame(trans_message('estimate.import_save_failed'), $status['error']);
         self::assertSame($status['error'], $status['message']);
-        $history = $service->getImportHistory($session->organization_id)->toArray();
+        $history = $service->getImportHistory($session->organization_id, 50, $this->context->access())->toArray();
         self::assertSame($status['error'], $history[0]['error_message']);
         self::assertStringNotContainsString('SQLSTATE', json_encode($history));
         self::assertStringNotContainsString('private-value', json_encode($history));
@@ -70,15 +73,8 @@ final class EstimateImportSafeErrorTest extends TestCase
 
     private function createImportSession(): ImportSession
     {
-        return ImportSession::query()->create([
-            'user_id' => User::factory()->create()->id,
-            'organization_id' => Organization::factory()->create()->id,
-            'status' => 'queued',
-            'file_name' => 'estimate.xlsx',
-            'file_format' => 'xlsx',
-            'file_size' => 100,
-            'options' => [],
-            'stats' => [],
-        ]);
+        $this->context = EstimateImportTestContext::create();
+
+        return $this->context->session(['status' => 'queued']);
     }
 }

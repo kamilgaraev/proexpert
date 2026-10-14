@@ -14,6 +14,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
+use Tests\Support\EstimateImportTestContext;
 
 class RealSmetaImportTest extends TestCase
 {
@@ -39,14 +40,12 @@ class RealSmetaImportTest extends TestCase
         Queue::fake();
         Storage::fake('s3');
 
-        $user = User::factory()->create();
-        $organization = Organization::factory()->create();
+        $context = EstimateImportTestContext::create();
+        $user = $context->user;
+        $organization = $context->organization;
         
         // Смете ТРЕБУЕТСЯ проект по ограничениям БД
-        $project = \App\Models\Project::first() ?: \App\Models\Project::factory()->create([
-            'organization_id' => $organization->id,
-            'name' => 'Тестовый проект для импорта'
-        ]);
+        $project = $context->project;
         
         /** @var EstimateImportService $importService */
         $importService = app(EstimateImportService::class);
@@ -62,13 +61,13 @@ class RealSmetaImportTest extends TestCase
             'file_name' => basename($filePath),
             'file_size' => filesize($filePath),
             'file_format' => 'xlsx',
-            'options' => [],
+            'options' => ['project_id' => $project->id],
             'stats' => ['progress' => 0],
         ]);
         $fileId = $session->id;
 
         // 3. Детекция формата и маппинг
-        $format = $importService->detectFormat($fileId);
+        $format = $importService->detectFormat($fileId, null, $context->access());
         $mapping = $format['detected_columns'];
         
         // 4. Выполнение импорта (синхронно для теста)

@@ -13,13 +13,47 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\Spr
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetNumberParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetTableReader;
 use PHPUnit\Framework\TestCase;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Foundation\Application;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
+use Psr\Log\NullLogger;
 
 final class CustomExcelNumericImportTest extends TestCase
 {
+    private mixed $previousFacadeApplication;
+
+    private Container $previousContainer;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+        $this->previousContainer = Container::getInstance();
+        $application = new Application(dirname(__DIR__, 4));
+        $application->instance('config', new Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru']]));
+        $application->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 4).'/lang'), 'ru'));
+        $application->instance('log', new NullLogger);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($application);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($this->previousFacadeApplication);
+        Container::setInstance($this->previousContainer);
+        parent::tearDown();
+    }
+
     public function test_native_and_text_decimal_quantities_keep_three_decimal_places(): void
     {
         foreach ([-8.747, -0.014, 1.205, '-0,014', '1.205'] as $quantity) {
-            $items = $this->rows([1 => ['1', 'MAT-1', 'Материал', null, null, $quantity, 10, null, -1]]);
+            $amount = (float) str_replace(',', '.', (string) $quantity) * 10;
+            $items = $this->rows([1 => ['1', 'MAT-1', 'Материал', null, null, $quantity, 10, null, $amount]]);
             self::assertEqualsWithDelta((float) str_replace(',', '.', (string) $quantity), $items[0]->quantity, 0.000001);
         }
     }
@@ -182,6 +216,69 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertCount(1, $sections);
         self::assertSame('Реальные работы', $sections[0]->itemName);
         self::assertSame('1', $sections[0]->sectionNumber);
+    }
+
+    public function test_every_net_vat_gross_and_section_control_is_checked_independently(): void
+    {
+        $rows = [
+            1 => ['1', 'RATE-1', 'Работа', null, null, 2, 100, null, 200],
+            2 => [null, null, 'Итого по разделу', null, null, null, null, null, 200],
+            3 => [null, null, 'Итого по смете', null, null, null, null, null, 200],
+            4 => [null, null, 'НДС 22%', null, null, null, null, null, 44],
+            5 => [null, null, 'Всего по смете', null, null, null, null, null, 244],
+        ];
+        $valid = $this->analyze($rows);
+        self::assertFalse($valid['total_mismatch']);
+        foreach ([2 => 199, 3 => 199, 4 => 45, 5 => 245] as $rowNumber => $wrongAmount) {
+            $corrupt = $rows;
+            $corrupt[$rowNumber][8] = $wrongAmount;
+            $analysis = $this->analyze($corrupt);
+            self::assertTrue($analysis['total_mismatch'], 'Control row '.$rowNumber);
+            self::assertSame($valid['positions'], $analysis['positions']);
+        }
+    }
+
+    public function test_plain_totals_and_vat_without_a_rate_remain_controls(): void
+    {
+        $rows = [
+            1 => ['1', 'RATE-1', 'Работа', null, null, 2, 100, null, 200],
+            2 => [null, null, 'Итого без НДС', null, null, null, null, null, 200],
+            3 => [null, null, 'НДС', null, null, null, null, null, 44],
+            4 => [null, null, 'Всего', null, null, null, null, null, 244],
+        ];
+        self::assertFalse($this->analyze($rows)['total_mismatch']);
+        $rows[2][8] = 199;
+        self::assertTrue($this->analyze($rows)['total_mismatch']);
+    }
+
+    public function test_local_and_explicit_global_charges_keep_their_scopes(): void
+    {
+        $analysis = $this->analyze([
+            1 => ['1', 'RATE-1', 'Work', null, null, 1, 100, null, 100],
+            2 => [null, 'Накладные расходы', null, null, null, null, 10],
+            3 => [null, 'Итого с накладными и см. прибылью', null, null, null, null, 110],
+            4 => [null, 'Итого по смете', null, null, null, null, 110],
+            5 => [null, 'Накладные расходы', null, null, null, null, 20],
+            6 => [null, 'Всего по смете', null, null, null, null, 130],
+        ]);
+        self::assertFalse($analysis['total_mismatch']);
+        self::assertSame(110.0, $analysis['positions'][1]['total']);
+        self::assertSame(10.0, $analysis['positions'][1]['overhead']);
+        self::assertSame(20.0, $analysis['footer']['global_overhead_cost']);
+        self::assertSame(30.0, $analysis['footer']['overhead_cost']);
+        self::assertSame(100.0, $analysis['footer']['direct_costs']);
+        self::assertSame(130.0, $analysis['footer']['total_estimate_cost']);
+    }
+
+    public function test_global_charge_without_a_following_control_is_not_silently_imported(): void
+    {
+        $analysis = $this->analyze([
+            1 => ['1', 'RATE-1', 'Work', null, null, 1, 100, null, 100],
+            2 => [null, 'Итого по смете', null, null, null, null, 100],
+            3 => [null, 'Накладные расходы', null, null, null, null, 20],
+        ]);
+        self::assertTrue($analysis['total_mismatch']);
+        self::assertSame(100.0, $analysis['positions'][1]['total']);
     }
 
     private function analyze(array $rows): array

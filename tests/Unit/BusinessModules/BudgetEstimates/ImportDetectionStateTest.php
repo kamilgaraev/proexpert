@@ -14,75 +14,32 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\SignatureGenera
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\TemplateService;
 use App\Models\ImportSession;
 use App\Services\Storage\FileService;
-use Illuminate\Cache\ArrayStore;
-use Illuminate\Cache\Repository as CacheRepository;
-use Illuminate\Config\Repository;
-use Illuminate\Container\Container;
-use Illuminate\Database\Capsule\Manager;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Filesystem\Filesystem;
-use Illuminate\Support\Facades\Facade;
-use Illuminate\Translation\FileLoader;
-use Illuminate\Translation\Translator;
 use Mockery;
-use PHPUnit\Framework\TestCase;
-use Psr\Log\NullLogger;
+use Tests\TestCase;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Support\EstimateImportTestContext;
 use RuntimeException;
-use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class ImportDetectionStateTest extends TestCase
 {
-    private Manager $database;
+    use RefreshDatabase;
+
+    private EstimateImportTestContext $context;
 
     protected function setUp(): void
     {
-        $container = new Container;
-        Container::setInstance($container);
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication($container);
-        $container->instance('config', new Repository(['octane' => ['max_request_timeout' => 30]]));
-        $container->instance('log', new NullLogger);
-        $container->instance('cache', new CacheRepository(new ArrayStore));
-        $container->instance('app', new class
-        {
-            public function getLocale(): string
-            {
-                return 'ru';
-            }
-        });
-        $container->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 4).'/lang'), 'ru'));
-        $this->database = new Manager($container);
-        $this->database->addConnection(IsolatedPostgresTestDatabase::configuration());
-        $this->database->setAsGlobal();
-        $this->database->bootEloquent();
-        $this->database->getConnection()->getSchemaBuilder()->create('import_sessions', function (Blueprint $table): void {
-            $table->uuid('id')->primary();
-            $table->string('status');
-            $table->string('file_path');
-            $table->jsonb('stats')->nullable();
-            $table->jsonb('options')->nullable();
-            $table->text('error_message')->nullable();
-            $table->timestamps();
-        });
-    }
-
-    protected function tearDown(): void
-    {
-        $this->database->getConnection()->disconnect();
-        ImportSession::unsetConnectionResolver();
-        Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
-        Container::setInstance(null);
-        Mockery::close();
+        parent::setUp();
+        $this->context = EstimateImportTestContext::create();
+        config(['octane.max_request_timeout' => 30]);
     }
 
     public function test_storage_failure_is_saved_and_rethrown(): void
     {
-        $session = $this->session();
+        $session = $this->createImportSession();
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('existsCurrent')->once()->andThrow(new RuntimeException('storage unavailable'));
         try {
-            $this->service($files)->detectEstimateType($session->id);
+            $this->service($files)->detectEstimateType($session->id, $this->context->access());
             self::fail('Expected failure');
         } catch (RuntimeException $e) {
             self::assertSame('storage unavailable', $e->getMessage());
@@ -95,7 +52,7 @@ final class ImportDetectionStateTest extends TestCase
 
     public function test_parser_failure_is_saved_and_retry_clears_error(): void
     {
-        $session = $this->session();
+        $session = $this->createImportSession();
         $files = $this->readableFiles();
         $handler = $this->createMock(RuntimeImportFormatHandlerInterface::class);
         $handler->method('slug')->willReturn('test');
@@ -110,14 +67,14 @@ final class ImportDetectionStateTest extends TestCase
         });
         $service = $this->service($files, [$handler]);
         try {
-            $service->detectEstimateType($session->id);
+            $service->detectEstimateType($session->id, $this->context->access());
             self::fail('Expected failure');
         } catch (RuntimeException $e) {
             self::assertSame('parser failure', $e->getMessage());
         }
         self::assertSame('failed', $session->refresh()->status);
         self::assertSame('test', $session->stats['detection_phase']);
-        self::assertSame('test', $service->detectEstimateType($session->id)->detectedType);
+        self::assertSame('test', $service->detectEstimateType($session->id, $this->context->access())->detectedType);
         $session->refresh();
         self::assertNull($session->error_message);
         self::assertSame('completed', $session->stats['detection_phase']);
@@ -126,11 +83,11 @@ final class ImportDetectionStateTest extends TestCase
 
     public function test_interrupted_detection_is_recovered_on_status_read(): void
     {
-        $session = $this->session();
+        $session = $this->createImportSession();
         $session->update(['status' => 'detecting', 'stats' => [
             'detection_phase' => 'recognizing', 'detection_deadline_at' => time() - 1,
         ]]);
-        $status = $this->service(Mockery::mock(FileService::class))->getImportStatus($session->id);
+        $status = $this->service(Mockery::mock(FileService::class))->getImportStatus($session->id, $this->context->access());
         self::assertSame('failed', $status['status']);
         self::assertStringContainsString('прервана', $status['error']);
         self::assertSame('estimate.import_detection_interrupted', $session->refresh()->error_message);
@@ -138,9 +95,9 @@ final class ImportDetectionStateTest extends TestCase
 
     public function test_unsupported_format_has_a_safe_stored_message(): void
     {
-        $session = $this->session();
+        $session = $this->createImportSession();
         try {
-            $this->service($this->readableFiles())->detectEstimateType($session->id);
+            $this->service($this->readableFiles())->detectEstimateType($session->id, $this->context->access());
             self::fail('Expected unsupported format');
         } catch (\App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\UnsupportedEstimateImportFormatException $e) {
             self::assertSame('Формат файла не поддерживается.', $e->getMessage());
@@ -151,21 +108,21 @@ final class ImportDetectionStateTest extends TestCase
 
     public function test_successful_and_active_detection_are_not_marked_interrupted(): void
     {
-        $session = $this->session();
+        $session = $this->createImportSession();
         $service = $this->service(Mockery::mock(FileService::class));
         foreach ([['completed', time() - 100], ['recognizing', time() + 100]] as [$phase, $deadline]) {
             $session->update(['status' => 'detecting', 'stats' => [
                 'detection_phase' => $phase, 'detection_deadline_at' => $deadline,
             ]]);
-            $service->getImportStatus($session->id);
+            $service->getImportStatus($session->id, $this->context->access());
             self::assertSame('detecting', $session->refresh()->status);
             self::assertNull($session->error_message);
         }
     }
 
-    private function session(): ImportSession
+    private function createImportSession(): ImportSession
     {
-        return ImportSession::create(['status' => 'uploading', 'file_path' => 'org-1/estimate-imports/test.xlsx', 'stats' => ['progress' => 0], 'options' => []]);
+        return $this->context->session(['file_path' => 'org-'.$this->context->organization->id.'/estimate-imports/test.xlsx', 'stats' => ['progress' => 0]]);
     }
 
     private function readableFiles(): FileService

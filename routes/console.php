@@ -1,5 +1,8 @@
 <?php
 
+\Illuminate\Support\Facades\Schedule::command('estimates:cleanup-import-sources --limit=100')
+    ->everyFiveMinutes()->withoutOverlapping(10)->onOneServer();
+
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ExpireReportSubscriptionExecutionsJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\PruneReportSubscriptionDeliveriesJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob;

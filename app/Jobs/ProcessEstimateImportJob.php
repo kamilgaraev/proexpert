@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Jobs;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportErrorMessage;
@@ -10,58 +12,72 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class ProcessEstimateImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout = 1200; // Increased timeout for parsing and enrichment
+    public int $timeout = 1200;
 
-    public int $tries = 1; // Don't retry parsing automatically if it fails logic
+    public int $tries = 1;
 
-    public function __construct(
-        public string $sessionId
-    ) {
+    public bool $failOnTimeout = true;
+
+    public function __construct(public string $sessionId, public ?string $runToken = null)
+    {
         $this->queue = 'imports';
+        $this->connection = 'redis_estimate_imports';
     }
 
     public function handle(ImportPipelineService $pipeline): void
     {
-        Log::info("[ProcessEstimateImportJob] Handling session: {$this->sessionId}");
+        $session = DB::transaction(function (): ?ImportSession {
+            $session = ImportSession::query()->whereKey($this->sessionId)->lockForUpdate()->first();
+            if (! $session || $session->status !== 'queued'
+                || ($session->options['run_token'] ?? null) !== $this->runToken) {
+                return null;
+            }
+            $session->update(['status' => 'parsing', 'stats' => array_merge($session->stats ?? [], [
+                'worker_deadline_at' => now()->addSeconds($this->timeout + 60)->timestamp,
+            ])]);
 
-        $session = ImportSession::find($this->sessionId);
-
-        if (! $session) {
-            Log::error("[ProcessEstimateImportJob] Session not found: {$this->sessionId}");
-
+            return $session;
+        });
+        if ($session === null) {
             return;
         }
-
-        if ($session->status === 'failed') {
-            Log::warning("[ProcessEstimateImportJob] Session already marked failed: {$this->sessionId}");
-
-            return;
-        }
-
         try {
             $pipeline->run($session);
-        } catch (Throwable $e) {
-            Log::error('[ProcessEstimateImportJob] Pipeline failed', ['session_id' => $this->sessionId, 'exception' => $e]);
-            $userMessage = ImportErrorMessage::fromException($e);
+        } catch (Throwable $exception) {
+            $this->failed($exception);
+            $this->fail($exception);
+        }
+    }
+
+    public function failed(?Throwable $exception): void
+    {
+        DB::transaction(function () use ($exception): void {
+            $session = ImportSession::query()->whereKey($this->sessionId)->lockForUpdate()->first();
+            if (! $session || ! $session->isActive() || ($session->options['run_token'] ?? null) !== $this->runToken) {
+                return;
+            }
+            $correlationId = (string) Str::uuid();
+            $message = $exception === null ? trans_message('estimate.import_worker_interrupted') : ImportErrorMessage::fromException($exception);
             $stats = $session->stats ?? [];
             unset($stats['technical_error_message'], $stats['error_trace']);
-
-            $session->update([
-                'status' => 'failed',
-                'error_message' => $userMessage,
-                'stats' => array_merge($stats, [
-                    'message' => $userMessage,
-                ]),
+            $session->update(['status' => 'failed', 'error_message' => $message, 'stats' => array_merge($stats, [
+                'message' => $message, 'reason_code' => 'import_processing_failed', 'correlation_id' => $correlationId,
+            ])]);
+            Cache::forget("import_session_progress_{$this->sessionId}");
+            Log::error('[EstimateImport] Worker failed', [
+                'session_id' => $this->sessionId, 'correlation_id' => $correlationId,
+                'reason_code' => 'import_processing_failed', 'exception_class' => $exception === null ? null : $exception::class,
             ]);
-
-            $this->fail($e);
-        }
+        });
     }
 }

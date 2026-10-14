@@ -30,6 +30,15 @@ return [
 
     'connections' => [
 
+        'redis_estimate_imports' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'imports',
+            'retry_after' => max(1260, (int) env('REDIS_ESTIMATE_IMPORT_RETRY_AFTER', 1260)),
+            'block_for' => null,
+            'after_commit' => true,
+        ],
+
         'redis_estimate_revisions' => [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),

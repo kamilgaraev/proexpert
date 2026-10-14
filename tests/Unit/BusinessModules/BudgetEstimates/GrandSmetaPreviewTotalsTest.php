@@ -116,6 +116,6 @@ final class GrandSmetaPreviewTotalsTest extends TestCase
         $parser->method('getFooterData')->willReturn($footer);
         $bridge = new GrandSmetaRuntimeBridge(new GrandSmetaHandler, $parser, new GrandSmetaXMLParser);
 
-        return $bridge->preview(new ImportSession, 'estimate.xlsx', new ImportStructureResult('grandsmeta'));
+        return $bridge->preview(new ImportSession, 'estimate.xlsx', new ImportStructureResult('grandsmeta', metadata: ['header_confirmed' => true]));
     }
 }

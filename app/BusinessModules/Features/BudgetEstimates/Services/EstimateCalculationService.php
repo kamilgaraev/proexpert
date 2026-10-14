@@ -64,7 +64,7 @@ class EstimateCalculationService
 
             // Если ресурсов много, а сумма 0 — пробуем все-таки суммировать всё (кроме оборудования),
             // на случай если иерархия не проставилась.
-            if ($resourcesSum <= 0 && $hasChildren) {
+            if ($resourcesSum == 0 && $hasChildren) {
                 $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
                     ->where('is_not_accounted', false)
                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
@@ -116,7 +116,8 @@ class EstimateCalculationService
             }
 
             // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
-            $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
+            $finalFot = (abs($fotOtAgg) >= abs($fotOtDet) ? $fotOtAgg : $fotOtDet)
+                + (abs($fotOtmAgg) >= abs($fotOtmDet) ? $fotOtmAgg : $fotOtmDet);
             $finalHours = (new EstimateLaborHoursService)->calculate($item);
 
             if ($hasChildren || $finalFot > 0) {
@@ -151,7 +152,10 @@ class EstimateCalculationService
             $overheadAmount = (float) ($item->overhead_amount ?? 0);
             $profitAmount = (float) ($item->profit_amount ?? 0);
 
-            if ($isEquipment) {
+            if ($hasImportedTotal && ($item->metadata['import_source_components_preserved'] ?? false)) {
+                $equipmentSum = (float) ($item->equipment_cost ?? 0);
+                $directCosts = $totalAmount - $equipmentSum - $overheadAmount - $profitAmount;
+            } elseif ($isEquipment) {
                 // Прямые Затраты для оборудования — это только РЕСУРСЫ (труд/маш).
                 // Сумма самой "железки" - это оборудование.
                 if (! $hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
@@ -180,7 +184,7 @@ class EstimateCalculationService
                 }
 
                 // ⭐ Если НР и СП уже есть (пришли из парсера), НЕ пересчитываем их по процентам
-                if ($overheadAmount > 0 || $profitAmount > 0) {
+                if ($overheadAmount != 0 || $profitAmount != 0) {
                     // Доверяем данным в БД (они уже в рублях)
                 } else {
                     // Только если рублёвых сумм НЕТ, пробуем считать от ФОТ (базовая логика)
@@ -235,24 +239,6 @@ class EstimateCalculationService
         ]);
 
         return $totalAmount;
-    }
-
-    private function parseAttributesFromName(?string $name): array
-    {
-        $res = ['overhead' => 0, 'profit' => 0];
-        if (empty($name)) {
-            return $res;
-        }
-
-        // Поиск конструкций типа "НР ( 123,45 руб )"
-        if (preg_match('/(?:нр|накладные).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['overhead'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
-        }
-        if (preg_match('/(?:сп|сметная).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['profit'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
-        }
-
-        return $res;
     }
 
     public function calculateSectionTotal(EstimateSection $section): float
@@ -316,7 +302,7 @@ class EstimateCalculationService
 
         // Прямые затраты в шапке — это то, что осталось от общего Итога за вычетом ОБ, НР и СП.
         // Такая формула физически исключает расхождение шапки с разделами.
-        $totalDirectCosts = BigDecimal::max('0', $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit));
+        $totalDirectCosts = $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit);
 
         $totalAmountWithVat = (new EstimateSourceVatCalculator)->gross($estimate, $totalAmount);
 
