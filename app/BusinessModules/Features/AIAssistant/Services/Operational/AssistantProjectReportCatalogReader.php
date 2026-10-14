@@ -37,6 +37,7 @@ final readonly class AssistantProjectReportCatalogReader extends AssistantProjec
         $definitions = array_map(static fn (ReportCatalogDefinitionView $definition): array => ['code' => $definition->code,
             'title' => trans_message($definition->titleKey), 'category' => $definition->category, 'grain' => $definition->grain,
             'hash' => $definition->definitionHash->value, 'can_run' => $definition->visibility->canRun,
+            'can_export' => $definition->visibility->canExport, 'can_download' => $definition->visibility->canDownload,
             'formats' => $definition->formats], $catalog->definitions);
         usort($definitions, static fn (array $a, array $b): int => (($a['code'] !== 'accepted_production_progress') <=> ($b['code'] !== 'accepted_production_progress')) ?: strcmp($a['code'], $b['code']));
         return ['manifest' => $catalog->manifestSha256->value, 'total' => count($definitions), 'definitions' => array_slice($definitions, 0, 20)];
@@ -47,7 +48,10 @@ final readonly class AssistantProjectReportCatalogReader extends AssistantProjec
         $lines = [trans_message('ai_assistant_operational.report_catalog_scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date'], 'count' => $data['total']])];
         foreach ($data['definitions'] as $definition) {
             $lines[] = '- '.self::text($definition['title']).' ('.self::text($definition['code']).'); '
-                .trans_message('ai_assistant_operational.report_catalog_run_'.($definition['can_run'] ? 'allowed' : 'unconfirmed'));
+                .trans_message('ai_assistant_operational.report_catalog_run_'.($definition['can_run'] ? 'allowed' : 'unconfirmed')).'; '
+                .trans_message('ai_assistant_operational.report_catalog_export', ['export' => trans_message('ai_assistant_operational.permission_'.($definition['can_export'] ? 'yes' : 'no')),
+                    'download' => trans_message('ai_assistant_operational.permission_'.($definition['can_download'] ? 'yes' : 'no')),
+                    'formats' => implode(', ', array_map(static fn (string $format): string => strtoupper(self::text($format)), $definition['formats']))]);
         }
         foreach ($data['definitions'] as $definition) {
             if ($definition['code'] === 'accepted_production_progress') {
@@ -58,6 +62,7 @@ final readonly class AssistantProjectReportCatalogReader extends AssistantProjec
         $lines[] = trans_message('ai_assistant_operational.report_catalog_open', ['url' => '/reports']);
         $lines[] = trans_message('ai_assistant_operational.report_catalog_limit', ['shown' => count($data['definitions'])]);
         $lines[] = trans_message('ai_assistant_operational.report_catalog_basis');
+        $lines[] = trans_message('ai_assistant_operational.report_catalog_scope_basis');
         return implode("\n", $lines);
     }
 }

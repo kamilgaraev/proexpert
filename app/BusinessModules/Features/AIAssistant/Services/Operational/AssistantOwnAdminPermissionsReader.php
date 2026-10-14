@@ -14,17 +14,22 @@ final readonly class AssistantOwnAdminPermissionsReader extends AssistantOrganiz
         'users' => ['view' => 'admin.users.view', 'create' => 'admin.users.create', 'edit' => 'admin.users.edit', 'block' => 'admin.users.block'],
         'contracts' => ['view' => 'contracts.view', 'create' => 'contracts.create', 'edit' => 'contracts.edit', 'delete' => 'contracts.delete'],
         'invoices' => ['view' => 'payments.invoice.view', 'view_all' => 'payments.invoice.view_all', 'create' => 'payments.invoice.create', 'edit' => 'payments.invoice.edit', 'delete' => 'payments.invoice.delete'],
+        'estimates' => ['view' => 'estimates.view', 'create' => 'estimates.create', 'edit' => 'estimates.edit', 'export' => 'estimates.export'],
+        'warehouse' => ['view' => 'warehouse.view', 'manage_stock' => 'warehouse.manage_stock', 'export' => 'warehouse.reports.export'],
+        'reports' => ['view' => 'reports.view', 'run' => 'reports.run', 'export' => 'reports.export', 'download' => 'reports.download'],
+        'organization' => ['view' => 'organization.manage', 'edit' => 'organization.manage'],
+        'notifications' => ['view' => 'admin.access'],
     ];
 
     public static function hasIntent(string $query): bool
     {
-        return preg_match('/(?:у\s+меня|мои|мо[её]|я\s+|могу\s+ли\s+я).*прав|прав[а-яё]*.*(?:у\s+меня|мне)|могу\s+ли\s+я\s+управлять/iu', $query) === 1;
+        return preg_match('/(?:у\s+меня|мои|мо[её]|\bя\s+|могу\s+ли\s+я).*\bправ|\bправ[а-яё]*.*(?:у\s+меня|мне)|могу\s+ли\s+я\s+управлять/iu', $query) === 1;
     }
 
     public static function matches(string $query): bool
     {
-        return self::hasIntent($query) && preg_match('/админк|пользовател|уч[её]тн|договор|сч[её]т/iu', $query) === 1
-            && preg_match('/измени|назначь|выдай|отзови|удали|создай|оплати|заблокируй|остатк|просроч|сколько|сумм|расход|затрат|потрач|прибыл|выручк|рентабел|марж|сотрудник|отпуск|проект|уведомлен|заказ|материал|бюджет/iu', $query) !== 1;
+        return self::hasIntent($query) && preg_match('/админк|пользовател|уч[её]тн|договор|сч[её]т|смет|склад|отч[её]т|настройк|организаци|уведомлен/iu', $query) === 1
+            && preg_match('/измени|назначь|выдай|отзови|удали|создай|оплати|заблокируй|остатк|просроч|сколько|сумм|расход|затрат|потрач|прибыл|выручк|рентабел|марж|сотрудник|отпуск|проект|заказ|материал|бюджет|непрочитан|сообщен|очеред|готов|статус|ошибк|последн/iu', $query) !== 1;
     }
 
     protected function collect(User $actor, int $organizationId): array
@@ -35,6 +40,10 @@ final readonly class AssistantOwnAdminPermissionsReader extends AssistantOrganiz
                 $result[$section][$action] = $this->access->canCurrentPermission($actor, $organizationId, $permission);
             }
         }
+        if (! User::query()->whereKey($actor->id)->whereNotNull('email_verified_at')->exists()) {
+            $result['organization'] = ['view' => false, 'edit' => false];
+        }
+        $result['notifications']['manage_preferences'] = $actor->activeOrganizations()->whereKey($organizationId)->exists();
 
         return ['permissions' => $result];
     }
@@ -50,6 +59,7 @@ final readonly class AssistantOwnAdminPermissionsReader extends AssistantOrganiz
             $lines[] = '- '.trans_message('ai_assistant_operational.permission_section_'.$section).': '.implode('; ', $actions).'.';
         }
         $lines[] = trans_message('ai_assistant_operational.own_permissions_basis');
+        $lines[] = trans_message('ai_assistant_operational.own_permissions_report_basis');
 
         return implode("\n", $lines);
     }

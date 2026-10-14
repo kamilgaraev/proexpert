@@ -21,6 +21,7 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHe
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectReportExportHistoryController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
@@ -46,6 +47,9 @@ Route::prefix('api/v1/admin/reports')
         Route::get('/catalog', ReportCatalogController::class)
             ->middleware($resourceAccess)
             ->name('catalog');
+        Route::get('/projects/{project}/exports', ProjectReportExportHistoryController::class)
+            ->middleware(['project.context', 'report.project-scope'])
+            ->name('project-exports.index');
         Route::get('/workspace', [ReportWorkspacePreferencesController::class, 'show'])
             ->middleware([$workspaceModule, ...$view])
             ->name('workspace.show');

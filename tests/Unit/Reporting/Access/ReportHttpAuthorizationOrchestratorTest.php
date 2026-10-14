@@ -69,9 +69,11 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
         $orchestrator = $this->orchestrator($resolver, $subjects, $authorizer);
         $identifier = $aggregate === ReportDispatchAggregate::RUN ? self::RUN_ID : self::EXPORT_ID;
 
-        $result = $method === 'createExport'
-            ? $orchestrator->createExport($this->request(), $identifier, (string) $exportFormat)
-            : $orchestrator->{$method}($this->request(), $identifier);
+        $result = match ($method) {
+            'createExport' => $orchestrator->createExport($this->request(), $identifier, (string) $exportFormat),
+            'exportForActor' => $orchestrator->exportForActor(17, 41, $identifier),
+            default => $orchestrator->{$method}($this->request(), $identifier),
+        };
 
         self::assertSame(['context', 'authorization'], array_keys($result));
         self::assertInstanceOf(ReportExecutionContext::class, $result['context']);
@@ -476,6 +478,7 @@ final class ReportHttpAuthorizationOrchestratorTest extends TestCase
     public static function persistedOperationProvider(): array
     {
         return [
+            'show export for actor' => ['exportForActor', ReportDispatchAggregate::EXPORT, ReportOperation::VIEW],
             'show run' => ['showRun', ReportDispatchAggregate::RUN, ReportOperation::VIEW],
             'retry run' => ['retryRun', ReportDispatchAggregate::RUN, ReportOperation::RUN],
             'cancel run' => ['cancelRun', ReportDispatchAggregate::RUN, ReportOperation::RUN],

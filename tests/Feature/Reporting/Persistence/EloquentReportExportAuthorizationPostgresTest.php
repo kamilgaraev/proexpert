@@ -109,8 +109,74 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             ))
             ->actor($baseContext->actor)
             ->build();
-        Organization::factory()->create(['id' => 1]);
+        if (! Organization::query()->whereKey(1)->exists()) {
+            Organization::factory()->create(['id' => 1]);
+        }
         $this->insertReadyRun();
+    }
+
+    public function test_project_export_history_filters_scope_and_rechecks_each_export_without_returning_artifacts(): void
+    {
+        $visible = '01J00000000000000000000021'; $hidden = '01J00000000000000000000022';
+        $this->insertExport($visible, 'queued', $this->now->modify('+1 hour'));
+        $this->insertExport($hidden, 'ready', $this->now->modify('+1 hour'));
+        DB::table('report_exports')->update(['scope_project_ids' => '[52]']);
+        $scope = new ReportScope(1, [1], [52], [], new DateTimeZone('UTC'));
+        $definition = $this->source->query->definition;
+        $snapshot = new ReportSnapshotRef('materialized', 'snapshot-1', $scope, $definition->definitionHash,
+            $definition->formulaVersion, new Sha256Hash(str_repeat('c', 64)), $this->now, null, [], ReportSnapshotClassification::OPERATIONAL, null);
+        $subjects = $this->createMock(\App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader::class);
+        $subjects->method('export')->willReturnCallback(fn (string $id) => new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT, $id, $definition, $scope, $snapshot, '01J00000000000000000000000', null, null, 'csv'));
+        $target = new CurrentReportAuthorizationTarget($definition, ReportOperation::VIEW, $snapshot, 'csv');
+        $targets = $this->createMock(\App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver::class);
+        $targets->method('export')->willReturn($target);
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->method('authorizeExact')->willReturn(new CurrentReportAuthorization($this->context->actor,
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext('http', 1, [1], [52], [], new DateTimeZone('UTC'), 'history-test', null),
+            new ReportVisibility(true, true, true, true, true, true, true), $target));
+        $orchestrator = new \App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator(DB::connection(), new ReportExecutionContextFactory, $targets, $subjects, $authorizer);
+        $get = $this->createMock(\App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction::class);
+        $get->method('handle')->willReturnCallback(function (ReportExecutionContext $context, string $id) use ($hidden) {
+            DB::table('report_exports')->where('id', $id)->lockForUpdate()->first();
+            self::assertSame([52], $context->scope->projectIds);
+            if ($id === $hidden) {
+                throw \App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+            }
+            return (new \Tests\Support\Reporting\ReportExportBuilder)->id($id)->expiresAt($this->now->modify('+1 hour'))->queued();
+        });
+        $metadata = $this->createMock(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry::class);
+        $metadata->method('published')->willReturn(new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogMetadata('report', 'reports.catalog.report', \App\BusinessModules\Core\Reporting\Domain\Enums\ReportCatalogGroup::PROJECTS, 'test', 'project', 1, 0));
+        $history = new \App\BusinessModules\Core\Reporting\Application\Queries\ProjectReportExportHistory(DB::connection(), $orchestrator, $get, $metadata);
+        $result = $history->read($this->context->actor->id, 1, 52);
+        self::assertSame([$visible], array_column($result['items'], 'id'));
+        self::assertTrue($result['complete']);
+        $outerDatabase = $this->createMock(\Illuminate\Database\ConnectionInterface::class);
+        $outerDatabase->method('transactionLevel')->willReturn(0);
+        $outerDatabase->method('transaction')->willReturnCallback(static fn (callable $callback) => $callback());
+        $outerDatabase->expects(self::once())->method('statement')->with('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        $outside = new \App\BusinessModules\Core\Reporting\Application\Queries\ProjectReportExportHistory($outerDatabase, $orchestrator, $get, $metadata);
+        self::assertSame($result, $outside->read($this->context->actor->id, 1, 52));
+        self::assertTrue($result['items'][0]['retention_expired']);
+        self::assertStringNotContainsString('artifact', json_encode($result));
+        self::assertSame([], $history->read($this->context->actor->id, 1, 99)['items']);
+        self::assertSame(2, DB::table('report_exports')->count());
+        self::assertSame(0, DB::table('report_dispatch_intents')->count());
+        for ($index = 0; $index < 100; $index++) {
+            $id = (string) \Illuminate\Support\Str::ulid();
+            $this->insertExport($id, 'queued', $this->now->modify('+1 hour'));
+            DB::table('report_exports')->where('id', $id)->update(['scope_project_ids' => '[52]']);
+        }
+        $page = $history->read($this->context->actor->id, 1, 52);
+        self::assertFalse($page['complete']);
+        self::assertCount(100, $page['items']);
+        self::assertStringNotContainsString($visible, $page['next_cursor']);
+        $last = $history->read($this->context->actor->id, 1, 52, $page['next_cursor']);
+        self::assertTrue($last['complete']);
+        self::assertSame([$visible], array_column($last['items'], 'id'));
+        self::assertSame(102, DB::table('report_exports')->count());
+        $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
+        $history->read($this->context->actor->id, 1, 99, $page['next_cursor']);
     }
 
     public function test_create_locks_ready_parent_and_persists_only_after_complete_fence(): void
@@ -476,6 +542,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'snapshot_generated_at' => $source->snapshot->generatedAt,
             'snapshot_stale_at' => null,
             'snapshot_watermarks' => '[]',
+            'snapshot_materialized_source_hash' => $source->snapshot->sourceHash->value,
             'queued_at' => $this->now->modify('-2 minutes'),
             'started_at' => $this->now->modify('-90 seconds'),
             'ready_at' => $this->now->modify('-1 minute'),
@@ -537,7 +604,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         );
         $provenance = new ReportProvenance(
             'system',
-            [new ReportSourceRef('system', 'table', 'snapshot_1', '1', 'wm_1', 2, $sourceHash)],
+            [new ReportSourceRef('system', 'table', 'snapshot_1', '1.0.0', 'wm_1', 2, $sourceHash)],
             $sourceHash,
             null,
         );
@@ -615,6 +682,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'snapshot_generated_at' => $this->now->modify('-1 minute'),
             'snapshot_stale_at' => null,
             'snapshot_watermarks' => '[]',
+            'snapshot_materialized_source_hash' => $this->source->snapshot->sourceHash->value,
             'snapshot_classification' => 'operational',
             'data_classification' => 'sensitive',
             'sensitive_column_ids' => '["secret"]',
