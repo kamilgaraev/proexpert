@@ -454,11 +454,13 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         int $projectId,
         int $sessionId,
         ?string $sourceVersion = null,
+        bool $stageFiveOnly = false,
     ): void {
         $prefix = implode(':', [$organizationId, $projectId, $sessionId]).':';
         foreach ($this->currentQuantities as $key => $quantity) {
             if (str_starts_with($key, $prefix)
-                && ($sourceVersion === null || $quantity->sourceVersion === $sourceVersion)) {
+                && ($sourceVersion === null || $quantity->sourceVersion === $sourceVersion)
+                && (! $stageFiveOnly || array_key_exists('technology_source_version', $quantity->snapshotIdentity))) {
                 unset($this->currentQuantities[$key]);
             }
         }

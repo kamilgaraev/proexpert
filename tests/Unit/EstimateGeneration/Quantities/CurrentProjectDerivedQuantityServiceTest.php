@@ -52,9 +52,22 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             }
             self::assertCount(1, $repository->currentDerivedQuantities(10, 20, 30, self::SOURCE));
         }
+        $geometryData = [
+            'id' => 'quantity:independent-geometry', 'organizationId' => 10, 'projectId' => 20, 'sessionId' => 30,
+            'sourceVersion' => self::SOURCE, 'entityId' => $rows[0]->entityId,
+            'formula' => $rows[0]->formula, 'operands' => $rows[0]->operands, 'value' => $rows[0]->value,
+            'unit' => $rows[0]->unit, 'roundingMode' => 'half_up', 'roundingScale' => 2,
+            'evidenceIds' => $rows[0]->evidenceIds, 'status' => 'confirmed',
+            'formulaIdentity' => $rows[0]->formulaIdentity, 'formulaVersion' => 'geometry-formulas:v2',
+            'snapshotIdentity' => ['contract' => 'geometry-formulas:v2'], 'logicalId' => 'quantity:independent-geometry',
+        ];
+        $geometryIdentity = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity::for(new DerivedQuantity(...$geometryData));
+        $geometry = new DerivedQuantity(...[...$geometryData, 'id' => 'quantityv:'.$geometryIdentity, 'exactIdentity' => $geometryIdentity]);
+        $repository->replaceDerivedQuantityFormulaProjectionSet(10, 20, 30, 'geometry-formulas:v2', [$geometry]);
+        self::assertCount(2, $repository->currentQuantities);
         $repository->removeProjection($area->id);
         self::assertSame([], $service->derive(10, 20, 30)['quantities']);
-        self::assertSame([], $repository->currentDerivedQuantities(10, 20, 30, self::SOURCE));
+        self::assertSame([$geometry->id], array_column($repository->currentDerivedQuantities(10, 20, 30, self::SOURCE), 'id'));
         self::assertCount(1, $repository->derivedQuantityHistory(10, 20, 30, self::SOURCE, $rows[0]->logicalId));
     }
 

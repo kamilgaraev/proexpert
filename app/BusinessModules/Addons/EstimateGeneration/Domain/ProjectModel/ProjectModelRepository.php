@@ -61,6 +61,7 @@ interface ProjectModelRepository
         int $projectId,
         int $sessionId,
         ?string $sourceVersion = null,
+        bool $stageFiveOnly = false,
     ): void;
 
     /** @return list<DerivedQuantity> */

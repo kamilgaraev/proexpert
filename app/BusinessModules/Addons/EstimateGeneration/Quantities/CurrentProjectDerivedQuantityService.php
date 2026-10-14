@@ -900,7 +900,7 @@ final readonly class CurrentProjectDerivedQuantityService
             $organizationId,
             $projectId,
             $sessionId,
-            null,
+            stageFiveOnly: true,
         );
 
         return $this->blocked($code, $token, $technology, $completeness);

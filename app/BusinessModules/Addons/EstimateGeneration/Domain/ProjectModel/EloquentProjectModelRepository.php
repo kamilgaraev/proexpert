@@ -1005,12 +1005,14 @@ SQL, [
         int $projectId,
         int $sessionId,
         ?string $sourceVersion = null,
+        bool $stageFiveOnly = false,
     ): void {
         $this->database->connection()->transaction(function () use (
             $organizationId,
             $projectId,
             $sessionId,
             $sourceVersion,
+            $stageFiveOnly,
         ): void {
             $this->lockUnderstandingScope($organizationId, $projectId, $sessionId);
             $query = $this->database->table('estimate_generation_project_model_derived_quantity_projections')
@@ -1019,6 +1021,12 @@ SQL, [
                 ->where('session_id', $sessionId);
             if ($sourceVersion !== null) {
                 $query->where('source_version', $sourceVersion);
+            }
+            if ($stageFiveOnly) {
+                $owned = $this->database->table('estimate_generation_project_model_derived_quantities')
+                    ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+                    ->whereRaw("jsonb_exists(snapshot_identity, 'technology_source_version')")->select('id');
+                $query->whereIn('derived_quantity_id', $owned);
             }
             $query->delete();
         }, 3);
