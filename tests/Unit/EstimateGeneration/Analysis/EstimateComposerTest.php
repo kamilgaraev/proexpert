@@ -31,6 +31,56 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateComposerTest extends TestCase
 {
+    public function test_registered_supplementary_work_name_is_owned_by_the_server_on_fresh_and_saved_results(): void
+    {
+        $input = $this->input(allowedWorkSections: ['roofing']);
+        $payload = $this->validResult($input);
+        $payload['work_intents'][] = [...$this->unverifiedSupplementaryWork(),
+            'work_key' => 'roof_underlay', 'name' => 'Монтаж труб отопления'];
+        $runs = new ComposerRoleRunMemoryRepository;
+        $model = new RecordedEstimateComposerModel($payload);
+        $composer = new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna');
+        $first = $composer->runDetailed($input);
+        $works = array_values(array_filter($first['intents'], static fn ($work): bool => $work['work_key'] === 'roof_underlay'));
+        self::assertCount(1, $works);
+        self::assertSame('Устройство подкладочного слоя кровли', $works[0]['name']);
+        self::assertSame($first, $composer->runDetailed($input));
+        self::assertSame(1, $model->calls);
+
+        $legacy = $this->validResult($input)['work_intents'];
+        $legacy[] = [...$payload['work_intents'][array_key_last($payload['work_intents'])],
+            'candidate_id' => 'supplementary:legacy', 'entity_id' => 'entity:roof'];
+        $stored = new ComposerRoleRunMemoryRepository;
+        $stored->complete(1, '11111111-1111-4111-8111-111111111111', new AiRoleRunResult([
+            'work_intents' => $legacy, 'quarantined_intents' => [],
+        ], 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'));
+        $noCalls = new RecordedEstimateComposerModel([]);
+        $replayed = (new RunEstimateComposer($stored, $noCalls, 'openai/gpt-6-luna'))->runDetailed($input);
+        $works = array_values(array_filter($replayed['intents'], static fn ($work): bool => $work['work_key'] === 'roof_underlay'));
+        self::assertSame('Устройство подкладочного слоя кровли', $works[0]['name']);
+        self::assertSame(array_column($input->candidates, 'candidate_id'), array_column(array_values(array_filter(
+            $replayed['intents'], static fn ($work): bool => $work['kind'] === 'existing',
+        )), 'candidate_id'));
+        self::assertSame(0, $noCalls->calls);
+    }
+
+    public function test_quantity_aliases_cannot_name_a_supplementary_work_even_with_a_confirmed_source(): void
+    {
+        $input = $this->input(allowedWorkSections: ['roofing']);
+        foreach (['roof.area', 'roof.flat_area'] as $key) {
+            $payload = $this->validResult($input);
+            $payload['work_intents'][] = [...$this->unverifiedSupplementaryWork(), 'work_key' => $key];
+            $model = new RecordedEstimateComposerModel($payload);
+            $composer = new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+            $first = $composer->runDetailed($input);
+            self::assertNotContains($key, array_column($first['intents'], 'work_key'));
+            self::assertSame('estimate_composer_work_definition_unverified', $first['quarantined'][0]['reason']);
+            self::assertSame('Монтаж труб отопления', $first['quarantined'][0]['work_name']);
+            self::assertSame($first, $composer->runDetailed($input));
+            self::assertSame(1, $model->calls);
+        }
+    }
+
     public function test_unknown_work_with_a_forged_section_stays_request_info_and_replays_without_paid_calls(): void
     {
         $input = $this->input(allowedWorkSections: ['roofing']);

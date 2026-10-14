@@ -25,6 +25,39 @@ final class WorkIntentSourceClassifier
         'plumbing.pipe' => 'water_supply', 'sewerage.pipe' => 'sewerage', 'electrical.main_cable' => 'electricity', 'ventilation.duct' => 'ventilation',
     ];
 
+    // Generic operation names never select a material, equipment model or technology.
+    // Quantity aliases roof.area/roof.flat_area and conditional heating.unit are
+    // deliberately absent: each can represent several different operations.
+    private const WORK_NAMES = [
+        'rough.floor' => 'Черновая подготовка пола', 'rough.walls' => 'Черновая подготовка стен',
+        'finish.floor' => 'Чистовое покрытие пола', 'finish.paint' => 'Окраска стен',
+        'finish.baseboard' => 'Монтаж плинтуса', 'floor_screed' => 'Устройство стяжки пола',
+        'roof_underlay' => 'Устройство подкладочного слоя кровли', 'roof_covering' => 'Устройство кровельного покрытия',
+        'roof_waterproofing' => 'Устройство гидроизоляции кровли', 'roof_drainage' => 'Устройство водоотведения кровли',
+        'roof_fasteners' => 'Установка кровельного крепежа', 'roof_insulation' => 'Утепление кровли',
+        'foundation.concrete' => 'Бетонирование фундаментов', 'foundation.formwork' => 'Опалубка фундаментов',
+        'foundation.rebar' => 'Армирование фундаментов', 'foundation.waterproofing' => 'Гидроизоляция фундаментов',
+        'walls.internal' => 'Устройство внутренних перегородок', 'walls.external_volume' => 'Кладка наружных стен',
+        'facade.area' => 'Отделка фасада', 'slabs.concrete' => 'Бетонирование перекрытий',
+        'slabs.formwork' => 'Устройство опалубки перекрытий', 'slabs.rebar' => 'Армирование перекрытий',
+        'earth.plan' => 'Планировка основания', 'earth.trench' => 'Разработка грунта под фундаменты',
+        'earth.backfill' => 'Обратная засыпка пазух', 'earth.export' => 'Вывоз излишнего грунта',
+        'heating.pipe' => 'Прокладка труб отопления', 'heating.radiators' => 'Монтаж радиаторов',
+        'equipment.purchase' => 'Покупка оборудования по спецификации', 'equipment.install' => 'Монтаж оборудования',
+        'pipelines.install' => 'Монтаж технологических трубопроводов',
+        'plumbing.pipe' => 'Прокладка труб водоснабжения', 'sewerage.pipe' => 'Прокладка внутренней канализации',
+        'electrical.main_cable' => 'Прокладка магистральных кабелей', 'ventilation.duct' => 'Монтаж воздуховодов',
+    ];
+
+    public function canonicalName(string $workKey): ?string
+    {
+        if (isset(self::WORKS[$workKey]) && ! isset(self::WORK_NAMES[$workKey])) {
+            throw new InvalidArgumentException('estimate_composer_work_definition_unverified');
+        }
+
+        return self::WORK_NAMES[$workKey] ?? null;
+    }
+
     /** @return array{entity_id:string,work_section:string,basis_fact_ids:list<string>} */
     public function binding(array $intent, array $facts): array
     {

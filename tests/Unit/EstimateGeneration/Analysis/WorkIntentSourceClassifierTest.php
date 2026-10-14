@@ -9,6 +9,23 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkIntentSourceClassifierTest extends TestCase
 {
+    public function test_registered_names_do_not_choose_a_technology_or_specific_equipment(): void
+    {
+        $classifier = new WorkIntentSourceClassifier;
+        self::assertSame('Покупка оборудования по спецификации', $classifier->canonicalName('equipment.purchase'));
+        self::assertSame('Монтаж оборудования', $classifier->canonicalName('equipment.install'));
+        self::assertSame('Прокладка труб отопления', $classifier->canonicalName('heating.pipe'));
+        self::assertSame('Чистовое покрытие пола', $classifier->canonicalName('finish.floor'));
+        self::assertSame('Устройство стяжки пола', $classifier->canonicalName('floor_screed'));
+        self::assertNull($classifier->canonicalName('custom.user_outline'));
+    }
+
+    public function test_generic_heating_unit_cannot_select_an_electric_boiler_without_a_definition(): void
+    {
+        $this->expectExceptionMessage('estimate_composer_work_definition_unverified');
+        (new WorkIntentSourceClassifier)->canonicalName('heating.unit');
+    }
+
     public function test_unknown_work_does_not_become_verified_by_a_model_supplied_section(): void
     {
         $this->expectExceptionMessage('estimate_composer_work_definition_unverified');
