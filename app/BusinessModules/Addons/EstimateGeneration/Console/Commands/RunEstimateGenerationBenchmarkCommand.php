@@ -27,6 +27,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
 {
     protected $signature = 'estimate-generation:benchmark
         {--dataset=regression : development|regression|acceptance}
+        {--qualification-profile=legacy : legacy|universal technical replay coverage}
         {--format=json : json|table}
         {--output= : Relative path under the benchmark output root}
         {--emit-json : Emit JSON even when an immutable output is written}
@@ -84,6 +85,19 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         try {
             $dataset = BenchmarkDatasetType::tryFrom((string) $this->option('dataset'))
                 ?? throw new BenchmarkCommandException('dataset_invalid');
+            $qualificationProfile = (string) $this->option('qualification-profile');
+            if (! in_array($qualificationProfile, ['legacy', 'universal'], true)
+                || ($qualificationProfile === 'universal' && $dataset !== BenchmarkDatasetType::Acceptance)) {
+                throw new BenchmarkCommandException('acceptance_profile_invalid');
+            }
+            if ($qualificationProfile === 'universal' && (
+                (string) $this->option('prompt-version') === 'none:v1'
+                || (string) $this->option('price-version') === '' || (string) $this->option('normative-version') === ''
+                || (int) $this->option('settings-snapshot-id') < 1 || (int) $this->option('settings-snapshot-version') < 1
+                || preg_match('/\A[a-f0-9]{64}\z/', (string) $this->option('settings-snapshot-hash')) !== 1
+                || (string) $this->option('settings-limits') === '')) {
+                throw new BenchmarkCommandException('universal_acceptance_versions_required');
+            }
             $this->assertProductionPolicy($dataset);
             $format = (string) $this->option('format');
             if (! in_array($format, ['json', 'table'], true)) {
@@ -100,9 +114,14 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
                 (bool) $this->option('allow-unsupported'),
             ), $corpus->objects, $corpus->executionReference);
             if ($dataset === BenchmarkDatasetType::Acceptance) {
-                ($this->acceptanceGate ?? throw new BenchmarkCommandException('acceptance_master_gate_not_configured'))->assert($report);
+                ($this->acceptanceGate ?? throw new BenchmarkCommandException('acceptance_master_gate_not_configured'))->assert($report, $qualificationProfile);
             }
             $payload = $report->jsonSerialize();
+            if ($qualificationProfile === 'universal') {
+                $payload['qualification_profile'] = $qualificationProfile;
+                $payload['coverage_policy_version'] = \App\BusinessModules\Addons\EstimateGeneration\Benchmark\UniversalBenchmarkCoverage::VERSION;
+                $payload['accuracy_calibrated'] = false;
+            }
             if (($settingsLimits = (string) $this->option('settings-limits')) !== '') {
                 $payload['settings_snapshot_id'] = (int) $this->option('settings-snapshot-id');
                 $payload['settings_snapshot_version'] = (int) $this->option('settings-snapshot-version');
@@ -114,6 +133,12 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             $payload['normative_version'] = (string) $this->option('normative-version');
             $payload['price_version'] = (string) $this->option('price-version');
             BenchmarkReportData::sortRecursive($payload);
+            if ($qualificationProfile === 'universal') {
+                $qualified = $payload;
+                unset($qualified['run_id'], $qualified['generated_at'], $qualified['duration_ms']);
+                $payload['qualification_fingerprint'] = hash('sha256', json_encode($qualified, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+                BenchmarkReportData::sortRecursive($payload);
+            }
             $rendered = $format === 'json'
                 ? json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
                 : $this->tablePayload($report);

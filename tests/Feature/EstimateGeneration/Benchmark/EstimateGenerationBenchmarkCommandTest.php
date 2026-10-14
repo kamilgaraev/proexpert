@@ -52,6 +52,24 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     }
 
     #[Test]
+    public function universal_qualification_rejects_a_regression_run_before_execution(): void
+    {
+        $tester = $this->tester([$this->passingAdapter()]);
+        self::assertSame(1, $tester->execute(['--dataset' => 'regression', '--qualification-profile' => 'universal',
+            '--adapter' => 'fixture-pipeline', '--pipeline-version' => 'fixture-pipeline:v1']));
+        self::assertStringContainsString('acceptance_profile_invalid', $tester->getDisplay());
+    }
+
+    #[Test]
+    public function universal_qualification_requires_frozen_versions_before_loading_a_corpus(): void
+    {
+        $tester = $this->tester([$this->passingAdapter()]);
+        self::assertSame(1, $tester->execute(['--dataset' => 'acceptance', '--qualification-profile' => 'universal',
+            '--adapter' => 'fixture-pipeline', '--pipeline-version' => 'fixture-pipeline:v1']));
+        self::assertStringContainsString('universal_acceptance_versions_required', $tester->getDisplay());
+    }
+
+    #[Test]
     public function command_runs_without_laravel_bootstrap_or_database_and_emits_canonical_json(): void
     {
         $tester = $this->tester([$this->passingAdapter()]);

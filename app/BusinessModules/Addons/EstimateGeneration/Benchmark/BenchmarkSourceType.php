@@ -13,4 +13,7 @@ enum BenchmarkSourceType: string
     case UndimensionedSketch = 'undimensioned_sketch';
     case Dwg = 'dwg';
     case Dxf = 'dxf';
+    case SitePhoto = 'site_photo';
+    case Spreadsheet = 'xlsx';
+    case TextDescription = 'text_description';
 }

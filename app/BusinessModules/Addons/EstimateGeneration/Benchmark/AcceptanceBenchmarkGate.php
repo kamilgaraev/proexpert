@@ -14,12 +14,18 @@ final class AcceptanceBenchmarkGate
         'unknown_numeric_values_preserved' => 1.0,
     ];
 
-    public function assert(BenchmarkReportData $report): void
+    public function assert(BenchmarkReportData $report, string $profile = 'legacy'): void
     {
+        if (! in_array($profile, ['legacy', 'universal'], true)) {
+            throw new BenchmarkContractException('acceptance_profile_invalid');
+        }
         if ($report->dataset !== BenchmarkDatasetType::Acceptance || $report->caseCount < 6) {
             throw new BenchmarkContractException('acceptance_coverage_insufficient');
         }
         $this->assertSummary($report->failedCount, $report->skippedCount, $report->metrics);
+        if ($profile === 'universal') {
+            (new UniversalBenchmarkCoverage)->assert($report);
+        }
     }
 
     public function assertSummary(int $failedCount, int $skippedCount, array $metrics): void
@@ -29,7 +35,8 @@ final class AcceptanceBenchmarkGate
         }
         foreach (self::THRESHOLDS as $metric => $threshold) {
             $value = $metrics[$metric]['macro'] ?? null;
-            if (! is_float($value) && ! is_int($value) || (float) $value < $threshold) {
+            if ((! is_float($value) && ! is_int($value)) || ! is_finite((float) $value)
+                || (float) $value < $threshold || (float) $value > 1.0) {
                 throw new BenchmarkContractException('acceptance_threshold_failed_'.$metric);
             }
         }
