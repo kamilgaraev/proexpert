@@ -76,6 +76,9 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 || ! in_array($payload['native_structure']['status'] ?? null, ['available', 'partial'], true)) {
                 throw new DocumentUnitProcessingException('spreadsheet_native_structure_contract_invalid');
             }
+            $publication = $this->nativeFacts->spreadsheet($context, $payload['native_structure']);
+            $payload['native_understanding'] = (new NativeSpreadsheetUnderstanding)->summarize($publication,
+                $payload['native_structure']['status']);
 
             return new DocumentUnitOutput(
                 version: hash('sha256', $content),
@@ -85,7 +88,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 unitType: $context->type,
                 unitIndex: $context->index,
                 sourceVersion: $context->sourceVersion,
-                publication: $this->nativeFacts->spreadsheet($context, $payload['native_structure']),
+                publication: $publication,
             );
         }
 

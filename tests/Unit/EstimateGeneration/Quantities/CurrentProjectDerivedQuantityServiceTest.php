@@ -22,6 +22,56 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     private const SOURCE = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
+    public function aggregate_planning_scope_preserves_document_quantity_versions_and_stale_runs_remove_their_active_projections(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $entity = new Entity('room:native', 10, 20, 30, self::SOURCE, 'room', 'room:native', ['semantic_type' => 'room']);
+        $evidence = $this->nativeEvidence('evidence:area', 10, 20, 30, self::SOURCE, 'artifact:sheet', 'document',
+            1, null, 'xlsx:sheet:Rooms!C2');
+        $area = $this->nativeFact('fact:native-area', 10, 20, 30, self::SOURCE, $entity->id, 'area', '25.97', 'm2',
+            0.0, 'document', 'confirmed', [$evidence->id]);
+        $repository->saveSourceModel([$entity], [$area], [$evidence]);
+        $descriptionVersion = 'sha256:'.str_repeat('c', 64);
+        $description = new Entity('quantity:description', 10, 20, 30, $descriptionVersion, 'quantity', 'quantity:description');
+        $repository->saveSourceModel([$description], [new Fact('fact:description', 10, 20, 30, $descriptionVersion,
+            $description->id, 'evaluation_answer', 'Описание выбранного состава', null, 0.0, 'user_assumption', 'confirmed', [])], []);
+        $aggregate = 'sha256:'.hash('sha256', self::SOURCE."\0".$descriptionVersion);
+        $this->makeStageFiveCurrent($repository, sourceVersion: $aggregate);
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+        self::assertSame('25.97', $service->derive(10, 20, 30)['quantities']['floor_area']->amount);
+        $rows = $repository->currentDerivedQuantities(10, 20, 30, self::SOURCE);
+        self::assertCount(1, $rows);
+        self::assertSame(self::SOURCE, $rows[0]->sourceVersion);
+        self::assertSame([], $repository->currentDerivedQuantities(10, 20, 30, $aggregate));
+        foreach ([null, str_repeat('f', 64)] as $expectedToken) {
+            try {
+                $repository->replaceDerivedQuantityProjection(10, 20, 30, $aggregate, $rows, [], $expectedToken);
+                self::fail('Legacy cross-source or stale snapshot write was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+            self::assertCount(1, $repository->currentDerivedQuantities(10, 20, 30, self::SOURCE));
+        }
+        $geometryData = [
+            'id' => 'quantity:independent-geometry', 'organizationId' => 10, 'projectId' => 20, 'sessionId' => 30,
+            'sourceVersion' => self::SOURCE, 'entityId' => $rows[0]->entityId,
+            'formula' => $rows[0]->formula, 'operands' => $rows[0]->operands, 'value' => $rows[0]->value,
+            'unit' => $rows[0]->unit, 'roundingMode' => 'half_up', 'roundingScale' => 2,
+            'evidenceIds' => $rows[0]->evidenceIds, 'status' => 'confirmed',
+            'formulaIdentity' => $rows[0]->formulaIdentity, 'formulaVersion' => 'geometry-formulas:v2',
+            'snapshotIdentity' => ['contract' => 'geometry-formulas:v2'], 'logicalId' => 'quantity:independent-geometry',
+        ];
+        $geometryIdentity = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity::for(new DerivedQuantity(...$geometryData));
+        $geometry = new DerivedQuantity(...[...$geometryData, 'id' => 'quantityv:'.$geometryIdentity, 'exactIdentity' => $geometryIdentity]);
+        $repository->replaceDerivedQuantityFormulaProjectionSet(10, 20, 30, 'geometry-formulas:v2', [$geometry]);
+        self::assertCount(2, $repository->currentQuantities);
+        $repository->removeProjection($area->id);
+        self::assertSame([], $service->derive(10, 20, 30)['quantities']);
+        self::assertSame([$geometry->id], array_column($repository->currentDerivedQuantities(10, 20, 30, self::SOURCE), 'id'));
+        self::assertCount(1, $repository->derivedQuantityHistory(10, 20, 30, self::SOURCE, $rows[0]->logicalId));
+    }
+
+    #[Test]
     public function engineering_measurements_are_exact_per_entity_and_never_use_floor_area(): void
     {
         $repository = new InMemoryProjectModelRepository;
@@ -561,15 +611,16 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         string $catalogHash = '',
         string $ruleVersion = 'rules:v1',
         string $ruleHash = '',
+        string $sourceVersion = self::SOURCE,
     ): void {
         $catalogHash = $catalogHash !== '' ? $catalogHash : str_repeat('c', 64);
         $ruleHash = $ruleHash !== '' ? $ruleHash : str_repeat('d', 64);
         $token = $repository->snapshotForPlanning(10, 20, 30, 10001)['token'];
         self::assertTrue($repository->replaceTechnologyRecommendations(
-            10, 20, 30, self::SOURCE, $token, $catalogVersion, $catalogHash, [], [],
+            10, 20, 30, $sourceVersion, $token, $catalogVersion, $catalogHash, [], [],
         ));
         self::assertTrue($repository->replaceCompleteness(
-            10, 20, 30, self::SOURCE, $token, $catalogVersion, $catalogHash,
+            10, 20, 30, $sourceVersion, $token, $catalogVersion, $catalogHash,
             $ruleVersion, $ruleHash, [], [],
         ));
     }

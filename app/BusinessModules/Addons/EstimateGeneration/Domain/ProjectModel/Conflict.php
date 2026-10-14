@@ -22,6 +22,7 @@ final readonly class Conflict
         public string $reason,
         public string $status = 'unresolved',
         public int $version = 1,
+        bool $acrossSources = false,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Conflict');
@@ -36,7 +37,14 @@ final readonly class Conflict
             if (! $fact instanceof Fact) {
                 throw new InvalidArgumentException('Project model conflict fact is invalid.');
             }
-            ProjectModelInvariant::sameScope($this, $fact);
+            if ($acrossSources) {
+                if ([$this->organizationId, $this->projectId, $this->sessionId]
+                    !== [$fact->organizationId, $fact->projectId, $fact->sessionId]) {
+                    throw new InvalidArgumentException('Project model conflict fact is outside the requested scope.');
+                }
+            } else {
+                ProjectModelInvariant::sameScope($this, $fact);
+            }
             if (isset($ids[$fact->id])) {
                 throw new InvalidArgumentException('Project model conflict fact is duplicated.');
             }
@@ -68,6 +76,17 @@ final readonly class Conflict
             $facts,
             $reason,
         );
+    }
+
+    public static function betweenSources(string $id, array $facts, string $reason, string $runSourceVersion): self
+    {
+        $first = $facts[0] ?? null;
+        if (! $first instanceof Fact) {
+            throw new InvalidArgumentException('Project model conflict has no facts.');
+        }
+
+        return new self($id, $first->organizationId, $first->projectId, $first->sessionId,
+            $runSourceVersion, $facts, $reason, acrossSources: true);
     }
 
     private static function fingerprint(mixed $value, ?string $unit): string

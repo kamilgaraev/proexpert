@@ -51,6 +51,7 @@ final readonly class ProjectUnderstandingCoordinator
             $projectId,
             $sessionId,
             $this->budget->maxFacts + 1,
+            includeFactSourceEntities: true,
         );
         $snapshot = $capture['snapshot'];
         $snapshotToken = $capture['token'];
@@ -77,6 +78,7 @@ final readonly class ProjectUnderstandingCoordinator
         $inputFingerprint = $approvedParts === null ? $synthesisInput->fingerprint()
             : hash('sha256', $synthesisInput->fingerprint().'|approved-synthesis-parts:'.$approvedParts);
         $inputFingerprint = hash('sha256', ProjectUnderstandingFingerprint::CONTRACT."\0".$inputFingerprint);
+        $inputFingerprint = hash('sha256', CrossDocumentFactLinker::CONTRACT."\0".$inputFingerprint);
         if ($allowIdentityOnlyPlanning) {
             $inputFingerprint = hash('sha256', $inputFingerprint.'|identity-only-planning:v1');
         }
@@ -112,8 +114,9 @@ final readonly class ProjectUnderstandingCoordinator
             ),
             $this->budget->maxCandidatesPerGroup,
             $this->budget,
+            $sourceVersion,
         );
-        $result = $linker->link($snapshot->entities, $snapshot->facts, $snapshot->evidence);
+        $result = $linker->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
         $conflicts = [];
         $questionsByConflict = [];
         $evidenceById = [];
@@ -242,8 +245,8 @@ final readonly class ProjectUnderstandingCoordinator
             $entity = $entitiesById[$fact->entityId] ?? null;
             if ($allowIdentityOnlyPlanning && $fact->type === 'room_name' && $fact->status === 'candidate'
                 && $fact->unit === null && $fact->evidenceIds !== [] && $entity !== null && $entity->type === 'room'
-                && ($entity->attributes['identity_only'] ?? false) === true
-                && ($entity->attributes['requires_confirmation'] ?? false) === true) {
+                && ($entity->attributes['properties']['identity_only'] ?? false) === true
+                && ($entity->attributes['properties']['requires_confirmation'] ?? false) === true) {
                 continue;
             }
             if ($fact->origin !== 'unresolved'

@@ -127,6 +127,7 @@ return [
         'current_version_changed' => 'Текущая версия документа изменена.',
         'versions_compared' => 'Сведения о версиях подготовлены.',
         'workflow_submitted' => 'Документ отправлен на согласование.',
+        'workflow_preview_default_route_only' => 'Предпросмотр показывает маршрут профиля документа без изменения его этапов.',
         'workflow_decided' => 'Решение по согласованию сохранено.',
         'workflow_cancelled' => 'Согласование отменено.',
         'signature_request_created' => 'Запрос на подписание создан.',

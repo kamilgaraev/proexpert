@@ -7,10 +7,134 @@ namespace Tests\Unit\EstimateGeneration\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class NativeNumericFactFactoryTest extends TestCase
 {
+    public function test_room_name_shares_the_dimension_entity_and_retains_literal_cell_evidence(): void
+    {
+        $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $this->roomSheet('Офис'));
+        self::assertCount(2, $publication->claims);
+        self::assertSame(['room_name', 'length'], array_column($publication->claims, 'factType'));
+        self::assertSame($publication->claims[0]->entityKey, $publication->claims[1]->entityKey);
+        self::assertSame(['type' => 'string', 'data' => 'Офис'], $publication->claims[0]->value);
+        self::assertNull($publication->claims[0]->unit);
+        self::assertSame('xlsx:sheet:Размеры!C2', $publication->claims[0]->locator['native_reference']);
+        self::assertSame('1', $publication->claims[0]->locator['floor_id']);
+        self::assertSame(['accepted', 'accepted'], array_column($publication->decisions, 'status'));
+        self::assertFalse($publication->numericSources->certifies($publication->claims[0]));
+        self::assertTrue($publication->numericSources->certifies($publication->claims[1]));
+        $models = new InMemoryProjectModelRepository;
+        (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration(
+            $publication->claims, $publication->decisions, 13, 1, $publication->numericSources);
+        self::assertCount(1, $models->entities, 'Actual canonical publication must bind the source name and measurement to one room.');
+        self::assertCount(1, array_unique(array_column($models->facts, 'entityId')));
+        $formula = $this->roomSheet('Офис');
+        $formula['cells'][2] = [...$formula['cells'][2], 'formula' => '=OTHER()', 'cached_value' => 'Офис'];
+        $decisions = array_column((new NativeNumericFactFactory)->spreadsheet($this->context(), $formula)->decisions, null, 'claimId');
+        self::assertSame('candidate', $decisions['literal:native:1']->status);
+    }
+
+    public function test_room_name_rejects_non_room_entity_units_and_invalid_literals(): void
+    {
+        foreach ([['Офис', 'wall:1', ''], ['Офис', 'room:office', 'm'], ['', 'room:office', ''],
+            [str_repeat('a', 241), 'room:office', ''], [12, 'room:office', ''], ["Офис\n2", 'room:office', '']] as [$name, $entity, $unit]) {
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $this->roomSheet($name, $entity, $unit));
+            self::assertSame(['length'], array_column($publication->claims, 'factType'));
+            self::assertSame('native_room_identity_invalid', $publication->quarantinedItems[0]['reason_code']);
+        }
+    }
+
+    public function test_native_room_names_do_not_merge_documents_or_unverified_dimensions(): void
+    {
+        $factory = new NativeNumericFactFactory;
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        foreach ([13, 14] as $document) {
+            $publication = $factory->spreadsheet($this->context(documentId: $document), $this->roomSheet('Офис'));
+            $writer->writeArbitration($publication->claims, $publication->decisions, $document, 1, $publication->numericSources);
+        }
+        self::assertCount(2, $models->entities);
+        self::assertCount(2, array_unique(array_column($models->facts, 'entityId')));
+        $unverifiedModels = new InMemoryProjectModelRepository;
+        $publication = $factory->spreadsheet($this->context(), $this->roomSheet('Офис'));
+        (new ProjectModelEvidenceWriter($unverifiedModels, new InMemoryEvidenceRepository))->writeArbitration(
+            $publication->claims, $publication->decisions, 13, 1);
+        self::assertCount(2, $unverifiedModels->entities);
+        self::assertCount(2, array_unique(array_column($unverifiedModels->facts, 'entityId')));
+    }
+
+    public function test_native_room_identity_metadata_survives_measurement_publication_in_any_row_order(): void
+    {
+        $rows = [['room:office', 'length', '5', 'м', '1'], ['room:office', 'width', '10', 'м', '1'], ['room:office', 'room_name', 'Офис', '', '1']];
+        foreach ([$rows, array_reverse($rows)] as $values) {
+            $native = $this->roomSheet('Офис');
+            $native['cells'] = [];
+            foreach ($values as $row => $columns) {
+                foreach ($columns as $column => $value) {
+                    $native['cells'][] = ['address' => chr(65 + $column).($row + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+                }
+            }
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $native);
+            $models = new InMemoryProjectModelRepository;
+            (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration(
+                $publication->claims, $publication->decisions, 13, 1, $publication->numericSources);
+            self::assertCount(1, $models->entities);
+            $entity = array_values($models->entities)[0];
+            self::assertSame('Офис', $entity->attributes['name'] ?? null);
+            self::assertTrue($entity->attributes['properties']['identity_only'] ?? false);
+            self::assertTrue($entity->attributes['properties']['requires_confirmation'] ?? false);
+        }
+    }
+
+    public function test_named_native_room_revision_preserves_older_numeric_entity_and_fact_records(): void
+    {
+        $native = $this->roomSheet('Офис');
+        $native['cells'] = [];
+        $rows = [['room:office', 'length', '5', 'м', '1'], ['room:office', 'width', '10', 'м', '1'], ['room:office', 'room_name', 'Офис', '', '1']];
+        foreach ($rows as $row => $values) {
+            foreach ($values as $column => $value) {
+                $native['cells'][] = ['address' => chr(65 + $column).($row + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $legacy = $native;
+        $legacy['cells'] = array_slice($native['cells'], 0, 10);
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $factory = new NativeNumericFactFactory;
+        $old = $factory->spreadsheet($this->context(), $legacy);
+        $writer->writeArbitration($old->claims, $old->decisions, 13, 1, $old->numericSources);
+        $originalEntity = array_values($models->entities)[0];
+        $originalFacts = $models->facts;
+        $named = $factory->spreadsheet($this->context(), $native);
+        $writer->writeArbitration($named->claims, $named->decisions, 13, 1, $named->numericSources);
+        self::assertCount(2, $models->entities);
+        self::assertSame($originalEntity, $models->entities[array_key_first($models->entities)]);
+        self::assertCount(5, $models->facts);
+        foreach ($originalFacts as $key => $fact) {
+            self::assertSame($fact, $models->facts[$key]);
+        }
+    }
+
+    private function roomSheet(mixed $name, string $entity = 'room:office', string $unit = ''): array
+    {
+        $headers = [];
+        foreach (['entity_key', 'parameter', 'value', 'unit', 'floor'] as $index => $value) {
+            $headers[] = ['address' => chr(65 + $index).'1', 'value' => $value];
+        }
+        $cells = [];
+        foreach ([[$entity, 'Название помещения', $name, $unit, '1'], ['room:office', 'length', '5', 'м', '1']] as $row => $values) {
+            foreach ($values as $column => $value) {
+                $cells[] = ['address' => chr(65 + $column).($row + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+
+        return ['sheet' => 'Размеры', 'header_cells' => $headers, 'cells' => $cells];
+    }
+
     public function test_engineering_rows_share_only_the_same_source_mark_and_reject_wrong_dimensions(): void
     {
         $headers = [['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'],
@@ -137,9 +261,9 @@ final class NativeNumericFactFactoryTest extends TestCase
         self::assertSame('native_parameter_missing', $publication?->quarantinedItems[0]['reason_code']);
     }
 
-    private function context(DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet): DocumentUnitExecutionContext
+    private function context(DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet, int $documentId = 13): DocumentUnitExecutionContext
     {
-        return new DocumentUnitExecutionContext(1, 7, 9, 11, 13, $type, 1, 'sha256:'.str_repeat('a', 64),
+        return new DocumentUnitExecutionContext(1, 7, 9, 11, $documentId, $type, 1, 'sha256:'.str_repeat('a', 64),
             [], 'source.xlsx', 'application/octet-stream', 'source.xlsx', 'claim-token', 1, 0, 'draft', 17);
     }
 }

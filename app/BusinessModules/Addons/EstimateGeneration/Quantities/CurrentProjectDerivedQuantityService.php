@@ -78,6 +78,7 @@ final readonly class CurrentProjectDerivedQuantityService
             (string) ($technology['source_version'] ?? $completeness['source_version'] ?? ''),
             $result['derived'],
             $result['inactive_logical_ids'],
+            $capture['token'],
         );
 
         return [
@@ -895,12 +896,11 @@ final readonly class CurrentProjectDerivedQuantityService
         ?array $technology,
         ?array $completeness,
     ): array {
-        $sourceVersion = $technology['source_version'] ?? $completeness['source_version'] ?? null;
         $this->models->deactivateDerivedQuantityProjectionScope(
             $organizationId,
             $projectId,
             $sessionId,
-            is_string($sourceVersion) ? $sourceVersion : null,
+            stageFiveOnly: true,
         );
 
         return $this->blocked($code, $token, $technology, $completeness);

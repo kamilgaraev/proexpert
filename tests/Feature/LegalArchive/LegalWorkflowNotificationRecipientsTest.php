@@ -111,6 +111,8 @@ final class LegalWorkflowNotificationRecipientsTest extends TestCase
         $recipients = $this->resolver()->recipientsFor($this->step(), $this->document())->all();
 
         self::assertSame([1, 2, 3, 12], array_map(static fn (User $user): int => (int) $user->id, $recipients));
+        self::assertSame([1, 2, 3, 12], $this->resolver()->recipientsForAssignment($this->document(), 'role', 'document_reviewer')
+            ->map(static fn (User $user): int => (int) $user->id)->all());
         self::assertSame(7, (int) $recipients[1]->current_organization_id);
         self::assertSame(8, (int) $this->database->table('users')->where('id', 2)->value('current_organization_id'));
     }
@@ -136,6 +138,7 @@ final class LegalWorkflowNotificationRecipientsTest extends TestCase
             'user_id' => 11, 'organization_id' => 7, 'is_active' => true, 'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
         ]);
         self::assertSame([], $this->resolver()->recipientsFor($step, $this->document())->all());
+        self::assertSame([], $this->resolver()->recipientsForAssignment($this->document(), 'user', '11')->all());
     }
 
     private function resolver(): LegalWorkflowActorResolver
