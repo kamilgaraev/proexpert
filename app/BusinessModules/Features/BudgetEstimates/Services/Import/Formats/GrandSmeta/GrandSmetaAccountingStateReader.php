@@ -14,7 +14,7 @@ final class GrandSmetaAccountingStateReader
     public function detect(string $filePath, Worksheet $sheet, array $mapping, int $headerRow): array
     {
         $mapping = array_filter($mapping, static fn (mixed $column): bool => is_string($column) && trim($column) !== '');
-        if (!isset($mapping['position_number'], $mapping['code'], $mapping['name'])) {
+        if (!isset($mapping['position_number'], $mapping['name'])) {
             return [];
         }
         $producerConfirmed = false;
@@ -33,13 +33,17 @@ final class GrandSmetaAccountingStateReader
         }
         $lastDataColumn = max(array_map(static fn (string $column): int => Coordinate::columnIndexFromString($column), array_values($mapping)));
         $mirrors = [];
+        $identityColumns = [];
         foreach ($sheet->getRowIterator($headerRow + 1) as $row) {
             $rowNumber = $row->getRowIndex();
             $number = preg_split('/\s+/u', $this->text($sheet->getCell($mapping['position_number'].$rowNumber)->getCalculatedValue()))[0] ?? '';
             $name = $this->text($sheet->getCell($mapping['name'].$rowNumber)->getCalculatedValue());
-            if (preg_match('/^\d+[а-яa-z-]*$/iu', $number) !== 1 || $name === ''
-                || $this->text($sheet->getCell($mapping['code'].$rowNumber)->getCalculatedValue()) === '') {
+            if (preg_match('/^\d+[а-яa-z-]*$/iu', $number) !== 1 || $name === '') {
                 continue;
+            }
+            $identityColumns[$rowNumber] = [$mapping['position_number'], $mapping['name']];
+            if (isset($mapping['code']) && $this->text($sheet->getCell($mapping['code'].$rowNumber)->getCalculatedValue()) !== '') {
+                $identityColumns[$rowNumber][] = $mapping['code'];
             }
             $mirrors[$rowNumber] = [];
             $cells = $row->getCellIterator();
@@ -53,7 +57,7 @@ final class GrandSmetaAccountingStateReader
         if (count($mirrors) < 2 || in_array([], $mirrors, true)) {
             return [];
         }
-        $columns = array_values(array_unique([$mapping['position_number'], $mapping['code'], $mapping['name']]));
+        $columns = array_values(array_unique(array_merge(...array_values($identityColumns))));
         $reader = IOFactory::createReaderForFile($filePath);
         $reader->setReadDataOnly(false);
         $reader->setReadEmptyCells(false);
@@ -79,7 +83,7 @@ final class GrandSmetaAccountingStateReader
             $counts = ['active' => [], 'inactive' => []];
             foreach ($mirrors as $rowNumber => $rowMirrors) {
                 $gray = true;
-                foreach ($columns as $column) {
+                foreach ($identityColumns[$rowNumber] as $column) {
                     $color = $styledSheet->getStyle($column.$rowNumber)->getFont()->getColor();
                     $gray = $gray && strtoupper($color->getRGB()) === '7F7F7F';
                 }
@@ -105,6 +109,7 @@ final class GrandSmetaAccountingStateReader
                     $result[$rowNumber] = [
                         'marker' => 'grand_export_inactive',
                         'font_color' => '7F7F7F',
+                        'identity_columns' => $identityColumns[$rowNumber],
                         'active_mirror_column' => $activeColumns[0],
                         'inactive_mirror_column' => $inactiveColumns[0],
                         'source_cell' => $inactiveColumns[0].$rowNumber,
