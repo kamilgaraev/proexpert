@@ -359,25 +359,37 @@ class TimeTrackingService
      */
     public function approveTimeEntry(int $id, User $approver): bool
     {
-        return DB::transaction(function () use ($id, $approver): bool {
-            $organizationId = (int) $approver->current_organization_id;
-            $guard = app(WorkforcePeriodMutationGuard::class);
-            $guard->lockOrganization($organizationId);
-            $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
-            if (! $entry) {
-                return false;
-            }
-            $this->assertEntryActor($entry, 'time_tracking.approve', $approver);
-            $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
-            $previousStatus = $entry->status;
-            $approved = $entry->approve($approver);
-            if ($approved) {
-                $this->reportingFacts->record($entry->refresh());
-                $this->logging->audit('time_tracking.entry.approved', ['time_entry_id' => $id, 'organization_id' => $organizationId, 'performed_by' => $approver->id, 'previous_status' => $previousStatus]);
-            }
+        try {
+            return DB::transaction(function () use ($id, $approver): bool {
+                $organizationId = (int) $approver->current_organization_id;
+                $guard = app(WorkforcePeriodMutationGuard::class);
+                $guard->lockOrganization($organizationId);
+                $entry = TimeEntry::query()->where('organization_id', $organizationId)->lockForUpdate()->find($id);
+                if (! $entry) {
+                    return false;
+                }
+                $this->assertEntryActor($entry, 'time_tracking.approve', $approver);
+                $guard->assertMutable($organizationId, (int) $entry->project_id, $guard->entryFacts($entry));
+                $previousStatus = $entry->status;
+                $approved = $entry->approve($approver);
+                if ($approved) {
+                    $this->reportingFacts->record($entry->refresh());
+                    $this->logging->audit('time_tracking.entry.approved', ['time_entry_id' => $id, 'organization_id' => $organizationId, 'performed_by' => $approver->id, 'previous_status' => $previousStatus]);
+                }
 
-            return $approved;
-        });
+                return $approved;
+            });
+        } catch (DomainException $exception) {
+            // DB::transaction has already rolled back both approval and reporting fact.
+            if ($exception->getMessage() !== 'approved_time_entry_reporting_currency_invalid') {
+                throw $exception;
+            }
+            $this->logging->technical('time_tracking.entry.approval.error', [
+                'time_entry_id' => $id, 'approver_id' => $approver->id, 'error' => $exception->getMessage(),
+            ], 'error');
+
+            return false;
+        }
     }
 
     /**

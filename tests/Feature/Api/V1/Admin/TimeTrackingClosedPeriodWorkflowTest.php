@@ -57,7 +57,7 @@ final class TimeTrackingClosedPeriodWorkflowTest extends TestCase
         DB::table('workforce_payroll_periods')->insert([
             'organization_id' => $context->organization->id, 'project_id' => $project->id, 'period_start' => '2026-05-01', 'period_end' => '2026-05-31', 'status' => 'locked',
         ]);
-        $this->denied(fn () => $service->updateTimeEntry((int) $civil->id, ['title' => 'Payroll alteration']));
+        $this->denied(fn () => $service->updateTimeEntry((int) $civil->id, ['title' => 'Payroll alteration']), 'workforce.errors.payroll_period_locked');
         self::assertSame('Measured fact', $civil->refresh()->title);
     }
 
@@ -198,13 +198,13 @@ final class TimeTrackingClosedPeriodWorkflowTest extends TestCase
         return TimekeepingPeriod::create(['organization_id' => $context->organization->id, 'project_id' => $project?->id, 'month' => '2026-05-01', 'status' => $status, 'revision' => 1, 'supersedes_id' => $supersedes, 'rule_snapshot' => [], 'snapshot' => [], 'snapshot_sha256' => hash('sha256', '[]'), 'created_by' => $context->user->id]);
     }
 
-    private function denied(callable $mutation): void
+    private function denied(callable $mutation, string $errorKey = 'workforce.errors.timekeeping_closed'): void
     {
         try {
             $mutation();
             self::fail('A frozen period accepted a source mutation.');
         } catch (DomainException $exception) {
-            self::assertSame(trans_message('workforce.errors.timekeeping_closed'), $exception->getMessage());
+            self::assertSame(trans_message($errorKey), $exception->getMessage());
         }
     }
 }

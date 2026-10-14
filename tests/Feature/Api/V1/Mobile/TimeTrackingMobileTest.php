@@ -432,6 +432,26 @@ final class TimeTrackingMobileTest extends TestCase
         $this->assertDatabaseCount('time_entry_approval_reporting_facts', 0);
     }
 
+    public function test_mobile_approval_returns_closed_period_conflict_without_mutating_source(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.approve']);
+        $entry = $this->timeEntry($context, $project, ['status' => 'submitted']);
+        \App\BusinessModules\Features\WorkforceManagement\Domain\Timekeeping\Models\TimekeepingPeriod::create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'month' => '2026-05-01',
+            'status' => 'closed', 'revision' => 1, 'rule_snapshot' => [], 'snapshot' => [],
+            'snapshot_sha256' => hash('sha256', '[]'), 'created_by' => $context->user->id,
+        ]);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/'.$entry->id.'/approve')
+            ->assertStatus(409)->assertJsonPath('message', trans_message('workforce.errors.timekeeping_closed'));
+        self::assertSame('submitted', $entry->refresh()->status);
+        self::assertNull($entry->approved_at);
+        self::assertNull($entry->approved_by_user_id);
+        $this->assertDatabaseCount('time_entry_approval_reporting_facts', 0);
+    }
+
     private function timeEntry(AdminApiTestContext $context, Project $project, array $attributes = []): TimeEntry
     {
         return TimeEntry::query()->create(array_merge([

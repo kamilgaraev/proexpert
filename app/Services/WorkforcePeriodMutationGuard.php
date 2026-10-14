@@ -39,7 +39,7 @@ final class WorkforcePeriodMutationGuard
     }
 
     /** Call under the organization mutex for writes; preview may call read-only. */
-    public function assertMutable(int $organizationId, ?int $projectId, array $fact): void
+    public function assertMutable(int $organizationId, ?int $projectId, array $fact, string $payrollErrorKey = 'workforce.errors.payroll_period_locked'): void
     {
         [$from, $to] = $this->dateBounds($organizationId, $fact);
         if (Schema::hasTable('workforce_timekeeping_periods') && ! $this->isConfirmedCivilOnly($organizationId, $fact, $from, $to)) {
@@ -57,7 +57,7 @@ final class WorkforcePeriodMutationGuard
             ->where('organization_id', $organizationId)->where('status', 'locked')
             ->whereDate('period_start', '<=', $to)->whereDate('period_end', '>=', $from)
             ->when($projectId !== null, fn ($query) => $query->where(fn ($scope) => $scope->whereNull('project_id')->orWhere('project_id', $projectId)))->exists()) {
-            throw new DomainException(trans_message('workforce.errors.timekeeping_closed'), 409);
+            throw new DomainException(trans_message($payrollErrorKey));
         }
     }
 

@@ -294,7 +294,7 @@ final class ProductionLaborService
                 throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
             }
 
-            app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $workOrder->project_id, ['work_date' => $payload['work_date'], 'user_id' => $userId]);
+            app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $workOrder->project_id, ['work_date' => $payload['work_date'], 'user_id' => $userId], 'production_labor.errors.payroll_period_locked');
             $quantity = (float) $payload['quantity'];
             $planned = (float) $line->planned_quantity;
             if (! $allowOverrun && $planned > 0 && round((float) $line->accepted_quantity + $quantity, 4) > $planned) {
@@ -414,7 +414,7 @@ final class ProductionLaborService
                 }
                 app(WorkforcePeriodMutationGuard::class)->assertMutable($organizationId, (int) $workOrder->project_id, [
                     ...$entryPayload, ...($interval?->persistence() ?? []), 'work_date' => $payload['shift_date'], 'user_id' => $employee?->user_id ?? ($entryPayload['user_id'] ?? null), 'employee_id' => $employee?->id,
-                ]);
+                ], 'production_labor.errors.payroll_period_locked');
                 $hours = $interval ? $interval->netMinutes() / 60 : (float) $entryPayload['hours'];
                 if (! is_finite($hours) || $hours <= 0 || $hours > 24) {
                     throw new DomainException(trans_message('time_tracking.mobile.errors.invalid_duration'));
@@ -558,13 +558,13 @@ final class ProductionLaborService
         foreach (ProductionLaborOutputEntry::query()->where('organization_id', $workOrder->organization_id)->where('work_order_id', $workOrder->id)->get() as $output) {
             $guard->assertMutable((int) $workOrder->organization_id, (int) $workOrder->project_id, [
                 'work_date' => $output->work_date->format('Y-m-d'), 'user_id' => $output->recorded_by_user_id,
-            ]);
+            ], 'production_labor.errors.payroll_period_locked');
         }
         foreach (ProductionLaborTimesheet::query()->where('organization_id', $workOrder->organization_id)->where('work_order_id', $workOrder->id)->with('entries.employee')->get() as $timesheet) {
             foreach ($timesheet->entries as $entry) {
                 $guard->assertMutable((int) $workOrder->organization_id, (int) $workOrder->project_id, [
                     ...($entry->metadata['time_interval'] ?? []), 'work_date' => $timesheet->shift_date->format('Y-m-d'), 'user_id' => $entry->employee?->user_id ?? $entry->user_id, 'employee_id' => $entry->employee_id,
-                ]);
+                ], 'production_labor.errors.payroll_period_locked');
             }
         }
     }
