@@ -53,6 +53,7 @@ final class AssistantDataAccessPolicy
     private ?array $batchIdentity = null;
     private array $batchDecisions = [];
     private array $batchEntityQueries = [];
+    private array $engineeringElementColumns = [];
     private ?array $pendingEntityReads = null;
     private ?\Closure $currentCheckpoint = null;
 
@@ -1192,6 +1193,20 @@ final class AssistantDataAccessPolicy
             default => null,
         };
         if ($columns === null) { return null; }
+        if ($type === 'design_ifc_model_element') {
+            if ($this->aclCompiler !== null || $this->entityQueryPath !== []) { return null; }
+            $previous = $this->engineeringElementColumns;
+            $this->engineeringElementColumns = [...$columns, 'source_content_hash', 'source_schema_version', 'source_equipment_kind', 'source_materials'];
+            try {
+                $authorized = $this->compileAcl($user, $organizationId, fn (): ?Builder => $this->entityQuery($user, $organizationId, $type));
+            } finally {
+                $this->engineeringElementColumns = $previous;
+            }
+            if ($authorized === null) { return null; }
+            $table = $authorized->getModel()->getTable();
+
+            return $authorized->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns));
+        }
         $authorized = $this->entityQuery($user, $organizationId, $type);
         if ($authorized === null) { return null; }
         $model = $authorized->getModel();
@@ -1262,6 +1277,9 @@ final class AssistantDataAccessPolicy
         $query = $model->newQuery();
         if ($restrictedAggregate && is_string($aggregate)) { $query->whereNotNull($table.'.'.$aggregate); }
         $safeColumns = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? null;
+        if ($type === 'design_ifc_model_element' && $this->engineeringElementColumns !== []) {
+            $safeColumns = $this->engineeringElementColumns;
+        }
         if (is_array($safeColumns)) {
             $safeColumns = array_values(array_intersect($safeColumns, $columns));
             if ($safeColumns === []) { return null; }

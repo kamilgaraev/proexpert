@@ -142,6 +142,8 @@ final readonly class AssistantBimModelReader
         $comparisonRows = [];
         [$sourceScopes, $parentReferences] = $this->sourceScopes($candidates->take($modelLimit), $artifactScope, $packageScope, $projectScope, $organizationId, $fetchedAt);
         array_push($references, ...$parentReferences);
+        [$batchedScans, $batchedDerivatives] = $tooMany ? [[], []]
+            : $this->equipmentBatch($actor, $organizationId, $candidates, $elements, $filters);
         foreach ($candidates->take($modelLimit) as $candidate) {
             $reference = $this->reference('design_artifact_version', (int) $candidate->id, $organizationId,
                 (int) $candidate->project_id, self::VERSION_FIELDS, (string) $candidate->getRawOriginal('updated_at'), $fetchedAt,
@@ -153,11 +155,15 @@ final readonly class AssistantBimModelReader
             if (! $tooMany && $filters['answer_kind'] !== 'models') {
                 $scope = (clone $elements)->where('design_ifc_model_elements.project_id', $candidate->project_id)
                     ->where('design_ifc_model_elements.version_id', $candidate->id);
-                $derivatives = $this->access->engineeringEntityQuery($actor, $organizationId, 'design_model_derivative');
-                $derivative = $derivatives?->where('design_model_derivatives.version_id', $candidate->id)
-                    ->where('design_model_derivatives.project_id', $candidate->project_id)
-                    ->where('design_model_derivatives.status', 'ready')->where('design_model_derivatives.viewer_provider', 'thatopen')
-                    ->where('design_model_derivatives.derivative_format', 'thatopen_frag')->orderByDesc('design_model_derivatives.id')->first();
+                if (array_key_exists((int) $candidate->id, $batchedScans)) {
+                    $derivative = $batchedDerivatives[(int) $candidate->id] ?? null;
+                } else {
+                    $derivatives = $this->access->engineeringEntityQuery($actor, $organizationId, 'design_model_derivative');
+                    $derivative = $derivatives?->where('design_model_derivatives.version_id', $candidate->id)
+                        ->where('design_model_derivatives.project_id', $candidate->project_id)
+                        ->where('design_model_derivatives.status', 'ready')->where('design_model_derivatives.viewer_provider', 'thatopen')
+                        ->where('design_model_derivatives.derivative_format', 'thatopen_frag')->orderByDesc('design_model_derivatives.id')->first();
+                }
                 $schemaVersion = $derivative?->metadata['ifc_index_schema_version'] ?? null;
                 $units = $schemaVersion === 2 ? $this->units($derivative?->metadata['ifc_units'] ?? []) : [];
                 if ($derivative !== null) {
@@ -167,7 +173,8 @@ final readonly class AssistantBimModelReader
                         (string) $derivative->getRawOriginal('updated_at'), $fetchedAt,
                         $this->fieldIdentity($derivative->getAttributes(), ['id', 'project_id', 'version_id', 'status', 'viewer_provider', 'derivative_format', 'metadata']));
                 }
-                $scan = $this->index->read($scope, $filters, $this->categories($filters['element_query']), $units, $filters['compare_version_id'] !== null);
+                $scan = $batchedScans[(int) $candidate->id]
+                    ?? $this->index->read($scope, $filters, $this->categories($filters['element_query']), $units, $filters['compare_version_id'] !== null);
                 $comparisonRows[(int) $candidate->id] = $scan['comparison_rows'];
                 unset($scan['comparison_rows']);
                 $model = array_replace($model, $scan);
@@ -238,6 +245,36 @@ final readonly class AssistantBimModelReader
             'needs_clarification' => $models === [] || $tooMany || ($comparison !== null && $comparison['status'] !== 'complete'),
             'server_formatted_answer' => $this->format($models, $filters, $tooMany).($comparison === null ? '' : "\n\n".trans_message(
                 $comparison['status'] === 'complete' ? 'ai_assistant_bim.comparison' : 'ai_assistant_bim.comparison_unavailable', $comparison['counts'] ?? [])).$this->formatComparison($comparison)];
+    }
+
+    private function equipmentBatch(User $actor, int $organizationId, \Illuminate\Support\Collection $versions, Builder $elements, array $filters): array
+    {
+        if ($versions->count() < 2 || $filters['answer_kind'] !== 'elements' || $filters['include_quantities']
+            || $filters['compare_version_id'] !== null || ($filters['equipment_kind'] === null && $filters['equipment_kinds'] === null)) {
+            return [[], []];
+        }
+        $derivativeScope = $this->access->engineeringEntityQuery($actor, $organizationId, 'design_model_derivative');
+        $derivatives = [];
+        if ($derivativeScope !== null) {
+            $derivativeScope->whereIn('design_model_derivatives.version_id', $versions->pluck('id')->all())
+                ->where('design_model_derivatives.status', 'ready')->where('design_model_derivatives.viewer_provider', 'thatopen')
+                ->where('design_model_derivatives.derivative_format', 'thatopen_frag');
+            $latest = (clone $derivativeScope)->reorder()->select([])->selectRaw('MAX(design_model_derivatives.id)')
+                ->groupBy('design_model_derivatives.version_id', 'design_model_derivatives.project_id');
+            foreach ($derivativeScope->whereIn('design_model_derivatives.id', $latest)->get() as $derivative) {
+                $version = $versions->firstWhere('id', $derivative->version_id);
+                if ($version !== null && (int) $version->project_id === (int) $derivative->project_id) {
+                    $derivatives[(int) $version->id] = $derivative;
+                }
+            }
+        }
+        $models = [];
+        foreach ($versions as $version) {
+            $models[(int) $version->id] = ['project_id' => $version->project_id === null ? null : (int) $version->project_id,
+                'derivative_id' => isset($derivatives[(int) $version->id]) ? (int) $derivatives[(int) $version->id]->id : null];
+        }
+
+        return [$this->index->readEquipmentBatch(clone $elements, $models, $filters, $this->categories($filters['element_query'])), $derivatives];
     }
 
     private function sourceScopes(\Illuminate\Support\Collection $versions, ?Builder $artifactScope, ?Builder $packageScope,

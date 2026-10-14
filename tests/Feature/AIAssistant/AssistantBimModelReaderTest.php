@@ -787,7 +787,8 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertCount(1, $proofs);
         self::assertStringContainsString('COUNT(*) FILTER', $proofs[0]['query']);
         self::assertStringContainsString('source_content_hash', $proofs[0]['query']);
-        self::assertStringContainsString('"design_ifc_model_elements"."id" in (', $proofs[0]['query']);
+        self::assertStringNotContainsString('"design_ifc_model_elements"."id" in (', $proofs[0]['query']);
+        self::assertSame(1, substr_count($proofs[0]['query'], 'from "design_ifc_model_elements"'));
         self::assertStringContainsString('"design_ifc_model_elements"."project_id" = ? and "design_ifc_model_elements"."version_id" = ? and "design_ifc_model_elements"."derivative_id" = ?', $proofs[0]['query']);
         self::assertSame([(int) $version->project_id, (int) $version->id, (int) $derivative->id], array_map('intval', array_slice($proofs[0]['bindings'], -3)));
         $unknown = $this->read(['version_id' => $version->id, 'equipment_kind' => 'unknown']);
@@ -804,9 +805,21 @@ final class AssistantBimModelReaderTest extends TestCase
         for ($i = 0; $i < 14; $i++) {
             $version = $this->model('Модель '.$i, 'current-'.$i.'.ifc');
             $ids[] = $version->id;
-            $derivative = $this->readyIndex($version, 1);
+            $derivative = $this->readyIndex($version, $i === 0 ? 21487 : 1);
             $this->element($version, 'IFCPUMP', 'Насос '.$i)->updateQuietly([
                 'derivative_id' => $derivative->id, 'properties' => ['_ifc' => ['schema_version' => 2]]]);
+            if ($i === 0) {
+                DB::insert("INSERT INTO design_ifc_model_elements (organization_id, project_id, version_id, derivative_id, express_id, category, name, properties, created_at, updated_at)
+                    SELECT ?, ?, ?, ?, -item_id, 'IFCWALL', 'Стена', '{\"_ifc\":{\"schema_version\":2}}'::jsonb, NOW(), NOW()
+                    FROM generate_series(1, 21486) AS item_id", [$version->organization_id, $version->project_id, $version->id, $derivative->id]);
+            }
+        }
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id]));
+        foreach ([$hidden, $foreign] as $project) {
+            $blockedVersion = $this->model('Скрытая модель', 'blocked.ifc', $project);
+            $blockedDerivative = $this->readyIndex($blockedVersion, 1);
+            $this->element($blockedVersion, 'IFCPUMP', 'Скрытый насос')->updateQuietly(['derivative_id' => $blockedDerivative->id]);
         }
         $old = $this->model('Прежняя модель', 'old.ifc');
         $old->updateQuietly(['is_current' => false]);
@@ -819,12 +832,15 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertNotNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
         DB::flushQueryLog(); DB::enableQueryLog();
         try {
-            $equipment = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'include_estimate_links' => true]);
+            $equipment = $this->read(['project_id' => null, 'model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'include_estimate_links' => true]);
             $queries = DB::getQueryLog();
         } finally { DB::disableQueryLog(); DB::flushQueryLog(); }
         self::assertCount(14, $equipment['models']);
-        self::assertCount(14, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS indexed_count')));
-        self::assertCount(14, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS equipment_count_kind')));
+        self::assertSame($ids, array_column(array_column($equipment['models'], 'version'), 'id'));
+        self::assertSame(21487, $equipment['models'][0]['scanned_count']);
+        self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS indexed_count')));
+        self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS equipment_count_kind')));
+        self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS _assistant_row_number')));
         self::assertSame([], array_values(array_filter($queries, static fn (array $query): bool => preg_match('/^select count\\(\\*\\) as aggregate from "design_ifc_model_elements"/i', $query['query']) === 1)));
         foreach ($equipment['models'] as $model) {
             self::assertSame(['pump' => 1, 'ventilation_unit' => 0], $model['equipment_counts']);
@@ -842,8 +858,43 @@ final class AssistantBimModelReaderTest extends TestCase
         $authorized = $this->read(['project_id' => $this->project->id, 'model_query' => null, 'equipment_kind' => 'pump', 'include_estimate_links' => true]);
         self::assertCount(14, $authorized['models']);
         foreach ($authorized['models'] as $model) { self::assertSame('page_limited', $model['estimate_link_coverage']); }
+        self::assertNotNull($this->reader->verifiedAnswer($authorized, $this->fixture->member, $this->fixture->organization->id));
         \App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion::query()->whereKey($ids[0])->update(['is_current' => false]);
         self::assertNull($this->reader->verifiedAnswer($catalog, $this->fixture->member, $this->fixture->organization->id));
+    }
+
+    public function test_batched_equipment_matches_single_version_proofs_pages_and_rejects_off_page_changes(): void
+    {
+        $versions = [];
+        for ($i = 0; $i < 3; $i++) {
+            $version = $this->model('Гаражная '.$i, 'batch-'.$i.'.ifc');
+            $versions[] = $version;
+            $derivative = $this->readyIndex($version, $i === 2 ? 0 : 4);
+            if ($i === 2) { continue; }
+            foreach ([['IFCPUMP', 'Насос 1'], ['IFCPUMP', 'Насос 2'],
+                ['IFCBUILDINGELEMENTPROXY', 'Приточная установка'], ['IFCWALL', 'Стена']] as [$category, $name]) {
+                $last = $this->element($version, $category, $name);
+                $last->updateQuietly(['derivative_id' => $derivative->id]);
+            }
+            $this->element($version, 'IFCPUMP', 'Устаревший насос')->updateQuietly(['derivative_id' => null]);
+        }
+        $filters = ['model_query' => null, 'equipment_kinds' => ['pump', 'ventilation_unit'], 'offset' => 1,
+            'limit' => 1, 'include_properties' => true, 'include_estimate_links' => true];
+        $batched = $this->read($filters);
+        self::assertSame([3, 3, 0], array_column($batched['models'], 'total'));
+        self::assertSame([4, 4, 0], array_column($batched['models'], 'scanned_count'));
+        foreach ($versions as $i => $version) {
+            $single = $this->read($filters + ['version_id' => $version->id]);
+            self::assertSame($single['models'][0], $batched['models'][$i]);
+        }
+        self::assertNotNull($this->reader->verifiedAnswer($batched, $this->fixture->member, $this->fixture->organization->id));
+        DB::table('design_ifc_model_elements')->where('id', $last->id)->update([
+            'properties' => json_encode(['_ifc' => ['schema_version' => 2], 'Pset_WallCommon' => ['Width' => 42]], JSON_THROW_ON_ERROR)]);
+        self::assertNull($this->reader->verifiedAnswer($batched, $this->fixture->member, $this->fixture->organization->id));
+        $current = $this->read($filters);
+        $this->fixture->member->assignedProjects()->updateExistingPivot($this->project->id, ['is_active' => false]);
+        $this->expectException(AccessDeniedHttpException::class);
+        $this->reader->verifiedAnswer($current, $this->fixture->member, $this->fixture->organization->id);
     }
 
     public function test_mixed_equipment_counts_cover_all_rows_and_keep_ventilation_units_distinct_from_fans(): void
