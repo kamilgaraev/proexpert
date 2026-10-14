@@ -137,7 +137,7 @@ final class LegalDocumentFileService
                 );
             }
 
-            if ($exception instanceof LegalArchiveLockConflict || $exception instanceof LegalDocumentVersionNumberConflict) {
+            if ($exception instanceof LegalArchiveLockConflict || $exception instanceof DomainException) {
                 throw $exception;
             }
 

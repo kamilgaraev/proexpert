@@ -108,7 +108,14 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.files.upload');
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
-            $version = $this->registry->addVersion($owner, $this->organizationId($request), (int) $actor->id, $request->validated(), $request->file('file'));
+            $version = $this->registry->addVersion(
+                $owner,
+                $this->organizationId($request),
+                (int) $actor->id,
+                $request->validated(),
+                $request->file('file'),
+                (bool) ($request->validated('make_current') ?? true),
+            );
 
             $response = AdminResponse::success(new LegalArchiveDocumentVersionResource($version), trans_message('legal_archive.messages.version_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,

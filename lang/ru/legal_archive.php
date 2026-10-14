@@ -151,6 +151,7 @@ return [
         'workflow_template_version_created' => 'Новая версия маршрута согласования выпущена.',
     ],
     'domain_errors' => [
+        'legal_document_editing_frozen' => 'Актуальный файл защищён от изменения. Замена недоступна.',
         'legal_document_version_number_taken' => 'Этот номер версии уже используется. Укажите следующий номер версии.',
         'archive_blocked_by_legal_hold' => 'Документ нельзя перевести в архив, пока включена защита от архивирования.',
         'document_not_archived' => 'Документ не находится в архиве.',
