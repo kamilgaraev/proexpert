@@ -835,6 +835,8 @@ class AIAssistantServiceBudgetTest extends TestCase
             ['Количество всех материалов в BIM-модели', 'elements', true],
             ['Количество видов материалов в BIM-модели', 'elements', true],
             ['Покажи материалы и объёмы без свойств', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, но не показывай свойства', 'materials_and_quantities', false],
+            ['Покажи материалы и объёмы, свойства не нужны', 'materials_and_quantities', false],
             ['Покажи материалы, но не показывай объёмы в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы не нужны в BIM-модели', 'materials', false],
             ['Покажи материалы, объёмы исключи в BIM-модели', 'materials', false],

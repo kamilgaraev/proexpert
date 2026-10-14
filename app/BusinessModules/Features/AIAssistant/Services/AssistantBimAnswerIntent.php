@@ -9,7 +9,7 @@ final readonly class AssistantBimAnswerIntent
     public static function materialsAndQuantities(string $query): bool
     {
         $quantityQuery = preg_replace('/(?<!\pL)количеств[а-яё]*\s+(?:(?:вс[её][а-яё]*|разн[а-яё]*|различн[а-яё]*|уникальн[а-яё]*|вид[а-яё]*|тип[а-яё]*)\s+)*материал[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
-        $propertyQuery = preg_replace('/(?<!\pL)(?:без|не)\s+свойств[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
+        $propertyQuery = preg_replace('/(?<!\pL)(?:без|не)\s+(?:(?:показывай|показывать|выводи|выводить|включай|включать|нужно|надо)\s+){0,2}свойств[а-яё]*(?!\pL)|(?<!\pL)свойств[а-яё]*\s+(?:не\s+нуж[а-яё]*|исключи[а-яё]*|убери[а-яё]*)/iu', '', $query) ?? $query;
 
         return preg_match('/(?<!\pL)материал[а-яё]*(?!\pL)/iu', $query) === 1
             && preg_match('/(?<!\pL)(?:объ[её]м[а-яё]*|единиц[а-яё]*\s+измерени[а-яё]*|количеств[а-яё]*)(?!\pL)/iu', $quantityQuery) === 1

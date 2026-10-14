@@ -49,7 +49,7 @@ final class AssistantBimModelSelector
         $literal = preg_quote(str_replace('ё', 'е', mb_strtolower(trim($selector))), '/');
         $query = str_replace('ё', 'е', mb_strtolower($question));
 
-        return preg_match('/(?:проект[а-я]*|(?:по|на|в)\s+(?:строительн[а-я]*\s+)?объект[а-я]*)\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
+        return preg_match('/(?:проект[а-я]*|(?:по|на|в)\s+(?:строительн[а-я]*\s+)?объект[а-я]*(?:\s+(?:капитальн[а-я]*\s+)?строительств[а-я]*)?)\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
     }
 
     public static function hasProjectScope(string $question): bool
@@ -59,7 +59,7 @@ final class AssistantBimModelSelector
 
     public static function namedProject(string $question): ?string
     {
-        if (! preg_match('/(?<![\pL\pN])(?:проект(?:е|у|а)?|(?:по|на|в)\s+(?:строительн[а-яё]*\s+)?объект(?:е|у|а)?)\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
+        if (! preg_match('/(?<![\pL\pN])(?:проект(?:е|у|а)?|(?:по|на|в)\s+(?:строительн[а-яё]*\s+)?объект(?:е|у|а)?(?:\s+(?:капитальн[а-яё]*\s+)?строительств[а-яё]*)?)\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
             return null;
         }
         if ($match[1] !== '') {
