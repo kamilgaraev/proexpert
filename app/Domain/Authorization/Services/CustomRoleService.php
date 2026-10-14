@@ -5,7 +5,9 @@ namespace App\Domain\Authorization\Services;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -52,6 +54,69 @@ class CustomRoleService
             $this->assertOrganizationPermission($createdBy, $organizationId, 'roles.create_custom');
         }
 
+        return $this->createValidatedRole($organizationId, $name, $systemPermissions, $modulePermissions,
+            $interfaceAccess, $conditions, $description, $createdBy);
+    }
+
+    public function createRoleForChildOrganization(
+        int $organizationId,
+        string $name,
+        array $permissions,
+        ?string $description,
+        User $createdBy
+    ): OrganizationCustomRole {
+        $child = Organization::findOrFail($organizationId);
+        if ($child->organization_type !== 'child') {
+            throw new AuthorizationException(trans_message('landing.multi_organization.child_access_denied'));
+        }
+
+        if ((int) $createdBy->current_organization_id === $organizationId) {
+            $this->assertOrganizationPermission($createdBy, $organizationId, 'roles.create_custom');
+        } else {
+            $parent = Organization::find($child->parent_organization_id);
+            if ($parent === null || !$parent->is_holding
+                || (int) $createdBy->current_organization_id !== (int) $parent->id) {
+                throw new AuthorizationException(trans_message('landing.multi_organization.child_access_denied'));
+            }
+            $this->assertOrganizationPermission($createdBy, (int) $parent->id, 'multi-organization.manage_child_users');
+        }
+
+        $systemPermissions = [];
+        $modulePermissions = [];
+        $availableSystemPermissions = $this->getAvailableSystemPermissions($organizationId);
+        $availableModulePermissions = $this->getAvailableModulePermissions($organizationId);
+        foreach ($permissions as $permission) {
+            if (isset($availableSystemPermissions[$permission])) {
+                $systemPermissions[] = $permission;
+                continue;
+            }
+            $module = null;
+            foreach ($availableModulePermissions as $moduleKey => $available) {
+                if (in_array($permission, $available, true)) {
+                    $module = $moduleKey;
+                    break;
+                }
+            }
+            if ($module === null) {
+                throw ValidationException::withMessages(['permissions' => "Недопустимое право: $permission"]);
+            }
+            $modulePermissions[$module][] = $permission;
+        }
+
+        return $this->createValidatedRole($organizationId, $name, $systemPermissions, $modulePermissions,
+            ['lk'], null, $description, $createdBy);
+    }
+
+    private function createValidatedRole(
+        int $organizationId,
+        string $name,
+        array $systemPermissions,
+        array $modulePermissions,
+        array $interfaceAccess,
+        ?array $conditions,
+        ?string $description,
+        ?User $createdBy
+    ): OrganizationCustomRole {
         $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
         $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($modulePermissions);
 

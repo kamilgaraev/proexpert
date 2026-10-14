@@ -21,8 +21,9 @@ final class BrigadeModerationAccess
         $context = AuthorizationContext::findOrganizationContext($organizationId);
         if ($context === null
             || !$actor->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()
-            || !UserRoleAssignment::query()->active()->where('user_id', $actor->id)->where('context_id', $context->id)
-                ->where('role_type', UserRoleAssignment::TYPE_SYSTEM)->where('role_slug', 'brigade_catalog_moderator')->exists()
+            || ($permission !== 'brigades.catalog.view'
+                && !UserRoleAssignment::query()->active()->where('user_id', $actor->id)->where('context_id', $context->id)
+                    ->where('role_type', UserRoleAssignment::TYPE_SYSTEM)->where('role_slug', 'brigade_catalog_moderator')->exists())
             || !app(AuthorizationService::class)->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
             throw new AuthorizationException(trans_message('brigades.forbidden'));
         }

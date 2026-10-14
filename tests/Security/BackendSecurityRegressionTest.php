@@ -192,6 +192,30 @@ final class BackendSecurityRegressionTest extends TestCase
         app(BrigadeModerationAccess::class)->assert($context->user, 'brigades.documents.verify');
     }
 
+    public function test_catalog_viewers_can_read_brigades_but_cannot_moderate_them(): void
+    {
+        $entitlements = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new \App\Models\Module(['slug' => 'brigades'])]));
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
+        $context = AdminApiTestContext::create(roleSlug: 'admin_viewer');
+        $brigade = BrigadeProfile::query()->create([
+            'owner_user_id' => $context->user->id, 'name' => 'Readable brigade', 'slug' => 'readable-brigade',
+            'contact_person' => $context->user->name, 'contact_email' => $context->user->email,
+            'contact_phone' => '+79990000000', 'team_size' => 1,
+            'verification_status' => BrigadeStatuses::PROFILE_APPROVED,
+        ]);
+
+        $this->getJson('/api/v1/admin/brigades/catalog', $context->authHeaders())->assertOk();
+        $this->getJson('/api/v1/admin/brigades/catalog/'.$brigade->id, $context->authHeaders())->assertOk();
+        $this->patchJson('/api/v1/admin/brigades/catalog/'.$brigade->id.'/status', [
+            'verification_status' => BrigadeStatuses::PROFILE_PENDING_REVIEW,
+        ], $context->authHeaders())->assertForbidden();
+        self::assertSame(BrigadeStatuses::PROFILE_APPROVED, $brigade->fresh()->verification_status);
+
+        $this->expectException(AuthorizationException::class);
+        app(BrigadeModerationAccess::class)->assert($context->user, 'brigades.documents.verify');
+    }
+
     public function test_tracking_links_preserve_signed_destination_and_reject_tampering(): void
     {
         $analytics = Mockery::mock(AnalyticsService::class);

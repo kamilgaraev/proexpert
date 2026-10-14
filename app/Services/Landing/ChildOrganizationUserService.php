@@ -252,11 +252,8 @@ class ChildOrganizationUserService
 
     public function createRoleFromTemplate(int $organizationId, string $templateKey, array $customData, User $createdBy): OrganizationCustomRole
     {
+        $this->assertAllowedRoleData(array_merge($customData, ['template' => $templateKey]));
         $templates = $this->getAvailableRoleTemplates();
-
-        if (! isset($templates[$templateKey])) {
-            throw new \Exception('Шаблон роли не найден');
-        }
 
         $template = $templates[$templateKey];
 
@@ -264,17 +261,12 @@ class ChildOrganizationUserService
             'name' => $customData['name'] ?? $template['name'],
             'description' => $customData['description'] ?? $template['description'],
             'permissions' => $customData['permissions'] ?? $template['permissions'],
-            'color' => $customData['color'] ?? $template['color'],
-            'is_active' => true,
         ];
 
-        return $this->customRoleService->createRole(
+        return $this->customRoleService->createRoleForChildOrganization(
             $organizationId,
             $roleData['name'],
             $roleData['permissions'],
-            [],
-            ['lk'],
-            null,
             $roleData['description'],
             $createdBy
         );
@@ -410,17 +402,12 @@ class ChildOrganizationUserService
             'name' => $roleData['name'],
             'description' => $roleData['description'] ?? null,
             'permissions' => $roleData['permissions'] ?? [],
-            'color' => $roleData['color'] ?? '#6B7280',
-            'is_active' => true,
         ];
 
-        return $this->customRoleService->createRole(
+        return $this->customRoleService->createRoleForChildOrganization(
             $organizationId,
             $data['name'],
             $data['permissions'],
-            [],
-            ['lk'],
-            null,
             $data['description'],
             $createdBy
         );
@@ -630,7 +617,7 @@ class ChildOrganizationUserService
     {
         return array_values(array_unique(array_merge(...array_map(
             static fn (array $template): array => $template['permissions'],
-            $this->getAvailableRoleTemplates()
+            array_values($this->getAvailableRoleTemplates())
         ))));
     }
 }

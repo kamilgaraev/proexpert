@@ -14,6 +14,8 @@
 
 ## Быстрый запуск из PowerShell
 
+Перед запуском передайте один и тот же случайный секрет длиной не менее 16 символов через `LOAD_TEST_PASSWORD` в окружение сидера и k6. Значения по умолчанию нет; без секрета оба сценария завершаются до записи данных или запросов к API. Не сохраняйте секрет в репозитории и логах.
+
 ```powershell
 cd C:\Users\kamilgaraev\Desktop\prohelper_full\prohelper
 
@@ -49,7 +51,7 @@ k6 run .\load-tests\k6\most-admin-readonly.js
 | --- | --- | --- |
 | `BASE_URL` | обязательна | Домен production без `/api`, например `https://example.com` |
 | `PROFILE` | `smoke` | Один из профилей выше |
-| `LOAD_TEST_PASSWORD` | `LoadTest123!` | Пароль пользователей из сидера |
+| `LOAD_TEST_PASSWORD` | обязательна | Общий секрет сидера и k6, не менее 16 символов |
 | `ACCOUNT_LABELS` | `owner` | Какие типы аккаунтов использовать |
 | `LOGIN_PATH` | `/api/v1/admin/auth/login` | Путь логина admin API |
 | `K6_SUMMARY_JSON` | пусто | Куда сохранить JSON-отчет |
