@@ -166,7 +166,7 @@ final class BuildMostEstimateDraft
         if ($reviewItems !== []) {
             $workItem['pricing_status'] = 'not_calculated';
             $workItem['pricing_blocker'] = $reviewItems[0]['code'];
-            $workItem['total_cost'] = '0';
+            $workItem['total_cost'] = ($workItem['quantity'] ?? null) === null ? null : '0';
         } else {
             $workItem['pricing_status'] = 'calculated';
             $workItem['pricing_blocker'] = null;
@@ -182,7 +182,7 @@ final class BuildMostEstimateDraft
         unset($workItem['prompt'], $workItem['raw_document'], $workItem['document_content']);
         $workItem['pricing_status'] = 'not_calculated';
         $workItem['pricing_blocker'] = 'draft_row_budget_exceeded';
-        $workItem['total_cost'] = '0';
+        $workItem['total_cost'] = ($workItem['quantity'] ?? null) === null ? null : '0';
 
         return $workItem;
     }

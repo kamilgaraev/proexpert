@@ -187,6 +187,29 @@ final class PipelineStageFunctionalTest extends TestCase
         self::assertSame('not_calculated', $unknown['pricing_status']);
         self::assertSame('quantity_review_required', $unknown['pricing_blocker']);
         self::assertSame(0, $known['total_cost']);
+        $built = (new BuildDraftStage($results))->execute($this->documentStageContext(ProcessingStage::BuildDraft, [
+            ProcessingStage::UnderstandDocuments->value => [
+                'base_input_version' => 'sha256:'.str_repeat('a', 64), 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null,
+            ],
+            ProcessingStage::UnderstandObject->value => ['analysis' => ['object' => ['description' => 'Кладка стен']]],
+            ProcessingStage::ExtractQuantities->value => [
+                'quantity_learning_hints' => [], 'quantity_coverage_warnings' => [], 'building_quantities' => [], 'stage6_generation_context' => [],
+            ],
+            ProcessingStage::PlanWorkItems->value => $plan,
+            ProcessingStage::ResolvePrices->value => $result->transientData,
+        ], $results));
+        $candidates = $built->transientData['draft']['stage6_candidate_rows'];
+        self::assertCount(2, $candidates);
+        self::assertNull($candidates[0]['quantity']);
+        self::assertNull($candidates[0]['total_cost']);
+        self::assertSame('0', $candidates[1]['total_cost']);
+        $plan['local_estimates'][0]['sections'][0]['work_items'][1] = [...$unknown, 'key' => $unknown['key'].'-overflow'];
+        $budgeted = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->build([
+            ...$plan, 'stage6_limits' => ['max_rows' => 1],
+        ]);
+        self::assertSame('draft_row_budget_exceeded', $budgeted['stage6_candidate_rows'][1]['pricing_blocker']);
+        self::assertNull($budgeted['stage6_candidate_rows'][1]['quantity']);
+        self::assertNull($budgeted['stage6_candidate_rows'][1]['total_cost']);
     }
 
     private function unknownDocumentPlan(): array
