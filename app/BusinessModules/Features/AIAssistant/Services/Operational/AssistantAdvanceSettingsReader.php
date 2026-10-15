@@ -1,0 +1,134 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
+
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
+use App\DTOs\AdvanceAccountSettingDTO;
+use App\Models\AdvanceAccountSetting;
+use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
+
+final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizationOperationalReader
+{
+    public const TYPE = 'live_organization_advance_settings_projection';
+
+    public static function hasIntent(string $query): bool
+    {
+        return preg_match('/подотч[её]т[а-яё]*|авансов[а-яё]*\s+отч[её]т/iu', $query) === 1;
+    }
+
+    public static function matches(string $query): bool
+    {
+        $query = self::intentQuery($query);
+        $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
+        $hasProjectRequirement = preg_match('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект/iu', $query) === 1;
+        return self::hasIntent($query)
+            && ! self::hasUnsupportedSubjectScope($query)
+            && ! AssistantTemporalIntent::hasNonCurrentScope($query)
+            && preg_match('/суточн|дневн[а-яё]*|ежедневн|ежемесячн|ежегодн|еженедельн|недельн[а-яё]*|месячн[а-яё]*|годов[а-яё]*|квартальн[а-яё]*|лимит[^.!?;]*(?:в|за|на|по)\s+(?:кажд[а-яё]*\s+)?(?:день|сутки|месяц|неделю|год|квартал)(?!\pL)/iu', $query) !== 1
+            && ($hasProjectRequirement || preg_match('/максимальн[а-яё]*\s+сумм[а-яё]*\s+(?:для\s+)?(?:одн[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*|настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
+            && (preg_match('/до\s+срок/iu', $query) !== 1 || preg_match('/напомина|напомин/iu', $query) === 1)
+            && ! self::asksAboutReportApproval($query)
+            && ! self::asksAboutUnsupportedNotificationEvent($query)
+            && preg_match('/позиц[а-яё]*|количеств[а-яё]*(?!\pL)(?!\s+(?:дней|суток)(?!\pL))|печат[а-яё]*|оформлен[а-яё]*|формат[а-яё]*|шаблон[а-яё]*|содержим[а-яё]*|вложен[а-яё]*|файл[а-яё]*/iu', $query) !== 1
+            && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)|остал[а-яё]*|конкретн|по\s+отч[её]ту/iu', $query) !== 1
+            && preg_match('/(?:каки[её]|покажи(?:те)?|перечисли(?:те)?)\s+авансов[а-яё]*\s+отч[её]т|авансов[а-яё]*\s+отч[её]т[а-яё]*\s+(?:просроч|задерж)/iu', $query) !== 1
+            && preg_match('/что\s+(?:делать|будет|произойд[её]т)|каков[а-яё]*\s+последств|что\s+если/iu', $query) !== 1
+            && preg_match('/^\s*(?:пожалуйста[,\s]+|а\s+)?(?:каки[её]|какой|какая|какое|каков[а-яё]*|сколько|за\s+сколько|(?:уведомля[а-яё]*|напомина[а-яё]*|обязательно|требуется|нужен|нужно|надо|будет|будут)\s+ли|что|покажи(?:те)?|назови(?:те)?|расскажи(?:те)?|перечисли(?:те)?|подскажи(?:те)?|посмотри(?:те)?|проверь(?:те)?)(?!\pL)/iu', $query) === 1
+            && ! AssistantMutationIntent::containsRequest($query)
+            && ! AssistantMutationIntent::containsFollowUpCommand($query)
+            && ! AssistantMutationIntent::hasPresentationRequest($query)
+            && preg_match('/сколько[\s\S]*(?:раз|выдан|получен|потрачен|превыс|превыш|использован|возвращ|операци|транзакци)|(?:уже|всего|фактически)\s+(?:выдан|потрачен|получен|возвращ|израсходован)|в\s+рамках\s+лимит/iu', $query) !== 1
+            && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
+    }
+
+    public static function intentQuery(string $query): string
+    {
+        return preg_replace('/(уведомля[а-яё]*\s+ли\s+)сотрудник[а-яё]*(?=\s+об?\s+(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц)/iu', '$1получателя', $query) ?? $query;
+    }
+
+    private static function hasUnsupportedSubjectScope(string $query): bool
+    {
+        $scopeQuery = preg_replace('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект(?!\pL)/iu', '', $query) ?? $query;
+        $scopeQuery = preg_replace('/для\s+(?:сдачи|предоставления|представления|подачи)\s+авансов[а-яё]*\s+отч[её]т[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
+        $scopeQuery = preg_replace('/(?<!\pL)(?:нашей|текущей|этой)\s+организац[а-яё]*|(?:для|у|в)\s+(?:(?:нашей|текущей|этой)\s+организац[а-яё]*|организац[а-яё]*(?!\pL)(?=\s*(?:$|[.!?;,])))|у\s+нас(?!\pL)|(?:для|у)\s+подотч[её]т[а-яё]*(?:\s+(?:средств|расход[а-яё]*|операц[а-яё]*))?|для\s+(?:одн[а-яё]*|кажд[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
+
+        return preg_match('/организац|проект|объект|сотрудник|работник|пользоват|контрагент|подрядчик|(?<!\pL)(?:для|у)\s+\pL/iu', $scopeQuery) === 1;
+    }
+
+    private static function asksAboutReportApproval(string $query): bool
+    {
+        if (preg_match('/авансов[а-яё]*\s+отч[её]т/iu', $query) === 1
+            && preg_match('/согласов|одобр|утвержд|отклон/iu', $query) === 1
+            && preg_match('/обязательн|нужно|надо|порядок|процесс|этап|проверк/iu', $query) === 1) {
+            return true;
+        }
+        foreach (preg_split('/[.!?;]|\s+(?:и|или)\s+/iu', $query) ?: [] as $part) {
+            if (preg_match('/авансов[а-яё]*\s+отч[её]т/iu', $part) === 1
+                && preg_match('/согласов|одобр|утвержд|отклон/iu', $part) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function asksAboutUnsupportedNotificationEvent(string $query): bool
+    {
+        if (preg_match('/уведомл[а-яё]*|уведомля[а-яё]*/iu', $query, $notification, PREG_OFFSET_CAPTURE) !== 1) {
+            return false;
+        }
+        $eventQuery = substr($query, $notification[0][1] + strlen($notification[0][0]));
+        if (preg_match_all('/(?<!\pL)(?:о|об|обо|при|после|когда|если|в\s+случае)\s+([^.!?;]+)/iu', $eventQuery, $events) < 1) {
+            return false;
+        }
+        foreach ($events[1] as $event) {
+            foreach (preg_split('/,|\s+(?:и|или)\s+/iu', $event) ?: [] as $part) {
+                $part = preg_replace('/^\s*(?:о|об|обо|при|после|когда|если|в\s+случае)\s+/iu', '', trim($part)) ?? $part;
+                if (preg_match('/^(?:просроч[а-яё]*\s+авансов[а-яё]*\s+отч[её]т[а-яё]*|крупн[а-яё]*\s+(?:подотч[её]тн[а-яё]*\s+)?операц[а-яё]*)(?:\s+подотч[её]тн[а-яё]*\s+средств)?$/iu', $part) === 1) {
+                    continue;
+                }
+                if (preg_match('/администратор/iu', $query) === 1
+                    || preg_match('/^(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц[а-яё]*$/iu', $part) !== 1) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    protected function collect(User $actor, int $organizationId): array
+    {
+        if (! in_array('advance-accounting', $this->access->effectiveModuleSlugs($actor, $organizationId), true)
+            || ! $this->access->canCurrentPermission($actor, $organizationId, 'advance_settings.view')
+            || ! $this->access->canCurrentPermission($actor, $organizationId, 'finance.view')) { throw new AuthorizationException; }
+        $setting = AdvanceAccountSetting::query()->where('organization_id', $organizationId)->first();
+        $settings = AdvanceAccountSettingDTO::fromModelOrDefaults($setting, $organizationId)->toArray();
+        foreach (['max_single_issue_amount', 'dual_authorization_threshold', 'high_value_notification_threshold'] as $key) {
+            $value = $setting?->getRawOriginal($key);
+            $settings[$key] = $value === null ? null : (string) $value;
+        }
+        return ['stored' => $setting !== null, 'settings' => $settings];
+    }
+
+    protected function format(array $data): string
+    {
+        $settings = $data['settings'];
+        $lines = [trans_message('ai_assistant_operational.advance_settings_scope', ['date' => $data['as_of_date']]),
+            trans_message('ai_assistant_operational.advance_settings_'.($data['stored'] ? 'stored' : 'defaults'))];
+        foreach (['max_single_issue_amount', 'report_submission_deadline_days', 'dual_authorization_threshold', 'require_project_for_expense',
+            'notify_admin_on_overdue_report', 'notify_admin_on_high_value_transaction', 'high_value_notification_threshold',
+            'notify_user_on_transaction_approval', 'notify_user_on_transaction_rejection', 'send_report_reminder_days_before'] as $key) {
+            $value = $settings[$key];
+            $text = $value === null ? trans_message('ai_assistant_operational.not_recorded')
+                : (is_bool($value) ? trans_message('ai_assistant_operational.advance_settings_'.($value ? 'yes' : 'no')) : (string) $value);
+            $lines[] = '- '.trans_message('ai_assistant_operational.advance_settings_'.$key).': '.$text.'.';
+        }
+        $lines[] = trans_message('ai_assistant_operational.advance_settings_basis');
+        return implode("\n", $lines);
+    }
+}

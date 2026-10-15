@@ -1,0 +1,94 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\AIAssistant;
+
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
+use PHPUnit\Framework\TestCase;
+
+final class AssistantMutationIntentTest extends TestCase
+{
+    public function test_follow_up_command_is_not_silently_lost_when_its_attribute_is_unknown(): void
+    {
+        $query = 'Покажи активные договоры нашего объекта; поставь им особый режим';
+        self::assertFalse(AssistantMutationIntent::containsRequest($query));
+        self::assertTrue(AssistantMutationIntent::containsFollowUpCommand($query));
+        self::assertFalse(AssistantMutationIntent::containsFollowUpCommand('Покажи активные договоры и даты окончания'));
+    }
+
+    public function test_make_summary_is_read_only_without_hiding_a_second_mutation(): void
+    {
+        foreach (['Сделай сводку по проектам', 'Пожалуйста, сделайте краткую сводку по проектам',
+            'Нужно сделать сводку по проектам', 'Сделай обзор по проектам',
+            'Сделай список договоров проекта', 'Сделай подборку просроченных задач',
+            'Сделай таблицу договоров проекта', 'Сделай перечень договоров', 'Сделай выборку просроченных задач',
+            'Примени фильтр по активным договорам', 'Примените сортировку по сроку окончания',
+            'Поставь фильтр по активным договорам', 'Выставь сортировку по сроку окончания',
+            'Задай фильтр по активным договорам', 'Установи фильтр по активным договорам',
+            'Настрой сортировку по сроку окончания', 'Сделай общую сумму расходов по проекту',
+            'Сделай сумму расходов по проекту', 'Сделай договоры таблицей', 'Сделай договоры списком',
+            'Сделай даты окончания договоров жирным шрифтом', 'Сделай сроки окончания договоров отдельной колонкой',
+            'Поставь даты окончания договоров в отдельную колонку', 'Выставь сроки окончания договоров отдельной колонкой',
+            'Поставь в таблицу даты окончания договоров'] as $query) {
+            self::assertNull(AssistantMutationIntent::type($query), $query);
+            self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
+        }
+        foreach (['Сделай сводку по проектам и поставь лимит 10000',
+            'Сделай сводку и сделай лимит подотчётных средств 10000',
+            'Покажи настройки подотчётных средств и поставь новый лимит 10000',
+            'Покажи настройки и сделай нам новый максимальный лимит 10000'] as $query) {
+            self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
+        }
+        foreach (['Покажи активные договоры нашего объекта и поставь им новый срок окончания',
+            'Покажи активные договоры нашего объекта и установи для них дату окончания',
+            'Покажи активные договоры нашего объекта и поставь по ним новые сроки окончания',
+            'Покажи активные договоры нашего объекта и продли их сроки окончания',
+            'Покажи договор и продли его срок окончания',
+            'Покажи лимит подотчётных средств и увеличь его до 10000',
+            'Покажи лимит подотчётных средств и уменьши его на 1000',
+            'Покажи лимит подотчётных средств и замени его на 10000',
+            'Покажи активные договоры нашего объекта и поменяй в них подрядчика'] as $query) {
+            self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
+        }
+        self::assertTrue(AssistantMutationIntent::containsRequest('Сделай даты окончания договоров жирным шрифтом и продли их на день'));
+        self::assertTrue(AssistantMutationIntent::containsRequest('Поставь даты окончания договоров в таблицу и поставь им новый срок окончания'));
+    }
+
+    public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
+    {
+        foreach (['Поставь лимит 10000 и покажи настройки таблицей',
+            'Поставь лимит 10000 и выведи настройки таблицей'] as $query) {
+            self::assertSame('update', AssistantMutationIntent::type($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+        }
+        foreach (['Поставь лимит 10000 в таблице настроек', 'Выставь лимит 10000 в колонке настроек'] as $query) {
+            self::assertFalse(AssistantMutationIntent::hasPresentationRequest($query));
+            self::assertSame('update', AssistantMutationIntent::type($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+        }
+        foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Отключи мне уведомления администратора о просроченном авансовом отчёте',
+            'Включи нам обязательное указание проекта для подотчётного расхода',
+            'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
+            self::assertSame('update', AssistantMutationIntent::type($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+        }
+        foreach (['Увеличь', 'Увеличьте', 'Уменьши', 'Уменьшите', 'Настрой', 'Настройте', 'Установи', 'Установите',
+            'Снизь', 'Снизьте', 'Повысь', 'Повысьте', 'Поменяй', 'Поменяйте', 'Задай', 'Задайте', 'Выставь', 'Выставьте',
+            'Сделай', 'Сделайте', 'Поставь', 'Поставьте', 'Подправь', 'Подправьте', 'Скорректируй', 'Скорректируйте',
+            'Отрегулируй', 'Отрегулируйте', 'Подними', 'Поднимите', 'Понизь', 'Понизьте', 'Сократи', 'Сократите',
+            'Продли', 'Продлите', 'Сбрось', 'Сбросьте', 'Обнули', 'Обнулите', 'Примени', 'Примените', 'Замени', 'Замените'] as $command) {
+            self::assertSame('update', AssistantMutationIntent::type($command.' лимит подотчётных средств'));
+            self::assertTrue(AssistantMutationIntent::containsRequest('Покажи настройки и '.$command.' лимит подотчётных средств'));
+        }
+        foreach (['Увеличить', 'Уменьшить', 'Настроить', 'Установить', 'Снизить', 'Повысить', 'Поменять', 'Задать', 'Выставить',
+            'Сделать', 'Поставить', 'Подправить', 'Скорректировать', 'Отрегулировать', 'Поднять', 'Понизить', 'Сократить', 'Продлить', 'Сбросить', 'Обнулить', 'Применить', 'Заменить'] as $command) {
+            self::assertTrue(AssistantMutationIntent::containsRequest($command.' лимит подотчётных средств'));
+        }
+        foreach (['Какие настройки подотчётных средств действуют?', 'Какой лимит установлен для подотчётных средств?',
+            'Покажи правила согласования подотчётных средств. Ничего не меняй.'] as $query) {
+            self::assertFalse(AssistantMutationIntent::containsRequest($query));
+        }
+    }
+}

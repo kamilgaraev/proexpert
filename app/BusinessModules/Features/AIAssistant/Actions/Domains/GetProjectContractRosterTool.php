@@ -17,7 +17,8 @@ final readonly class GetProjectContractRosterTool implements AIToolInterface
     public function getDescription(): string { return trans_message('ai_assistant_contract_roster.description'); }
     public function getParametersSchema(): array
     {
-        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1]], 'required' => ['project_id'], 'additionalProperties' => false];
+        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1],
+            'deadline_filter' => ['type' => 'string', 'enum' => AssistantProjectContractRosterReader::DEADLINE_FILTERS]], 'required' => ['project_id'], 'additionalProperties' => false];
     }
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {

@@ -48,8 +48,8 @@ final class AssistantProjectAttentionTest extends TestCase
     {
         for ($i = 0; $i < 28; $i++) { $this->task($this->schedule, 'Задача '.$i); }
         $this->task($this->schedule, 'Отменённая задача', ['status' => 'cancelled']);
-        $this->defect($this->project, 'Критическое замечание', 'critical');
-        $this->defect($this->project, 'Второе критическое замечание', 'critical');
+        $this->defect($this->project, '123', 'critical');
+        $this->defect($this->project, '*Дефект [123]* <протечка> &', 'critical');
         $this->defect($this->project, 'Просроченное замечание', 'major');
         $this->defect($this->project, 'Устранённое критическое замечание', 'critical', 'resolved');
         $this->purchase($this->project, 'Первая заявка');
@@ -68,6 +68,8 @@ final class AssistantProjectAttentionTest extends TestCase
         self::assertSame(2, $groups['pending_procurement']['total']);
         self::assertSame($this->fixture->owner->name, $groups['overdue_schedule']['items'][0]['owner_name']);
         self::assertStringContainsString('Следующее действие:', $read['server_formatted_answer']);
+        self::assertStringContainsString('- 123; Ответственный:', $read['server_formatted_answer']);
+        self::assertStringContainsString('\\*Дефект \\[123\\]\\* &lt;протечка&gt; &amp;', $read['server_formatted_answer']);
         self::assertStringContainsString('2026-10-12', $read['server_formatted_answer']);
         self::assertStringNotContainsString('Чужой', json_encode($read));
         self::assertSame('verified', app(AssistantProjectAttentionReader::class)->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['validation_status']);

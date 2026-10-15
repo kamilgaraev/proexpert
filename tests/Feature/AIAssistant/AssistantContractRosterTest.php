@@ -62,5 +62,31 @@ final class AssistantContractRosterTest extends TestCase
         $deadlines = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame(25, $deadlines['data']['total']); self::assertSame(22, $deadlines['data']['overdue_count']);
         self::assertSame(2, $deadlines['data']['ending_soon_count']); self::assertSame(0, $deadlines['data']['missing_end_date_count']);
+        Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'UNDATED-AFTER-25', 'end_date' => null] + $base));
+        $undated = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(26, $undated['data']['total']);
+        self::assertCount(20, $undated['data']['items']);
+        self::assertCount(1, $undated['data']['undated_items']);
+        self::assertSame('UNDATED-AFTER-25', $undated['data']['undated_items'][0]['number']);
+        self::assertStringContainsString('Договоры без даты окончания: показано 1 из 1.', $undated['server_formatted_answer']);
+        self::assertStringContainsString('UNDATED-AFTER-25', $undated['server_formatted_answer']);
+        $missingOnly = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id, 'deadline_filter' => 'undated']);
+        self::assertSame(1, $missingOnly['data']['selected_total']);
+        self::assertSame(['UNDATED-AFTER-25'], array_column($missingOnly['data']['items'], 'number'));
+        self::assertStringNotContainsString('OWN-ACTIVE', $missingOnly['server_formatted_answer']);
+        self::assertStringNotContainsString('DEADLINE-', $missingOnly['server_formatted_answer']);
+        self::assertSame($missingOnly['server_formatted_answer'], $reader->verifiedAnswer($missingOnly, $fixture->owner, $fixture->organization->id)['text']);
+        $overdueOnly = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id, 'deadline_filter' => 'overdue']);
+        self::assertSame(22, $overdueOnly['data']['selected_total']);
+        self::assertSame([], $overdueOnly['data']['undated_items']);
+        self::assertStringNotContainsString('UNDATED-AFTER-25', $overdueOnly['server_formatted_answer']);
+        self::assertStringNotContainsString('DEADLINE-', $overdueOnly['server_formatted_answer']);
+        self::assertSame($overdueOnly['server_formatted_answer'], $reader->verifiedAnswer($overdueOnly, $fixture->owner, $fixture->organization->id)['text']);
+        $combined = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id, 'deadline_filter' => 'overdue_or_undated']);
+        self::assertSame(23, $combined['data']['selected_total']);
+        self::assertStringContainsString('UNDATED-AFTER-25', $combined['server_formatted_answer']);
+        self::assertStringNotContainsString('DEADLINE-', $combined['server_formatted_answer']);
+        $forged = $missingOnly['source_refs'][0]; $forged['deadline_filter'] = 'all';
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $forged));
     }
 }

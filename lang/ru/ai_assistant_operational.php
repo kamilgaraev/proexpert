@@ -3,6 +3,22 @@
 declare(strict_types=1);
 
 return [
+    'advance_settings_description' => 'Настройки подотчётных средств текущей организации: лимиты выдачи, срок отчёта, пороги согласования и правила уведомлений. Только чтение при действующем модуле и правах просмотра настроек и финансов.',
+    'advance_settings_scope' => 'Настройки подотчётных средств нашей организации на :date.',
+    'advance_settings_stored' => 'Показаны сохранённые настройки организации.',
+    'advance_settings_defaults' => 'Сохранённой записи настроек нет. Показаны значения по умолчанию из реестра настроек.',
+    'advance_settings_yes' => 'да', 'advance_settings_no' => 'нет',
+    'advance_settings_max_single_issue_amount' => 'Лимит одной выдачи',
+    'advance_settings_report_submission_deadline_days' => 'Срок сдачи авансового отчёта, дней',
+    'advance_settings_dual_authorization_threshold' => 'Порог двойного согласования',
+    'advance_settings_require_project_for_expense' => 'Обязательно указывать проект для расхода',
+    'advance_settings_notify_admin_on_overdue_report' => 'Уведомлять администратора о просроченном отчёте',
+    'advance_settings_notify_admin_on_high_value_transaction' => 'Уведомлять администратора о крупной операции',
+    'advance_settings_high_value_notification_threshold' => 'Порог уведомления о крупной операции',
+    'advance_settings_notify_user_on_transaction_approval' => 'Уведомлять сотрудника об одобрении операции',
+    'advance_settings_notify_user_on_transaction_rejection' => 'Уведомлять сотрудника об отклонении операции',
+    'advance_settings_send_report_reminder_days_before' => 'Напоминать об отчёте за количество дней',
+    'advance_settings_basis' => 'Валюта денежных порогов в этом реестре не указана; значения не пересчитывались. Отсутствие значения не подтверждает отсутствие других ограничений. Показаны правила уведомлений, а не фактическая доставка сообщений. Настройки и операции не менялись.',
     'act_amount_pending' => 'Суммы актов на согласовании: :amounts.',
     'act_amount_approved' => 'Суммы согласованных и подписанных актов: :amounts.',
     'act_amount_empty' => 'актов с этим статусом нет',
