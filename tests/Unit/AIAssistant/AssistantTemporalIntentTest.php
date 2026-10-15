@@ -26,7 +26,9 @@ final class AssistantTemporalIntentTest extends TestCase
             self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
         foreach (['Какой срок подотчёта?', 'Сколько дней даётся на подотчёт?', 'Какие настройки действуют сейчас?',
-            'За сколько дней напоминают об авансовом отчёте?'] as $query) {
+            'За сколько дней напоминают об авансовом отчёте?',
+            'Будут ли уведомлять администратора о просроченном авансовом отчёте?',
+            'Будет ли администратор получать уведомление?'] as $query) {
             self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
     }

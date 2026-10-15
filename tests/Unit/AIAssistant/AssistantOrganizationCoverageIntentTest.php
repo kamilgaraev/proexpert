@@ -27,6 +27,7 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
             ['Какой срок подотчёта?', 'get_organization_advance_settings'],
             ['Сколько дней даётся на подотчёт?', 'get_organization_advance_settings'],
             ['Уведомляют ли администратора о просроченном авансовом отчёте?', 'get_organization_advance_settings'],
+            ['Будут ли уведомлять администратора о просроченном авансовом отчёте?', 'get_organization_advance_settings'],
             ['Обязательно ли указывать проект для подотчётного расхода?', 'get_organization_advance_settings'],
             ['Требуется ли проект для подотчётного расхода?', 'get_organization_advance_settings'],
             ['Нужно ли указывать проект для подотчётного расхода?', 'get_organization_advance_settings'],
