@@ -124,6 +124,12 @@ final class CorsMiddleware
         if ($audience === null) {
             $origins = $this->origins->originsFor('public');
 
+            if ($request->is('api/public/legal')
+                && ($request->isMethod('GET')
+                    || ($request->isMethod('OPTIONS') && strtoupper((string) $request->header('Access-Control-Request-Method')) === 'GET'))) {
+                $origins = array_merge($origins, $this->origins->originsFor('lk'));
+            }
+
             if (preg_match('#^api/v1/procurement/supplier-requests/[^/]+(?:/proposals)?$#D', $request->path()) === 1) {
                 $origins = array_merge($origins, $this->origins->originsFor('lk'));
             }
