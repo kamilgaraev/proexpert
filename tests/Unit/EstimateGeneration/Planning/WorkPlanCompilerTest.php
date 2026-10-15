@@ -19,6 +19,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
@@ -467,15 +468,20 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
-    public function test_mixed_opening_packages_do_not_repeat_source_backed_windows_doors_gates_or_loading_nodes(): void
+    #[DataProvider('openingModes')]
+    public function test_mixed_opening_packages_do_not_repeat_source_backed_windows_doors_gates_or_loading_nodes(string $mode): void
     {
         $quantities = ['openings.windows' => 10, 'openings.doors' => 20, 'warehouse.gates' => 3, 'warehouse.loading_nodes' => 4];
         $analysis = ['object' => ['object_type' => 'mixed_warehouse_office'],
+            'planning_signals' => ['generation_mode' => $mode === 'universal' ? 'ai_assisted' : $mode],
             'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['structures']],
             'document_context' => ['quantity_takeoffs' => array_map(static fn (string $key, int $value): array => [
                 'quantity_key' => $key, 'quantity' => $value, 'unit' => 'шт', 'source_refs' => [['document_id' => 82]],
                 'normalized_payload' => ['quantity_key' => $key],
             ], array_keys($quantities), array_values($quantities))]];
+        if ($mode !== 'universal') {
+            unset($analysis['evaluation_policy']);
+        }
         $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
         $matches = [];
         foreach ($payload['local_estimates'] as $estimate) {
@@ -497,6 +503,54 @@ final class WorkPlanCompilerTest extends TestCase
             self::assertSame(str_starts_with($key, 'openings.') ? 'entrance_group' : 'gates', $matches[$key][0]['package']);
             self::assertSame((string) $quantity, $matches[$key][0]['item']['quantity']);
             self::assertSame([['document_id' => 82]], $matches[$key][0]['item']['source_refs']);
+        }
+    }
+
+    public static function openingModes(): array
+    {
+        return [['universal'], ['strict'], ['ai_assisted']];
+    }
+
+    public function test_coexisting_packages_do_not_reuse_the_same_lighting_network_or_sanitary_takeoff(): void
+    {
+        foreach (['house', 'warehouse', 'industrial', 'mixed_warehouse_office'] as $type) {
+            foreach (['universal', 'strict'] as $mode) {
+                $quantities = ['lighting.lines' => [40, 'lighting']];
+                if ($type === 'mixed_warehouse_office') {
+                    $quantities += ['warehouse.low_current' => [60, 'low_current'], 'office.network_points' => [6, 'low_current'], 'server.room' => [7, 'server_room']];
+                    if ($mode === 'strict') {
+                        $quantities += ['plumbing.pipe' => [64, 'water_sewerage'], 'sanitary.tile' => [10, 'sanitary_rooms'],
+                            'sanitary.waterproofing' => [20, 'sanitary_rooms'], 'sanitary.floor_tile' => [30, 'sanitary_rooms']];
+                    }
+                }
+                $analysis = ['object' => ['object_type' => $type],
+                    'document_context' => ['quantity_takeoffs' => array_map(static fn (string $key, array $value): array => [
+                        'quantity_key' => $key, 'quantity' => $value[0], 'unit' => 'м2', 'source_refs' => [['document_id' => 82]],
+                        'normalized_payload' => ['quantity_key' => $key],
+                    ], array_keys($quantities), array_values($quantities))]];
+                if ($mode === 'universal') {
+                    $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['electricity']];
+                }
+                $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+                $matches = [];
+                foreach ($payload['local_estimates'] as $estimate) {
+                    foreach ($estimate['sections'] as $section) {
+                        foreach ($section['work_items'] as $item) {
+                            $key = $item['quantity_formula'] ?? null;
+                            if (is_string($key) && array_key_exists($key, $quantities)) {
+                                $matches[$key][] = ['package' => $estimate['key'], 'item' => $item];
+                            }
+                        }
+                    }
+                }
+                foreach ($quantities as $key => [$quantity, $owner]) {
+                    foreach ($matches[$key] ?? [] as $match) {
+                        self::assertSame((string) $quantity, $match['item']['quantity']);
+                    }
+                    self::assertCount(1, $matches[$key] ?? [], $type.' '.$mode.' '.$key);
+                    self::assertSame($owner, $matches[$key][0]['package']);
+                }
+            }
         }
     }
 

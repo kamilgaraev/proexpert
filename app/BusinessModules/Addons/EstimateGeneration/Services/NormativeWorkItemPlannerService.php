@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
@@ -28,12 +29,12 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
-    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null): array
+    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null, ?PackagePlanData $packagePlan = null): array
     {
         $quantityModel = $this->documentQuantityModel($analysis);
         $items = $this->projectReferenceItems($projectReferences ?? $this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit), $localEstimate, $section);
 
-        foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel) as $index => $definition) {
+        foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel, $packagePlan) as $index => $definition) {
             $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
 
             if ($item !== null) {
@@ -641,17 +642,17 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $quantityModel
      * @return array<int, array<string, mixed>>
      */
-    private function definitions(array $localEstimate, array $section, array $analysis, array $quantityModel): array
+    private function definitions(array $localEstimate, array $section, array $analysis, array $quantityModel, ?PackagePlanData $packagePlan): array
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
         $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);
-        $openingQuantityKeys = $universal ? match ($packageKey) {
+        $openingQuantityKeys = match ($packageKey) {
             'gates' => ['warehouse.gates', 'warehouse.loading_nodes', 'openings.gates'],
             'entrance_group' => ['openings.windows', 'openings.doors'],
             default => null,
-        } : null;
+        };
         $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
@@ -669,9 +670,27 @@ final class NormativeWorkItemPlannerService
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
                 && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
                 && ($openingQuantityKeys === null || in_array($definition['quantity_key'] ?? null, $openingQuantityKeys, true))
+                && $this->definitionBelongsToPackage((string) ($definition['quantity_key'] ?? ''), $packageKey, $packagePlan)
                 && ($universal || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
                 && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));
+    }
+
+    private function definitionBelongsToPackage(string $quantityKey, string $packageKey, ?PackagePlanData $plan): bool
+    {
+        $packages = $plan === null ? [] : array_column($plan->packages, 'key');
+        $owner = match (true) {
+            str_starts_with($quantityKey, 'lighting.') || $quantityKey === 'warehouse.lighting' => 'lighting',
+            in_array($quantityKey, ['warehouse.low_current', 'office.network_points'], true) => 'low_current',
+            $quantityKey === 'server.room' => 'server_room',
+            in_array('sanitary_rooms', $packages, true) && in_array('water_sewerage', $packages, true)
+                && str_starts_with($quantityKey, 'sanitary.') => 'sanitary_rooms',
+            in_array('sanitary_rooms', $packages, true) && in_array('water_sewerage', $packages, true)
+                && $quantityKey === 'plumbing.pipe' => 'water_sewerage',
+            default => null,
+        };
+
+        return $owner === null || ! in_array($owner, $packages, true) || $packageKey === $owner;
     }
 
     private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool

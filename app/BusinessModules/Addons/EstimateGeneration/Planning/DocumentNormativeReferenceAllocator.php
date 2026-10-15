@@ -39,6 +39,7 @@ final readonly class DocumentNormativeReferenceAllocator
         $parsed = $this->quantities->parse($name.' '.$reference['quantity'].' '.$reference['unit']);
         $quantityKey = $parsed['quantity_key'] ?? null;
         $text = mb_strtolower($name);
+        $keys = array_column($estimates, 'key');
         $preferred = match (true) {
             is_string($quantityKey) && str_starts_with($quantityKey, 'foundation.') => ['foundation', 'foundations', 'structural_foundation', 'custom-foundation'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'earth.') => ['earthworks', 'custom-earthworks'],
@@ -58,12 +59,14 @@ final readonly class DocumentNormativeReferenceAllocator
             is_string($quantityKey) && str_starts_with($quantityKey, 'warehouse.floor_') => ['industrial_floor'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'roof.') => ['roof', 'roofing', 'custom-roof'],
             str_contains($text, 'перекрыт') => ['slabs'],
+            str_contains($text, 'стенов') && str_contains($text, 'панел')
+                && ! str_contains($text, 'внутрен') && ! str_contains($text, 'перегород')
+                && (in_array('envelope', $keys, true) || str_contains($text, 'сэндвич')) => ['envelope', 'facade'],
             str_contains($text, 'фасад') => ['facade', 'envelope'],
             preg_match('/(?<!\p{L})стен(?:а|ы|у|е|ой|ою|ам|ами|ах|ов\p{L}*)?(?!\p{L})/u', $text) === 1 || preg_match('/(?<!\p{L})клад(?:к|оч)\p{L}*/u', $text) === 1 || str_contains($text, 'перегород') => ['walls', 'office_partitions', 'custom-walls'],
             ($reference['work_category'] ?? null) === 'walls' => ['walls', 'office_partitions', 'custom-walls'],
             default => [],
         };
-        $keys = array_column($estimates, 'key');
         foreach ($preferred as $key) {
             if (in_array($key, $keys, true)) {
                 return $key;

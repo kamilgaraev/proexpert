@@ -62,7 +62,7 @@ final readonly class WorkPlanCompiler
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $intents = $source?->intentsFor((string) $section['key'], (string) $localEstimate['scope_type']);
                 $items = $intents === null
-                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [])
+                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [], $plan)
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
                     $items,

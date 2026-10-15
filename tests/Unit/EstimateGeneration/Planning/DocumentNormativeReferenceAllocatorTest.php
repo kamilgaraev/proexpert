@@ -116,6 +116,25 @@ final class DocumentNormativeReferenceAllocatorTest extends TestCase
         self::assertSame([], $allocation['unresolved']);
     }
 
+    public function test_wall_panels_use_the_envelope_instead_of_office_partitions_and_house_walls_stay_walls(): void
+    {
+        $planner = new PackagePlannerService;
+        foreach (['warehouse', 'industrial', 'mixed_warehouse_office'] as $type) {
+            $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => $type]]))->packages;
+            $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+                'Монтаж стеновых сэндвич-панелей', 'Монтаж стеновых панелей',
+            ]), $packages);
+            self::assertCount(2, $allocation['by_package']['envelope'] ?? [], $type);
+            self::assertSame([], $allocation['unresolved']);
+        }
+        $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => 'mixed_warehouse_office']]))->packages;
+        $internal = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis(['Монтаж внутренних стеновых панелей', 'Монтаж офисных перегородок']), $packages);
+        self::assertCount(2, $internal['by_package']['office_partitions'] ?? []);
+        $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => 'house']]))->packages;
+        $house = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis(['Монтаж стеновых панелей']), $packages);
+        self::assertCount(1, $house['by_package']['walls'] ?? []);
+    }
+
     public function test_document_packages_use_the_existing_evaluation_section_taxonomy(): void
     {
         foreach (['custom-electrical' => 'electricity', 'custom-walls' => 'structures', 'custom-openings' => 'structures',
