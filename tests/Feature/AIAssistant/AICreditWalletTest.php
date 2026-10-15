@@ -49,7 +49,7 @@ final class AICreditWalletTest extends TestCase
         config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
         DB::purge($this->connectionName);
         DB::connection($this->connectionName);
-        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
+        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('organizations', function (Blueprint $table): void {
@@ -93,6 +93,9 @@ final class AICreditWalletTest extends TestCase
             $table->timestampTz('period_start_at')->nullable();
             $table->timestampTz('period_end_at')->nullable();
             $table->timestamps();
+        });
+        Schema::create('commercial_payments', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('commercial_order_id'); $table->bigInteger('refunded_amount_minor')->default(0);
         });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->string('billing_period')->default('30_days');
@@ -336,6 +339,38 @@ final class AICreditWalletTest extends TestCase
         $controller->balance($request);
         $controller->balance($request);
         $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(3, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_partial_refund_reduces_future_monthly_grants_without_reapplying_old_refunds(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $this->travelTo($start);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $order = $this->order('purchase', 40000000, [], $start, $start->addMonthsNoOverflow(12));
+        $order->forceFill(['billing_period' => '12_months'])->save();
+        $payment = DB::table('commercial_payments')->insertGetId(['commercial_order_id' => $order->id, 'refunded_amount_minor' => 0]);
+        $commercial->settlePaidOrder($order);
+        DB::table('commercial_payments')->where('id', $payment)->update(['refunded_amount_minor' => 20000000]);
+        $commercial->refund($order, 20000000);
+        $this->assertSame(250000, $this->credits->balance($this->organization)['included_minor']);
+
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(250000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+        DB::table('commercial_payments')->where('id', $payment)->update(['refunded_amount_minor' => 30000000]);
+        $commercial->refund($order, 30000000);
+        $commercial->refund($order, 30000000);
+        $this->assertSame(125000, $this->credits->balance($this->organization)['included_minor']);
+
+        $this->travelTo($start->addMonthsNoOverflow(2));
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(125000, $this->credits->balance($this->organization)['included_minor']);
         $this->assertSame(3, AICreditLedgerEntry::query()->where('type', 'grant')->count());
     }
 

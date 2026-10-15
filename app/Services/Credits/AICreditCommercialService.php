@@ -49,7 +49,14 @@ final class AICreditCommercialService
         if (AICreditLedgerEntry::query()->where('organization_id', $order->organization_id)->whereIn('idempotency_key', [$periodKey, 'legacy-base:'.$order->commercial_account_id.':'.$periodStart->toAtomString()])->exists()) {
             return;
         }
-        $this->credits->grant($organization, 500_000, 'subscription', $periodEnd, $periodKey, (int) $order->getKey(), ['period_start_at' => $periodStart->toAtomString(), 'period_end_at' => $periodEnd->toAtomString()]);
+        DB::transaction(function () use ($order, $organization, $periodStart, $periodEnd, $periodKey): void {
+            $this->credits->grant($organization, 500_000, 'subscription', $periodEnd, $periodKey, (int) $order->getKey(), ['period_start_at' => $periodStart->toAtomString(), 'period_end_at' => $periodEnd->toAtomString()]);
+            // Read after acquiring the wallet lock so a concurrent refund cannot miss this new lot.
+            $refundedAmount = (int) $order->payments()->sum('refunded_amount_minor');
+            if ($refundedAmount > 0) {
+                $this->refund($order, $refundedAmount);
+            }
+        }, 3);
     }
 
     /** Reconcile a newly available AI product against an already paid period, never against a pending order. */

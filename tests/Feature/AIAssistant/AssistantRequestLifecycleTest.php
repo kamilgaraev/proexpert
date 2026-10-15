@@ -104,6 +104,9 @@ final class AssistantRequestLifecycleTest extends TestCase
             $table->string('billing_period')->default('30_days'); $table->bigInteger('amount_minor');
             $table->timestampTz('period_start_at'); $table->timestampTz('period_end_at'); $table->timestamps();
         });
+        Schema::create('commercial_payments', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('commercial_order_id'); $table->bigInteger('refunded_amount_minor')->default(0);
+        });
         Schema::create('ai_conversations', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id')->constrained(); $table->foreignId('user_id')->constrained(); $table->string('title')->nullable(); $table->jsonb('context')->nullable(); $table->timestamp('last_activity_at')->nullable(); $table->unsignedInteger('context_version')->default(1); $table->timestamps();
         });
@@ -1650,7 +1653,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
