@@ -15,21 +15,17 @@
     <td class="text-right" style="font-weight: bold; color: #2d3748;">{{ number_format($item['total_amount'] ?? 0, 2, '.', ' ') }}</td>
     @endif
     <td style="font-size: 7pt; color: #718096; font-style: italic;">
-        @php
-            $notes = [];
-            if (!empty($item['description'])) {
-                $notes[] = $item['description'];
-            }
-            if ($options['include_coefficients'] && !empty($item['applied_coefficients'])) {
-                $coeffStr = '<strong style="color: #2c5282;">К:</strong> ' . implode(', ', array_map(
-                    fn($k, $v) => "<span style='color: #2c5282;'>{$k}={$v}</span>",
-                    array_keys($item['applied_coefficients']),
-                    $item['applied_coefficients']
-                ));
-                $notes[] = $coeffStr;
-            }
-        @endphp
-        {!! implode('; ', $notes) !!}
+        @if(!empty($item['description']))
+            {{ $item['description'] }}
+        @endif
+        @if($options['include_coefficients'] && !empty($item['applied_coefficients']))
+            @if(!empty($item['description'])); @endif
+            <strong style="color: #2c5282;">К:</strong>
+            @foreach($item['applied_coefficients'] as $key => $coefficient)
+                @if(!$loop->first), @endif
+                <span style="color: #2c5282;">{{ is_array($coefficient) ? ($coefficient['name'] ?? $key) : $key }}={{ is_array($coefficient) ? ($coefficient['value'] ?? '') : $coefficient }}</span>
+            @endforeach
+        @endif
     </td>
 </tr>
 
