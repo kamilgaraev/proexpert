@@ -32,7 +32,7 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
 
     public function test_brigade_requests_are_created_listed_closed_and_scoped_to_current_organization(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
@@ -149,7 +149,7 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
 
     public function test_approving_response_creates_scoped_assignment_and_assignment_list_filters_by_project(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);

@@ -717,6 +717,8 @@
       "brigades.catalog.view",
       "brigades.requests.view",
       "brigades.requests.create",
+      "brigades.requests.close",
+      "brigades.responses.approve",
       "brigades.invitations.view",
       "brigades.invitations.create",
       "brigades.invitations.cancel",

@@ -88,6 +88,23 @@ class PermissionTranslatorTest extends TestCase
         }
     }
 
+    public function test_brigade_management_actions_have_russian_labels(): void
+    {
+        $permissions = [
+            'brigades.requests.close' => 'Закрытие заявок на бригады',
+            'brigades.responses.approve' => 'Одобрение откликов бригад',
+        ];
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => ['brigades' => array_keys($permissions)],
+        ]);
+
+        self::assertSame($permissions, $translated['module_permissions']['brigades']);
+        $catalog = json_decode(file_get_contents(dirname(__DIR__, 3).'/config/ModuleList/features/brigades.json'), true, flags: JSON_THROW_ON_ERROR);
+        foreach (array_keys($permissions) as $permission) {
+            self::assertContains($permission, $catalog['permissions']);
+        }
+    }
+
     public function test_missing_translation_keys_are_not_exposed_to_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

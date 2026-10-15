@@ -55,6 +55,42 @@ final class BrigadeActionAuthorizationSecurityTest extends TestCase
         self::assertSame(1, BrigadeInvitation::query()->count());
     }
 
+    #[DataProvider('managingRoles')]
+    public function test_standard_managers_keep_contractor_actions_within_their_project_scope(string $role): void
+    {
+        $actor = $this->context($role === 'project_manager' ? 'admin_viewer' : $role);
+        $data = $this->fixtures($actor);
+        if ($role === 'project_manager') {
+            UserRoleAssignment::assignRole($actor->user, $role,
+                AuthorizationContext::getProjectContext($data['project']->id, $actor->organization->id));
+        }
+
+        self::assertSame([200, 200, 200, 201, 201], $this->performActions($actor, $data));
+        self::assertSame(BrigadeStatuses::REQUEST_CLOSED, $data['close_request']->fresh()->status);
+        self::assertSame(BrigadeStatuses::RESPONSE_APPROVED, $data['response']->fresh()->status);
+
+        if ($role === 'project_manager') {
+            $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
+            $otherRequest = $this->request($actor, $otherProject);
+            $otherResponse = BrigadeResponse::query()->create([
+                'request_id' => $otherRequest->id, 'brigade_id' => $data['brigade']->id,
+                'status' => BrigadeStatuses::RESPONSE_PENDING,
+            ]);
+            $headers = $actor->authHeaders();
+            $this->postJson('/api/v1/admin/brigades/requests/'.$otherRequest->id.'/close', [], $headers)->assertForbidden();
+            $this->postJson('/api/v1/admin/brigades/requests/'.$otherRequest->id.'/responses/'.$otherResponse->id.'/approve', [], $headers)->assertForbidden();
+            self::assertSame(BrigadeStatuses::REQUEST_OPEN, $otherRequest->fresh()->status);
+            self::assertSame(BrigadeStatuses::RESPONSE_PENDING, $otherResponse->fresh()->status);
+        }
+    }
+
+    public static function managingRoles(): iterable
+    {
+        yield ['web_admin'];
+        yield ['organization_admin'];
+        yield ['project_manager'];
+    }
+
     public function test_viewer_cannot_perform_any_contractor_action(): void
     {
         $actor = $this->context('admin_viewer');
