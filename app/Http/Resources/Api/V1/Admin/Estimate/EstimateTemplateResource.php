@@ -20,8 +20,14 @@ class EstimateTemplateResource extends JsonResource
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
             
-            'organization' => $this->whenLoaded('organization'),
-            'created_by' => $this->whenLoaded('createdBy'),
+            'organization' => $this->whenLoaded('organization', fn () => [
+                'id' => $this->organization->id,
+                'name' => $this->organization->name,
+            ]),
+            'created_by' => $this->whenLoaded('createdBy', fn () => [
+                'id' => $this->createdBy->id,
+                'name' => $this->createdBy->name,
+            ]),
         ];
     }
 }

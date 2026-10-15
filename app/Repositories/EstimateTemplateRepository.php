@@ -5,6 +5,7 @@ namespace App\Repositories;
 use App\Models\EstimateTemplate;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class EstimateTemplateRepository
 {
@@ -88,9 +89,11 @@ class EstimateTemplateRepository
 
     protected function clearCache(int $organizationId): void
     {
-        Cache::forget("estimate_templates:org:{$organizationId}:public:1");
-        Cache::forget("estimate_templates:org:{$organizationId}:public:0");
-        Cache::forget('estimate_templates:public');
+        DB::afterCommit(static function () use ($organizationId): void {
+            Cache::forget("estimate_templates:org:{$organizationId}:public:1");
+            Cache::forget("estimate_templates:org:{$organizationId}:public:0");
+            Cache::forget('estimate_templates:public');
+        });
     }
 }
 
