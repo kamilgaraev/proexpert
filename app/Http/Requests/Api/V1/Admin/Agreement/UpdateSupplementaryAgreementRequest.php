@@ -6,7 +6,11 @@ namespace App\Http\Requests\Api\V1\Admin\Agreement;
 
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use App\Services\Contract\ProjectSupplementaryAgreementService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Validation\Rule;
@@ -18,6 +22,19 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
 {
     public function authorize(): bool
     {
+        $actor = $this->user();
+        if (! $actor instanceof User) {
+            return false;
+        }
+        try {
+            app(ProjectSupplementaryAgreementService::class)->findForUpdate($actor,
+                (int) $actor->current_organization_id, (int) $this->route('project'), (int) $this->route('agreement'));
+        } catch (AuthorizationException) {
+            throw new HttpResponseException(AdminResponse::error(trans_message('agreements.access_denied'), 403));
+        } catch (ModelNotFoundException) {
+            throw new HttpResponseException(AdminResponse::error(trans_message('agreements.not_found'), 404));
+        }
+
         return true;
     }
 
@@ -54,19 +71,6 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
                         ->where('contract_id', $contractId)
                         ->whereNull('deleted_at')
                     : 'exists:supplementary_agreements,id',
-                function (string $attribute, mixed $value, callable $fail): void {
-                    $currentAgreement = $this->route('agreement');
-                    $contractId = $currentAgreement
-                        ? \App\Models\SupplementaryAgreement::find($currentAgreement)?->contract_id
-                        : null;
-
-                    if ($contractId) {
-                        $agreement = \App\Models\SupplementaryAgreement::find($value);
-                        if ($agreement && (int) $agreement->contract_id !== (int) $contractId) {
-                            $fail(trans_message('agreements.validation.agreement_belongs_to_contract', ['id' => $value]));
-                        }
-                    }
-                },
             ],
             'subject_changes' => ['sometimes', 'array'],
             'subject_changes.*' => ['string'],
