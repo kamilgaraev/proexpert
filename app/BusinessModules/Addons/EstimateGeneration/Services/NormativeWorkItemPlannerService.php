@@ -28,14 +28,10 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
-    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null): array
+    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null): array
     {
         $quantityModel = $this->documentQuantityModel($analysis);
-        $items = [];
-
-        foreach ($this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit) as $referenceIndex => $reference) {
-            $items[] = $this->workItemFromProjectReference($reference, $localEstimate, $section, $referenceIndex);
-        }
+        $items = $this->projectReferenceItems($projectReferences ?? $this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit), $localEstimate, $section);
 
         foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel) as $index => $definition) {
             $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
@@ -43,6 +39,17 @@ final class NormativeWorkItemPlannerService
             if ($item !== null) {
                 $items[] = $item;
             }
+        }
+
+        return $this->uniquePricedItems($items);
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function projectReferenceItems(array $references, array $localEstimate, array $section): array
+    {
+        $items = [];
+        foreach ($references as $index => $reference) {
+            $items[] = $this->workItemFromProjectReference($reference, $localEstimate, $section, $index);
         }
 
         return $this->uniquePricedItems($items);
@@ -1137,7 +1144,6 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
                 $this->definition('Окраска потолка', 'finishing', 'окраска потолка водно-дисперсионными составами', 'finish.ceiling'),
                 $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
-                $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'office_finishing' => [
                 $this->definition('Черновая подготовка пола', 'finishing', 'устройство черновой подготовки пола', 'rough.floor'),
@@ -1145,7 +1151,6 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
                 $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
-                $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'process_pipelines' => [
                 $this->industrialDefinition('Монтаж технологического трубопровода по спецификации', 'engineering', 'process_pipelines.length', 'm', 'installation'),

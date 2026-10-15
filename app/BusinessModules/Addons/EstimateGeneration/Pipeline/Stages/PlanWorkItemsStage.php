@@ -305,6 +305,13 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ?WorkItemQuantityResolver $quantityResolver = null,
         array $generationIdentity = [],
     ): array {
+        if (($workItem['metadata']['generation_source'] ?? null) === 'project_document_normative_reference'
+            && in_array($workItem['item_type'] ?? null, ['quantity_review', 'review_note'], true)) {
+            // Keep the observed amount visible for review, never publish it as accepted quantity evidence.
+            unset($workItem['quantity_evidence'], $workItem['quantity_evidence_id'], $workItem['quantity_evidence_fingerprint'], $workItem['quantity_evidence_source_version']);
+
+            return $workItem;
+        }
         $quantity = ($quantityResolver ?? new WorkItemQuantityResolver)
             ->resolve($workItem, $quantities, $generationIdentity)?->toArray();
         if (! is_array($quantity)) {

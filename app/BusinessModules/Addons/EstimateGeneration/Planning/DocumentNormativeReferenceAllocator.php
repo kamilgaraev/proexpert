@@ -1,0 +1,80 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
+
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\QuantityStatementLineParser;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+
+/** Routes observations once; classification never confirms physical identity or quantity. */
+final readonly class DocumentNormativeReferenceAllocator
+{
+    public function __construct(
+        private ProjectDocumentNormativeReferenceExtractor $extractor = new ProjectDocumentNormativeReferenceExtractor,
+        private QuantityStatementLineParser $quantities = new QuantityStatementLineParser,
+    ) {}
+
+    /** @return array{by_package:array<string,list<array<string,mixed>>>,unresolved:list<array<string,mixed>>} */
+    public function allocate(array $analysis, array $estimates, ?int $limit = null): array
+    {
+        $result = ['by_package' => [], 'unresolved' => []];
+        // A single scan enforces the structural ceiling globally, including historical operations.
+        $references = $this->extractor->extract($analysis, ['key' => 'document_source', 'scope_type' => 'custom'], [], $limit);
+        foreach ($references as $reference) {
+            $package = $this->package($reference, $estimates);
+            if ($package === null) {
+                $result['unresolved'][] = $reference;
+            } else {
+                $result['by_package'][$package][] = $reference;
+            }
+        }
+
+        return $result;
+    }
+
+    private function package(array $reference, array $estimates): ?string
+    {
+        $name = (string) $reference['name'];
+        $parsed = $this->quantities->parse($name.' '.$reference['quantity'].' '.$reference['unit']);
+        $quantityKey = $parsed['quantity_key'] ?? null;
+        $text = mb_strtolower($name);
+        $preferred = match (true) {
+            is_string($quantityKey) && str_starts_with($quantityKey, 'foundation.') => ['foundation', 'foundations', 'structural_foundation'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'earth.') => ['earthworks'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'rough.') => ['rough_finishing'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'finish.') => ['finish_finishing'],
+            $quantityKey === 'warehouse.lighting' || str_contains($text, 'освещ') => ['lighting'],
+            $quantityKey === 'office.ceiling' => ['finish_finishing', 'office_finishing'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'electrical.') => ['electrical'],
+            ($reference['work_category'] ?? null) === 'electrical' => ['electrical'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'warehouse.floor_') => ['industrial_floor'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'roof.') => ['roof', 'roofing'],
+            str_contains($text, 'перекрыт') => ['slabs'],
+            str_contains($text, 'фасад') => ['facade'],
+            str_contains($text, 'стен') || str_contains($text, 'клад') || str_contains($text, 'перегород') => ['walls'],
+            ($reference['work_category'] ?? null) === 'walls' => ['walls'],
+            default => [],
+        };
+        $keys = array_column($estimates, 'key');
+        foreach ($preferred as $key) {
+            if (in_array($key, $keys, true)) {
+                return $key;
+            }
+        }
+        // A known subpackage that is outside the chosen scope is not relabelled as another one.
+        if ($preferred !== []) {
+            return null;
+        }
+        $category = $reference['work_category'] ?? 'custom';
+        if ($category === 'roof' && ! str_contains($text, 'кров') && ! str_contains($text, 'крыш')) {
+            return null;
+        }
+        if (in_array($category, ['custom', 'unknown', ''], true)) {
+            return null;
+        }
+        $matches = array_values(array_filter($estimates, static fn (array $estimate): bool => ($estimate['scope_type'] ?? null) === $category));
+
+        return count($matches) === 1 ? (string) $matches[0]['key'] : null;
+    }
+}

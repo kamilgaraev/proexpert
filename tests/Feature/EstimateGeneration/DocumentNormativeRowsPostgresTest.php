@@ -4,11 +4,24 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactReference;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineInputVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
@@ -18,9 +31,51 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
+use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_actual_plan_stage_keeps_observed_amounts_for_review_without_accepting_quantity_evidence(): void
+    {
+        [$context, $session] = $this->fixture();
+        foreach ([10, 20] as $quantity) {
+            $this->document($session, 'ФЕР 08-02-001-01 Кладка стен '.$quantity.' м2');
+        }
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures'], 'price_policy' => 'catalog', 'profile_id' => 'construction'];
+        $graph = PipelineDefinitionGraph::standard();
+        $model = new class implements EstimateComposerModel
+        {
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+                return ['work_intents' => array_map(static fn (array $candidate): array => [
+                    'kind' => 'existing', 'candidate_id' => $candidate['candidate_id'], 'work_key' => null,
+                    'name' => null, 'derived_quantity_id' => null, 'source_fact_ids' => $candidate['source_fact_ids'],
+                    'technology_package_candidate' => $candidate['technology_package_candidate'],
+                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+                ], $input->candidates)];
+            }
+        };
+        $this->app->instance(RunEstimateComposer::class, new RunEstimateComposer(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-6-luna'));
+        $this->app->instance(StageResultFactory::class, new StageResultFactory(new InMemoryPipelineArtifactStore, $graph));
+        $result = app(PlanWorkItemsStage::class)->execute($this->planContext($session, $analysis, $graph));
+        $references = $this->references($result->transientData);
+        self::assertCount(2, $references);
+        self::assertSame(['10', '20'], array_column($references, 'quantity'));
+        foreach ($references as $item) {
+            self::assertSame('quantity_review', $item['item_type']);
+            self::assertSame('quantity_review_required', $item['pricing_blocker']);
+            self::assertArrayNotHasKey('quantity_evidence', $item);
+            self::assertArrayNotHasKey('quantity_evidence_id', $item);
+            self::assertSame(0, $item['total_cost']);
+            self::assertNotEmpty($item['source_refs'][0]['source_version']);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void
     {
         [$context, $session] = $this->fixture();
@@ -35,6 +90,8 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         $payload = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
         self::assertContains('electrical', array_column($payload['local_estimates'], 'key'));
         self::assertContains('lighting', array_column($payload['local_estimates'], 'key'));
+        $electrical = array_column($payload['local_estimates'], null, 'key')['electrical'];
+        self::assertCount(4, $this->references(['local_estimates' => [$electrical]]));
         $references = [];
         foreach ($payload['local_estimates'] as $estimate) {
             foreach ($estimate['sections'] as $section) {
@@ -50,6 +107,30 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         self::assertSame([$first->id, $first->id, $second->id, $second->id], array_map(static fn (array $item): int => $item['source_refs'][0]['document_id'], $references));
         self::assertSame([1, 3, 1, 3], array_map(static fn (array $item): int => $item['source_refs'][0]['line_number'], $references));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_unknown_scope_stays_visible_in_package_warnings_without_becoming_priced_work(): void
+    {
+        [$context, $session] = $this->fixture();
+        $document = $this->document($session, 'ФЕР 08-02-001-01 Неопределённая специальная работа 10 м2');
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $draft = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
+        $package = array_column($draft['local_estimates'], null, 'key')['document_review'];
+        $rows = $this->references(['local_estimates' => [$package]]);
+        self::assertCount(1, $rows);
+        self::assertSame('review_note', $rows[0]['item_type']);
+        self::assertSame('not_applicable', $rows[0]['pricing_status']);
+        $summary = (new \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter)->summary(
+            new \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage([
+                'key' => 'document_review', 'title' => $package['title'], 'metadata' => ['coverage_warnings' => $package['coverage_warnings']], 'totals' => [],
+            ]));
+        $message = $summary['coverage_warnings'][0]['message'];
+        self::assertStringContainsString('Неопределённая специальная работа', $message);
+        self::assertStringContainsString($document->filename, $message);
+        self::assertStringContainsString('строка исходного текста 1', $message);
+        self::assertStringContainsString('не включена в стоимость', $message);
+        self::assertSame([], (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector)->candidates([$package]));
     }
 
     public function test_real_gateway_parser_and_planner_preserve_both_document_rows_and_versions(): void
@@ -115,6 +196,45 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
 
         return [new PipelineContext((int) $session->id, (int) $organization->id, (int) $project->id,
             1, 'sha256:'.str_repeat('a', 64), 'generating', generationAttemptId: $attempt), $session];
+    }
+
+    private function references(array $draft): array
+    {
+        $items = [];
+        foreach ($draft['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    if (($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+                        $items[] = $item;
+                    }
+                }
+            }
+        }
+
+        return $items;
+    }
+
+    private function planContext(EstimateGenerationSession $session, array $analysis, PipelineDefinitionGraph $graph): PipelineContext
+    {
+        $quantities = ['quantity_learning_hints' => [], 'quantity_coverage_warnings' => [], 'building_quantities' => [], 'stage6_generation_context' => []];
+        $payloads = [ProcessingStage::UnderstandObject->value => ['analysis' => $analysis], ProcessingStage::ExtractQuantities->value => $quantities];
+        $outputs = [];
+        foreach ([ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities] as $stage) {
+            $json = CanonicalPipelineJson::encode($payloads[$stage->value]);
+            $dependencies = [];
+            foreach ($graph->get($stage)->dependencies as $dependency) {
+                $dependencies[$dependency->value] = 'sha256:'.hash('sha256', $dependency->value);
+            }
+            $outputs[$stage->value] = PipelineStageOutput::create($graph->get($stage), 'sha256:'.hash('sha256', $stage->value), $dependencies,
+                new PipelineArtifactReference('memory_json_v1', 'test/'.$stage->value, 'sha256:'.hash('sha256', $json), strlen($json)));
+        }
+        $dependencies = array_map(static fn (PipelineStageOutput $output): string => $output->version, $outputs);
+        $base = 'sha256:'.hash('sha256', CanonicalPipelineJson::encode($session->input_payload));
+
+        return new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id, 1,
+            PipelineInputVersion::for($graph->get(ProcessingStage::PlanWorkItems), $base, $dependencies), 'generating',
+            priorOutputs: new PipelinePriorOutputs($outputs, $payloads), generationAttemptId: $session->input_payload['generation_attempt_id'],
+            baseInputVersion: $base, stage: ProcessingStage::PlanWorkItems, dependencyVersions: $dependencies);
     }
 
     private function document(EstimateGenerationSession $session, string $text): EstimateGenerationDocument

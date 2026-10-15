@@ -13,6 +13,19 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerServiceTest extends TestCase
 {
+    public function test_office_floor_area_does_not_accept_a_suspended_ceiling_technology(): void
+    {
+        $section = ['key' => 'finish', 'construction_part' => 'finishing'];
+        $items = $this->planner()->build(['key' => 'finish_finishing', 'scope_type' => 'finishing'], $section, [
+            'object' => ['object_type' => 'office', 'description' => 'Офис'],
+            'evaluation_policy' => ['mode' => 'universal'],
+            'document_context' => ['facts_summary' => ['zones' => [['scope_key' => 'office', 'area_m2' => 50,
+                'label' => 'Площадь помещения', 'source_ref' => ['document_id' => 42]]]]],
+        ]);
+        $ceilings = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'office.ceiling'));
+        self::assertSame([], $ceilings, 'The room type and floor area do not select a suspended-ceiling technology.');
+    }
+
     public function test_document_rows_with_one_norm_keep_their_quantities_and_require_explicit_review(): void
     {
         foreach ([[10, 20], [10, 10]] as $quantities) {

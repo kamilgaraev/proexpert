@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntent
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 
 final readonly class WorkPlanCompiler
 {
@@ -25,6 +26,7 @@ final readonly class WorkPlanCompiler
         private NormativeContextPinResolver $normativePins,
         private ?WorkIntentClassifier $intentClassifier = null,
         private ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
+        private DocumentNormativeReferenceAllocator $documentReferences = new DocumentNormativeReferenceAllocator,
     ) {}
 
     /** @param array<string, mixed> $analysis
@@ -42,15 +44,17 @@ final readonly class WorkPlanCompiler
         }
         $localEstimates = $this->decomposition->decomposePackagePlan($analysis, $plan);
         $seenObservations = [];
+        $referenceLimit = min($workItemLimit ?? ProjectDocumentNormativeReferenceExtractor::MAX_REFERENCES, ProjectDocumentNormativeReferenceExtractor::MAX_REFERENCES);
+        $allocated = $this->documentReferences->allocate($analysis, $localEstimates, $referenceLimit);
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $intents = $source?->intentsFor((string) $section['key'], (string) $localEstimate['scope_type']);
                 $items = $intents === null
-                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit)
+                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit, $allocated['by_package'][$localEstimate['key']] ?? [])
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
                 $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
                     $items,
-                    static function (array $item) use (&$seenObservations): bool {
+                    static function (array $item) use (&$seenObservations, $referenceLimit): bool {
                         if (($item['metadata']['generation_source'] ?? null) !== 'project_document_normative_reference') {
                             return true;
                         }
@@ -61,12 +65,38 @@ final readonly class WorkPlanCompiler
                         if (isset($seenObservations[$observation])) {
                             return false;
                         }
+                        FrozenWorkItemLimit::assertCount(count($seenObservations) + 1, $referenceLimit);
                         $seenObservations[$observation] = true;
 
                         return true;
                     },
                 ));
             }
+        }
+        if ($allocated['unresolved'] !== []) {
+            $review = ['key' => 'document_review', 'title' => trans_message('estimate_generation.document_scope_review_title'), 'scope_type' => 'custom'];
+            $section = ['key' => 'document_review', 'title' => $review['title'], 'construction_part' => 'custom'];
+            $items = $this->workItemPlanner->projectReferenceItems($allocated['unresolved'], $review, $section);
+            $warnings = [];
+            foreach ($items as &$item) {
+                $item['item_type'] = 'review_note';
+                $item['pricing_status'] = 'not_applicable';
+                $item['pricing_blocker'] = 'work_scope_review_required';
+                $item['metadata']['display_role'] = 'review_note';
+                $item['metadata']['source_scope_unresolved'] = true;
+                $item['validation_flags'][] = 'work_scope_review_required';
+                $origin = $item['source_refs'][0] ?? [];
+                $warnings[] = ['quantity_key' => 'document_source:'.$item['metadata']['source_observation_id'],
+                    'reason' => 'work_scope_review_required', 'package_key' => 'document_review',
+                    'message' => trans_message('estimate_generation.document_scope_review_row', [
+                        'name' => $item['name'], 'amount' => $item['quantity'], 'unit' => $item['unit'],
+                        'source' => $origin['filename'] ?? ('#'.($origin['document_id'] ?? '?')),
+                        'line' => $origin['line_number'] ?? '?',
+                    ])];
+            }
+            unset($item);
+            $localEstimates[] = [...$review, 'assumptions' => [trans_message('estimate_generation.document_scope_review_note')], 'coverage_warnings' => $warnings,
+                'sections' => [[...$section, 'work_items' => $items]]];
         }
         $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
         FrozenWorkItemLimit::assertDraft(['local_estimates' => $localEstimates], $workItemLimit);
