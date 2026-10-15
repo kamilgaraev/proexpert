@@ -22,14 +22,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
-use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\Support\AssistantRagTestSchema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 final class CommercialRefundServiceTest extends TestCase
 {
     private RefundGatewayFake $gateway;
+
     private ?string $connectionName = null;
+
     private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
@@ -104,6 +106,7 @@ final class CommercialRefundServiceTest extends TestCase
 
     public function test_balance_refund_returns_money_once_and_closes_access_after_full_refund(): void
     {
+        config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false]);
         [$order] = $this->paidOrder('balance');
         OrganizationBalance::query()->create([
             'organization_id' => 42,
@@ -171,6 +174,23 @@ final class CommercialRefundServiceTest extends TestCase
             try {
                 $service->create($order->public_id, 1000, 'RUB', 'Проверка политики', 'denied-'.$mode.'-'.count($allowlist));
                 $this->fail('Provider policy must reject refund creation.');
+            } catch (PaymentGatewayConfigurationException) {
+                $this->assertDatabaseCount('commercial_refunds', 0);
+                $this->assertSame(0, $this->gateway->creates);
+            }
+        }
+    }
+
+    public function test_disabled_provider_cannot_create_refund_intents_or_call_gateway(): void
+    {
+        [$order] = $this->paidOrder();
+        $service = app(CommercialRefundService::class);
+
+        foreach ([['tochka', true], ['yookassa', false]] as [$provider, $enabled]) {
+            config(['bank_billing.default_provider' => $provider, 'services.yookassa.payments_enabled' => $enabled]);
+            try {
+                $service->create($order->public_id, 1000, 'RUB', 'Проверка отключённого провайдера', 'disabled-'.$provider);
+                $this->fail('Disabled YooKassa must reject refunds');
             } catch (PaymentGatewayConfigurationException) {
                 $this->assertDatabaseCount('commercial_refunds', 0);
                 $this->assertSame(0, $this->gateway->creates);
@@ -316,7 +336,10 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamp('apply_at');
             $t->timestamps();
         });
-        Schema::create('users', function (Blueprint $table): void { $table->id(); $table->softDeletes(); });
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->softDeletes();
+        });
         Schema::create('organizations', function (Blueprint $t): void {
             $t->id();
             $t->string('name');

@@ -32,8 +32,8 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
-use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\Support\AssistantRagTestSchema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
 class CommercialWebhookServiceTest extends TestCase
@@ -49,7 +49,9 @@ class CommercialWebhookServiceTest extends TestCase
     private CommercialOrder $order;
 
     private CommercialPayment $payment;
+
     private ?string $connectionName = null;
+
     private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
@@ -1173,6 +1175,29 @@ class CommercialWebhookServiceTest extends TestCase
         }
 
         $this->assertSame(0, CommercialWebhookEvent::query()->count());
+    }
+
+    public function test_disabled_provider_never_processes_notifications_or_authoritative_results(): void
+    {
+        $service = app(CommercialWebhookService::class);
+        foreach ([['tochka', true], ['yookassa', false]] as [$provider, $enabled]) {
+            config(['bank_billing.default_provider' => $provider, 'services.yookassa.payments_enabled' => $enabled]);
+            $payment = $this->paymentResult();
+            $notification = $this->notification('payment.succeeded', 'payment-id', 'succeeded');
+            $this->assertSame('disabled', $service->process($notification, '185.71.76.1'));
+            $this->assertSame('disabled', $service->process($this->notification('refund.succeeded', 'refund-id', 'succeeded'), '185.71.76.1'));
+            $this->assertSame('disabled', $service->process($this->notification('payment_method.active', 'method-id', 'active'), '185.71.76.1'));
+            $this->assertSame('disabled', $service->processAuthoritativePayment($notification, '185.71.76.1', $payment));
+            $this->assertSame('disabled', $service->processAuthoritativeRefund(
+                $this->notification('refund.succeeded', 'refund-id', 'succeeded'), '185.71.76.1',
+                $this->refundResult('refund-id', 1000), $payment,
+            ));
+            $this->assertSame(0, $this->gateway->paymentLookups);
+            $this->assertSame(0, $this->gateway->refundLookups);
+            $this->assertSame('pending', $this->payment->refresh()->provider_status);
+            $this->assertSame('pending_payment', $this->order->refresh()->status->value);
+            $this->assertDatabaseCount('commercial_webhook_events', 0);
+        }
     }
 
     private function notification(string $event, string $id, string $state): YooKassaWebhookNotification

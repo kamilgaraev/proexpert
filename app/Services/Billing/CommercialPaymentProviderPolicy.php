@@ -21,6 +21,19 @@ final class CommercialPaymentProviderPolicy
         return $provider;
     }
 
+    public function yooKassaEnabled(): bool
+    {
+        return $this->checkoutProvider() === 'yookassa'
+            && config('services.yookassa.payments_enabled') === true;
+    }
+
+    public function assertYooKassaEnabled(): void
+    {
+        if (! $this->yooKassaEnabled()) {
+            throw $this->configurationException();
+        }
+    }
+
     public function assertCanCharge(int $organizationId): void
     {
         if ($this->checkoutProvider() === 'tochka') {
@@ -28,9 +41,7 @@ final class CommercialPaymentProviderPolicy
 
             return;
         }
-        if ($this->checkoutProvider() !== 'yookassa' || config('services.yookassa.payments_enabled') !== true) {
-            throw $this->configurationException();
-        }
+        $this->assertYooKassaEnabled();
         if (PaymentProviderMode::configured() !== PaymentProviderMode::YooKassaTest) {
             return;
         }
@@ -47,9 +58,7 @@ final class CommercialPaymentProviderPolicy
 
     public function assertCanCreatePayment(): void
     {
-        if ($this->checkoutProvider() !== 'yookassa' || config('services.yookassa.payments_enabled') !== true) {
-            throw $this->configurationException();
-        }
+        $this->assertYooKassaEnabled();
         if (PaymentProviderMode::configured() !== PaymentProviderMode::YooKassaLive) {
             return;
         }
@@ -67,6 +76,8 @@ final class CommercialPaymentProviderPolicy
 
     public function assertCanCreateRefund(int $organizationId): void
     {
+        $this->assertCanCreatePayment();
+
         if (PaymentProviderMode::configured() === PaymentProviderMode::Mock) {
             throw $this->configurationException();
         }

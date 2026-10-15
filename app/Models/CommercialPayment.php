@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -30,6 +31,18 @@ class CommercialPayment extends Model
         'reconciliation_required' => 'boolean',
         'last_reconciled_at' => 'immutable_datetime',
     ];
+
+    public function scopeWithUnresolvedFunds(Builder $query): Builder
+    {
+        return $query->where(fn ($funds) => $funds->whereIn('provider_status', ['succeeded', 'waiting_for_capture'])
+            ->orWhere(fn ($review) => $review->where('reconciliation_required', true)
+                ->where(fn ($real) => $real->where('provider', '!=', 'yookassa')
+                    ->orWhereNotIn('provider_status', ['pending', 'canceled'])
+                    ->orWhereNull('safe_response->test')
+                    ->orWhereJsonDoesntContain('safe_response->test', true)
+                    ->orWhereNull('safe_response->paid')
+                    ->orWhereJsonDoesntContain('safe_response->paid', false))));
+    }
 
     public function order(): BelongsTo
     {

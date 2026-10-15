@@ -42,6 +42,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         private readonly ContractorReferralRewardService $referralRewards,
         private readonly AccessController $accessController,
         private readonly BalanceServiceInterface $balanceService,
+        private readonly CommercialPaymentProviderPolicy $providerPolicy,
     ) {}
 
     public function settleBalancePayment(CommercialOrder $sourceOrder, CommercialPayment $sourcePayment): void
@@ -253,6 +254,10 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
     public function process(YooKassaWebhookNotification $notification, string $sourceIp): string
     {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return 'disabled';
+        }
+
         if ($notification->event === 'payment_method.active') {
             return $this->recordNoOp($notification, $sourceIp);
         }
@@ -274,6 +279,10 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         string $sourceIp,
         PaymentGatewayResult $authoritative,
     ): string {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return 'disabled';
+        }
+
         $fingerprint = $this->fingerprint($notification, $authoritative->status);
         $organizationId = null;
         $entitlementsChanged = false;
@@ -461,6 +470,10 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         RefundGatewayResult $refund,
         PaymentGatewayResult $authoritativePayment,
     ): string {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return 'disabled';
+        }
+
         $fingerprint = $this->fingerprint($notification, $refund->status);
         $organizationId = null;
         $entitlementsChanged = false;

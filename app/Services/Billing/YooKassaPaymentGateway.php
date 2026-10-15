@@ -134,6 +134,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
         array $payload = [],
         ?string $idempotenceKey = null,
     ): Response {
+        $this->policy->assertYooKassaEnabled();
         [$shopId, $secretKey] = $this->credentials();
         $attempts = max(1, (int) config('services.yookassa.retry_attempts', 3));
         $delayMilliseconds = max(0, (int) config('services.yookassa.retry_delay_ms', 150));
