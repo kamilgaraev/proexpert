@@ -21,6 +21,7 @@ class OrganizationCommercialAccount extends Model
         'status',
         'offer_type',
         'quote_version',
+        'billing_period',
         'billing_anchor_at',
         'current_period_start_at',
         'current_period_end_at',

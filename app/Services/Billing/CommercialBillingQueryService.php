@@ -37,6 +37,9 @@ final class CommercialBillingQueryService
             (bool) $input['full_suite'],
             currentPeriodStartAt: $account?->current_period_start_at,
             currentPeriodEndAt: $account?->current_period_end_at,
+            billingPeriod: $input['billing_period'] ?? $account?->billing_period ?? '30_days',
+            currentBillingPeriod: $account?->billing_period ?? '30_days',
+            renewSubscription: (bool) ($input['renew_subscription'] ?? false),
         );
 
         return $this->withResourceAddons($organization, $quote, $input['resources'] ?? []);
@@ -64,15 +67,20 @@ final class CommercialBillingQueryService
             ];
         }
 
-        $resourceQuote = $this->quotas->calculateResourceAddonQuote(
+        $resourceQuote = CommercialResourcePeriodPricing::apply($this->quotas->calculateResourceAddonQuote(
             $organization,
             $resources,
             $quote['target_package_slugs'],
-        );
+        ), $quote);
+        if ($quote['renew_subscription']) {
+            throw new \InvalidArgumentException('Renew packages separately from resource addons.');
+        }
         $amountDueNowMinor = (int) $quote['amount_due_now_minor'] + (int) $resourceQuote['amount_minor'];
-        $monthlyTotalMinor = (int) $quote['monthly_total_minor'] + (int) $resourceQuote['amount_minor'];
+        $monthlyTotalMinor = (int) $quote['monthly_total_minor'] + (int) $resourceQuote['monthly_amount_minor'];
 
         return array_replace($quote, [
+            'period_total_minor' => (int) $quote['period_total_minor'] + (int) $resourceQuote['monthly_amount_minor'] * (int) $quote['billing_period_months'],
+            'period_total' => $this->money((int) $quote['period_total_minor'] + (int) $resourceQuote['monthly_amount_minor'] * (int) $quote['billing_period_months']),
             'resource_addons_quote' => $resourceQuote,
             'resource_quote_version' => (int) $resourceQuote['quote_version'],
             'amount_due_now_minor' => $amountDueNowMinor,
@@ -179,6 +187,8 @@ final class CommercialBillingQueryService
             'selected_resource_addons' => $order->selected_resource_addons ?? [],
             'paid_composition_items' => $this->paidCompositionItems($order, $paidPackageSlugs),
             'offer_type' => $order->offer_type->value,
+            'billing_period' => $order->billing_period ?? '30_days',
+            'renew_subscription' => (bool) $order->renew_subscription,
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
             'auto_renew_consent' => $order->auto_renew_consent,

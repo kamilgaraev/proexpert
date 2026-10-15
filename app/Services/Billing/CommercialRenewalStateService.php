@@ -24,6 +24,8 @@ final class CommercialRenewalStateService
 
         return [
             'status' => $account?->status?->value ?? 'free',
+            'billing_period' => $account?->billing_period ?? '30_days',
+            'offer_type' => $account?->offer_type?->value ?? 'packages',
             'auto_renew_enabled' => (bool) $account?->auto_renew_enabled,
             'saved_method_available' => (bool) ($account?->saved_payment_method_active && $account?->saved_payment_method_id),
             'next_billing_at' => $account?->current_period_end_at?->toIso8601String(),
