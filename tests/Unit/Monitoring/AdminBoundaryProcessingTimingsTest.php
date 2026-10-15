@@ -163,6 +163,28 @@ final class AdminBoundaryProcessingTimingsTest extends TestCase
         self::assertTrue($request->attributes->get(AdminResponse::DECODED_ARRAY_ATTRIBUTE));
     }
 
+    public function test_native_standard_success_preserves_empty_object_maps_and_lists(): void
+    {
+        $request = $this->request();
+        $this->app->instance('request', $request);
+        $data = ['totals' => new \stdClass(), 'items' => [], 'nested' => [['map' => new \stdClass()]]];
+
+        foreach ([
+            AdminResponse::success($data, 'fixture', 201),
+            AdminResponse::paginated([$data], ['total' => 1], 'fixture', 201),
+        ] as $original) {
+            $response = (new NormalizeAdminResponse)->handle($request, fn () => $original);
+
+            self::assertInstanceOf(JsonResponse::class, $response);
+            self::assertSame($original->getContent(), $response->getContent());
+            $body = $response->getData();
+            $row = is_array($body->data) ? $body->data[0] : $body->data;
+            self::assertInstanceOf(\stdClass::class, $row->totals);
+            self::assertSame([], $row->items);
+            self::assertInstanceOf(\stdClass::class, $row->nested[0]->map);
+        }
+    }
+
     public function test_native_normalization_preserves_nested_scalar_and_pagination_payloads(): void
     {
         $request = $this->request();

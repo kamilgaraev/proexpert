@@ -89,7 +89,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
             organizationId: 7, periodStart: '2026-01-10', periodEnd: '2026-01-11',
         ));
         $this->assertSame([], $foreign['undated']['items']);
-        $this->assertSame([], $foreign['undated']['totals_by_currency']);
+        $this->assertSame('{}', json_encode($foreign['undated']['totals_by_currency'], JSON_THROW_ON_ERROR));
     }
 
     public function test_contract_contains_items_events_daily_aggregates_summary_and_cash_gap_state(): void

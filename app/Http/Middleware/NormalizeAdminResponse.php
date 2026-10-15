@@ -60,6 +60,10 @@ class NormalizeAdminResponse
         $statusCode = $response->getStatusCode();
 
         if ($this->isStandardResponse($payload)) {
+            if (get_class($response) === JsonResponse::class && $payload['success'] && array_key_exists('data', $payload)) {
+                $payload['data'] = $response->getData()->data;
+            }
+
             return $this->finalize($response, $this->normalizeStandardPayload($payload, $statusCode));
         }
 
