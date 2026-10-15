@@ -210,7 +210,7 @@ final class EstimateFinanceTest extends TestCase
             self::assertTrue($document->loadXML($documentXml));
             self::assertStringContainsString('Бетон', $document->textContent);
             self::assertStringContainsString('FIN-2', $document->textContent);
-            self::assertStringContainsString('35 000,00', $document->textContent);
+            self::assertStringContainsString('35 000,00', str_replace("\u{00A0}", ' ', $document->textContent));
         } finally {
             unlink($docxPath);
         }
