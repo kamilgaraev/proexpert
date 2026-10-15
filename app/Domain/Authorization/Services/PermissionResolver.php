@@ -358,13 +358,19 @@ class PermissionResolver
         $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId, $roleRevision) {
             $perms = [];
             $interfaceAccess = [];
 
             if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-                $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
-                $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
+                if ($this->readCache === null) {
+                    $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
+                    $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
+                } else {
+                    $definition = $this->systemRoleDefinition($assignment->role_slug, $roleRevision);
+                    $perms = $definition['system_permissions'] ?? [];
+                    $interfaceAccess = $definition['interface_access'] ?? [];
+                }
             } elseif ($assignment->role_type === UserRoleAssignment::TYPE_CUSTOM) {
                 $customRole = $this->getAssignmentCustomRole($assignment, $organizationId);
                 $perms = $customRole ? ($customRole->system_permissions ?? []) : [];
@@ -384,7 +390,7 @@ class PermissionResolver
         $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId, $roleRevision) {
             if ($assignment->role_type === UserRoleAssignment::TYPE_CUSTOM) {
                 $customRole = $this->getAssignmentCustomRole($assignment, $organizationId);
 
@@ -394,9 +400,17 @@ class PermissionResolver
             }
 
             return $assignment->role_type === UserRoleAssignment::TYPE_SYSTEM
-                ? RolePermissionNormalizer::normalizeModulePermissions($this->roleScanner->getModulePermissions($assignment->role_slug))
+                ? RolePermissionNormalizer::normalizeModulePermissions($this->readCache === null
+                    ? $this->roleScanner->getModulePermissions($assignment->role_slug)
+                    : ($this->systemRoleDefinition($assignment->role_slug, $roleRevision)['module_permissions'] ?? []))
                 : [];
         }));
+    }
+
+    private function systemRoleDefinition(string $roleSlug, mixed $revision): array
+    {
+        return $this->rememberRead('system_role_definition:'.serialize([$revision, $roleSlug]),
+            fn (): array => $this->roleScanner->getRole($roleSlug) ?? []);
     }
 
     /**
