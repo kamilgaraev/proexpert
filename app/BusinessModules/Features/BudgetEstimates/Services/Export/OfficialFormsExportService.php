@@ -14,6 +14,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class OfficialFormsExportService
@@ -354,7 +355,7 @@ class OfficialFormsExportService
         $sheet->mergeCells("A{$row}:H{$row}");
         $row++;
 
-        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
+        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 0322005');
         $sheet->mergeCells("A{$row}:H{$row}");
         $row += 2;
 
@@ -441,8 +442,9 @@ class OfficialFormsExportService
         $estimate = $contract->estimate ?? null;
         $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
         $sheet->setCellValue("A{$row}", 'Сметная (договорная) стоимость в соответствии с договором подряда (субподряда)');
-        $sheet->setCellValue("B{$row}", number_format($contractAmount, 2, ',', ' ').' руб.');
-        $sheet->mergeCells("B{$row}:H{$row}");
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("E{$row}", number_format($contractAmount, 2, ',', ' ').' руб.');
+        $sheet->mergeCells("E{$row}:H{$row}");
         $row += 2;
 
         // Заголовок таблицы
@@ -555,7 +557,7 @@ class OfficialFormsExportService
         $sheet->mergeCells("A{$row}:G{$row}");
         $row++;
 
-        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
+        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 0322001');
         $sheet->mergeCells("A{$row}:G{$row}");
         $row += 2;
 
@@ -623,8 +625,8 @@ class OfficialFormsExportService
         $row += 2;
 
         // Отчетный период
-        $periodStart = $act->act_date->copy()->startOfMonth();
-        $periodEnd = $act->act_date->copy()->endOfMonth();
+        $periodStart = $act->period_start ?? $act->act_date->copy()->startOfMonth();
+        $periodEnd = $act->period_end ?? $act->act_date->copy()->endOfMonth();
         $sheet->setCellValue("A{$row}", 'Отчетный период');
         $sheet->setCellValue("B{$row}", 'с '.$periodStart->format('d.m.Y').' по '.$periodEnd->format('d.m.Y'));
         $sheet->mergeCells("B{$row}:G{$row}");
@@ -798,7 +800,6 @@ class OfficialFormsExportService
     protected function applyKS2Styles($sheet): void
     {
         $highestRow = $sheet->getHighestRow();
-        $highestColumn = $sheet->getHighestColumn();
 
         // Заголовок формы
         $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(12);
@@ -826,7 +827,7 @@ class OfficialFormsExportService
         $sheet->getStyle("E{$dataStartRow}:G{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
         // Ширина колонок
-        $sheet->getColumnDimension('A')->setWidth(8);
+        $sheet->getColumnDimension('A')->setWidth(16);
         $sheet->getColumnDimension('B')->setWidth(12);
         $sheet->getColumnDimension('C')->setWidth(40);
         $sheet->getColumnDimension('D')->setWidth(15);
@@ -836,7 +837,13 @@ class OfficialFormsExportService
         $sheet->getColumnDimension('H')->setWidth(20);
 
         // Перенос текста для длинных ячеек
-        $sheet->getStyle("B1:H{$highestRow}")->getAlignment()->setWrapText(true);
+        $this->applyExcelHeaderLayout($sheet, 'H');
+        $sheet->getStyle("G{$dataStartRow}:G{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
+        $sheet->getStyle("E{$dataStartRow}:F{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00##');
+        $sheet->getRowDimension(22)->setRowHeight(32);
+        if ($headerRow) {
+            $sheet->getRowDimension($headerRow)->setRowHeight(36);
+        }
         $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
             ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
             ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:H{$highestRow}");
@@ -881,7 +888,7 @@ class OfficialFormsExportService
         $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
         // Ширина колонок
-        $sheet->getColumnDimension('A')->setWidth(10);
+        $sheet->getColumnDimension('A')->setWidth(16);
         $sheet->getColumnDimension('B')->setWidth(50);
         $sheet->getColumnDimension('C')->setWidth(12);
         $sheet->getColumnDimension('D')->setWidth(20);
@@ -890,12 +897,42 @@ class OfficialFormsExportService
         $sheet->getColumnDimension('G')->setWidth(15);
 
         // Перенос текста
-        $sheet->getStyle("B{$dataStartRow}:G{$highestRow}")->getAlignment()->setWrapText(true);
+        $this->applyExcelHeaderLayout($sheet, 'G');
+        $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getNumberFormat()->setFormatCode('#,##0.00');
+        if ($headerRow) {
+            $sheet->getRowDimension($headerRow)->setRowHeight(36);
+            $sheet->getRowDimension($headerRow + 1)->setRowHeight(36);
+        }
         $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE)
             ->setPaperSize(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_A4)
             ->setFitToWidth(1)->setFitToHeight(0)->setPrintArea("A1:G{$highestRow}");
         if ($headerRow) {
             $sheet->getPageSetup()->setRowsToRepeatAtTop([$headerRow, $headerRow + 1]);
+        }
+    }
+
+    private function applyExcelHeaderLayout(Worksheet $sheet, string $lastColumn): void
+    {
+        $highestRow = $sheet->getHighestRow();
+        $sheet->setShowGridlines(false);
+        $sheet->getStyle("A1:{$lastColumn}{$highestRow}")->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_CENTER);
+        $sheet->mergeCells("A14:{$lastColumn}14");
+        foreach ([15, 20] as $row) {
+            $sheet->mergeCells("B{$row}:C{$row}");
+            $sheet->mergeCells("E{$row}:{$lastColumn}{$row}");
+            $sheet->getRowDimension($row)->setRowHeight(32);
+        }
+        foreach ([5, 6, 7, 8, 10, 11, 12, 16, 18] as $row) {
+            $value = (string) $sheet->getCell("B{$row}")->getValue();
+            $height = max(18, (int) ceil(mb_strlen($value) / 100) * 16);
+            $sheet->getRowDimension($row)->setRowHeight(min(409, max(in_array($row, [7, 8, 12], true) ? 36 : 18, $height)));
+        }
+        for ($row = 24; $row <= $highestRow; $row++) {
+            if ($sheet->getCell("A{$row}")->getValue() === 'Генеральный Директор') {
+                $sheet->getRowDimension($row)->setRowHeight(32);
+                $sheet->getRowDimension($row + 1)->setRowHeight(32);
+                $sheet->getStyle("B{$row}:E{$row}")->getAlignment()->setWrapText(false);
+            }
         }
     }
 

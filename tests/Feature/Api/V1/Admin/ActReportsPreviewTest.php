@@ -1486,6 +1486,56 @@ class ActReportsPreviewTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_official_excel_metadata_and_layout_match_the_act_and_preserve_month_fallback(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('УЧ-ПТО-102/2026');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $disk = \Illuminate\Support\Facades\Storage::fake('official-act-layout');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+        });
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'АВР-УЧ-102-01', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+
+        foreach ([true, false] as $explicitPeriod) {
+            $act->update([
+                'period_start' => $explicitPeriod ? '2026-04-01' : null,
+                'period_end' => $explicitPeriod ? '2026-04-20' : null,
+            ]);
+            foreach (['ks3' => '0322001', 'ks2' => '0322005'] as $form => $okud) {
+                $response = $this->actingAs($user, 'api_admin')
+                    ->get("/api/v1/admin/estimates/export/{$form}/{$act->id}?format=xlsx");
+                $response->assertOk();
+                $path = $response->baseResponse->getFile()->getPathname();
+                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
+                try {
+                    $sheet = $spreadsheet->getActiveSheet();
+                    self::assertSame('с 01.04.2026 по '.($explicitPeriod ? '20.04.2026' : '30.04.2026'), $sheet->getCell('B18')->getValue());
+                    self::assertSame('Форма по ОКУД '.$okud, $sheet->getCell('A3')->getValue());
+                    self::assertSame($contract->number, $sheet->getCell('B15')->getValue());
+                    self::assertSame($act->act_document_number, $sheet->getCell('B20')->getValue());
+                    self::assertSame($act->act_date->format('d.m.Y'), $sheet->getCell('E20')->getValue());
+                    self::assertContains('B15:C15', $sheet->getMergeCells());
+                    self::assertContains('B20:C20', $sheet->getMergeCells());
+                    self::assertTrue($sheet->getStyle('A7')->getAlignment()->getWrapText());
+                    self::assertGreaterThanOrEqual(30, $sheet->getRowDimension(7)->getRowHeight());
+                    $headerRow = $form === 'ks2' ? 24 : 22;
+                    self::assertTrue($sheet->getStyle('B'.$headerRow)->getAlignment()->getWrapText());
+                    self::assertGreaterThanOrEqual(32, $sheet->getRowDimension($headerRow)->getRowHeight());
+                    $moneyCell = $form === 'ks2' ? 'G25' : 'F24';
+                    self::assertEquals((float) $act->amount, (float) $sheet->getCell($moneyCell)->getCalculatedValue());
+                    self::assertSame('#,##0.00', $sheet->getStyle($moneyCell)->getNumberFormat()->getFormatCode());
+                    self::assertFalse($sheet->getShowGridlines());
+                    self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+                } finally {
+                    $spreadsheet->disconnectWorksheets();
+                    unlink($path);
+                }
+            }
+        }
+    }
+
     public function test_legacy_official_exports_read_storage_objects_and_keep_safe_download_names(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('УЧ-ПТО-102/2026');
