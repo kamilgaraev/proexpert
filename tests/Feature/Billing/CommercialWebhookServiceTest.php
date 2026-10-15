@@ -83,7 +83,7 @@ class CommercialWebhookServiceTest extends TestCase
             'organization_id' => $this->organization->id,
             'commercial_account_id' => $this->account->id,
             'user_id' => $this->user->id,
-            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 3,
+            'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 4,
             'selected_package_slugs' => ['machinery'], 'current_package_slugs' => [],
             'amount_minor' => 790000, 'amount' => '7900.00', 'currency' => 'RUB',
             'period_start_at' => '2026-07-14 10:00:00', 'period_end_at' => '2026-08-14 10:00:00',
@@ -106,6 +106,169 @@ class CommercialWebhookServiceTest extends TestCase
             DB::connection($this->connectionName);
         }
         parent::tearDown();
+    }
+
+    public function test_half_year_payment_activates_six_calendar_months_in_moscow(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-08-30 21:30:00', 'UTC');
+        $this->travelTo($now);
+        $this->order->forceFill(['billing_period' => '6_months', 'amount_minor' => 4503000, 'amount' => '45030.00'])->save();
+        $this->payment->forceFill(['amount_minor' => 4503000])->save();
+        $this->gateway->payment = $this->paymentResult(amountMinor: 4503000);
+        $service = app(CommercialWebhookService::class);
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('2027-02-28 00:30:00', $this->account->fresh()->current_period_end_at->setTimezone('Europe/Moscow')->format('Y-m-d H:i:s'));
+        $this->assertSame('6_months', $this->account->fresh()->billing_period);
+    }
+
+    public function test_annual_payment_activates_a_calendar_year_from_confirmation_once(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2028-02-29 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $this->order->forceFill(['billing_period' => '12_months', 'amount_minor' => 8532000, 'amount' => '85320.00'])->save();
+        $this->payment->forceFill(['amount_minor' => 8532000])->save();
+        $this->gateway->payment = $this->paymentResult(amountMinor: 8532000);
+        $service = app(CommercialWebhookService::class);
+        $notification = $this->notification('payment.succeeded', 'payment-id', 'succeeded');
+        $this->assertSame('processed', $service->process($notification, '185.71.76.1'));
+        $this->assertSame('duplicate', $service->process($notification, '185.71.76.1'));
+        $this->assertSame('2029-02-28 09:00:00', $this->account->fresh()->current_period_end_at->format('Y-m-d H:i:s'));
+        $this->assertSame('12_months', $this->account->fresh()->billing_period);
+        $this->assertTrue(OrganizationPackageSubscription::query()->sole()->isActive());
+    }
+
+    public function test_refund_of_prepaid_annual_renewal_restores_the_previous_paid_access(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $oldEnd = $now->addDays(30);
+        $this->account->forceFill(['status' => 'active', 'billing_period' => '30_days', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd])->save();
+        OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id, 'package_slug' => 'machinery', 'status' => 'active', 'access_source' => 'paid_package', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd, 'price_paid' => '7900.00']);
+        $this->order->forceFill(['billing_period' => '12_months', 'renew_subscription' => true, 'current_package_slugs' => ['machinery'], 'period_start_at' => $oldEnd, 'period_end_at' => $oldEnd->addMonthsNoOverflow(12)])->save();
+        $this->gateway->payment = $this->paymentResult();
+        $service = app(CommercialWebhookService::class);
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertTrue($oldEnd->addMonthsNoOverflow(12)->equalTo($this->account->fresh()->current_period_end_at));
+        $this->gateway->refund = $this->refundResult('annual-refund', 790000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 790000);
+        $this->assertSame('full_refund', $service->process($this->notification('refund.succeeded', 'annual-refund', 'succeeded'), '185.71.76.1'));
+        $this->assertTrue($oldEnd->equalTo($this->account->fresh()->current_period_end_at));
+        $this->assertTrue(OrganizationPackageSubscription::query()->sole()->isActive());
+        $this->assertTrue($oldEnd->equalTo(OrganizationPackageSubscription::query()->sole()->current_period_end_at));
+    }
+
+    public function test_refund_of_full_suite_prepaid_renewal_restores_original_offer_and_package_sources(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $oldEnd = $now->addDays(30);
+        $slugs = array_column(app(\App\Services\Modules\PackageCatalogService::class)->allPackages(), 'slug');
+        $this->account->forceFill(['status' => 'active', 'offer_type' => 'packages', 'billing_period' => '30_days', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd])->save();
+        foreach ($slugs as $slug) {
+            OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
+                'package_slug' => $slug, 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => '1000.00',
+                'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd]);
+        }
+        OrganizationPackageSubscription::query()->where('package_slug', $slugs[0])->update(['status' => 'scheduled_for_removal', 'cancel_at' => $oldEnd]);
+        $this->order->forceFill(['offer_type' => 'full_suite', 'billing_period' => '12_months', 'renew_subscription' => true,
+            'current_package_slugs' => $slugs, 'selected_package_slugs' => $slugs, 'period_start_at' => $oldEnd, 'period_end_at' => $oldEnd->addMonthsNoOverflow(12)])->save();
+        $this->gateway->payment = $this->paymentResult();
+        $service = app(CommercialWebhookService::class);
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('full_suite', $this->account->fresh()->offer_type->value);
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
+        $this->gateway->refund = $this->refundResult('full-suite-renewal-refund', 790000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 790000);
+        $this->assertSame('full_refund', $service->process($this->notification('refund.succeeded', 'full-suite-renewal-refund', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('packages', $this->account->fresh()->offer_type->value);
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('access_source', 'paid_package')->count());
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('price_paid', '1000.00')->count());
+        $restored = OrganizationPackageSubscription::query()->where('package_slug', $slugs[0])->sole();
+        $this->assertSame('scheduled_for_removal', $restored->status->value);
+        $this->assertTrue($oldEnd->equalTo($restored->cancel_at));
+        $this->assertTrue($oldEnd->equalTo($this->account->fresh()->current_period_end_at));
+    }
+
+    #[DataProvider('refundedPrepaidAncestors')]
+    public function test_refunding_nested_prepayments_skips_already_refunded_ancestors(bool $refundBase): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $oldEnd = $now->addDays(30);
+        $this->order->forceFill(['status' => 'paid', 'period_start_at' => $now, 'period_end_at' => $oldEnd])->save();
+        $this->account->forceFill(['status' => 'active', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd])->save();
+        $row = OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id, 'package_slug' => 'machinery', 'status' => 'active', 'access_source' => 'paid_package',
+            'price_paid' => '7900.00', 'source_order_id' => $this->order->id, 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd]);
+        $this->order->refresh();
+        $periods = app(\App\Services\Billing\CommercialPaidPeriodService::class);
+        $prepayments = [];
+        foreach ([1, 2] as $number) {
+            $renewal = $this->order->replicate()->fill(['public_id' => (string) \Illuminate\Support\Str::uuid(),
+                'client_idempotency_key' => 'nested-renewal-'.$number, 'billing_period' => '12_months', 'renew_subscription' => true,
+                'current_package_slugs' => ['machinery']]);
+            $renewal->save();
+            $periods->prepare($renewal, $this->account, collect([$row]));
+            $this->account->forceFill(['billing_period' => '12_months', 'current_period_start_at' => $renewal->period_start_at, 'current_period_end_at' => $renewal->period_end_at])->save();
+            $row->forceFill(['source_order_id' => $renewal->id, 'current_period_start_at' => $renewal->period_start_at, 'current_period_end_at' => $renewal->period_end_at])->save();
+            $prepayments[] = $renewal;
+        }
+        $prepayments[0]->forceFill(['status' => 'refunded'])->save();
+        $prepayments[1]->forceFill(['status' => 'refunded'])->save();
+        if ($refundBase) {
+            $this->order->forceFill(['status' => 'refunded'])->save();
+        }
+        $this->assertTrue($periods->restoreAfterRefund($prepayments[1], $this->account, collect([$row])));
+        $this->assertSame($refundBase ? null : $this->order->id, $row->fresh()->source_order_id);
+        $this->assertSame($refundBase ? 'expired' : 'active', $row->fresh()->status->value);
+        $this->assertSame($refundBase ? 'suspended' : 'active', $this->account->fresh()->status->value);
+        $this->assertTrue(($refundBase ? $now : $oldEnd)->equalTo($this->account->fresh()->current_period_end_at));
+    }
+
+    public static function refundedPrepaidAncestors(): array
+    {
+        return ['base remains paid' => [false], 'all periods refunded' => [true]];
+    }
+
+    public function test_ordinary_package_upgrade_and_refund_preserve_the_original_paid_ai_quota(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $end = $now->addMonthsNoOverflow(12);
+        $this->travelTo($now);
+        $this->order->refresh();
+        $base = $this->order->replicate()->fill(['public_id' => (string) \Illuminate\Support\Str::uuid(), 'client_idempotency_key' => 'paid-ai-base',
+            'status' => 'paid', 'billing_period' => '12_months', 'current_package_slugs' => [], 'selected_package_slugs' => ['working-entry'],
+            'period_start_at' => $now, 'period_end_at' => $end]);
+        $base->save();
+        $this->account->forceFill(['status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $now, 'current_period_end_at' => $end])->save();
+        OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
+            'package_slug' => 'working-entry', 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => '430920.00',
+            'source_order_id' => $base->id, 'current_period_start_at' => $now, 'current_period_end_at' => $end]);
+        $this->mock(\App\Services\Entitlements\OrganizationEntitlementService::class)->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = app(\App\Services\Credits\AICreditCommercialService::class);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->order->forceFill(['billing_period' => '12_months', 'current_package_slugs' => ['working-entry'],
+            'selected_package_slugs' => ['working-entry', 'machinery'], 'period_start_at' => $now, 'period_end_at' => $end])->save();
+        $this->gateway->payment = $this->paymentResult();
+        $service = app(CommercialWebhookService::class);
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $ai = OrganizationPackageSubscription::query()->where('package_slug', 'working-entry')->sole();
+        $this->assertSame($base->id, $ai->source_order_id);
+        $this->assertSame('430920.00', $ai->price_paid);
+        $this->travelTo($now->addMonthsNoOverflow(1));
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $lot = \App\Models\Credits\AICreditLot::query()->latest('id')->firstOrFail();
+        $this->assertSame($base->id, $lot->commercial_order_id);
+        $this->gateway->refund = $this->refundResult('ordinary-upgrade-refund', 395000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 395000);
+        $this->assertSame('partial_refund', $service->process($this->notification('refund.succeeded', 'ordinary-upgrade-refund', 'succeeded'), '185.71.76.1'));
+        $this->assertSame(500000, app(\App\Services\Credits\AICreditService::class)->balance($this->organization)['included_minor']);
+        $this->gateway->refund = $this->refundResult('ordinary-upgrade-full-refund', 395000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 790000);
+        $this->assertSame('full_refund', $service->process($this->notification('refund.succeeded', 'ordinary-upgrade-full-refund', 'succeeded'), '185.71.76.1'));
+        $this->assertSame($base->id, $ai->fresh()->source_order_id);
+        $this->assertTrue($ai->fresh()->isActive());
+        $this->assertSame(500000, app(\App\Services\Credits\AICreditService::class)->balance($this->organization)['included_minor']);
     }
 
     public function test_verified_credit_payment_grants_pack_once_without_changing_subscription(): void
@@ -1140,7 +1303,17 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
+        Schema::dropIfExists('commercial_contour_changes');
+        Schema::create('commercial_contour_changes', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id');
+            $table->string('status');
+            $table->timestamp('apply_at');
+            $table->timestamps();
+        });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
             $table->id();
             $table->foreignId('organization_id')->unique();
             $table->foreignId('responsible_user_id')->nullable();
@@ -1161,6 +1334,9 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
+            $table->boolean('renew_subscription')->default(false);
+            $table->jsonb('paid_period_snapshot')->nullable();
             $table->id();
             $table->uuid('public_id')->unique();
             $table->foreignId('organization_id');

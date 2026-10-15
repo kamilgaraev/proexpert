@@ -127,7 +127,7 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 3, 'current_period_start_at' => now()->subDays(20),
+            'quote_version' => 4, 'current_period_start_at' => now()->subDays(20),
             'current_period_end_at' => now()->addDays(10), 'auto_renew_enabled' => true,
         ]);
         $this->package($foreignAccount, 'supply-warehouse');
@@ -142,7 +142,7 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.added_package_slugs', ['supply-warehouse'])
             ->assertJsonPath('data.removed_package_slugs', [])
             ->assertJsonPath('data.offer_type', 'packages')
-            ->assertJsonPath('data.quote_version', 3);
+            ->assertJsonPath('data.quote_version', 4);
     }
 
     public function test_quote_recommends_full_suite_from_the_ruble_threshold_but_never_selects_it_automatically(): void
@@ -167,6 +167,38 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.offer_type', 'full_suite')
             ->assertJsonPath('data.recommendation', null);
         $this->assertCount(7, $selected->json('data.target_package_slugs'));
+    }
+
+    public function test_annual_resource_quote_charges_the_remaining_paid_period_on_both_routes(): void
+    {
+        $at = \Carbon\CarbonImmutable::now('UTC')->startOfSecond();
+        $start = $at->subMonthsNoOverflow(6);
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($at);
+        $this->authenticatedAs($this->owner);
+        $expected = (int) round(150000 * 12 * $at->diffInSeconds($end) / $start->diffInSeconds($end));
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 4, 'billing_period' => '12_months',
+            'auto_renew_enabled' => false, 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        \App\Models\OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'working-entry', 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => '430920.00',
+            'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        foreach (['/billing/commercial/resource-addons/quote', '/billing/resource-addons/quote'] as $route) {
+            $this->postJson('/api/v1/landing'.$route, ['resources' => [['slug' => 'extra_users', 'quantity' => 5]]])
+                ->assertOk()->assertJsonPath('data.monthly_amount_minor', 150000)
+                ->assertJsonPath('data.amount_minor', $expected)->assertJsonPath('data.items.0.amount_minor', $expected);
+        }
+        $account->forceFill(['status' => 'grace'])->save();
+        foreach (['/billing/commercial/resource-addons/quote', '/billing/resource-addons/quote'] as $route) {
+            $this->postJson('/api/v1/landing'.$route, ['resources' => [['slug' => 'extra_users', 'quantity' => 5]]])->assertStatus(409);
+        }
+    }
+
+    public function test_quote_rejects_unsupported_billing_period_and_returns_server_annual_price(): void
+    {
+        $this->authenticatedAs($this->owner)->postJson('/api/v1/landing/billing/commercial/quote', ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'billing_period' => '24_months'])->assertUnprocessable();
+        $this->authenticatedAs($this->owner)->postJson('/api/v1/landing/billing/commercial/quote', ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'billing_period' => '12_months'])->assertOk()
+            ->assertJsonPath('data.billing_period', '12_months')->assertJsonPath('data.period_discount_percent', 10)->assertJsonPath('data.amount_due_now_minor', 43092000);
     }
 
     public function test_quote_rejects_client_current_contour_and_period_boundaries(): void
@@ -439,7 +471,7 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 3, 'auto_renew_enabled' => false,
+            'quote_version' => 4, 'auto_renew_enabled' => false,
         ]);
         [$foreignOrder] = $this->commercialOrder($foreign, $foreignAccount, 'paid');
         $this->authenticatedAs($this->owner)
@@ -509,7 +541,7 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $foreignAccount = OrganizationCommercialAccount::query()->create([
             'organization_id' => $foreign->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 3, 'auto_renew_enabled' => false,
+            'quote_version' => 4, 'auto_renew_enabled' => false,
         ]);
         $this->commercialOrder($foreign, $foreignAccount, 'paid', '2026-07-04 10:00:00');
 
@@ -640,6 +672,20 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.payment_status', 'canceled');
     }
 
+    public function test_removal_from_an_annual_subscription_preserves_the_paid_year(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15 12:00:00', 'UTC');
+        $this->travelTo($start->addDay());
+        $end = $start->addMonthsNoOverflow(12);
+        $account = $this->commercialAccount();
+        $account->forceFill(['billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end, 'billing_anchor_at' => $end])->save();
+        $this->package($account, 'working-entry', $end);
+        $removed = $this->package($account, 'supply-warehouse', $end);
+        $this->authenticatedAs($this->owner)->postJson('/api/v1/landing/billing/commercial/contour/schedule', ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'quote_version' => 4, 'client_idempotency_key' => fake()->uuid()])->assertCreated()->assertJsonPath('data.apply_at', $end->toJSON());
+        $this->assertTrue($removed->fresh()->isActive());
+        $this->assertTrue($end->equalTo($removed->fresh()->current_period_end_at));
+    }
+
     public function test_removal_is_scheduled_idempotently_for_fixed_anchor_without_revoking_current_access(): void
     {
         CarbonImmutable::setTestNow('2026-07-14 12:00:00');
@@ -650,7 +696,7 @@ class CommercialCheckoutControllerTest extends TestCase
         $removed = $this->package($account, 'supply-warehouse', $anchor);
         $payload = [
             'target_package_slugs' => ['working-entry'], 'full_suite' => false,
-            'quote_version' => 3, 'client_idempotency_key' => 'schedule-removal-00000000000000000001',
+            'quote_version' => 4, 'client_idempotency_key' => 'schedule-removal-00000000000000000001',
         ];
 
         $first = $this->authenticatedAs($this->owner)->postJson(
@@ -695,7 +741,7 @@ class CommercialCheckoutControllerTest extends TestCase
             [
                 'target_package_slugs' => ['machinery'],
                 'full_suite' => false,
-                'quote_version' => 3,
+                'quote_version' => 4,
                 'client_idempotency_key' => 'corporate-schedule-000000000000000001',
             ],
         )->assertConflict()
@@ -715,7 +761,7 @@ class CommercialCheckoutControllerTest extends TestCase
         $payload = [
             'target_package_slugs' => ['working-entry'],
             'full_suite' => false,
-            'quote_version' => 3,
+            'quote_version' => 4,
             'client_idempotency_key' => 'corporate-repeat-000000000000000000001',
         ];
 
@@ -748,7 +794,7 @@ class CommercialCheckoutControllerTest extends TestCase
             [
                 'target_package_slugs' => ['machinery'],
                 'full_suite' => false,
-                'quote_version' => 3,
+                'quote_version' => 4,
                 'client_idempotency_key' => 'schedule-grace-000000000000000000001',
             ],
         )->assertConflict();
@@ -782,7 +828,7 @@ class CommercialCheckoutControllerTest extends TestCase
             [
                 'target_package_slugs' => ['working-entry'],
                 'full_suite' => false,
-                'quote_version' => 3,
+                'quote_version' => 4,
                 'client_idempotency_key' => 'schedule-deadlock-0000000000000000001',
             ],
         )->assertConflict();
@@ -844,7 +890,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'user_id' => $this->owner->id,
             'status' => 'scheduled',
             'offer_type' => 'packages',
-            'quote_version' => 3,
+            'quote_version' => 4,
             'target_package_slugs' => ['machinery'],
             'current_package_slugs' => ['machinery', 'planning-schedules'],
             'apply_at' => $anchor,
@@ -899,7 +945,7 @@ class CommercialCheckoutControllerTest extends TestCase
     {
         return OrganizationCommercialAccount::query()->firstOrCreate(['organization_id' => $this->organization->id], [
             'responsible_user_id' => $this->owner->id, 'status' => 'active', 'offer_type' => 'packages',
-            'quote_version' => 3, 'billing_anchor_at' => now()->addDays(10),
+            'quote_version' => 4, 'billing_anchor_at' => now()->addDays(10),
             'current_period_start_at' => now()->subDays(20), 'current_period_end_at' => now()->addDays(10),
             'auto_renew_enabled' => true, 'saved_payment_method_id' => 'provider-method-audit',
             'saved_payment_method_active' => true,
@@ -949,7 +995,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'target_package_slugs' => ['machinery'],
             'current_package_slugs' => [],
             'full_suite' => false,
-            'quote_version' => 3,
+            'quote_version' => 4,
             'client_idempotency_key' => '22222222-2222-4222-8222-222222222222',
             'auto_renew_consent' => true,
             'use_balance' => false,
@@ -987,7 +1033,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'kind' => 'purchase',
             'status' => $status,
             'offer_type' => 'packages',
-            'quote_version' => 3,
+            'quote_version' => 4,
             'selected_package_slugs' => ['machinery'],
             'current_package_slugs' => [],
             'amount_minor' => 790000,
@@ -1179,6 +1225,7 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->timestampsTz();
         });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
             $table->id();
             $table->foreignId('organization_id')->unique();
             $table->foreignId('responsible_user_id')->nullable();
@@ -1278,6 +1325,9 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
+            $table->boolean('renew_subscription')->default(false);
+            $table->jsonb('paid_period_snapshot')->nullable();
             $table->id();
             $table->uuid('public_id')->unique();
             $table->jsonb('assistant_revenue_allocation')->nullable();

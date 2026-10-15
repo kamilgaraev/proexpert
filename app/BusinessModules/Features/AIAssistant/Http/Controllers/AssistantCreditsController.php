@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantCreditPurcha
 use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantCreditQuoteRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\Models\Organization;
+use App\Services\Credits\AICreditCommercialService;
 use App\Services\Credits\AICreditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,10 @@ final class AssistantCreditsController extends AbstractAssistantApiController
 
     public function balance(Request $request): JsonResponse
     {
-        return $this->success($request, $this->credits->balance($this->organization($request), $this->actor($request)));
+        $organization = $this->organization($request);
+        app(AICreditCommercialService::class)->reconcileCurrentPaidPeriod($organization);
+
+        return $this->success($request, $this->credits->balance($organization, $this->actor($request)));
     }
 
     public function history(Request $request): JsonResponse

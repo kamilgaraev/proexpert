@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Credits;
 
+use App\Enums\Billing\CommercialBillingPeriod;
 use App\Models\CommercialOrder;
 use App\Models\Credits\AICreditLedgerEntry;
 use App\Models\Credits\AICreditLot;
@@ -11,7 +12,10 @@ use App\Models\Credits\AICreditReservation;
 use App\Models\Credits\AICreditWallet;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Modules\PackageCatalogService;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -34,18 +38,27 @@ final class AICreditCommercialService
 
             return;
         }
-        if ($order->period_start_at === null || $order->period_end_at === null || $order->period_start_at > now() || $order->period_end_at <= now()) {
+        $window = $this->subscriptionWindow($order);
+        if ($window === null) {
             return;
         }
+        [$periodStart, $periodEnd] = $window;
         if (! $this->entitlements->hasModuleAccess((int) $order->organization_id, 'ai-assistant')
             && ! $this->entitlements->hasModuleAccess((int) $order->organization_id, 'ai-estimates')) {
             return;
         }
-        $periodKey = 'paid-period:'.$order->commercial_account_id.':'.$order->period_start_at->toAtomString();
-        if (AICreditLedgerEntry::query()->where('organization_id', $order->organization_id)->whereIn('idempotency_key', [$periodKey, 'legacy-base:'.$order->commercial_account_id.':'.$order->period_start_at->toAtomString()])->exists()) {
+        $periodKey = 'paid-period:'.$order->commercial_account_id.':'.$periodStart->toAtomString();
+        if (AICreditLedgerEntry::query()->where('organization_id', $order->organization_id)->whereIn('idempotency_key', [$periodKey, 'legacy-base:'.$order->commercial_account_id.':'.$periodStart->toAtomString()])->exists()) {
             return;
         }
-        $this->credits->grant($organization, 500_000, 'subscription', $order->period_end_at, $periodKey, (int) $order->getKey(), ['period_start_at' => $order->period_start_at->toAtomString(), 'period_end_at' => $order->period_end_at->toAtomString()]);
+        DB::transaction(function () use ($order, $organization, $periodStart, $periodEnd, $periodKey): void {
+            $this->credits->grant($organization, 500_000, 'subscription', $periodEnd, $periodKey, (int) $order->getKey(), ['period_start_at' => $periodStart->toAtomString(), 'period_end_at' => $periodEnd->toAtomString()]);
+            // Read after acquiring the wallet lock so a concurrent refund cannot miss this new lot.
+            $refundedAmount = (int) $order->payments()->sum('refunded_amount_minor');
+            if ($refundedAmount > 0) {
+                $this->refund($order, $refundedAmount);
+            }
+        }, 3);
     }
 
     /** Reconcile a newly available AI product against an already paid period, never against a pending order. */
@@ -54,17 +67,75 @@ final class AICreditCommercialService
         DB::transaction(function () use ($organization): void {
             $account = OrganizationCommercialAccount::query()->where('organization_id', $organization->id)->lockForUpdate()->first();
             if ($account === null || $account->status->value !== 'active' || $account->current_period_start_at === null
-                || $account->current_period_end_at === null || $account->current_period_start_at > now() || $account->current_period_end_at <= now()) {
+                || $account->current_period_end_at === null || $account->current_period_end_at <= now()) {
                 return;
             }
-            $order = CommercialOrder::query()->where('organization_id', $organization->id)->where('commercial_account_id', $account->id)
-                ->where('status', 'paid')->where('kind', '<>', 'ai_credits')
-                ->where('period_start_at', $account->current_period_start_at)->where('period_end_at', $account->current_period_end_at)
-                ->orderBy('id')->first();
+            $order = $this->currentPaidAiOrder($account);
             if ($order !== null) {
                 $this->settlePaidOrder($order);
             }
         }, 3);
+    }
+
+    private function currentPaidAiOrder(OrganizationCommercialAccount $account): ?CommercialOrder
+    {
+        $catalog = app(PackageCatalogService::class);
+        $aiPackages = array_filter(array_column($catalog->allPackages(), 'slug'), fn (string $slug): bool =>
+            array_intersect(['ai-assistant', 'ai-estimates'], $catalog->tierModules($slug, 'standard')) !== []);
+        $subscriptions = OrganizationPackageSubscription::query()->where('organization_id', $account->organization_id)
+            ->where('commercial_account_id', $account->id)->whereIn('package_slug', $aiPackages)
+            ->whereIn('access_source', ['paid_package', 'full_suite'])->whereIn('status', ['active', 'scheduled_for_removal'])
+            ->where('current_period_end_at', '>', now())->orderByDesc('current_period_end_at')->orderBy('id')->get();
+        $orders = [];
+        foreach ($subscriptions as $subscription) {
+            $sourceId = (int) $subscription->source_order_id;
+            $visited = [];
+            while ($sourceId > 0 && ! isset($visited[$sourceId])) {
+                $visited[$sourceId] = true;
+                if (! array_key_exists($sourceId, $orders)) {
+                    $orders[$sourceId] = CommercialOrder::query()->whereKey($sourceId)->where('organization_id', $account->organization_id)
+                        ->where('commercial_account_id', $account->id)->where('status', 'paid')->where('kind', '<>', 'ai_credits')->first();
+                }
+                $order = $orders[$sourceId];
+                if ($order === null || $order->period_start_at === null || $order->period_end_at === null) {
+                    break;
+                }
+                if ($order->period_start_at <= now() && $order->period_end_at > now()) {
+                    return $order;
+                }
+                if (! $order->renew_subscription || $order->period_start_at <= now()) {
+                    break;
+                }
+                // A prepaid next period points back to the still-paid source for this same AI package.
+                $sourceId = (int) ($order->paid_period_snapshot['package_order_ids'][$subscription->package_slug] ?? 0);
+            }
+        }
+
+        return null;
+    }
+
+    private function subscriptionWindow(CommercialOrder $order): ?array
+    {
+        $now = CarbonImmutable::instance(now());
+        if ($order->period_start_at === null || $order->period_end_at === null
+            || $order->period_start_at->greaterThan($now) || $order->period_end_at->lessThanOrEqualTo($now)) {
+            return null;
+        }
+        $term = CommercialBillingPeriod::from($order->billing_period ?? '30_days');
+        if ($term === CommercialBillingPeriod::ThirtyDays) {
+            return [$order->period_start_at, $order->period_end_at];
+        }
+        $anchor = $order->period_start_at->setTimezone('Europe/Moscow');
+        $timezone = $order->period_start_at->getTimezone();
+        for ($month = 0; $month < $term->months(); $month++) {
+            $start = $anchor->addMonthsNoOverflow($month)->setTimezone($timezone);
+            $end = $anchor->addMonthsNoOverflow($month + 1)->setTimezone($timezone)->min($order->period_end_at);
+            if ($start->lessThanOrEqualTo($now) && $end->greaterThan($now)) {
+                return [$start, $end];
+            }
+        }
+
+        return null;
     }
 
     public function refund(CommercialOrder $order, int $cumulativeAmountMinor): void

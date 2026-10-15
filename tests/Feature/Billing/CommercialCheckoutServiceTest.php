@@ -584,6 +584,74 @@ class CommercialCheckoutServiceTest extends TestCase
         CarbonImmutable::setTestNow();
     }
 
+    public function test_annual_balance_purchase_and_prepaid_renewal_extend_from_paid_expiry_once(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($at);
+        OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 100000000, 'currency' => 'RUB']);
+        $initial = $this->checkoutPayload(['target_package_slugs' => ['working-entry'], 'use_balance' => true, 'auto_renew_consent' => false]);
+        $this->assertSame('paid', $initial['status']);
+        $oldEnd = $at->addDays(30);
+        $payload = ['target_package_slugs' => ['working-entry'], 'current_package_slugs' => ['working-entry'], 'billing_period' => '12_months', 'renew_subscription' => true, 'use_balance' => true, 'auto_renew_consent' => false, 'client_idempotency_key' => fake()->uuid()];
+        $paid = $this->checkoutPayload($payload);
+        $again = $this->checkoutPayload($payload);
+        $this->assertSame($paid['order_id'], $again['order_id']);
+        $this->assertSame(43092000, $paid['amount_minor']);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertSame('12_months', $account->billing_period);
+        $this->assertTrue($oldEnd->addMonthsNoOverflow(12)->equalTo($account->current_period_end_at));
+        $this->assertTrue(OrganizationPackageSubscription::query()->sole()->isActive());
+        $this->assertSame(52918000, OrganizationBalance::query()->sole()->balance);
+    }
+
+    public function test_resources_bought_after_prepayment_are_quoted_consistently_and_available_immediately(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($at);
+        OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 100000000, 'currency' => 'RUB']);
+        $current = ['target_package_slugs' => ['working-entry'], 'use_balance' => true, 'auto_renew_consent' => false];
+        $this->checkoutPayload($current);
+        $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'billing_period' => '6_months', 'renew_subscription' => true]);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertTrue($account->current_period_start_at->isFuture());
+        $resources = [['slug' => 'extra_users', 'quantity' => 10]];
+        $queries = app(\App\Services\Billing\CommercialBillingQueryService::class);
+        $resourceQuote = $queries->quoteResourceAddons($this->organization, $resources);
+        $combined = $queries->quote($this->organization, ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'resources' => $resources]);
+        $this->assertSame($combined['resource_addons_quote']['amount_minor'], $resourceQuote['amount_minor']);
+        $this->assertGreaterThan(1800000, $resourceQuote['amount_minor']);
+        $paid = $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'resources' => $resources]);
+        $this->assertSame('paid', $paid['status']);
+        $this->assertSame($resourceQuote['amount_minor'], $paid['amount_minor']);
+        $allocation = OrganizationResourceAllocation::query()->active()->sole();
+        $this->assertTrue($at->equalTo($allocation->period_start_at));
+        $this->assertTrue($account->current_period_end_at->equalTo($allocation->period_end_at));
+    }
+
+    public function test_checkout_idempotency_key_cannot_be_reused_for_another_billing_period(): void
+    {
+        $key = fake()->uuid();
+        $this->checkoutPayload(['billing_period' => '6_months', 'client_idempotency_key' => $key]);
+        $this->expectException(CommercialCheckoutConflictException::class);
+        $this->checkoutPayload(['billing_period' => '12_months', 'client_idempotency_key' => $key]);
+    }
+
+    public function test_annual_checkout_does_not_grant_access_until_provider_confirms_payment(): void
+    {
+        $result = $this->checkoutPayload(['billing_period' => '12_months']);
+        $this->assertSame(49464000, $result['amount_minor']);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->assertSame('12_months', CommercialOrder::query()->sole()->billing_period);
+    }
+
+    public function test_pending_annual_order_conflicts_with_a_monthly_default_retry(): void
+    {
+        $key = fake()->uuid();
+        $this->checkoutPayload(['billing_period' => '12_months', 'client_idempotency_key' => $key]);
+        $this->expectException(CommercialCheckoutConflictException::class);
+        $this->checkoutPayload(['client_idempotency_key' => $key]);
+    }
+
     private function checkout(array $targets): array
     {
         return $this->checkoutPayload([
@@ -601,7 +669,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'target_package_slugs' => ['machinery'],
                 'current_package_slugs' => [],
                 'full_suite' => false,
-                'quote_version' => 3,
+                'quote_version' => 4,
                 'client_idempotency_key' => fake()->uuid(),
                 'auto_renew_consent' => true,
                 'use_balance' => false,
@@ -615,7 +683,7 @@ class CommercialCheckoutServiceTest extends TestCase
             'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs',
             'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user',
             'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_resource_allocations', 'organization_package_subscriptions',
-            'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'modules', 'users', 'organizations',
+            'commercial_contour_changes', 'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'modules', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -647,7 +715,16 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
+        Schema::create('commercial_contour_changes', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id');
+            $table->string('status');
+            $table->timestamp('apply_at');
+            $table->timestamps();
+        });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
             $table->id();
             $table->foreignId('organization_id')->unique();
             $table->foreignId('responsible_user_id')->nullable();
@@ -721,6 +798,9 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createCommercialCheckoutTables(): void
     {
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->string('billing_period', 20)->default('30_days');
+            $table->boolean('renew_subscription')->default(false);
+            $table->jsonb('paid_period_snapshot')->nullable();
             $table->id();
             $table->uuid('public_id')->unique();
             $table->jsonb('assistant_revenue_allocation')->nullable();

@@ -21,6 +21,8 @@ class CommercialCheckoutRequest extends FormRequest
             'current_package_slugs' => ['present', 'array'],
             'current_package_slugs.*' => ['required', 'string', 'max:100', 'distinct'],
             'full_suite' => ['required', 'boolean'],
+            'billing_period' => ['sometimes', 'string', 'in:30_days,6_months,12_months'],
+            'renew_subscription' => ['sometimes', 'boolean'],
             'resources' => ['sometimes', 'array', 'max:20'],
             'resources.*.slug' => ['required', 'string', 'max:100'],
             'resources.*.quantity' => ['required', 'numeric', 'min:0'],

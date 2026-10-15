@@ -216,6 +216,88 @@ class CommercialOfferCalculatorTest extends TestCase
         );
     }
 
+    public function test_six_calendar_months_have_five_percent_discount_and_no_month_overflow(): void
+    {
+        $now = CarbonImmutable::parse('2026-08-31 09:00:00', 'Europe/Moscow');
+        $quote = $this->calculator()->preview(['working-entry'], calculatedAt: $now, billingPeriod: '6_months');
+        $this->assertSame(22743000, $quote['amount_due_now_minor']);
+        $this->assertSame(5, $quote['period_discount_percent']);
+        $this->assertSame('2027-02-28 09:00:00', $quote['period_end_at']->format('Y-m-d H:i:s'));
+    }
+
+    public function test_annual_full_suite_discount_combines_with_bundle_price_and_handles_leap_day(): void
+    {
+        $now = CarbonImmutable::parse('2028-02-29 09:00:00', 'Europe/Moscow');
+        $quote = $this->calculator()->preview([], fullSuite: true, calculatedAt: $now, billingPeriod: '12_months');
+        $this->assertSame(86292000, $quote['amount_due_now_minor']);
+        $this->assertSame(9588000, $quote['period_savings_minor']);
+        $this->assertSame('2029-02-28 09:00:00', $quote['period_end_at']->format('Y-m-d H:i:s'));
+    }
+
+    public function test_prepaid_annual_renewal_starts_at_current_expiry(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $end = $start->addDays(30);
+        $quote = $this->calculator()->preview(['working-entry'], ['working-entry'], calculatedAt: $start->addDay(), currentPeriodStartAt: $start, currentPeriodEndAt: $end, billingPeriod: '12_months', renewSubscription: true);
+        $this->assertSame(43092000, $quote['amount_due_now_minor']);
+        $this->assertTrue($end->equalTo($quote['period_start_at']));
+        $this->assertTrue($end->addYear()->equalTo($quote['period_end_at']));
+    }
+
+    public function test_upgrade_during_an_annual_period_uses_annual_discount_and_actual_remaining_duration(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $end = $start->addYear();
+        $quote = $this->calculator()->preview(['working-entry', 'supply-warehouse'], ['working-entry'], calculatedAt: $start->addDays(100), currentPeriodStartAt: $start, currentPeriodEndAt: $end, billingPeriod: '12_months', currentBillingPeriod: '12_months');
+        $this->assertSame((int) round(10692000 * 265 / 365), $quote['amount_due_now_minor']);
+        $this->assertTrue($end->equalTo($quote['period_end_at']));
+    }
+
+    public function test_billing_period_change_without_renewal_is_rejected(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15', 'UTC');
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry'], ['working-entry'], calculatedAt: $start->addDay(), currentPeriodStartAt: $start, currentPeriodEndAt: $start->addDays(30), billingPeriod: '6_months');
+    }
+
+    public function test_renewal_cannot_remove_or_add_packages_before_the_paid_period_ends(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15', 'UTC');
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry', 'machinery'], ['working-entry'], calculatedAt: $start->addDay(), currentPeriodStartAt: $start, currentPeriodEndAt: $start->addDays(30), billingPeriod: '12_months', renewSubscription: true);
+    }
+
+    public function test_calendar_period_uses_moscow_timezone_at_the_utc_month_boundary(): void
+    {
+        $now = CarbonImmutable::parse('2026-08-30 21:30:00', 'UTC');
+        $quote = $this->calculator()->preview(['working-entry'], calculatedAt: $now, billingPeriod: '6_months');
+        $this->assertSame('2027-02-28 00:30:00', $quote['period_end_at']->setTimezone('Europe/Moscow')->format('Y-m-d H:i:s'));
+    }
+
+    public function test_resource_addons_cover_the_selected_period_without_the_package_discount(): void
+    {
+        $quote = $this->calculator()->preview(['working-entry'], billingPeriod: '6_months');
+        $resourceQuote = \App\Services\Billing\CommercialResourcePeriodPricing::apply([
+            'amount_minor' => 30000,
+            'items' => [['amount_minor' => 30000]],
+        ], $quote);
+        $this->assertSame(180000, $resourceQuote['amount_minor']);
+        $this->assertSame('1800.00', $resourceQuote['amount']);
+    }
+
+    public function test_renewal_of_a_free_organization_is_rejected_before_payment(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry'], billingPeriod: '12_months', renewSubscription: true);
+    }
+
+    public function test_renewal_of_an_expired_paid_period_is_rejected_before_payment(): void
+    {
+        $start = CarbonImmutable::parse('2026-01-01', 'UTC');
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry'], ['working-entry'], calculatedAt: $start->addDays(31), currentPeriodStartAt: $start, currentPeriodEndAt: $start->addDays(30), billingPeriod: '12_months', renewSubscription: true);
+    }
+
     private function calculator(): CommercialOfferCalculator
     {
         return app(CommercialOfferCalculator::class);

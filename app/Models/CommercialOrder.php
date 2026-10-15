@@ -13,11 +13,11 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CommercialOrder extends Model
 {
-    protected $hidden = ['assistant_revenue_allocation'];
+    protected $hidden = ['assistant_revenue_allocation', 'paid_period_snapshot'];
 
     protected $fillable = [
         'public_id', 'organization_id', 'commercial_account_id', 'user_id', 'status',
-        'offer_type', 'quote_version', 'selected_package_slugs', 'current_package_slugs', 'selected_resource_addons',
+        'offer_type', 'quote_version', 'billing_period', 'renew_subscription', 'selected_package_slugs', 'current_package_slugs', 'selected_resource_addons',
         'amount_minor', 'amount', 'currency', 'period_start_at', 'period_end_at',
         'auto_renew_consent', 'client_idempotency_key', 'server_idempotency_key', 'kind',
     ];
@@ -26,10 +26,12 @@ class CommercialOrder extends Model
         'status' => CommercialOrderStatus::class,
         'offer_type' => CommercialOfferType::class,
         'quote_version' => 'integer',
+        'renew_subscription' => 'boolean',
         'selected_package_slugs' => 'array',
         'current_package_slugs' => 'array',
         'selected_resource_addons' => 'array',
         'assistant_revenue_allocation' => 'array',
+        'paid_period_snapshot' => 'array',
         'amount_minor' => 'integer',
         'amount' => 'decimal:2',
         'period_start_at' => 'immutable_datetime',

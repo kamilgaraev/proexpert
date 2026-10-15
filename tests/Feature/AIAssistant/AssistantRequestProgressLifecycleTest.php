@@ -64,6 +64,11 @@ final class AssistantRequestProgressLifecycleTest extends TestCase
             $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(false); $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void { $table->id(); $table->string('kind')->default('purchase'); });
+        Schema::dropIfExists('organization_commercial_accounts');
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id'); $table->string('status');
+            $table->timestampTz('current_period_start_at')->nullable(); $table->timestampTz('current_period_end_at')->nullable(); $table->timestamps();
+        });
         Schema::create('ai_conversations', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id')->constrained(); $table->foreignId('user_id')->constrained(); $table->string('title')->nullable(); $table->jsonb('context')->nullable(); $table->timestamp('last_activity_at')->nullable(); $table->unsignedInteger('context_version')->default(1); $table->timestamps();
         });

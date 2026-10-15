@@ -143,17 +143,27 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             $fullRefund = $refundedAmount >= $payment->amount_minor;
             if ($fullRefund) {
                 $order->forceFill(['status' => 'refunded'])->save();
-                OrganizationPackageSubscription::query()
+                $sourceRows = OrganizationPackageSubscription::query()
                     ->where('organization_id', $order->organization_id)
                     ->where('source_order_id', $order->id)
                     ->lockForUpdate()
-                    ->get()
-                    ->each(static fn (OrganizationPackageSubscription $row) => $row->forceFill([
+                    ->get();
+                $restored = false;
+                if ($order->renew_subscription) {
+                    $account = OrganizationCommercialAccount::query()
+                        ->whereKey($order->commercial_account_id)
+                        ->where('organization_id', $order->organization_id)
+                        ->lockForUpdate()->firstOrFail();
+                    $restored = app(CommercialPaidPeriodService::class)->restoreAfterRefund($order, $account, $sourceRows);
+                }
+                if (! $restored) {
+                    $sourceRows->each(static fn (OrganizationPackageSubscription $row) => $row->forceFill([
                         'status' => 'expired',
                         'current_period_end_at' => now(),
                         'cancel_at' => null,
                         'canceled_at' => now(),
                     ])->save());
+                }
             }
 
             $this->notify(
@@ -241,7 +251,8 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
-                if ($order->kind !== 'ai_credits' && (int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)) {
+                if ($order->kind !== 'ai_credits' && (int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)
+                    && ! ((int) $order->quote_version === 3 && ($order->billing_period ?? '30_days') === '30_days')) {
                     $payment->forceFill([
                         'provider_status' => 'succeeded',
                         'confirmation_url' => null,
@@ -263,7 +274,8 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     );
                 }
 
-                if ($order->kind === 'purchase' && $account->status->value === 'grace') {
+                if ($order->kind === 'purchase' && ($account->status->value === 'grace'
+                    || ! app(CommercialPaidPeriodService::class)->canActivate($order, $packageRows))) {
                     $payment->forceFill([
                         'provider_status' => 'succeeded',
                         'confirmation_url' => null,
@@ -405,7 +417,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
             $order = CommercialOrder::query()->whereKey($payment->commercial_order_id)->lockForUpdate()->firstOrFail();
             $organizationId = (int) $order->organization_id;
-            OrganizationCommercialAccount::query()
+            $account = OrganizationCommercialAccount::query()
                 ->whereKey($order->commercial_account_id)
                 ->where('organization_id', $order->organization_id)
                 ->lockForUpdate()
@@ -503,7 +515,8 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             if ($full) {
                 $order->forceFill(['status' => 'refunded'])->save();
 
-                foreach ($sourceRows as $row) {
+                $restored = app(CommercialPaidPeriodService::class)->restoreAfterRefund($order, $account, $sourceRows);
+                foreach ($restored ? [] : $sourceRows as $row) {
                     $row->forceFill([
                         'status' => 'expired',
                         'current_period_end_at' => now(),
@@ -539,10 +552,12 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         PaymentGatewayResult $authoritative,
         bool $preserveRenewalMethod = false,
     ): void {
+        app(CommercialPaidPeriodService::class)->prepare($order, $account, $packageRows);
         $order->forceFill(['status' => 'paid'])->save();
         $renewal = $order->kind === 'renewal';
         $canRenew = $preserveRenewalMethod
             ? $account->auto_renew_enabled && $account->saved_payment_method_active
+                && (($account->billing_period ?? '30_days') === ($order->billing_period ?? '30_days') || $order->auto_renew_consent)
             : ($renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
             && $authoritative->paymentMethodSaved
             && trim((string) $authoritative->paymentMethodId) !== ''));
@@ -571,6 +586,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             'status' => 'active',
             'offer_type' => $order->offer_type->value,
             'quote_version' => $order->quote_version,
+            'billing_period' => $order->billing_period ?? '30_days',
             'current_period_start_at' => $order->period_start_at,
             'current_period_end_at' => $order->period_end_at,
             'billing_anchor_at' => $order->period_end_at,
@@ -612,18 +628,23 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     'organization_id' => $order->organization_id,
                     'package_slug' => $slug,
                 ]);
+            $preserveAiPayment = ! $renewal && ! $order->renew_subscription && $order->offer_type === CommercialOfferType::Packages
+                && $row->exists && $row->access_source->value === 'paid_package' && $row->source_order_id !== null
+                && in_array($slug, $order->current_package_slugs ?? [], true)
+                && $row->current_period_end_at !== null && $row->current_period_end_at->equalTo($order->period_end_at)
+                && array_intersect(['ai-assistant', 'ai-estimates'], $this->catalog->tierModules($slug, 'standard')) !== [];
             $row->forceFill([
                 'commercial_account_id' => $account->id,
                 'status' => 'active',
                 'access_source' => $source,
-                'price_paid' => $order->amount,
+                'price_paid' => $preserveAiPayment ? $row->price_paid : $order->amount,
                 'current_period_start_at' => $order->period_start_at,
                 'current_period_end_at' => $order->period_end_at,
                 'trial_started_at' => null,
                 'trial_ends_at' => null,
                 'cancel_at' => null,
                 'canceled_at' => null,
-                'source_order_id' => $order->id,
+                'source_order_id' => $preserveAiPayment ? $row->source_order_id : $order->id,
             ])->save();
         }
 
@@ -668,7 +689,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'quantity' => $quantity,
                 'source' => 'paid_addon',
                 'status' => 'active',
-                'period_start_at' => $order->period_start_at,
+                'period_start_at' => now(),
                 'period_end_at' => $order->period_end_at,
                 'metadata' => [
                     'commercial_order_id' => $order->public_id,
@@ -677,7 +698,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ],
             ]);
         }
-        app(\App\Services\Credits\AICreditCommercialService::class)->settlePaidOrder($order);
+        app(\App\Services\Credits\AICreditCommercialService::class)->reconcileCurrentPaidPeriod($order->organization);
     }
 
     private function matchesOrder(
