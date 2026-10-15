@@ -22,6 +22,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
 
     public static function matches(string $query): bool
     {
+        $query = self::intentQuery($query);
         $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
         $hasProjectRequirement = preg_match('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект/iu', $query) === 1;
         return self::hasIntent($query)
@@ -35,6 +36,11 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             && ! AssistantMutationIntent::containsRequest($query)
             && ! AssistantMutationIntent::containsFollowUpCommand($query)
             && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|сотрудник|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
+    }
+
+    public static function intentQuery(string $query): string
+    {
+        return preg_replace('/(уведомля[а-яё]*\s+ли\s+)сотрудник[а-яё]*(?=\s+об?\s+(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц)/iu', '$1получателя', $query) ?? $query;
     }
 
     private static function asksAboutReportApproval(string $query): bool

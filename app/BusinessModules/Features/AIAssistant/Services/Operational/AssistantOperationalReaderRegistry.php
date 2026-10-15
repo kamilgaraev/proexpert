@@ -144,6 +144,7 @@ final class AssistantOperationalReaderRegistry
         $topicQuery = AssistantAccessRecertificationReader::matches($query)
             ? preg_replace('/((?:провер(?:к|ок)|пересмотр|ревизи|переаттестаци)[а-яё]*\s+доступ[а-яё]*)\s+(?:сотрудник[а-яё]*|персонал[а-яё]*)/iu', '$1', $query) ?? $query
             : $query;
+        $topicQuery = AssistantAdvanceSettingsReader::intentQuery($topicQuery);
         foreach (self::TOPICS as $pattern) {
             if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
                 continue;
