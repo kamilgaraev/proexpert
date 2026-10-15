@@ -73,7 +73,10 @@ final readonly class AssistantRequiredProjectRead
             return ['name' => 'get_project_handover_summary', 'arguments' => ['project_id' => $scope->projectId]];
         }
         if (AssistantProjectContractRosterReader::matches($query)) {
-            return ['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => $scope->projectId]];
+            $arguments = ['project_id' => $scope->projectId];
+            $filter = AssistantProjectContractRosterReader::deadlineFilter($query);
+            if ($filter !== 'all') { $arguments['deadline_filter'] = $filter; }
+            return ['name' => 'get_project_contract_roster', 'arguments' => $arguments];
         }
         if (AssistantProjectMachineryReader::matches($query)) {
             return ['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => $scope->projectId]];

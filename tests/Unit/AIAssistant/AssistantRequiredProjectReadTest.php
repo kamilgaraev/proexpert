@@ -95,7 +95,16 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи действующие договора нашего объекта',
             'Покажи сроки окончания договоров нашего объекта',
             'Покажи даты окончания договоров нашего объекта'] as $query) {
-            self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+            $filter = match ($query) {
+                'Какие договоры нашего объекта уже просрочены по сроку окончания? Покажи номера, подрядчиков и даты; договоры без срока выдели отдельно, не называй их просроченными.' => 'overdue_or_undated',
+                'Какие договоры нашего объекта имеют просроченную дату окончания?' => 'overdue',
+                'У каких договоров нашего объекта не указана дата окончания?' => 'undated',
+                default => null,
+            };
+            $arguments = ['project_id' => 52];
+            if ($filter !== null) { $arguments['deadline_filter'] = $filter; }
+            self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => $arguments], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+            self::assertSame($arguments, AssistantRequiredProjectRead::bindArguments($this->plan($query), 'get_project_contract_roster', ['project_id' => 999, 'deadline_filter' => 'all']));
         }
         foreach (['Покажи действующие договоры нашего объекта на сегодня',
             'Какие активные договоры нашего объекта действуют на сегодняшний день?'] as $query) {
