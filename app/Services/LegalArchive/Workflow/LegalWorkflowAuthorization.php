@@ -13,8 +13,11 @@ use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAccessSubjectKind;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\Access\LegalDocumentInternalAccessFilter;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Support\Collection;
 
 final class LegalWorkflowAuthorization
@@ -25,15 +28,15 @@ final class LegalWorkflowAuthorization
     {
         $organizationId = (int) $document->organization_id;
         if (
-            $organizationId < 1
-            || (string) $document->getKey() === ''
+            $this->objectAccess === null
+            || $organizationId < 1
+            || (int) $document->getKey() < 1
         ) {
             return false;
         }
         if ((int) $actor->current_organization_id !== $organizationId) {
             if (
-                $this->objectAccess === null
-                || ! in_array($permission, [
+                ! in_array($permission, [
                     LegalWorkflowPermissions::VIEW,
                     LegalWorkflowPermissions::APPROVE,
                     LegalWorkflowPermissions::REJECT,
@@ -55,12 +58,13 @@ final class LegalWorkflowAuthorization
             }
         }
 
-        $context = ['organization_id' => $organizationId];
-        if ($document->primary_project_id !== null) {
-            $context['project_id'] = (int) $document->primary_project_id;
-        }
+        try {
+            $this->objectAccess->authorizePermission($actor, $document, $permission);
 
-        return $actor->hasPermission($permission, $context);
+            return true;
+        } catch (AuthorizationException) {
+            return false;
+        }
     }
 
     public function assertCan(User $actor, LegalArchiveDocument $document, string $permission): void
@@ -82,29 +86,12 @@ final class LegalWorkflowAuthorization
             return $batched;
         }
 
-        $byContext = [];
-        $resolvedContexts = [];
         $result = [];
         foreach ($documents as $document) {
             $documentId = (int) $document->id;
-            $organizationId = (int) $document->organization_id;
-            if ($organizationId < 1 || (int) $actor->current_organization_id !== $organizationId) {
-                $result[$documentId] = array_fill_keys($permissions, false);
-
-                continue;
+            foreach ($permissions as $permission) {
+                $result[$documentId][$permission] = $this->can($actor, $document, $permission);
             }
-            $context = ['organization_id' => $organizationId];
-            if ($document->primary_project_id !== null) {
-                $context['project_id'] = (int) $document->primary_project_id;
-            }
-            $contextKey = $organizationId.':'.($context['project_id'] ?? 'organization');
-            if (! isset($resolvedContexts[$contextKey])) {
-                $resolvedContexts[$contextKey] = true;
-                foreach ($permissions as $permission) {
-                    $byContext[$contextKey][$permission] = $actor->hasPermission($permission, $context);
-                }
-            }
-            $result[$documentId] = $byContext[$contextKey];
         }
 
         return $result;
@@ -112,12 +99,12 @@ final class LegalWorkflowAuthorization
 
     private function batchedForMany(User $actor, Collection $documents, array $permissions): ?array
     {
-        if ($documents->isEmpty() || $actor::class !== User::class || ! app()->bound(PermissionResolver::class)) {
+        if ($documents->isEmpty() || $actor::class !== User::class || ! app()->bound(PermissionResolver::class)
+            || ! $this->objectAccess instanceof LegalDocumentInternalAccessFilter) {
             return null;
         }
 
-        $eligible = $documents->filter(static fn (LegalArchiveDocument $document): bool => (int) $document->organization_id > 0
-            && (int) $document->organization_id === (int) $actor->current_organization_id);
+        $eligible = $this->objectAccess->filterInternalDocuments($actor, $documents);
         $external = $documents->filter(static fn (LegalArchiveDocument $document): bool => (int) $document->organization_id > 0
             && (int) $document->organization_id !== (int) $actor->current_organization_id);
         $result = $this->deniedMany($documents, $permissions);
@@ -168,7 +155,7 @@ final class LegalWorkflowAuthorization
                 ])
                 ->get();
             $activeProjectCounts = $this->activeProjectCounts($assignments);
-            $resolver = app(PermissionResolver::class);
+            $resolver = app(PermissionResolver::class)->forCurrentChecks()->forReadScope(new Repository(new ArrayStore));
             $assignmentsByContext = $assignments->groupBy(static fn (UserRoleAssignment $assignment): int => (int) $assignment->context_id);
 
             foreach ($eligible as $document) {

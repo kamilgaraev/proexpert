@@ -66,7 +66,6 @@ final class LegalDocumentWorkflowService
         User $actor,
         WorkflowOverride $override,
     ): LegalWorkflowInstance {
-        $this->authorization->assertCan($actor, $document, LegalWorkflowPermissions::SUBMIT);
         $idempotencyKey = $this->validKey($override->idempotencyKey);
         $clientRequestHash = hash('sha256', $this->integrity->canonicalJson([
             'document_id' => (int) $document->id,
@@ -83,15 +82,6 @@ final class LegalDocumentWorkflowService
                 $idempotencyKey,
                 $clientRequestHash,
             ): LegalWorkflowInstance {
-                $existing = $this->findSubmitReplay(
-                    (int) $document->organization_id,
-                    (int) $document->id,
-                    $idempotencyKey,
-                    $clientRequestHash,
-                );
-                if ($existing instanceof LegalWorkflowInstance) {
-                    return $existing;
-                }
                 $lockedDocument = $this->aggregateLock->lockDocument(
                     $this->connection,
                     (int) $document->organization_id,
@@ -239,25 +229,32 @@ final class LegalDocumentWorkflowService
 
             return $instance;
         } catch (QueryException $exception) {
-            $existing = $this->instances()
-                ->where('organization_id', (int) $document->organization_id)
-                ->where('document_id', (int) $document->id)
-                ->where('idempotency_key', $idempotencyKey)
-                ->first();
-            if ($existing instanceof LegalWorkflowInstance) {
-                $this->assertSameRequest($existing->client_request_hash, $clientRequestHash);
-
-                return $existing->load('steps', 'decisions');
-            }
-            if ($this->instances()
-                ->where('organization_id', (int) $document->organization_id)
-                ->where('document_id', (int) $document->id)
-                ->whereIn('status', self::ACTIVE_STATUSES)
-                ->exists()
-            ) {
-                throw new DomainException('legal_workflow_active_instance_exists', previous: $exception);
-            }
-            throw $exception;
+            return $this->connection->transaction(function () use ($document, $actor, $idempotencyKey, $clientRequestHash, $exception): LegalWorkflowInstance {
+                $lockedDocument = $this->aggregateLock->lockDocument(
+                    $this->connection,
+                    (int) $document->organization_id,
+                    (int) $document->getKey(),
+                );
+                $this->authorization->assertCan($actor, $lockedDocument, LegalWorkflowPermissions::SUBMIT);
+                $existing = $this->findSubmitReplay(
+                    (int) $lockedDocument->organization_id,
+                    (int) $lockedDocument->id,
+                    $idempotencyKey,
+                    $clientRequestHash,
+                );
+                if ($existing instanceof LegalWorkflowInstance) {
+                    return $existing;
+                }
+                if ($this->instances()
+                    ->where('organization_id', (int) $lockedDocument->organization_id)
+                    ->where('document_id', (int) $lockedDocument->id)
+                    ->whereIn('status', self::ACTIVE_STATUSES)
+                    ->exists()
+                ) {
+                    throw new DomainException('legal_workflow_active_instance_exists', previous: $exception);
+                }
+                throw $exception;
+            }, 3);
         }
     }
 

@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveDocumentControlle
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RecoverLegalArchiveDocumentRequest;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\LegalArchive\Access\ContractLegalDocumentViewAccess;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\CanonicalJson;
@@ -973,6 +974,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
         $authorization->method('getUserRoleSlugs')->willReturn([]);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturn(Project::query()->whereRaw('1 = 0'));
         $access = new LegalDocumentAccessService(
@@ -1016,6 +1018,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $authorization,
             (new \ReflectionClass(LegalDocumentObligationExecutionService::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(ContractLegalDocumentAccessResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(ContractLegalDocumentViewAccess::class))->newInstanceWithoutConstructor(),
         );
 
         $response = $controller->recoverCreate($request, 'create-operation');
@@ -1049,6 +1052,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
         $authorization->method('getUserRoleSlugs')->willReturn([]);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturn(Project::query()->whereRaw('1 = 0'));
         $access = new LegalDocumentAccessService(
@@ -1115,6 +1119,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $authorization,
             (new \ReflectionClass(LegalDocumentObligationExecutionService::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(ContractLegalDocumentAccessResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(ContractLegalDocumentViewAccess::class))->newInstanceWithoutConstructor(),
         ))
             ->recoverCreate($request, (string) $document->create_operation_id);
 
@@ -1197,7 +1202,7 @@ SQL);
                 new VersionInput(uploadedByUserId: 30),
             );
             self::fail('Current version rotation was allowed during an active workflow.');
-        } catch (RuntimeException $exception) {
+        } catch (DomainException $exception) {
             self::assertSame('legal_document_active_workflow_exists', $exception->getMessage());
         }
 

@@ -7,8 +7,10 @@ namespace Tests\Feature\Customer;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowAuthorization;
 use App\Services\LegalArchive\Workflow\LegalWorkflowPermissions;
 use Illuminate\Container\Container;
@@ -53,7 +55,7 @@ final class CustomerLegalArchiveAccessTest extends TestCase
         $connection = $this->database->getConnection();
         $connection->flushQueryLog();
         $connection->enableQueryLog();
-        $permissions = (new LegalWorkflowAuthorization)->forMany($actor, $documents, [
+        $permissions = (new LegalWorkflowAuthorization(new LegalDocumentAccessService($this->createStub(AuthorizationService::class))))->forMany($actor, $documents, [
             LegalWorkflowPermissions::VIEW,
             LegalWorkflowPermissions::APPROVE,
             LegalWorkflowPermissions::REJECT,
