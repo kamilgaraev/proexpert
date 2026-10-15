@@ -16,7 +16,7 @@ final class NativeNumericFactFactoryTest extends TestCase
 {
     public function test_formula_and_oversized_locations_do_not_become_literal_room_scope(): void
     {
-        foreach ([['1', '=1'], [str_repeat('1', 121), null], [true, null]] as [$value, $formula]) {
+        foreach ([['1', '=1'], [str_repeat('1', 121), null], [true, null], ['-', null], ['unknown', null], ['не указан', null], ['не указана', null], ['n/a', null]] as [$value, $formula]) {
             $sheet = $this->roomSheet('001');
             $sheet['cells'][1]['value'] = 'room_number';
             $sheet['header_cells'][] = ['address' => 'F1', 'value' => 'zone'];

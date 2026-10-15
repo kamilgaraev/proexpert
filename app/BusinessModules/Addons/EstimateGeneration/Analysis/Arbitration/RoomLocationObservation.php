@@ -22,10 +22,20 @@ final class RoomLocationObservation
             || ! is_string($text) || ! mb_check_encoding($text, 'UTF-8')) {
             return null;
         }
+
+        return self::identifier($text);
+    }
+
+    public static function identifier(mixed $text): ?string
+    {
+        if (! is_string($text) || ! mb_check_encoding($text, 'UTF-8')) {
+            return null;
+        }
         $text = trim($text);
         if ($text === '' || mb_strlen($text) > 120
             || preg_match('/^-?[\p{L}\p{N}][\p{L}\p{N} ._\/\-]*$/uD', $text) !== 1
-            || in_array(mb_strtolower($text), ['unknown', 'неизвестно', 'не указан', 'не указана'], true)) {
+            || in_array(mb_strtolower($text), ['unknown', 'none', 'null', 'n/a', 'na', 'нет', 'неизвестно', 'не указан', 'не указана',
+                'не задан', 'не задана', 'не определён', 'не определен', 'не определена', 'отсутствует'], true)) {
             return null;
         }
 

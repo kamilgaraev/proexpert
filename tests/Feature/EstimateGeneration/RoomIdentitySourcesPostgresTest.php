@@ -113,7 +113,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
     {
         [$actor, $session] = $this->fixture();
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
-        foreach (['plan', 'explication', 'explication'] as $index => $role) {
+        foreach (['plan', 'explication', 'explication', 'explication', 'explication'] as $index => $role) {
             $version = 'sha256:'.str_repeat((string) ($index + 1), 64);
             $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
                 'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'rooms.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -125,6 +125,9 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             foreach ([['room:office', 'room_number', '001', '', '1', $role],
                 ['room:office', 'length', '5', 'м', '1', $role]] as $row => $values) {
                 foreach ($values as $column => $value) {
+                    if ($row === 0 && $column === 4 && $index >= 3) {
+                        $value = $index === 3 ? '-' : 'unknown';
+                    }
                     $cells[] = ['address' => chr(65 + $column).($row + 2), 'value' => $value, 'raw_value' => $value,
                         'formula' => $index === 2 && $row === 0 && $column === 4 ? '=1' : null];
                 }
@@ -141,7 +144,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
         $snapshot = $capture['snapshot'];
         $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number' && $fact->status === 'confirmed'));
         self::assertCount(2, $numbers);
-        self::assertSame(1, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])
+        self::assertSame(3, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])
             ->where('assertion_type', 'room_number')->where('fact_status', 'candidate')->count());
         $evidenceById = array_column($snapshot->evidence, null, 'id');
         foreach ($numbers as $number) {

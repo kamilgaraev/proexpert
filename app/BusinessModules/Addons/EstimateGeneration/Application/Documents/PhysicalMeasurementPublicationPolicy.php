@@ -36,7 +36,7 @@ final class PhysicalMeasurementPublicationPolicy
 
             return new ArbitrationDecision($decision->claimId, 'candidate', $decision->supportingClaimIds, $decision->evidenceRefs,
                 'numeric_source_requires_user_confirmation', $decision->canonicalClaim,
-                'Р›РѕРєР°С‚РѕСЂ Рё СЃРѕРІРїР°РґРµРЅРёРµ РІС‹РІРѕРґРѕРІ РјРѕРґРµР»РµР№ РЅРµ РїРѕРґС‚РІРµСЂР¶РґР°СЋС‚ С‡РёСЃР»РѕРІРѕРµ Р·РЅР°С‡РµРЅРёРµ. РќСѓР¶РµРЅ РїСЂРѕРІРµСЂРµРЅРЅС‹Р№ РёСЃС…РѕРґРЅС‹Р№ СЂР°Р·РјРµСЂ РёР»Рё РІРІРѕРґ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.');
+                'Локатор и совпадение выводов моделей не подтверждают числовое значение. Нужен проверенный исходный размер или ввод пользователя.');
         }, $decisions);
     }
 }

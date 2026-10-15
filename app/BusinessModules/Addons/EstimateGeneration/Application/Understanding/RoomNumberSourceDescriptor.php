@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understanding;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -65,6 +66,6 @@ final readonly class RoomNumberSourceDescriptor
 
     private function location(mixed $value): ?string
     {
-        return is_string($value) && trim($value) !== '' && mb_strlen($value) <= 120 ? trim($value) : null;
+        return RoomLocationObservation::identifier($value);
     }
 }

@@ -30,7 +30,7 @@ final class RoomNumberSourceLinksTest extends TestCase
 
     public function test_incomplete_unrelated_or_mismatched_sources_do_not_link(): void
     {
-        foreach (['hash', 'key', 'version', 'role', 'artifact', 'source_ref', 'floor', 'missing_floor', 'zone', 'number', 'candidate', 'unit', 'missing_proof', 'missing_floor_proof', 'missing_zone_proof', 'wrong_floor_proof'] as $variant) {
+        foreach (['hash', 'key', 'version', 'role', 'artifact', 'source_ref', 'floor', 'missing_floor', 'zone', 'number', 'candidate', 'unit', 'missing_proof', 'missing_floor_proof', 'missing_zone_proof', 'wrong_floor_proof', 'unknown_floor', 'unknown_zone'] as $variant) {
             $input = $this->pair(variant: $variant);
             $result = $this->linker()->link(...$input);
             self::assertSame([], $result->links, $variant);
@@ -70,6 +70,12 @@ final class RoomNumberSourceLinksTest extends TestCase
             $number = $index === 2 && $variant === 'number' ? '1' : '001';
             $location = ['semantic_type' => 'room', 'floor_id' => $index === 2 && $variant === 'floor' ? '2' : '1',
                 'zone_id' => $index === 2 && $variant === 'zone' ? 'B' : 'A'];
+            if ($variant === 'unknown_floor') {
+                $location['floor_id'] = 'unknown';
+            }
+            if ($variant === 'unknown_zone') {
+                $location['zone_id'] = 'не указана';
+            }
             if ($variant === 'missing_floor') {
                 unset($location['floor_id']);
             }

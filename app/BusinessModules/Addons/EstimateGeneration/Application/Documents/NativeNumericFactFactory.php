@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
@@ -76,7 +77,8 @@ final class NativeNumericFactFactory
                     $locationValue = $locationCell['raw_value'] ?? $locationCell['value'] ?? null;
                     $literal = (is_string($locationValue) || is_int($locationValue)
                         || (is_float($locationValue) && is_finite($locationValue))) ? trim((string) $locationValue) : '';
-                    if (($locationCell['formula'] ?? null) !== null || $literal === '' || mb_strlen($literal) > 120) {
+                    $literal = RoomLocationObservation::identifier($literal);
+                    if (($locationCell['formula'] ?? null) !== null || $literal === null) {
                         $locationRequiresConfirmation = true;
                     } else {
                         $location[$field] = $literal;

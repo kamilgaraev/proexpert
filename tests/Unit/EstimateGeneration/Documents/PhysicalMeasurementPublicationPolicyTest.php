@@ -19,6 +19,7 @@ final class PhysicalMeasurementPublicationPolicyTest extends TestCase
         $publication = new DocumentUnitPublication($claims, $decisions);
         self::assertSame(['candidate'], array_values(array_unique(array_column($publication->decisions, 'status'))));
         self::assertSame('numeric_source_requires_user_confirmation', $publication->decisions[0]->reasonCode);
+        self::assertSame('Локатор и совпадение выводов моделей не подтверждают числовое значение. Нужен проверенный исходный размер или ввод пользователя.', $publication->decisions[0]->reason);
     }
 
     public function test_a_native_reference_without_validated_value_is_not_numeric_proof_and_proof_cannot_be_reused_for_another_number(): void
