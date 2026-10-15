@@ -1336,11 +1336,43 @@ SQL, [
         $rows = $query->orderBy('entity.stable_key')->orderBy('fact.assertion_type')->get([
             'fact.*', 'entity.stable_key as entity_stable_key',
         ]);
+
+        return $this->hydrateFactRows($rows, $organizationId, $projectId, $sessionId);
+    }
+
+    public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array
+    {
+        if (count($factIds) > 10000) {
+            throw new InvalidArgumentException('Project model fact read batch exceeds its limit.');
+        }
+        foreach ($factIds as $factId) {
+            if (! is_string($factId)) {
+                throw new InvalidArgumentException('Project model fact read identity is invalid.');
+            }
+            ProjectModelInvariant::id($factId, 'Fact');
+        }
+        if ($factIds === []) {
+            return [];
+        }
+        $rows = $this->database->table('estimate_generation_project_model_assertions as fact')
+            ->join('estimate_generation_project_model_entities as entity', 'entity.id', '=', 'fact.entity_id')
+            ->where('fact.organization_id', $organizationId)->where('fact.project_id', $projectId)->where('fact.session_id', $sessionId)
+            ->where('entity.organization_id', $organizationId)->where('entity.project_id', $projectId)->where('entity.session_id', $sessionId)
+            ->whereIn('fact.stable_key', array_values(array_unique($factIds, SORT_STRING)))
+            ->orderBy('fact.stable_key')->get(['fact.*', 'entity.stable_key as entity_stable_key']);
+
+        return $this->hydrateFactRows($rows, $organizationId, $projectId, $sessionId);
+    }
+
+    /** @param \Illuminate\Support\Collection<int, \stdClass> $rows @return list<Fact> */
+    private function hydrateFactRows(\Illuminate\Support\Collection $rows, int $organizationId, int $projectId, int $sessionId): array
+    {
         $evidenceByFact = [];
         $factIds = $rows->pluck('id')->map(static fn ($id): int => (int) $id)->all();
         $supersededIds = $rows->pluck('supersedes_assertion_id')->filter()->map(static fn ($id): int => (int) $id)->all();
         $supersededKeys = $supersededIds === [] ? [] : $this->database
             ->table('estimate_generation_project_model_assertions')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->whereIn('id', $supersededIds)->pluck('stable_key', 'id')->all();
         if ($factIds !== []) {
             foreach ($this->database->table('estimate_generation_project_model_fact_evidence as binding')

@@ -67,6 +67,31 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
         $selected = $models->fact(...[...$scope, $first['fact_id']]);
         self::assertSame('user_assumption', $selected->origin);
         self::assertSame('pitched_roof.metal_tile', $selected->value['system_id']);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $history = $models->factsByIds(...[...$scope, ['fact:roof-material', $first['fact_id'], 'fact:roof-type']]);
+            self::assertLessThanOrEqual(3, count(DB::getQueryLog()));
+        } finally {
+            DB::disableQueryLog();
+        }
+        self::assertEqualsCanonicalizing(['fact:roof-material', $first['fact_id'], 'fact:roof-type'], array_column($history, 'id'));
+        $history = array_column($history, null, 'id');
+        self::assertSame('unresolved', $history['fact:roof-material']->status);
+        self::assertSame('fact:roof-material', $history[$first['fact_id']]->supersedesFactId);
+        self::assertNotEmpty($history['fact:roof-type']->evidenceIds);
+        self::assertSame([], $models->factsByIds($scope[0] + 1000, $scope[1], $scope[2], ['fact:roof-material', $first['fact_id']]));
+        self::assertSame([], $models->factsByIds($scope[0], $scope[1] + 1000, $scope[2], ['fact:roof-material', $first['fact_id']]));
+        self::assertSame([], $models->factsByIds($scope[0], $scope[1], $scope[2] + 1000, ['fact:roof-material', $first['fact_id']]));
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
+            ->current($session->fresh(), 100);
+        $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
+        self::assertCount(1, $technologyItems, 'The saved technology must remain visible after its question is superseded.');
+        $technology = $technologyItems[0]['recommendation'];
+        self::assertSame('pitched_roof.metal_tile', $technology['selected_option']);
+        self::assertSame('selected', $technology['selection_state']);
+        self::assertArrayHasKey('pitched_roof.metal_tile', array_column($technology['alternatives'], null, 'id'));
+        self::assertSame(['other', 'leave_unresolved'], $technology['response_options']);
         self::assertCount(1, $models->decisions(...[...$scope, [$first['decision_id']]]));
         self::assertTrue(app(GetEvaluationTechnologies::class)->handle($actor, (int) $session->project_id, (int) $session->id)['composition_refresh_required']);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
@@ -119,11 +144,54 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
         $selected = $models->fact(...[...$scope, $second['fact_id']]);
         self::assertSame($first['fact_id'], $selected->supersedesFactId);
         self::assertSame('pitched_roof.standing_seam', $selected->value['system_id']);
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
+            ->current($session->fresh(), 100);
+        $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
+        self::assertCount(1, $technologyItems);
+        self::assertSame('pitched_roof.standing_seam', $technologyItems[0]['recommendation']['selected_option']);
+        self::assertSame('selected', $technologyItems[0]['recommendation']['selection_state']);
         self::assertCount(2, $models->decisions(...[...$scope, [$first['decision_id'], $second['decision_id']]]));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
         Http::assertNothingSent();
         $this->expectException(ValidationException::class);
         $service->handle($actor, $projectId, $sessionId, [...$input, 'request_id' => (string) Str::uuid(), 'state_version' => 2]);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('unverifiedReviewSelectionContexts')]
+    public function test_review_does_not_present_a_saved_choice_as_current_after_catalog_or_mirror_changes(string $change): void
+    {
+        [$actor, $session] = $this->fixture();
+        Http::preventStrayRequests();
+        Http::fake();
+        $recommendation = app(GetEvaluationTechnologies::class)->handle($actor, (int) $session->project_id, (int) $session->id)['recommendations'][0];
+        app(SaveEvaluationTechnologySelection::class)->handle($actor, (int) $session->project_id, (int) $session->id, [
+            'request_id' => (string) Str::uuid(), 'state_version' => 0, 'planning_run_id' => (int) $recommendation['planning_run_id'],
+            'decision_key' => $recommendation['decision_key'], 'system_id' => 'pitched_roof.metal_tile', 'reason' => 'Сохранённый вариант']);
+        if ($change === 'input_mirror') {
+            $input = $session->fresh()->input_payload;
+            $input['technology_selections']['roofing']['roof:1'] = 'pitched_roof.standing_seam';
+            $session->forceFill(['input_payload' => $input])->save();
+        } else {
+            $catalog = app(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class);
+            $catalog = new \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog(
+                $change === 'catalog_version' ? 'changed' : $catalog->version,
+                $change === 'catalog_hash' ? str_repeat('0', 64) : $catalog->contentHash, $catalog->systems, $catalog->requiredFacts);
+            $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class, $catalog);
+            $this->app->instance(TechnologyRecommendationService::class, new TechnologyRecommendationService($catalog));
+        }
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
+            ->current($session->fresh(), 100);
+        $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
+        self::assertCount(1, $technologyItems);
+        self::assertNull($technologyItems[0]['recommendation']['selected_option']);
+        self::assertSame('requires_review', $technologyItems[0]['recommendation']['selection_state']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public static function unverifiedReviewSelectionContexts(): array
+    {
+        return [['catalog_version'], ['catalog_hash'], ['input_mirror']];
     }
 
     private function fixture(): array

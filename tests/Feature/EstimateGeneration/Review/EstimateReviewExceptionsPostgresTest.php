@@ -11,39 +11,22 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummary
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
-final class EstimateReviewExceptionsPostgresTest extends TestCase
+final class EstimateReviewExceptionsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function createApplication(): Application
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-
-        return $app;
-    }
-
     public function test_real_postgres_keeps_review_filter_order_cursor_locator_and_tenant_scope_stable(): void
     {
         self::assertSame('pgsql', DB::connection()->getDriverName());
-        self::assertContains(DB::connection()->getDatabaseName(), ['most_ai_estimator_contract', 'most_backend_testing']);
+        self::assertMatchesRegularExpression('/^most_phpunit_[a-f0-9]+_testing$/', DB::connection()->getDatabaseName());
         $version = (string) DB::selectOne('SELECT version() AS version')->version;
         self::assertStringStartsWith('PostgreSQL 16.', $version);
 
-        foreach (['technology' => '000700_create_technology_planning_projections', 'completeness' => '000710_create_completeness_planning_projections'] as $kind => $suffix) {
-            $table = 'estimate_generation_'.$kind.'_'.($kind === 'technology' ? 'planning' : '').'_runs';
-            $table = str_replace('__', '_', $table);
-            if (! Schema::hasTable($table)) {
-                $migration = glob(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/*_'.$suffix.'.php');
-                self::assertCount(1, $migration);
-                (require $migration[0])->up();
-            }
-        }
+        self::assertTrue(Schema::hasTable('estimate_generation_technology_planning_runs'));
+        self::assertTrue(Schema::hasTable('estimate_generation_completeness_runs'));
         DB::beginTransaction();
         try {
 

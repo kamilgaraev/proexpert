@@ -591,6 +591,23 @@ final class InMemoryProjectModelRepository implements \App\BusinessModules\Addon
         return null;
     }
 
+    public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array
+    {
+        if (count($factIds) > 10000) {
+            throw new InvalidArgumentException('Project model fact read batch exceeds its limit.');
+        }
+        foreach ($factIds as $factId) {
+            if (! is_string($factId)) {
+                throw new InvalidArgumentException('Project model fact read identity is invalid.');
+            }
+            \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelInvariant::id($factId, 'Fact');
+        }
+        $wanted = array_fill_keys($factIds, true);
+
+        return array_values(array_filter($this->facts, fn (Fact $fact): bool => $this->scope($fact) === [$organizationId, $projectId, $sessionId]
+            && isset($wanted[$fact->id])));
+    }
+
     public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array
     {
         $ids = array_fill_keys($decisionIds, true);
