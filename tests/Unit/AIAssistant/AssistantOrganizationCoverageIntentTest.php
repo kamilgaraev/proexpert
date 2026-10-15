@@ -12,6 +12,15 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantOrganizationCoverageIntentTest extends TestCase
 {
+    public function test_advance_topic_exposes_settings_without_forcing_an_unrelated_answer(): void
+    {
+        $query = 'Подотчёт: что мне посмотреть?';
+        $tool = 'get_organization_advance_settings';
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantAdvanceSettingsReader::hasIntent($query));
+        self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        self::assertContains($tool, AssistantToolSurface::names([$tool], $this->plan($query)));
+    }
+
     public function test_organization_and_personal_queries_bind_current_scope_and_expose_tools(): void
     {
         foreach ([
@@ -20,6 +29,8 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
             ['Уведомляют ли администратора о просроченном авансовом отчёте?', 'get_organization_advance_settings'],
             ['Обязательно ли указывать проект для подотчётного расхода?', 'get_organization_advance_settings'],
             ['Требуется ли проект для подотчётного расхода?', 'get_organization_advance_settings'],
+            ['Нужно ли указывать проект для подотчётного расхода?', 'get_organization_advance_settings'],
+            ['Надо ли указывать проект для подотчётного расхода?', 'get_organization_advance_settings'],
             ['Напоминают ли об авансовом отчёте?', 'get_organization_advance_settings'],
             ['За сколько дней напоминают об авансовом отчёте?', 'get_organization_advance_settings'],
             ['Какой порог двойного согласования подотчётных средств?', 'get_organization_advance_settings'],
@@ -65,6 +76,7 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
             'Какие правила согласования авансового отчёта действуют?',
             'Обязательно ли авансовый отчёт согласовывать?',
             'Нужно ли согласовывать авансовый отчёт?',
+            'Обязательно ли согласование и проверка авансового отчёта?',
             'Какие настройки подотчётных средств и мои непрочитанные уведомления?',
             'Увеличь лимит выдачи подотчётных средств', 'Уменьши срок сдачи авансового отчёта',
             'Настройте лимит подотчётных средств', 'Настроить лимит подотчётных средств',
