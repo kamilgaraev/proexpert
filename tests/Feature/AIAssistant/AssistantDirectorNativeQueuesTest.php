@@ -63,7 +63,7 @@ final class AssistantDirectorNativeQueuesTest extends TestCase
         $org = (int) $f->organization->id; $actor = $f->owner;
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
         $contract = Contract::withoutEvents(fn () => Contract::query()->create(['organization_id' => $org, 'project_id' => $project->id,
-            'number' => 'CURRENCIES', 'date' => today(), 'subject' => 'Работы', 'status' => 'active', 'total_amount' => 10000, 'is_self_execution' => true]));
+            'number' => 'CURRENCIES', 'date' => today(), 'subject' => 'Работы', 'status' => 'active', 'currency' => 'RUB', 'total_amount' => 10000, 'is_self_execution' => true]));
         Model::withoutEvents(function () use ($contract, $project): void {
             foreach ([['pending_approval', 'RUB', '100.10'], ['pending_approval', 'USD', '9.25'],
                 ['approved', 'RUB', '200.20'], ['signed', 'RUB', '20.03'], ['approved', 'USD', '3.00'],
@@ -72,11 +72,23 @@ final class AssistantDirectorNativeQueuesTest extends TestCase
                     'act_document_number' => 'CURRENCY-'.$i, 'act_date' => today(), 'amount' => $amount, 'currency' => $currency, 'status' => $status]);
             }
         });
+        $otherCurrencyContract = Contract::withoutEvents(fn () => Contract::query()->create(['organization_id' => $org, 'project_id' => $project->id,
+            'number' => 'LEGACY-USD', 'date' => today(), 'subject' => 'Работы', 'status' => 'active', 'currency' => 'USD', 'total_amount' => 10000, 'is_self_execution' => true]));
+        foreach ([[$contract, '777.11'], [$otherCurrencyContract, '888.22']] as [$parent, $amount]) {
+            ContractPerformanceAct::withoutEvents(fn () => ContractPerformanceAct::query()->create(['contract_id' => $parent->id, 'project_id' => $project->id,
+                'act_document_number' => 'UNKNOWN-'.$parent->id, 'act_date' => today(), 'amount' => $amount, 'currency' => null, 'status' => 'approved']));
+        }
         $reader = app(AssistantProjectActReader::class);
         $read = $reader->read($actor, $org, ['project_id' => (int) $project->id]);
         self::assertSame(2, $read['data']['pending']);
+        self::assertCount(5, $read['data']['approved_examples']);
+        self::assertStringContainsString('CURRENCY-2', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('CURRENCY-5', $read['server_formatted_answer']);
         self::assertSame([['currency' => 'RUB', 'amount' => '100.10'], ['currency' => 'USD', 'amount' => '9.25']], $read['data']['amounts_by_status']['pending']);
         self::assertSame([['currency' => 'RUB', 'amount' => '220.23'], ['currency' => 'USD', 'amount' => '3.00']], $read['data']['amounts_by_status']['approved']);
+        self::assertSame(['pending' => 0, 'approved' => 2], $read['data']['amounts_unknown_currency']);
+        self::assertStringContainsString('Не включены в суммы принятых актов: 2', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('1665.33', $read['server_formatted_answer']);
         self::assertStringContainsString('220.23 RUB; 3.00 USD', $read['server_formatted_answer']);
         self::assertTrue($reader->matchesReference($actor, $org, $read['source_refs'][0]));
         $member = $f->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
@@ -100,6 +112,11 @@ final class AssistantDirectorNativeQueuesTest extends TestCase
         self::assertFalse($reader->matchesReference($member, $org, $granted['source_refs'][0]));
         ContractPerformanceAct::query()->where('contract_id', $contract->id)->where('act_document_number', 'CURRENCY-3')->firstOrFail()->updateQuietly(['currency' => 'USD']);
         self::assertFalse($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        ContractPerformanceAct::query()->where('project_id', $project->id)->whereNotNull('currency')->whereIn('status', ['approved', 'signed'])->update(['status' => 'draft']);
+        $unknownOnly = $reader->read($actor, $org, ['project_id' => (int) $project->id]);
+        self::assertSame([], $unknownOnly['data']['amounts_by_status']['approved']);
+        self::assertSame(2, $unknownOnly['data']['amounts_unknown_currency']['approved']);
+        self::assertStringContainsString('итог не подтверждён без валюты актов', $unknownOnly['server_formatted_answer']);
     }
 
     public function test_native_queues_count_before_limit_and_recheck_current_scope_and_visibility(): void
