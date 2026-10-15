@@ -436,7 +436,10 @@ class PermissionResolver
             return [];
         }
 
-        $allPermissions = $customRole->system_permissions ?? [];
+        $allPermissions = RolePermissionNormalizer::normalizeSystemPermissions(
+            $customRole->system_permissions ?? [],
+            $customRole->interface_access ?? []
+        );
 
         // Преобразуем модульные права в полные права
         $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($customRole->module_permissions ?? []);
@@ -446,7 +449,12 @@ class PermissionResolver
                 if ($permission === '*') {
                     $allPermissions[] = "$module.*";
                 } else {
-                    $allPermissions[] = "$module.$permission";
+                    $permissionModule = explode('.', $permission, 2)[0];
+                    $qualified = str_contains($permission, '.') && array_intersect(
+                        $this->expandModuleVariants($module),
+                        $this->expandModuleVariants($permissionModule)
+                    ) !== [];
+                    $allPermissions[] = $qualified ? $permission : "$module.$permission";
                 }
             }
         }

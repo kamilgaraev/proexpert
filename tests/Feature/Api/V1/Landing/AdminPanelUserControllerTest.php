@@ -7,11 +7,14 @@ namespace Tests\Feature\Api\V1\Landing;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Enums\AuthSessionStatus;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\UserAuthSession;
+use App\Services\Auth\WebAuthTokenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class AdminPanelUserControllerTest extends TestCase
 {
@@ -243,11 +246,26 @@ final class AdminPanelUserControllerTest extends TestCase
      */
     private function landingHeaders(User $user, Organization $organization): array
     {
+        $sessionUuid = (string) Str::uuid();
+        UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'organization_id' => $organization->id,
+            'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid),
+            'device_name' => 'Landing API test',
+            'ip_address' => '127.0.0.1',
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $token = app(WebAuthTokenService::class)->issue($user, 'lk', $sessionUuid, $organization->id, false);
+
         return [
-            'Authorization' => 'Bearer ' . JWTAuth::claims([
-                'organization_id' => $organization->id,
-            ])->fromUser($user),
+            'Authorization' => 'Bearer '.$token->accessToken,
             'Accept' => 'application/json',
+            'Origin' => 'https://lk.1мост.рф',
         ];
     }
 }

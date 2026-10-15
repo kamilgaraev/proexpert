@@ -10,7 +10,6 @@ use App\Http\Requests\Api\V1\Landing\AdminPanelUser\UpdateAdminPanelUserRequest;
 use App\Http\Requests\Api\V1\Landing\User\StoreAdminPanelUserRequest;
 use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
 use App\Http\Responses\LandingResponse;
-use App\Models\User;
 use App\Services\User\UserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -52,21 +51,7 @@ class AdminPanelUserController extends Controller
             $roleSlug = (string) $roleSlugs[0];
             unset($validatedData['role_slug'], $validatedData['role_slugs']);
 
-            $user = $this->userService->createAdminPanelUser($validatedData, $roleSlug, $request);
-            if (count($roleSlugs) > 1) {
-                $organizationId = $request->attributes->get('current_organization_id');
-                $actor = $request->user();
-
-                if ($organizationId) {
-                    $user = $this->userService->syncAdminPanelUserRoles(
-                        $user,
-                        (int) $organizationId,
-                        $roleSlugs,
-                        $actor instanceof User ? $actor : null,
-                        (string) $request->input('current_interface', 'lk')
-                    );
-                }
-            }
+            $user = $this->userService->createAdminPanelUser($validatedData, $roleSlug, $request, $roleSlugs);
 
             $user->load('roleAssignments');
 
