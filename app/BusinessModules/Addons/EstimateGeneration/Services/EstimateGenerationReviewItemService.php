@@ -90,7 +90,7 @@ final class EstimateGenerationReviewItemService
     {
         $reviewQueueQuery = $this->reviewQueueQuery ?? new EstimateGenerationReviewQueueQuery;
         if ($session->exists && $reviewQueueQuery->hasFreshProjection($session)) {
-            return DuplicateWorkGroupPreview::enrich($session->draft_payload ?? [], $reviewQueueQuery->paginate($session, $filters));
+            return ['state_version' => $session->state_version, ...DuplicateWorkGroupPreview::enrich($session->draft_payload ?? [], $reviewQueueQuery->paginate($session, $filters))];
         }
 
         $perPage = max(min((int) ($filters['per_page'] ?? 20), 100), 1);
@@ -121,6 +121,7 @@ final class EstimateGenerationReviewItemService
         $page = min($requestedPage, $lastPage);
 
         return DuplicateWorkGroupPreview::enrich($draft, [
+            'state_version' => $session->state_version,
             'summary' => $summary,
             'items' => array_slice($retained, ($page - 1) * $perPage, $perPage),
             'meta' => [

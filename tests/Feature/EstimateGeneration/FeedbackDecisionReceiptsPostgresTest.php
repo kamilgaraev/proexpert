@@ -161,6 +161,7 @@ final class FeedbackDecisionReceiptsPostgresTest extends EstimateGenerationCanon
         self::assertTrue(app(EstimateGenerationReviewQueueQuery::class)->hasFreshProjection($session));
         $queue = app(EstimateGenerationReviewItemService::class)->forSession($session, ['per_page' => 1, 'search' => 'work-2']);
         self::assertCount(1, $queue['items']);
+        self::assertSame(3, $queue['state_version']);
         self::assertSame(['work-1', 'work-2'], array_column($queue['items'][0]['duplicate_group']['items'], 'key'));
         self::assertTrue($queue['items'][0]['duplicate_group']['can_resolve']);
         $input['payload'] = ['action' => 'merge_with_existing', 'target_work_item_key' => 'work-1'];
