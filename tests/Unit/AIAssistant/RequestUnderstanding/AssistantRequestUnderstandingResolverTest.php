@@ -42,6 +42,19 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         }
     }
 
+    public function test_compound_mutation_requires_confirmation_without_overriding_no_actions(): void
+    {
+        foreach (['Покажи лимит подотчётных средств и замени его на 10000',
+            'Покажи лимит подотчётных средств; замени его на 10000',
+            'Какой лимит подотчётных средств? Увеличь его до 10000',
+            'Покажи настройки и отключи мне уведомления администратора'] as $query) {
+            $result = (new AssistantRequestUnderstandingResolver)->resolve($query);
+            self::assertSame('update', $result->primaryIntent, $query);
+            self::assertSame('requires_confirmation', $result->actionPolicy, $query);
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query.'. Ничего не меняй.')->actionPolicy);
+        }
+    }
+
     public function test_mutation_commands_share_classification_with_project_read_guards(): void
     {
         foreach ([

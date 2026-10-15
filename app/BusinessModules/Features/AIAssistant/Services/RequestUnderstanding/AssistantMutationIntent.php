@@ -70,6 +70,23 @@ final class AssistantMutationIntent
         return false;
     }
 
+    public static function compoundType(string $message): ?string
+    {
+        $parts = preg_split('/[.!?;,]|\s+(?:и|затем|потом)\s+/u', mb_strtolower($message)) ?: [];
+        foreach (array_slice($parts, 1) as $part) {
+            $type = self::type($part);
+            if ($type !== null) {
+                return $type;
+            }
+            if (self::containsRequest($message)
+                && preg_match('/^(?:пожалуйста |прошу )?(?:'.self::UPDATE_COMMANDS.')\s+(?:его|ее|их|это)(?!\pL)/u', self::normalize($part)) === 1) {
+                return 'update';
+            }
+        }
+
+        return null;
+    }
+
     public static function containsFollowUpCommand(string $message): bool
     {
         $query = str_replace('ё', 'е', mb_strtolower($message));
