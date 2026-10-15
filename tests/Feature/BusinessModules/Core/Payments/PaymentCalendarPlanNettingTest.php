@@ -66,6 +66,7 @@ final class PaymentCalendarPlanNettingTest extends TestCase
             'multi-project contract without this project' => ['multi-unlinked', '100000.00', '200000.00'],
             'single-project contract ignores stale pivot' => ['single-pivot', '100000.00', '200000.00'],
             'organization ID collides with contractor ID' => ['counterparty-type', '100000.00', '200000.00'],
+            'outgoing payment order' => ['payment-order', '0.00', '100000.00'],
         ];
     }
 
@@ -80,7 +81,10 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         $end = '2026-10-31';
         $scope = null;
         $projectScope = null;
-        if ($case === 'smaller' || $case === 'larger') {
+        if ($case === 'payment-order') {
+            $document->update(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+                'invoiceable_type' => Contract::class, 'invoiceable_id' => $fixture['contract']->id]);
+        } elseif ($case === 'smaller' || $case === 'larger') {
             $value = $case === 'smaller' ? '60000.00' : '120000.00';
             $document->update(['amount' => $value, 'remaining_amount' => $value]);
         } elseif (in_array($case, ['partial', 'paid', 'dedup'], true)) {
@@ -205,6 +209,13 @@ final class PaymentCalendarPlanNettingTest extends TestCase
             'all installments paid' => ['paid', '2026-10-01', '2026-11-30', '100000.00'],
             'document and first payment before visible months' => ['earlier', '2026-11-01', '2026-11-30', '50000.00'],
             'inaccessible scheduled document' => ['scope', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed procurement schedule' => ['managed', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed procurement October only' => ['managed', '2026-10-01', '2026-10-31', '50000.00'],
+            'managed procurement November only' => ['managed', '2026-11-01', '2026-11-30', '50000.00'],
+            'managed paid October' => ['managed-first-paid', '2026-10-01', '2026-10-31', '50000.00'],
+            'managed undated remainder' => ['managed-undated', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed all installments undated' => ['managed-all-undated', '2026-10-01', '2026-11-30', '100000.00'],
+            'inaccessible managed procurement' => ['managed-scope', '2026-10-01', '2026-11-30', '100000.00'],
         ];
     }
 
@@ -212,21 +223,27 @@ final class PaymentCalendarPlanNettingTest extends TestCase
     public function test_installments_replace_only_the_plan_of_their_own_month(string $case, string $start, string $end, string $expectedTotal): void
     {
         Queue::fake();
-        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project] = $this->fixture();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project, 'contract' => $contract] = $this->fixture();
         $amount->update(['plan_amount' => '50000.00', 'forecast_amount' => '50000.00']);
         $november = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-11-01',
             'plan_amount' => '50000.00', 'forecast_amount' => '50000.00', 'currency' => 'RUB']);
         $firstDate = $case === 'earlier' ? '2026-09-20' : '2026-10-20';
-        $firstPaid = in_array($case, ['first-paid', 'paid', 'earlier'], true) ? '50000.00' : ($case === 'partial' ? '20000.00' : '0.00');
+        $firstPaid = in_array($case, ['first-paid', 'paid', 'earlier', 'managed-first-paid'], true) ? '50000.00' : ($case === 'partial' ? '20000.00' : '0.00');
         $secondPaid = $case === 'paid' ? '50000.00' : '0.00';
         $paid = PortfolioDecimal::add($firstPaid, $secondPaid);
         $document->update(['scheduled_at' => $firstDate, 'due_date' => $firstDate,
             'document_date' => $case === 'earlier' ? '2026-09-15' : '2026-10-15',
             'status' => $case === 'paid' ? PaymentDocumentStatus::PAID : ($paid !== '0.00' ? PaymentDocumentStatus::PARTIALLY_PAID : PaymentDocumentStatus::SCHEDULED),
             'paid_amount' => $paid, 'remaining_amount' => PortfolioDecimal::subtract('100000.00', $paid)]);
+        $managed = str_starts_with($case, 'managed');
+        if ($managed) $document->forceFill(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id, 'source_type' => Contract::class, 'source_id' => $contract->id,
+            'schedule_source' => 'procurement', 'scheduled_at' => null, 'due_date' => null])->save();
         foreach ([[$firstDate, $firstPaid], ['2026-11-20', $secondPaid]] as $index => [$date, $installmentPaid]) {
+            if ($case === 'managed-all-undated' || ($case === 'managed-undated' && $index === 1)) $date = null;
             PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => $index + 1,
                 'due_date' => $date, 'amount' => '50000.00', 'paid_amount' => $installmentPaid,
+                'source_key' => $managed ? 'procurement:term:'.($index + 1) : null,
                 'status' => $installmentPaid === '50000.00' ? 'paid' : 'pending']);
             if ($installmentPaid !== '0.00') {
                 PaymentTransaction::query()->create(['payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
@@ -236,7 +253,7 @@ final class PaymentCalendarPlanNettingTest extends TestCase
                     'transaction_date' => $date, 'value_date' => $date, 'status' => 'completed', 'created_by_user_id' => $context->user->id]);
             }
         }
-        $scope = $case === 'scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        $scope = str_ends_with($case, 'scope') ? static fn ($query) => $query->whereKey(-1) : null;
         $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
             organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end,
             projectId: (int) $project->id, currency: 'RUB',
@@ -245,13 +262,21 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         $this->assertCount($start === '2026-10-01' && $end === '2026-11-30' ? 2 : 1, $plans);
         foreach ($plans as $plan) {
             $this->assertSame('50000.00', $plan->amount);
-            $this->assertSame($case === 'scope' ? '50000.00' : '0.00', $plan->remainingAmount);
+            $uncommitted = str_ends_with($case, 'scope') || $case === 'managed-all-undated'
+                || ($case === 'managed-undated' && $plan->date === '2026-11-01');
+            $this->assertSame($uncommitted ? '50000.00' : '0.00', $plan->remainingAmount);
         }
         $total = '0.00';
         foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
         $this->assertSame($expectedTotal, $total);
         $this->assertSame(0, collect($items)->where('sourceType', 'payment_document')->count());
-        if ($case === 'scope') $this->assertSame(0, collect($items)->whereIn('sourceType', ['payment_schedule', 'payment_transaction'])->count());
+        if (str_ends_with($case, 'scope')) $this->assertSame(0, collect($items)->whereIn('sourceType', ['payment_schedule', 'payment_transaction'])->count());
+        if (in_array($case, ['managed-undated', 'managed-all-undated'], true)) {
+            $undated = app(PaymentCalendarSourceService::class)->collectUndated(new PaymentCalendarSourceFilters(
+                organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end, projectId: (int) $project->id, currency: 'RUB',
+            ));
+            $this->assertCount($case === 'managed-all-undated' ? 2 : 1, $undated);
+        }
         foreach ([$amount, $november] as $storedAmount) {
             $this->assertSame('50000.00', $storedAmount->fresh()->plan_amount);
             $this->assertSame('50000.00', $storedAmount->fresh()->forecast_amount);

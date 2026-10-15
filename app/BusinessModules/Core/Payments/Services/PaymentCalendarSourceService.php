@@ -9,7 +9,6 @@ use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
-use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
@@ -679,8 +678,6 @@ final class PaymentCalendarSourceService
         $end = CarbonImmutable::parse($filters->periodEnd)->startOfMonth()->addMonth()->toDateString();
         $documents = PaymentDocument::query()
             ->where('organization_id', $filters->organizationId)
-            ->where('document_type', PaymentDocumentType::INVOICE->value)
-            ->whereNull('schedule_source')
             ->whereIn('status', [...$this->activeDocumentStatuses(), PaymentDocumentStatus::PAID->value])
             ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
             ->where(function (Builder $query) use ($start, $end): void {
@@ -719,7 +716,10 @@ final class PaymentCalendarSourceService
             $allocations = $schedules->get($document->id, collect())->map(fn (PaymentSchedule $schedule): array => [
                 $this->dateString($schedule->due_date), $this->positive((string) $schedule->amount),
             ])->all();
-            if ($allocations === []) $allocations[] = [$this->effectiveDocumentDate($document), $this->positive((string) $document->amount)];
+            if ($allocations === []) {
+                if ($document->schedule_source !== null) continue;
+                $allocations[] = [$this->effectiveDocumentDate($document), $this->positive((string) $document->amount)];
+            }
             foreach ($allocations as [$date, $amount]) {
                 if ($date === null) continue;
                 $indices = [];
