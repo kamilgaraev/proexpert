@@ -22,6 +22,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\LiteralFactEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
@@ -736,6 +737,7 @@ final readonly class ProjectModelEvidenceWriter
             $node->sourceRef,
             fingerprint: $node->fingerprint,
             documentRole: SourceDocumentRole::normalize($node->locator['document_role'] ?? null),
+            literalFact: $node->type === EvidenceType::SourceFact ? LiteralFactEvidence::fromSourceFactValue($node->value) : null,
         );
     }
 }

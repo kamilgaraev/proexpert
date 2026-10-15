@@ -262,6 +262,32 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertCount(3, array_unique($contracts));
     }
 
+    #[DataProvider('roomRegisterSheetTypes')]
+    public function test_literal_observer_preserves_explicit_room_register_sheet_types(string $type): void
+    {
+        Http::fake(fn () => Http::response($this->response([
+            'schema_version' => 4, 'sheet_type' => $type,
+            'project_sheet_analysis' => ['contractVersion' => 'sheet-analysis:v3', 'role' => 'explication',
+                'facts' => [$this->semanticFact('room-1', 'room_number', ['type' => 'string', 'data' => '001'])]],
+            'analysis_routing' => ['page_kind' => 'explication', 'requested_depth' => 'structured_textual',
+                'information_density' => 'medium', 'readability' => 'high', 'confidence' => 0.96,
+                'ambiguous' => false, 'material_risk' => 'low', 'reasons' => ['Explicit room register.'], 'semantic_regions' => []],
+        ])));
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 204), ObserverProfile::Literal, static function (): void {},
+        ));
+        self::assertSame($type, $analysis->sheetType);
+        self::assertSame('room_number', $analysis->projectSheetAnalysis->facts[0]['factType']);
+        Http::assertSent(static fn ($request): bool => str_contains((string) $request['messages'][0]['content'], 'room_schedule, explication')
+            && str_contains((string) $request['messages'][0]['content'], 'generic schedules'));
+        Http::assertSentCount(1);
+    }
+
+    public static function roomRegisterSheetTypes(): array
+    {
+        return [['room_schedule'], ['explication']];
+    }
+
     #[Test]
     public function literal_observer_returns_durable_adaptive_routing_and_semantic_regions(): void
     {

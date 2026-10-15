@@ -21,7 +21,7 @@ final readonly class VisionAnalysisData
 
     public const ADAPTIVE_ROUTING_SCHEMA_VERSION = 4;
 
-    private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'sketch', 'photo', 'unknown'];
+    private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'room_schedule', 'explication', 'sketch', 'photo', 'unknown'];
 
     public static function isSupportedSheetType(mixed $sheetType): bool
     {

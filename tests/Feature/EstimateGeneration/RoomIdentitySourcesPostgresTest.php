@@ -7,12 +7,17 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmRoomIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetRoomIdentitySources;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\CrossDocumentFactLinker;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -36,6 +41,67 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_native_number_sources_link_after_database_hydration_and_persist_without_merging_geometry(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        foreach (['plan', 'explication', 'explication'] as $index => $role) {
+            $version = 'sha256:'.str_repeat((string) ($index + 1), 64);
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+                'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'rooms.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat((string) ($index + 1), 64)]);
+            $headers = $cells = [];
+            foreach (['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role'] as $column => $value) {
+                $headers[] = ['address' => chr(65 + $column).'1', 'value' => $value];
+            }
+            foreach ([['room:office', 'room_number', '001', '', '1', $role],
+                ['room:office', 'length', '5', 'м', '1', $role]] as $row => $values) {
+                foreach ($values as $column => $value) {
+                    $cells[] = ['address' => chr(65 + $column).($row + 2), 'value' => $value, 'raw_value' => $value,
+                        'formula' => $index === 2 && $row === 0 && $column === 4 ? '=1' : null];
+                }
+            }
+            $context = new DocumentUnitExecutionContext(1, ...[...$scope, (int) $document->id,
+                DocumentUnitType::SpreadsheetSheet, 1, $version, [], 'rooms.xlsx', $document->mime_type,
+                'rooms.xlsx', 'native-test-claim', 1, 0, 'draft']);
+            $publication = (new NativeNumericFactFactory)->spreadsheet($context, ['sheet' => 'Комнаты', 'header_cells' => $headers, 'cells' => $cells]);
+            app(ProjectModelEvidenceWriter::class)->writeArbitration($publication->claims, $publication->decisions,
+                (int) $document->id, 1, $publication->numericSources);
+        }
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $snapshot = $capture['snapshot'];
+        $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number' && $fact->status === 'confirmed'));
+        self::assertCount(2, $numbers);
+        self::assertSame(1, DB::table('estimate_generation_project_model_assertions')->where('session_id', $scope[2])
+            ->where('assertion_type', 'room_number')->where('fact_status', 'candidate')->count());
+        $evidenceById = array_column($snapshot->evidence, null, 'id');
+        foreach ($numbers as $number) {
+            $proof = $evidenceById[$number->evidenceIds[0]];
+            self::assertSame('room_number', $proof->literalFact?->factKey);
+            self::assertSame(hash('sha256', '001'), $proof->literalFact?->valueHash);
+            self::assertSame($number->sourceVersion, $proof->sourceVersion);
+        }
+        $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
+        self::assertCount(1, $run->links);
+        self::assertSame('room_number', $run->links[0]['strategy']);
+        self::assertNotSame($numbers[0]->entityId, $numbers[1]->entityId);
+        self::assertSame(0, $run->providerCalls);
+        foreach ($capture['source_entities'] as $entity) {
+            self::assertArrayNotHasKey('room_number', $entity->attributes);
+            self::assertArrayNotHasKey('document_role', $entity->attributes);
+        }
+        $version = $run->links[0]['source_version'];
+        $fingerprint = hash('sha256', 'actual-native-number-sources-v1');
+        self::assertTrue($models->replaceUnderstanding(...[...$scope, $version, $fingerprint, $capture['token'],
+            $run->links, $run->conflicts, $run->questions, $run->limitations, 0]));
+        self::assertEquals($run->links, $models->currentUnderstanding(...$scope)['links']);
+        self::assertNotNull($models->replayUnderstanding(...[...$scope, $version, $fingerprint, $capture['token']]));
+        self::assertSame(1, DB::table('estimate_generation_project_model_cross_document_links')->where('session_id', $scope[2])->count());
+        self::assertEquals($snapshot->facts, $models->snapshot(...$scope)->facts);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_page_local_room_numbers_are_isolated_without_confirming_or_replacing_names(): void
     {
         foreach (['001', '002'] as $secondNumber) {

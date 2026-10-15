@@ -54,11 +54,11 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $input = $directory.'/dimensions.xlsx';
         $book = new Spreadsheet;
         $book->getActiveSheet()->setTitle('Размеры')->fromArray([
-            ['entity_key', 'parameter', 'value', 'unit', 'floor'],
-            ['room:office', 'length', 5, 'м', '1'],
-            ['room:office', 'width', 10, 'м', '1'],
-            ['room:office', 'room_name', 'Офис', '', '1'],
-            ['room:office', 'room_number', '001', '', '1'],
+            ['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role'],
+            ['room:office', 'length', 5, 'м', '1', 'plan'],
+            ['room:office', 'width', 10, 'м', '1', 'plan'],
+            ['room:office', 'room_name', 'Офис', '', '1', 'plan'],
+            ['room:office', 'room_number', '001', '', '1', 'plan'],
         ]);
         try {
             (new Xlsx($book))->save($input);
@@ -90,6 +90,10 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                     self::assertSame(['fact_key' => 'room_number', 'fact_value' => hash('sha256', '001')], json_decode($evidence->value, true, flags: JSON_THROW_ON_ERROR));
                     self::assertSame('xlsx:sheet:Размеры!C5', json_decode($evidence->locator, true, flags: JSON_THROW_ON_ERROR)['native_reference']);
                     self::assertSame($number->sourceVersion, $evidence->source_version);
+                    $canonicalProof = array_column($snapshot->evidence, null, 'id')[$number->evidenceIds[0]];
+                    self::assertSame('plan', $canonicalProof->documentRole);
+                    self::assertSame('room_number', $canonicalProof->literalFact?->factKey);
+                    self::assertSame(hash('sha256', '001'), $canonicalProof->literalFact?->valueHash);
                     $document = EstimateGenerationDocument::query()->where('session_id', $session->id)->firstOrFail();
                     $numberNote = $document->facts()->where('label', 'Номер помещения')->first();
                     self::assertNotNull($numberNote);

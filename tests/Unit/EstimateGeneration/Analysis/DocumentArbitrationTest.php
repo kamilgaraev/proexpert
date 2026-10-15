@@ -37,6 +37,7 @@ final class DocumentArbitrationTest extends TestCase
         $runs = $this->observerRuns();
         $literal = $runs['observer_literal'];
         $payload = $literal->payload;
+        $payload['observation']['sheet_type'] = 'explication';
         $payload['claims'][0] = [...$payload['claims'][0], 'entityKey' => 'room.office', 'factType' => 'room_number',
             'value' => ['type' => 'string', 'data' => '001'], 'sourcePolygonOrNativeRef' => 'pdf:page:4/text'];
         $payload['evidence'][0]['locator'] = [...$payload['evidence'][0]['locator'], 'document_id' => 999, 'page' => 99];
@@ -53,6 +54,10 @@ final class DocumentArbitrationTest extends TestCase
         (new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository))->writeArbitration([$claim], $decisions, 13, 4);
         self::assertSame('001', array_values($models->facts)[0]->value);
         self::assertSame('confirmed', array_values($models->facts)[0]->status);
+        $proof = array_values($models->evidence)[0];
+        self::assertSame('explication', $proof->documentRole);
+        self::assertSame('room_number', $proof->literalFact?->factKey);
+        self::assertSame(hash('sha256', '001'), $proof->literalFact?->valueHash);
     }
 
     #[Test]

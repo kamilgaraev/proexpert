@@ -955,7 +955,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'semantic_regions contains 0..16 objects with exactly label, purpose and box. label and purpose are bounded natural language. box is normalized [left,top,right,bottom] within the full page and must cover a meaningful subdrawing or text block, not a fixed grid cell.',
                 'Unknown page kind, low readability, confidence below 0.8 or ambiguity always requests dense_ambiguous. Routing selects analysis depth and never discards a page.',
             ] : []),
-            'sheet_type is exactly one of floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown.',
+            'sheet_type is exactly one of floor_plan, elevation, section, detail, site_plan, schedule, room_schedule, explication, sketch, photo, unknown. Use room_schedule or explication only for an explicitly identifiable room register; generic schedules, equipment specifications and filenames do not prove a room register.',
             'Each evidence item has exactly key and locator. Locator has exactly page_id, page_number, processing_unit_id, source_version, coordinate_space and must echo the supplied values without changes.',
             'page_id, page_number and processing_unit_id are positive integers; source_version is sha256 followed by 64 lowercase hex; coordinate_space is normalized_derivative_v1.',
             "Evidence and element keys match [a-z0-9][a-z0-9._:-]{0,79}. Return 1..256 evidence items, 0..{$maxElements} elements and 0..32 scale candidates.",
