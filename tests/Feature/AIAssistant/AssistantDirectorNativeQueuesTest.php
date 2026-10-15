@@ -79,6 +79,25 @@ final class AssistantDirectorNativeQueuesTest extends TestCase
         self::assertSame([['currency' => 'RUB', 'amount' => '220.23'], ['currency' => 'USD', 'amount' => '3.00']], $read['data']['amounts_by_status']['approved']);
         self::assertStringContainsString('220.23 RUB; 3.00 USD', $read['server_formatted_answer']);
         self::assertTrue($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        $member = $f->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contracts.performance_acts.view']]);
+        $member->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $sumQueries = [];
+        DB::listen(static function ($event) use (&$sumQueries): void { if (stripos($event->sql, 'sum(') !== false) { $sumQueries[] = $event->sql; } });
+        $limited = $reader->read($member, $org, ['project_id' => (int) $project->id]);
+        self::assertSame(2, $limited['data']['pending']);
+        self::assertNull($limited['data']['amounts_by_status']);
+        self::assertSame([], $sumQueries);
+        self::assertStringContainsString('Суммы актов недоступны', $limited['server_formatted_answer']);
+        self::assertStringNotContainsString('220.23', $limited['server_formatted_answer']);
+        $slug = \App\Domain\Authorization\Models\UserRoleAssignment::query()->where('user_id', $member->id)->value('role_slug');
+        $role = \App\Domain\Authorization\Models\OrganizationCustomRole::query()->where('organization_id', $org)->where('slug', $slug)->firstOrFail();
+        $role->updateQuietly(['system_permissions' => ['finance.view']]);
+        self::assertFalse($reader->matchesReference($member, $org, $limited['source_refs'][0]));
+        $granted = $reader->read($member, $org, ['project_id' => (int) $project->id]);
+        self::assertNotNull($granted['data']['amounts_by_status']);
+        $role->updateQuietly(['system_permissions' => []]);
+        self::assertFalse($reader->matchesReference($member, $org, $granted['source_refs'][0]));
         ContractPerformanceAct::query()->where('contract_id', $contract->id)->where('act_document_number', 'CURRENCY-3')->firstOrFail()->updateQuietly(['currency' => 'USD']);
         self::assertFalse($reader->matchesReference($actor, $org, $read['source_refs'][0]));
     }
