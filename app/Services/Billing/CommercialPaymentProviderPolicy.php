@@ -11,8 +11,26 @@ use function trans_message;
 
 final class CommercialPaymentProviderPolicy
 {
+    public function checkoutProvider(): string
+    {
+        $provider = config('bank_billing.default_provider', 'tochka');
+        if (! in_array($provider, ['tochka', 'yookassa'], true)) {
+            throw $this->configurationException();
+        }
+
+        return $provider;
+    }
+
     public function assertCanCharge(int $organizationId): void
     {
+        if ($this->checkoutProvider() === 'tochka') {
+            app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertReady();
+
+            return;
+        }
+        if ($this->checkoutProvider() !== 'yookassa' || config('services.yookassa.payments_enabled') !== true) {
+            throw $this->configurationException();
+        }
         if (PaymentProviderMode::configured() !== PaymentProviderMode::YooKassaTest) {
             return;
         }
@@ -29,6 +47,9 @@ final class CommercialPaymentProviderPolicy
 
     public function assertCanCreatePayment(): void
     {
+        if ($this->checkoutProvider() !== 'yookassa' || config('services.yookassa.payments_enabled') !== true) {
+            throw $this->configurationException();
+        }
         if (PaymentProviderMode::configured() !== PaymentProviderMode::YooKassaLive) {
             return;
         }
@@ -50,8 +71,12 @@ final class CommercialPaymentProviderPolicy
             throw $this->configurationException();
         }
 
-        $this->assertCanCharge($organizationId);
-        $this->assertCanCreatePayment();
+        if (PaymentProviderMode::configured() === PaymentProviderMode::YooKassaTest) {
+            $allowedIds = array_map('intval', (array) config('services.yookassa.test_organization_ids', []));
+            if ($allowedIds !== [] && ! in_array($organizationId, $allowedIds, true)) {
+                throw $this->configurationException();
+            }
+        }
     }
 
     public function receipt(?string $customerEmail, string $description, int $amountMinor, string $currency): ?array

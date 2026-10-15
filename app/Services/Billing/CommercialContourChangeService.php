@@ -78,6 +78,9 @@ final class CommercialContourChangeService
                     throw new CommercialBillingConflictException('A contour change is already scheduled.');
                 }
 
+                if (config('bank_billing.default_provider') === 'tochka') {
+                    app(\App\Services\Billing\Bank\BankInvoiceService::class)->invalidateRenewalInvoices($account, $user);
+                }
                 $change = CommercialContourChange::query()->create([
                     'public_id' => (string) Str::uuid(),
                     'organization_id' => $organization->getKey(),

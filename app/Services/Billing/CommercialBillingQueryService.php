@@ -107,6 +107,10 @@ final class CommercialBillingQueryService
             }
         }
 
+        if ($order->payments->contains('provider', 'tochka')) {
+            $order->load('bankRefunds');
+        }
+
         return $this->orderPayload($order, false);
     }
 
@@ -119,6 +123,9 @@ final class CommercialBillingQueryService
             ->orderByDesc('id')
             ->paginate($perPage);
 
+        if ($paginator->getCollection()->contains(fn ($order): bool => $order->payments->contains('provider', 'tochka'))) {
+            $paginator->getCollection()->load('bankRefunds');
+        }
         $paginator->setCollection($paginator->getCollection()->map(
             fn (CommercialOrder $order): array => $this->orderPayload($order, true),
         ));
@@ -146,6 +153,8 @@ final class CommercialBillingQueryService
         $refunds = $order->refunds->sortBy('created_at')->values();
         $succeededRefunds = $refunds->where('provider_status', 'succeeded');
         $refundedMinor = (int) $succeededRefunds->sum('amount_minor');
+        $bankRefunds = $order->relationLoaded('bankRefunds') ? $order->bankRefunds->where('kind', 'payment')->where('status', 'completed') : collect();
+        $refundedMinor += (int) $bankRefunds->sum('amount_minor');
         $confirmationUsable = $order->status->value === 'pending_payment'
             && $latestPayment !== null
             && in_array($latestPayment->provider_status, ['created', 'pending', 'waiting_for_capture'], true);
@@ -182,8 +191,10 @@ final class CommercialBillingQueryService
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
             'auto_renew_consent' => $order->auto_renew_consent,
-            'test_mode' => PaymentProviderMode::configured()->testMode(),
-            'confirmation_url' => $confirmationUsable ? $latestPayment->confirmation_url : null,
+            'test_mode' => $latestPayment?->provider === 'tochka' ? false : PaymentProviderMode::configured()->testMode(),
+            'confirmation_url' => $confirmationUsable && $latestPayment->provider === 'yookassa'
+                && config('bank_billing.default_provider') === 'yookassa'
+                && config('services.yookassa.payments_enabled') === true ? $latestPayment->confirmation_url : null,
             'created_at' => $order->created_at?->toJSON(),
             'paid_at' => in_array($order->status->value, ['paid', 'refunded'], true)
                 ? ($paidPayment?->terminal_at ?? $paidPayment?->updated_at)?->toJSON()
@@ -192,7 +203,7 @@ final class CommercialBillingQueryService
                 ? ($canceledPayment?->terminal_at ?? $canceledPayment?->updated_at)?->toJSON()
                 : null,
             'refunds_summary' => [
-                'count' => $succeededRefunds->count(),
+                'count' => $succeededRefunds->count() + $bankRefunds->count(),
                 'amount' => $this->money($refundedMinor),
                 'amount_minor' => $refundedMinor,
                 'currency' => $order->currency,

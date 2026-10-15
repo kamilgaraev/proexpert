@@ -19,19 +19,18 @@ use App\Models\Organization;
 use App\Models\OrganizationBalance;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
-use App\Models\OrganizationResourceAllocation;
 use App\Models\User;
 use App\Services\Billing\CommercialCheckoutService;
 use App\Services\Billing\CommercialWebhookService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
-use Tests\TestCase;
-use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\Support\AssistantRagTestSchema;
-use Illuminate\Support\Facades\DB;
+use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\TestCase;
 
 class CommercialCheckoutServiceTest extends TestCase
 {
@@ -40,8 +39,11 @@ class CommercialCheckoutServiceTest extends TestCase
     private User $user;
 
     private CheckoutGatewayFake $gateway;
+
     private ?string $creditApprovalPath = null;
+
     private ?string $connectionName = null;
+
     private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
@@ -104,7 +106,9 @@ class CommercialCheckoutServiceTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->creditApprovalPath !== null && is_file($this->creditApprovalPath)) { unlink($this->creditApprovalPath); }
+        if ($this->creditApprovalPath !== null && is_file($this->creditApprovalPath)) {
+            unlink($this->creditApprovalPath);
+        }
         if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
             DB::purge($this->connectionName);
             config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
@@ -592,6 +596,460 @@ class CommercialCheckoutServiceTest extends TestCase
         ]);
     }
 
+    public function test_bank_invoice_partials_overpayment_and_replay_activate_only_once(): void
+    {
+        $this->prepareBankBilling();
+        $first = $this->checkout(['machinery']);
+        $again = $this->checkout(['machinery']);
+        $this->assertSame($first['bank_invoice']['id'], $again['bank_invoice']['id']);
+        $this->assertNull($first['confirmation_url']);
+        $this->assertSame('tochka', $first['payment_source']);
+        $this->assertSame('awaiting_payment', $first['bank_invoice']['status']);
+        $this->assertSame('RUB', $first['bank_invoice']['currency']);
+        $this->assertSame(0, $first['bank_invoice']['paid_minor']);
+        $this->assertFalse($first['auto_renew_consent']);
+        $this->assertCount(0, $this->gateway->payments);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $service = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $firstPart = $this->bankTransaction($invoice, 'first-part', 10000);
+        $service->ingest($firstPart);
+        $this->assertSame('partially_paid', $invoice->refresh()->status);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $lastPart = $this->bankTransaction($invoice, 'last-part', $invoice->amount_minor - 10000 + 1000);
+        $service->ingest($lastPart);
+        $activatedAt = $invoice->refresh()->activated_at->toJSON();
+        $packageRows = OrganizationPackageSubscription::query()->count();
+        $service->ingest($lastPart);
+        $service->ingest($firstPart);
+        $service->activate((int) $invoice->id);
+        $this->assertSame($activatedAt, $invoice->refresh()->activated_at->toJSON());
+        $this->assertSame('paid', $invoice->status);
+        $this->assertSame($invoice->amount_minor, $invoice->paid_minor);
+        $this->assertDatabaseCount('commercial_bank_operations', 2);
+        $this->assertDatabaseCount('commercial_bank_allocations', 2);
+        $this->assertDatabaseCount('commercial_bank_documents', 2);
+        $this->assertSame(1000, app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['overpayment_minor']);
+        $this->assertSame('active', OrganizationCommercialAccount::query()->sole()->status->value);
+        $this->assertFalse(OrganizationCommercialAccount::query()->sole()->auto_renew_enabled);
+        $this->assertSame($packageRows, OrganizationPackageSubscription::query()->count());
+        $this->assertSame(1, OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->count());
+    }
+
+    public function test_bank_payer_mismatch_pending_and_changed_operations_never_activate(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $service = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $transaction = $this->bankTransaction($invoice, 'wrong-payer', $invoice->amount_minor);
+        $transaction['status'] = 'Pending';
+        $this->assertNull($service->ingest($transaction));
+        $transaction['status'] = 'Booked';
+        $transaction['DebtorParty']['inn'] = '7736050003';
+        $operation = $service->ingest($transaction);
+        $this->assertSame('payer_mismatch', $operation->review_reason);
+        $transaction['Amount']['amount'] = '1.00';
+        $this->assertSame('bank_operation_changed', $service->ingest($transaction)->review_reason);
+        $this->assertNull($invoice->refresh()->activated_at);
+        $this->assertSame(0, $invoice->paid_minor);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    public function test_bank_refund_splits_original_payments_and_requires_approved_outgoing_statement(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'part-one', 10000));
+        $settlement->ingest($this->bankTransaction($invoice, 'part-two', $invoice->amount_minor - 10000));
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $key = '88888888-8888-4888-8888-888888888888';
+        $result = $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, $invoice->amount_minor, 'payment', 'Возврат полной оплаты по запросу клиента', $key);
+        $this->assertCount(2, $result['items']);
+        $this->assertSame($result, $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, $invoice->amount_minor, 'payment', 'Возврат полной оплаты по запросу клиента', $key));
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        foreach (\App\Models\CommercialBankRefund::query()->get() as $refund) {
+            $transaction = $this->bankTransaction($invoice, 'refund-'.$refund->id, $refund->amount_minor);
+            $transaction['creditDebitIndicator'] = 'Debit';
+            $transaction['description'] = $refund->reference;
+            $transaction['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+            $transaction['CreditorAccount']['identification'] = $refund->operation->payer_account;
+            $settlement->ingest($transaction);
+            $this->assertSame('requested', $refund->refresh()->status);
+            $refunds->decide($operator, (int) $refund->id, true);
+            $settlement->ingest($transaction);
+            $settlement->ingest($transaction);
+            $this->assertSame('completed', $refund->refresh()->status);
+        }
+        $this->assertSame('refunded', $invoice->refresh()->status);
+        $this->assertSame(0, $invoice->paid_minor);
+        $this->assertSame($invoice->amount_minor, $invoice->refunded_minor);
+        $this->assertFalse(OrganizationPackageSubscription::query()->where('status', '!=', 'expired')->exists());
+    }
+
+    public function test_bank_documents_and_cancellation_are_scoped_to_the_buying_organization(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $other = Organization::withoutEvents(fn () => Organization::create(['name' => 'Other', 'is_active' => true]));
+        DB::table('organization_user')->insert(['user_id' => $this->user->id, 'organization_id' => $other->id, 'is_active' => true]);
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        app(\App\Services\Billing\Bank\BankBillingService::class)->document($this->user, (int) $other->id, $invoice->documents()->sole()->public_id);
+    }
+
+    public function test_yookassa_disabled_refuses_new_payment_without_calling_the_gateway(): void
+    {
+        config(['services.yookassa.payments_enabled' => false]);
+        $this->expectException(PaymentGatewayConfigurationException::class);
+        try {
+            $this->checkout(['machinery']);
+        } finally {
+            $this->assertCount(0, $this->gateway->payments);
+        }
+    }
+
+    public function test_bank_renewal_prepayment_waits_for_the_period_and_never_restores_card_charging(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $first = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement->ingest($this->bankTransaction($first, 'initial', $first->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->travelTo($account->current_period_end_at->subDays(5));
+        try {
+            $account->forceFill(['auto_renew_enabled' => true, 'saved_payment_method_active' => true, 'saved_payment_method_id' => 'old-card'])->save();
+            $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+            $again = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+            $this->assertSame($renewal->id, $again->id);
+            $settlement->ingest($this->bankTransaction($renewal, 'renewal', $renewal->amount_minor));
+            $this->assertSame('paid', $renewal->refresh()->status);
+            $this->assertNull($renewal->activated_at);
+            $this->travelTo($renewal->order->period_start_at);
+            $settlement->activate((int) $renewal->id);
+            $account->refresh();
+            $this->assertNotNull($renewal->refresh()->activated_at);
+            $this->assertSame($renewal->order->period_end_at->toJSON(), $account->current_period_end_at->toJSON());
+            $this->assertFalse($account->auto_renew_enabled);
+            $this->assertFalse($account->saved_payment_method_active);
+            $this->assertCount(0, $this->gateway->payments);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_bank_statement_polling_activates_without_webhooks_and_replays_safely(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $date = now('Europe/Moscow')->toDateString();
+        config(['bank_billing.start_date' => $date]);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('initializeStatement')->with($date)->once()->andReturn('statement-1');
+        $client->shouldReceive('statement')->with('statement-1')->once()->andReturn(['Data' => ['Statement' => [[
+            'accountId' => config('bank_billing.account_id'), 'statementId' => 'statement-1', 'status' => 'Ready',
+            'startDateTime' => $date, 'endDateTime' => $date, 'Transaction' => [$this->bankTransaction($invoice, 'statement-payment', $invoice->amount_minor)],
+        ]]]]);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
+        $documents->shouldReceive('store')->andReturnUsing(fn ($document) => $document);
+        $this->app->instance(\App\Services\Billing\Bank\BankDocumentService::class, $documents);
+        $first = app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        $again = app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        $this->assertSame(0, $first['failed']);
+        $this->assertSame(1, $first['processed']);
+        $this->assertSame(0, $again['processed']);
+        $this->assertNotNull($invoice->refresh()->activated_at);
+        $this->assertDatabaseCount('commercial_bank_allocations', 1);
+    }
+
+    public function test_bank_malformed_statement_record_does_not_hide_later_payments(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $date = now('Europe/Moscow')->toDateString();
+        config(['bank_billing.start_date' => $date]);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('initializeStatement')->once()->andReturn('malformed-record');
+        $client->shouldReceive('statement')->twice()->andReturn(['Data' => ['Statement' => [[
+            'accountId' => config('bank_billing.account_id'), 'statementId' => 'malformed-record', 'status' => 'Ready',
+            'startDateTime' => $date, 'endDateTime' => $date,
+            'Transaction' => ['invalid', $this->bankTransaction($invoice, 'valid-after-malformed', $invoice->amount_minor)],
+        ]]]]);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
+        $documents->shouldReceive('store')->andReturnUsing(fn ($document) => $document);
+        $this->app->instance(\App\Services\Billing\Bank\BankDocumentService::class, $documents);
+        $sync = app(\App\Services\Billing\Bank\BankSyncService::class);
+        $this->assertSame(1, $sync->process()['failed']);
+        $this->assertSame(1, $sync->process()['failed']);
+        $this->assertNotNull($invoice->refresh()->activated_at);
+        $this->assertDatabaseCount('commercial_bank_allocations', 1);
+        $this->assertDatabaseHas('commercial_bank_statements', ['statement_id' => 'malformed-record', 'status' => 'error']);
+    }
+
+    public function test_bank_document_retry_does_not_starve_later_documents(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        for ($index = 1; $index <= 5; $index++) {
+            app(\App\Services\Billing\Bank\BankDocumentService::class)->prepare($invoice, 'correction', (string) $index);
+        }
+        \App\Models\CommercialBankDocument::query()->update(['updated_at' => now()->subMinute()]);
+        $lastId = (int) \App\Models\CommercialBankDocument::query()->max('id');
+        $attempts = [];
+        $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
+        $documents->shouldReceive('store')->andReturnUsing(function ($document) use (&$attempts, $lastId) {
+            $attempts[] = (int) $document->id;
+            if ((int) $document->id !== $lastId) {
+                throw new \RuntimeException('temporary_document_failure');
+            }
+
+            return $document;
+        });
+        $this->app->instance(\App\Services\Billing\Bank\BankDocumentService::class, $documents);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(false);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $sync = app(\App\Services\Billing\Bank\BankSyncService::class);
+        $sync->process();
+        $this->assertNotContains($lastId, $attempts);
+        $sync->process();
+        $this->assertContains($lastId, $attempts);
+    }
+
+    public function test_bank_signed_notification_is_deduplicated_and_never_grants_access_by_itself(): void
+    {
+        $this->prepareBankBilling();
+        config(['bank_billing.customer_code' => 'test-customer']);
+        $payload = ['webhookType' => 'incomingPayment', 'customerCode' => 'test-customer', 'paymentId' => 'incoming-1',
+            'date' => now('Europe/Moscow')->toDateString(), 'SideRecipient' => ['account' => config('bank_billing.seller_account'), 'bankCode' => config('bank_billing.seller_bik')]];
+        $verifier = \Mockery::mock(\App\Services\Billing\Bank\TochkaWebhookVerifier::class);
+        $verifier->shouldReceive('verify')->with('signed-notification')->andReturn($payload);
+        $service = new \App\Services\Billing\Bank\TochkaWebhookService($verifier);
+        $service->receive('signed-notification');
+        $service->receive('signed-notification');
+        $this->app->instance(\App\Services\Billing\Bank\TochkaWebhookVerifier::class, $verifier);
+        config(['bank_billing.enabled' => true]);
+        $this->call('POST', '/api/v1/webhooks/tochka', [], [], [], ['CONTENT_TYPE' => 'text/plain'], 'signed-notification')
+            ->assertOk()->assertSee('OK');
+        $this->assertDatabaseCount('commercial_bank_webhook_events', 1);
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $event = \App\Models\CommercialBankWebhookEvent::query()->sole();
+        $this->assertSame(hash('sha256', 'signed-notification'), $event->fingerprint);
+        $this->assertNull($event->processed_at);
+    }
+
+    public function test_bank_backfill_does_not_skip_dates_after_a_newer_webhook_statement(): void
+    {
+        $this->prepareBankBilling();
+        $today = \Carbon\CarbonImmutable::now('Europe/Moscow')->startOfDay();
+        config(['bank_billing.start_date' => $today->subDays(35)->toDateString()]);
+        \App\Models\CommercialBankStatement::query()->create(['account_id' => config('bank_billing.account_id'),
+            'statement_date' => $today->toDateString(), 'status' => 'done', 'processed_at' => now()]);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('initializeStatement')->andReturnUsing(fn ($date) => $date);
+        $client->shouldReceive('statement')->andReturnUsing(fn ($id): array => ['Data' => ['Statement' => [[
+            'accountId' => config('bank_billing.account_id'), 'statementId' => $id, 'status' => 'Processing',
+        ]]]]);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        $this->assertSame(36, \App\Models\CommercialBankStatement::query()->count());
+        $this->assertSame(36, \App\Models\CommercialBankStatement::query()->where('is_periodic', true)->count());
+    }
+
+    public function test_bank_manual_matching_requires_operator_authority_and_records_the_basis(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $service = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $transaction = $this->bankTransaction($invoice, 'third-party', $invoice->amount_minor);
+        $transaction['DebtorParty']['inn'] = '7736050003';
+        $operation = $service->ingest($transaction);
+        $this->assertSame('payer_mismatch', $operation->review_reason);
+        $observer = new \App\Models\SystemAdmin(['role' => 'security_auditor', 'is_active' => true]);
+        $observer->id = 101;
+        try {
+            $service->allocateManually($observer, (int) $operation->id, (int) $invoice->id, 'Письмо о платеже третьего лица');
+            $this->fail('Observer approved payment');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $this->addToAssertionCount(1);
+        }
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $service->allocateManually($operator, (int) $operation->id, (int) $invoice->id, 'Письмо о платеже третьего лица');
+        $this->assertSame(100, (int) $operation->refresh()->reviewed_by);
+        $this->assertSame('Письмо о платеже третьего лица', $operation->review_note);
+        $this->assertNotNull($invoice->refresh()->activated_at);
+    }
+
+    public function test_bank_documents_are_immutable_private_objects_with_repeatable_downloads(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        $path = 'org-'.$this->organization->id.'/billing/documents/'.$document->invoice->public_id.'/'.$document->public_id.'.pdf';
+        $content = '%PDF-1.4 bank invoice test';
+        $files = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $files->shouldReceive('existsCurrent')->once()->with($path)->andReturn(false);
+        $files->shouldReceive('putPrivate')->once()->with($path, $content, 'application/pdf', hash('sha256', $content))
+            ->andReturn(new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', strlen($content), hash('sha256', $content), 'application/pdf'));
+        $stream = fopen('php://temp', 'w+b');
+        fwrite($stream, $content);
+        rewind($stream);
+        $files->shouldReceive('readCurrent')->once()->with($path)->andReturn($stream);
+        $service = new class($files, $content) extends \App\Services\Billing\Bank\BankDocumentService
+        {
+            public function __construct(\App\Services\Storage\FileService $files, private readonly string $content)
+            {
+                parent::__construct($files);
+            }
+
+            public function render(\App\Models\CommercialBankDocument $document): string
+            {
+                return $this->content;
+            }
+        };
+        $stored = $service->store($document);
+        $this->assertSame('ready', $stored->status);
+        $this->assertSame(hash('sha256', $content), $stored->sha256);
+        $this->assertNotNull($stored->notified_at);
+        $read = $service->read($stored);
+        $this->assertSame($content, stream_get_contents($read));
+        fclose($read);
+        $this->assertDatabaseCount('commercial_bank_documents', 1);
+        $this->assertDatabaseCount('commercial_billing_notification_keys', 1);
+    }
+
+    public function test_bank_personal_account_cannot_be_allocated_even_by_an_operator(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $service = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $transaction = $this->bankTransaction($invoice, 'personal', $invoice->amount_minor);
+        $transaction['DebtorAccount']['identification'] = '40817810000000000002';
+        $operation = $service->ingest($transaction);
+        $this->assertSame('payer_not_b2b', $operation->review_reason);
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $this->expectException(\InvalidArgumentException::class);
+        try {
+            $service->allocateManually($operator, (int) $operation->id, (int) $invoice->id, 'Попытка зачесть личный перевод');
+        } finally {
+            $this->assertNull($invoice->refresh()->activated_at);
+        }
+    }
+
+    public function test_bank_overpayment_refund_does_not_reduce_the_paid_subscription(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'excess', $invoice->amount_minor + 1000));
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, 1000, 'overpayment', 'Просим вернуть сумму переплаты', '77777777-7777-4777-8777-777777777777');
+        $refund = \App\Models\CommercialBankRefund::query()->sole();
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $refunds->decide($operator, (int) $refund->id, true);
+        $transaction = $this->bankTransaction($invoice, 'excess-refund', 1000);
+        $transaction['creditDebitIndicator'] = 'Debit';
+        $transaction['description'] = $refund->reference;
+        $transaction['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+        $transaction['CreditorAccount']['identification'] = $refund->operation->payer_account;
+        $settlement->ingest($transaction);
+        $settlement->ingest($transaction);
+        $this->assertSame('completed', $refund->refresh()->status);
+        $this->assertSame($invoice->amount_minor, $invoice->refresh()->paid_minor);
+        $this->assertSame(0, $invoice->refunded_minor);
+        $this->assertSame(0, app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['overpayment_minor']);
+        $this->assertSame('active', OrganizationCommercialAccount::query()->sole()->status->value);
+    }
+
+    public function test_bank_refunding_all_partial_funds_cancels_the_unactivated_order(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'partial-refund-source', 1000));
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, 1000, 'payment', 'Отказ от покупки после частичной оплаты', '66666666-6666-4666-8666-666666666666');
+        $refund = \App\Models\CommercialBankRefund::query()->sole();
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $refunds->decide($operator, (int) $refund->id, true);
+        $transaction = $this->bankTransaction($invoice, 'partial-refund-outgoing', 1000);
+        $transaction['creditDebitIndicator'] = 'Debit';
+        $transaction['description'] = $refund->reference;
+        $transaction['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+        $transaction['CreditorAccount']['identification'] = $refund->operation->payer_account;
+        $settlement->ingest($transaction);
+        $this->assertSame('canceled', $invoice->refresh()->status);
+        $this->assertSame('canceled', $invoice->order->status->value);
+        $this->assertNull($invoice->activated_at);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    private function prepareBankBilling(): void
+    {
+        config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false,
+            'ai-assistant-credits.enforce' => false, 'bank_billing.seller_account' => '40802810000000000001',
+            'bank_billing.seller_bik' => '044525104', 'bank_billing.seller_bank' => 'Тестовый банк',
+            'bank_billing.seller_correspondent_account' => '30101810000000000001',
+            'bank_billing.account_id' => '40802810000000000001/044525104',
+            'legal.provider' => ['name' => 'ИП Тестовый', 'inn' => '500100732259', 'registration_number' => '326500100000001', 'address' => 'Москва']]);
+        Schema::table('organizations', function (Blueprint $table): void {
+            $table->string('legal_name')->nullable();
+            $table->string('tax_number')->nullable();
+            $table->string('registration_number')->nullable();
+            $table->string('address')->nullable();
+        });
+        Schema::table('commercial_orders', fn (Blueprint $table) => $table->string('server_idempotency_key', 100)->nullable());
+        Schema::table('commercial_orders', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
+        Schema::table('organization_commercial_accounts', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
+        (require database_path('migrations/2026_07_14_000004_create_commercial_contour_changes_table.php'))->up();
+        Schema::create('commercial_billing_notification_keys', function (Blueprint $table): void {
+            $table->string('idempotency_key')->primary();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('commercial_account_id');
+            $table->timestamps();
+        });
+        (require database_path('migrations/2026_10_15_230000_create_commercial_bank_billing.php'))->up();
+        $this->organization->forceFill(['legal_name' => 'ООО Покупатель', 'tax_number' => '7707083893', 'registration_number' => '1027700132195', 'address' => 'Москва'])->save();
+        $this->user->forceFill(['current_organization_id' => $this->organization->id])->save();
+        DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true]);
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+    }
+
+    private function bankTransaction(\App\Models\CommercialBankInvoice $invoice, string $id, int $amount): array
+    {
+        return ['transactionId' => $id, 'paymentId' => $id, 'status' => 'Booked', 'creditDebitIndicator' => 'Credit',
+            'documentProcessDate' => now('Europe/Moscow')->toDateString(), 'description' => $invoice->snapshot['purpose'],
+            'Amount' => ['amount' => \App\Services\Billing\Bank\BankMoney::decimal($amount), 'currency' => 'RUB'],
+            'DebtorParty' => ['inn' => $this->organization->tax_number], 'DebtorAccount' => ['identification' => '40702810000000000002'],
+            'CreditorParty' => ['inn' => config('legal.provider.inn')], 'CreditorAccount' => ['identification' => config('bank_billing.seller_account')]];
+    }
+
     private function checkoutPayload(array $override): array
     {
         return app(CommercialCheckoutService::class)->checkout(
@@ -612,6 +1070,9 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'commercial_bank_documents', 'commercial_bank_refunds', 'commercial_bank_webhook_events', 'commercial_bank_statements',
+            'commercial_bank_allocations', 'commercial_bank_operations', 'commercial_bank_invoices',
+            'commercial_contour_changes', 'commercial_billing_notification_keys',
             'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs',
             'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user',
             'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_resource_allocations', 'organization_package_subscriptions',

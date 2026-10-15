@@ -47,6 +47,12 @@ final class CommercialRenewalService
 
     public function process(CarbonInterface $at, int $limit = 100): array
     {
+        if ($this->providerPolicy->checkoutProvider() === 'tochka') {
+            return app(\App\Services\Billing\Bank\BankRenewalService::class)->process($at, $limit);
+        }
+        if (config('services.yookassa.payments_enabled') !== true) {
+            return ['processed' => 0, 'created_cycles' => 0, 'created_attempts' => 0, 'canceled_changes' => 0, 'failed' => 0, 'suspended' => 0];
+        }
         $now = CarbonImmutable::instance($at)->setTimezone(self::TIMEZONE);
         $queryNow = $now->utc();
         if (Schema::hasTable('notifications')) {

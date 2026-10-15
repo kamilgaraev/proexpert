@@ -8,6 +8,7 @@ final class OrganizationStoragePath
 {
     private const DOMAINS = [
         'acts',
+        'billing',
         'design-models',
         'estimate-generation',
         'estimates',

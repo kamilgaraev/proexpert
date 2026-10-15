@@ -30,6 +30,9 @@ final class CommercialManualPaymentService
 
     public function create(Organization $organization, User $user, string $idempotencyKey): array
     {
+        if ($this->providerPolicy->checkoutProvider() === 'tochka') {
+            return app(\App\Services\Billing\Bank\BankRenewalService::class)->manual($organization, $user, $idempotencyKey);
+        }
         $this->providerPolicy->assertCanCharge((int) $organization->getKey());
 
         [$order, $payment, $created, $callProvider] = DB::transaction(function () use (

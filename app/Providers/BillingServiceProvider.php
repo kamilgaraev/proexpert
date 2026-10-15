@@ -19,6 +19,10 @@ class BillingServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(PaymentGatewayInterface::class, static function ($app): PaymentGatewayInterface {
+            if (config('bank_billing.default_provider', 'tochka') === 'tochka') {
+                return $app->make(YooKassaPaymentGateway::class);
+            }
+
             return match (PaymentProviderMode::configured()) {
                 PaymentProviderMode::Mock => $app->make(MockPaymentGateway::class),
                 PaymentProviderMode::YooKassaTest,

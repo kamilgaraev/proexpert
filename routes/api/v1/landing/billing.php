@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['interface:lk'])
     ->name('billing.')
     ->group(function (): void {
+        require __DIR__.'/../bank_billing.php';
         Route::middleware(['authorize:billing.view'])->group(function (): void {
             Route::post('commercial/quote', [CommercialBillingController::class, 'quote'])
                 ->name('commercial.quote');

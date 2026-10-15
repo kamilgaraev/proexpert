@@ -14,6 +14,7 @@ use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\RetryableCommercialWebhookException;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Interfaces\Billing\PaymentGatewayInterface;
+use App\Models\CommercialBankInvoice;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
@@ -93,6 +94,53 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         }, 3);
 
         $this->accessController->clearAccessCache($organizationId);
+    }
+
+    public function settleBankPayment(CommercialBankInvoice $sourceInvoice): void
+    {
+        DB::transaction(function () use ($sourceInvoice): void {
+            $invoice = CommercialBankInvoice::query()->whereKey($sourceInvoice->id)->lockForUpdate()->firstOrFail();
+            if ($invoice->activated_at !== null) {
+                return;
+            }
+            $order = CommercialOrder::query()->whereKey($invoice->commercial_order_id)
+                ->where('organization_id', $invoice->organization_id)->lockForUpdate()->firstOrFail();
+            $payment = CommercialPayment::query()->whereKey($invoice->commercial_payment_id)
+                ->where('commercial_order_id', $order->id)->lockForUpdate()->firstOrFail();
+            $funded = (int) $invoice->allocations()->sum('amount_minor')
+                - (int) $invoice->refunds()->where('kind', 'payment')->where('status', 'completed')->sum('amount_minor');
+            if ($invoice->status !== 'paid' || $invoice->paid_minor !== $order->amount_minor
+                || $funded !== $order->amount_minor || $payment->provider !== 'tochka'
+                || $payment->amount_minor !== $order->amount_minor || $order->currency !== 'RUB') {
+                throw new RuntimeException('Bank payment does not match the funded commercial order.');
+            }
+            $account = OrganizationCommercialAccount::query()->whereKey($order->commercial_account_id)
+                ->where('organization_id', $order->organization_id)->lockForUpdate()->firstOrFail();
+            $packageRows = OrganizationPackageSubscription::query()->where('organization_id', $order->organization_id)
+                ->lockForUpdate()->get();
+            if ($order->kind !== 'ai_credits'
+                && ($order->current_package_slugs === [] || ($order->kind === 'renewal' && $order->period_end_at->isPast()))) {
+                $start = \Carbon\CarbonImmutable::instance(now());
+                $order->forceFill(['period_start_at' => $start, 'period_end_at' => $start->addDays(30)])->save();
+            }
+            $authoritative = new PaymentGatewayResult(id: 'bank-'.$invoice->public_id, status: 'succeeded',
+                confirmationUrl: null, paymentMethodId: null, paymentMethodSaved: false,
+                safeResponse: ['source' => 'tochka'], paid: true, test: false,
+                amountMinor: $order->amount_minor, currency: 'RUB',
+                metadata: ['order_id' => $order->public_id, 'organization_id' => $order->organization_id], refundedAmountMinor: 0);
+            $this->activate($order, $payment, $account, $packageRows, $authoritative);
+            \App\Models\CommercialContourChange::query()->where('organization_id', $order->organization_id)
+                ->where('commercial_order_id', $order->id)->where('status', 'scheduled')
+                ->update(['status' => 'applied', 'applied_at' => now()]);
+            $invoice->forceFill(['activated_at' => now()])->save();
+            $snapshot = $invoice->snapshot;
+            $snapshot['period_start_at'] = $order->period_start_at?->toIso8601String();
+            $snapshot['period_end_at'] = $order->period_end_at?->toIso8601String();
+            app(\App\Services\Billing\Bank\BankDocumentService::class)->prepare($invoice, 'closing', snapshot: $snapshot);
+            $this->referralRewards->handleFirstPaidOrder($order->fresh(), $payment->fresh());
+            $this->notify($order, 'commercial_payment_succeeded', 'billing.webhook.payment_succeeded');
+        }, 3);
+        $this->accessController->clearAccessCache((int) $sourceInvoice->organization_id);
     }
 
     public function settleBalanceRefund(CommercialRefund $sourceRefund): void
@@ -541,11 +589,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     ): void {
         $order->forceFill(['status' => 'paid'])->save();
         $renewal = $order->kind === 'renewal';
-        $canRenew = $preserveRenewalMethod
+        $canRenew = $payment->provider === 'tochka' ? false : ($preserveRenewalMethod
             ? $account->auto_renew_enabled && $account->saved_payment_method_active
             : ($renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
             && $authoritative->paymentMethodSaved
-            && trim((string) $authoritative->paymentMethodId) !== ''));
+            && trim((string) $authoritative->paymentMethodId) !== '')));
         $cumulativeRefundedAmount = max((int) $payment->refunded_amount_minor, $authoritative->refundedAmountMinor);
         $payment->forceFill([
             'provider_status' => 'succeeded',
@@ -565,6 +613,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     $order->forceFill(['status' => 'refunded'])->save();
                 }
             }
+
             return;
         }
         $account->forceFill([

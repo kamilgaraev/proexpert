@@ -40,6 +40,8 @@ return [
 
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#send_default_pii
     'send_default_pii' => env('SENTRY_SEND_DEFAULT_PII', false),
+    'before_send' => [\App\Services\Billing\Bank\BankTelemetrySanitizer::class, 'sanitize'],
+    'before_send_transaction' => [\App\Services\Billing\Bank\BankTelemetrySanitizer::class, 'sanitize'],
 
     // @see: https://docs.sentry.io/platforms/php/guides/laravel/configuration/options/#ignore_exceptions
     // 'ignore_exceptions' => [],

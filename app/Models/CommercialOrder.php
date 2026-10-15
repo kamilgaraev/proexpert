@@ -9,6 +9,7 @@ use App\Enums\Billing\CommercialOrderStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CommercialOrder extends Model
@@ -70,5 +71,11 @@ class CommercialOrder extends Model
     public function refunds(): HasMany
     {
         return $this->hasMany(CommercialRefund::class);
+    }
+
+    public function bankRefunds(): HasManyThrough
+    {
+        return $this->hasManyThrough(CommercialBankRefund::class, CommercialBankInvoice::class,
+            'commercial_order_id', 'commercial_bank_invoice_id');
     }
 }
