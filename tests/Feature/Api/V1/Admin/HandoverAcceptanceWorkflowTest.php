@@ -69,6 +69,23 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $scopeResponse->assertJsonPath('data.status', 'planned');
         $scopeId = (int) $scopeResponse->json('data.id');
 
+        $duplicateChecklistResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/checklists", [
+                'title' => 'Invalid duplicate codes',
+                'items' => [
+                    ['code' => 'walls_accepted', 'title' => 'Walls accepted'],
+                    ['code' => 'walls_accepted', 'title' => 'Duplicate walls'],
+                ],
+            ]);
+
+        $duplicateChecklistResponse->assertUnprocessable();
+        $duplicateChecklistResponse->assertJsonValidationErrors(['items.0.code', 'items.1.code']);
+        $this->assertDatabaseMissing('acceptance_checklists', [
+            'acceptance_scope_id' => $scopeId,
+            'title' => 'Invalid duplicate codes',
+        ]);
+        $this->assertDatabaseCount('acceptance_checklist_items', 0);
+
         $checklistResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/checklists", [
                 'title' => 'Apartment readiness',
