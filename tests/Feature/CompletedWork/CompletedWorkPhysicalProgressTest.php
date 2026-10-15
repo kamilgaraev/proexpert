@@ -64,8 +64,19 @@ final class CompletedWorkPhysicalProgressTest extends TestCase
             'planned_start_date' => '2026-09-01',
             'planned_end_date' => '2026-09-30',
         ]);
+        $parent = ScheduleTask::query()->create([
+            'schedule_id' => $schedule->id,
+            'organization_id' => $project->organization_id,
+            'created_by_user_id' => $user->id,
+            'name' => 'Physical summary',
+            'task_type' => 'summary',
+            'planned_start_date' => '2026-09-01',
+            'planned_end_date' => '2026-09-30',
+            'planned_duration_days' => 30,
+        ]);
         $task = ScheduleTask::query()->create([
             'schedule_id' => $schedule->id,
+            'parent_task_id' => $parent->id,
             'organization_id' => $project->organization_id,
             'created_by_user_id' => $user->id,
             'name' => 'Physical task',
@@ -82,6 +93,9 @@ final class CompletedWorkPhysicalProgressTest extends TestCase
         app(ScheduleTaskCompletedWorkService::class)->syncCompletedQuantity($task->fresh());
 
         self::assertSame(10.0, (float) $task->fresh()->completed_quantity);
+        self::assertSame(10.0, (float) $parent->fresh()->progress_percent);
+        self::assertSame('in_progress', $parent->fresh()->status->value);
+        self::assertSame(0, CompletedWork::query()->where('schedule_task_id', $parent->id)->count());
         $entry = ConstructionJournalEntry::query()->create([
             'journal_id' => $journal->id, 'estimate_id' => $estimate->id,
             'schedule_task_id' => $task->id, 'entry_date' => '2026-09-20', 'entry_number' => 1,

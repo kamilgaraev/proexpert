@@ -7,10 +7,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Support\Facades\DB;
 use App\Enums\Schedule\TaskStatusEnum;
 use App\Enums\Schedule\TaskTypeEnum;
 use App\Enums\Schedule\PriorityEnum;
+use App\Services\Schedule\ScheduleTaskSyncService;
 use Carbon\Carbon;
 use App\Traits\HasOnboardingDemo;
 
@@ -369,7 +369,10 @@ class ScheduleTask extends Model
         } elseif ($percent > 0 && $percent < 100 && $this->status === TaskStatusEnum::NOT_STARTED) {
             $this->update(['status' => TaskStatusEnum::IN_PROGRESS]);
         } elseif ($percent == 100) {
-            $this->complete();
+            if (! $this->complete()) {
+                $this->updateParentProgress();
+                $this->schedule->recalculateProgress();
+            }
             return true;
         }
 
@@ -397,8 +400,19 @@ class ScheduleTask extends Model
             return;
         }
 
-        $parent = $this->parentTask;
-        $siblings = $parent->childTasks;
+        $parent = $this->parentTask()
+            ->where('organization_id', $this->organization_id)
+            ->where('schedule_id', $this->schedule_id)
+            ->first();
+
+        if ($parent === null) {
+            return;
+        }
+
+        $siblings = $parent->childTasks()
+            ->where('organization_id', $this->organization_id)
+            ->where('schedule_id', $this->schedule_id)
+            ->get();
         
         if ($siblings->isEmpty()) {
             return;
@@ -415,7 +429,25 @@ class ScheduleTask extends Model
             $averageProgress = $weightedProgress / $totalWork;
         }
 
-        $parent->update(['progress_percent' => round($averageProgress, 2)]);
+        $attributes = ['progress_percent' => round($averageProgress, 2)];
+
+        if ($parent->task_type->hasChildren() && ! in_array($parent->status, [
+            TaskStatusEnum::ON_HOLD,
+            TaskStatusEnum::CANCELLED,
+            TaskStatusEnum::WAITING,
+        ], true)) {
+            $allCompleted = $siblings->every(fn (ScheduleTask $task): bool =>
+                $task->status === TaskStatusEnum::COMPLETED && (float) $task->progress_percent >= 100
+            );
+            $hasStarted = $averageProgress > 0 || $siblings->contains(fn (ScheduleTask $task): bool =>
+                in_array($task->status, [TaskStatusEnum::IN_PROGRESS, TaskStatusEnum::WAITING], true)
+            );
+            $attributes['status'] = $allCompleted
+                ? TaskStatusEnum::COMPLETED
+                : ($hasStarted ? TaskStatusEnum::IN_PROGRESS : TaskStatusEnum::NOT_STARTED);
+        }
+
+        ScheduleTaskSyncService::withoutReverseSync(fn () => $parent->update($attributes));
         
         // Рекурсивно обновляем родителей
         $parent->updateParentProgress();
@@ -520,4 +552,4 @@ class ScheduleTask extends Model
             ]);
         }
     }
-} 
+}
