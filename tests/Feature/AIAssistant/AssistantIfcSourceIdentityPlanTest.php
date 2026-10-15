@@ -11,6 +11,8 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewRound;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
@@ -192,6 +194,68 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 $collect(json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
                 self::assertLessThanOrEqual(21000, $scanned, 'Counting a dense IFC corpus must not reread every source row to recover its counters.');
             }, fresh: true);
+            $this->assertMixedCorpusCounterPlan($policy, $fixture, $project, $package);
         }
+    }
+
+    private function assertMixedCorpusCounterPlan(AssistantDataAccessPolicy $policy, AssistantRealAuthorizationFixture $fixture, Project $project, DesignPackage $package): void
+    {
+        $organizationId = (int) $fixture->organization->id;
+        $section = DesignPackageSection::withoutEvents(fn () => DesignPackageSection::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'package_id' => $package->id,
+            'code' => 'AR', 'title' => 'Section', 'project_stage' => $package->project_stage,
+        ]));
+        $round = DesignReviewRound::withoutEvents(fn () => DesignReviewRound::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'package_id' => $package->id, 'round_number' => 1,
+        ]));
+        foreach (['design_package_section' => $section->id, 'design_review_round' => $round->id] as $type => $id) {
+            RagSource::withoutEvents(fn () => RagSource::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $project->id, 'source_type' => 'design_additional',
+                'entity_type' => $type, 'entity_id' => (string) $id, 'title' => 'Mixed source', 'checksum' => hash('sha256', $type),
+            ]));
+        }
+        DB::statement('ANALYZE ai_rag_status_sources');
+        DB::statement("SET LOCAL work_mem = '64kB'");
+        $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($policy, $fixture, $organizationId, $package): void {
+            $batches = $policy->aggregateSourceIdentityBatches(
+                RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $organizationId,
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+                    ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count'),
+            );
+            self::assertCount(1, $batches);
+            $counts = $batches[0]->first();
+            self::assertSame(20007, (int) $counts->stored_count);
+            self::assertSame(0, (int) $counts->chunk_count);
+            self::assertSame(0, (int) $counts->indexed_count);
+            $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
+            $plan = json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan'];
+            $sourceCtes = [];
+            $discover = static function (array $node) use (&$discover, &$sourceCtes): bool {
+                $containsSources = ($node['Relation Name'] ?? null) === 'ai_rag_status_sources';
+                foreach ($node['Plans'] ?? [] as $child) { $containsSources = $discover($child) || $containsSources; }
+                if ($containsSources && str_starts_with($node['Subplan Name'] ?? '', 'CTE ')) {
+                    $sourceCtes[substr($node['Subplan Name'], 4)] = true;
+                }
+
+                return $containsSources;
+            };
+            $discover($plan);
+            $rowsProcessed = 0;
+            $collect = static function (array $node) use (&$collect, &$rowsProcessed, $sourceCtes): void {
+                if (($node['Relation Name'] ?? null) === 'ai_rag_status_sources'
+                    || (($node['Node Type'] ?? null) === 'CTE Scan' && isset($sourceCtes[$node['CTE Name'] ?? '']))) {
+                    $rowsProcessed += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+                }
+                foreach ($node['Plans'] ?? [] as $child) { $collect($child); }
+            };
+            $collect($plan);
+            self::assertLessThanOrEqual(42000, $rowsProcessed, 'Mixed source counting must bound base and CTE work, including filtered rows and loops; temp blocks '.($plan['Temp Read Blocks'] ?? 0).'.');
+            $package->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+            self::assertNull($batches[0]->first());
+            $package->updateQuietly(['organization_id' => $organizationId]);
+            $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
+            self::assertNull($batches[0]->first());
+        }, fresh: true);
     }
 }

@@ -675,7 +675,8 @@ final class AssistantDataAccessPolicy
                 $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query, [], materialize: false);
                 $checkpoint?->__invoke();
                 $sourceCounts = $batchSize === null ? null : [];
-                $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
+                $identityCounts = $sourceCounts === null ? null : [];
+                $identities = $this->discoverSourceIdentities($candidates, $sourceCounts, $identityCounts);
                 $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
                 foreach ($planned as $entry) {
                     $nextProcessingPhase('rag_acl_batch_compile');
@@ -701,8 +702,18 @@ final class AssistantDataAccessPolicy
                     if ($sourceColumns !== null) {
                         $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: count($types ?? []) > 1)->select([])->toBase();
                     }
+                    $identitySourceOverrides = [];
+                    if ($sourceColumns !== null && $types === ['design_additional']) {
+                        $boundedTypes = $this->sourceQueries->boundedIdentityTypes($identityCounts ?? [], 'design_additional');
+                        if (count($boundedTypes) > 1) {
+                            $boundedSources = $this->aclCompiler->register('__assistant_bounded_batch_sources_'.count($compiled),
+                                (clone $batch)->whereIn($table.'.entity_type', $boundedTypes)->select($sourceColumns), [], materialize: true)->select([])->toBase();
+                            $identitySourceOverrides = array_fill_keys($boundedTypes, $boundedSources);
+                        }
+                    }
                     $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
-                        splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities, sourceColumns: $sourceColumns)->select($columns)->toBase();
+                        splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities, sourceColumns: $sourceColumns,
+                        identitySourceOverrides: $identitySourceOverrides)->select($columns)->toBase();
                     $checkpoint?->__invoke();
                     $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
                     $finishCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -734,12 +745,12 @@ final class AssistantDataAccessPolicy
         return $this->applySourceIdentityScope($query, $user, $organizationId, true);
     }
 
-    private function discoverSourceIdentities(Builder $query, ?array &$sourceCounts = null): array
+    private function discoverSourceIdentities(Builder $query, ?array &$sourceCounts = null, ?array &$identityCounts = null): array
     {
-        return $this->sourceQueries->discoverIdentities($query, $this->finishAclDiscovery(...), $sourceCounts);
+        return $this->sourceQueries->discoverIdentities($query, $this->finishAclDiscovery(...), $sourceCounts, $identityCounts);
     }
 
-    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null, ?array $sourceColumns = null): Builder
+    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null, ?array $sourceColumns = null, array $identitySourceOverrides = []): Builder
     {
         if ($this->aclCompiler === null) {
             if ($preparedCandidates) { throw new \LogicException('assistant_prepared_candidates_require_query_compilation'); }
@@ -773,7 +784,7 @@ final class AssistantDataAccessPolicy
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $entityType) : null;
                 if ($entities === null) { continue; }
                 foreach ($availableSources as $sourceType) {
-                    $branch = $this->sourceQueries->identityBranch(clone $entities, $sourceType, $entityType, $identitySources, $table, $expectedProjection, $sourceColumns);
+                    $branch = $this->sourceQueries->identityBranch(clone $entities, $sourceType, $entityType, $identitySourceOverrides[$entityType] ?? $identitySources, $table, $expectedProjection, $sourceColumns);
                     if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
                 }
             }
