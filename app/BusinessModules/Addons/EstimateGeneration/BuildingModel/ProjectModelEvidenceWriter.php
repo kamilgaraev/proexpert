@@ -313,7 +313,7 @@ final readonly class ProjectModelEvidenceWriter
                     $evidenceIds,
                     nativeNumericProofs: array_map(static fn (array $proof): array => [...$proof, 'entity_id' => $entityId], $numericProofs),
                 );
-                if ($stableNumberContext || $roomLocationFact) {
+                if ($stableNumberContext) {
                     $fact = $this->literalRevision($fact);
                 }
                 if (isset($facts[$factId])) {
@@ -325,6 +325,11 @@ final readonly class ProjectModelEvidenceWriter
                 $facts[$factId] = $fact;
                 $factsByClaimId[$claim->id] = $fact;
             }
+            $replacements = $this->roomLocationRevisions($facts);
+            foreach ($factsByClaimId as $id => $fact) {
+                $factsByClaimId[$id] = $replacements[$fact->id] ?? $fact;
+            }
+            $this->retireOmittedRoomLocations($facts);
             $conflicts = $this->unresolvedConflicts($byId, $decisions, $factsByClaimId);
             $this->models->saveSourceModel(
                 array_values($entities),
@@ -333,6 +338,72 @@ final readonly class ProjectModelEvidenceWriter
                 $conflicts,
             );
         });
+    }
+
+    /** @param array<string,Fact> $facts @return array<string,Fact> */
+    private function roomLocationRevisions(array &$facts): array
+    {
+        $numbers = array_filter($facts, static fn (Fact $fact): bool => $fact->type === 'room_number' && $fact->status === 'confirmed');
+        $replacements = [];
+        foreach ($facts as $id => $fact) {
+            if (! in_array($fact->type, ['room_floor', 'room_zone'], true)) {
+                continue;
+            }
+            $contexts = [];
+            foreach ($numbers as $number) {
+                if (array_intersect($fact->evidenceIds, $number->evidenceIds) !== []) {
+                    $contexts[] = $number->id;
+                }
+            }
+            sort($contexts, SORT_STRING);
+            $revised = new Fact($contexts === [] ? $id : 'fact:'.hash('sha256', $id.'|number-context:v1:'.implode('|', $contexts)),
+                $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion, $fact->entityId,
+                $fact->type, $fact->value, $fact->unit, $fact->confidence, $fact->origin, $fact->status, $fact->evidenceIds);
+            $revised = $this->literalRevision($revised);
+            unset($facts[$id]);
+            $facts[$revised->id] = $revised;
+            $replacements[$id] = $revised;
+        }
+
+        return $replacements;
+    }
+
+    /** Unknown location is a new unresolved revision, not a deletion of its proof/history. @param array<string,Fact> $facts */
+    private function retireOmittedRoomLocations(array &$facts): void
+    {
+        $numbers = array_filter($facts, static fn (Fact $fact): bool => $fact->type === 'room_number'
+            && $fact->status === 'confirmed' && $fact->origin === 'document');
+        if ($numbers === []) {
+            return;
+        }
+        $scope = reset($numbers);
+        $current = $this->models->currentFacts($scope->organizationId, $scope->projectId, $scope->sessionId);
+        foreach ($numbers as $number) {
+            foreach ($current as $previous) {
+                if ($previous->entityId !== $number->entityId || $previous->type !== 'room_number' || $previous->sourceVersion !== $number->sourceVersion
+                    || $previous->version >= $number->version) {
+                    continue;
+                }
+                foreach ($current as $location) {
+                    if (! in_array($location->type, ['room_floor', 'room_zone'], true) || $location->status !== 'confirmed'
+                        || $location->origin !== 'document' || $location->sourceVersion !== $number->sourceVersion
+                        || array_intersect($location->evidenceIds, $previous->evidenceIds) === []) {
+                        continue;
+                    }
+                    foreach ($facts as $incoming) {
+                        if ($incoming->entityId === $location->entityId && $incoming->type === $location->type
+                            && in_array($incoming->status, ['confirmed', 'conflicted', 'unresolved'], true)
+                            && $incoming->version > $location->version) {
+                            continue 2;
+                        }
+                    }
+                    $id = 'fact:'.hash('sha256', 'room-location-omitted:v1|'.$number->id.'|'.$location->id);
+                    $facts[$id] = new Fact($id, $location->organizationId, $location->projectId, $location->sessionId,
+                        $location->sourceVersion, $location->entityId, $location->type, null, null, 0.0,
+                        'unresolved', 'unresolved', [], $location->version + 1, $location->id);
+                }
+            }
+        }
     }
 
     /** Called under the existing organization/session evidence transaction lock. */

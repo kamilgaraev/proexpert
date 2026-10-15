@@ -93,6 +93,13 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             if ($zone !== null) {
                 self::assertSame(hash('sha256', $zone), $evidence[$zoneProofs[0]]->literalFact->valueHash);
             }
+            foreach (['room_floor' => $floor, 'room_zone' => $zone] as $type => $expected) {
+                $currentLocations = array_values(array_filter($capture['snapshot']->facts,
+                    static fn ($fact): bool => $fact->type === $type && $fact->status === 'confirmed'
+                        && $fact->sourceVersion === $document->source_version));
+                self::assertSame($expected === null ? [] : [$expected], array_column($currentLocations, 'value'),
+                    'Snapshot must not expose a previously confirmed location omitted by the new room revision.');
+            }
             $linked = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'],
                 $capture['snapshot']->facts, $capture['snapshot']->evidence);
             self::assertCount($revision === 0 ? 1 : 0, $linked->links);
