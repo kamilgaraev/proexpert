@@ -75,6 +75,21 @@ final class PaymentTransactionProjectScopeSecurityTest extends TestCase
         self::assertSame(2, PaymentTransaction::query()->count());
     }
 
+    public function test_malformed_route_ids_are_not_found_before_validation_and_never_coerce_to_a_valid_transaction(): void
+    {
+        [$fixture, $actor, $allowed, $restricted, $visible] = $this->context($this->permissions());
+        $headers = $this->headers($actor);
+        foreach (['abc', '999999999999999999999999999', $visible->id.'invalid'] as $id) {
+            $base = '/api/v1/admin/payments/transactions/'.$id;
+            $this->getJson($base, $headers)->assertNotFound();
+            foreach (['approve', 'reject', 'cancel', 'refund'] as $action) {
+                $this->postJson($base.'/'.$action, ['notes' => [], 'reason' => [], 'amount' => 'invalid'], $headers)->assertNotFound();
+            }
+        }
+        self::assertSame(PaymentTransactionStatus::COMPLETED, $visible->fresh()->status);
+        self::assertSame(0, $visible->refunds()->count());
+    }
+
     public function test_authorized_actions_and_refund_replay_work_without_transaction_view(): void
     {
         [$fixture, $actor, $allowed, $restricted, $visible] = $this->context(array_values(array_diff($this->permissions(), ['payments.transaction.view'])));

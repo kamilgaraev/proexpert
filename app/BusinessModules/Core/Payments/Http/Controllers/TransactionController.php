@@ -113,7 +113,7 @@ class TransactionController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $transaction = $this->access->findForResponse($organizationId, $this->actor($request), (int) $id, 'payments.transaction.view');
+            $transaction = $this->access->findForResponse($organizationId, $this->actor($request), $id, 'payments.transaction.view');
 
             return AdminResponse::success($this->formatTransaction($transaction, true), trans_message('payments.transactions.loaded'));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {

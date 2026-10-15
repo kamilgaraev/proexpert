@@ -27,7 +27,7 @@ final class PaymentTransactionAccessService
 
     public function find(int $organizationId, User $actor, int|string $id, string $permission): PaymentTransaction
     {
-        return $this->query($organizationId, $actor, $permission)->findOrFail($id);
+        return $this->query($organizationId, $actor, $permission)->findOrFail($this->validatedId($id));
     }
 
     public function responseQuery(int $organizationId, User $actor, string $permission): Builder
@@ -40,9 +40,9 @@ final class PaymentTransactionAccessService
             ]);
     }
 
-    public function findForResponse(int $organizationId, User $actor, int $id, string $permission): PaymentTransaction
+    public function findForResponse(int $organizationId, User $actor, int|string $id, string $permission): PaymentTransaction
     {
-        $transaction = $this->responseQuery($organizationId, $actor, $permission)->findOrFail($id);
+        $transaction = $this->responseQuery($organizationId, $actor, $permission)->findOrFail($this->validatedId($id));
         if ($transaction->payment_document_id !== null && $transaction->paymentDocument === null) {
             throw (new ModelNotFoundException)->setModel(PaymentTransaction::class);
         }
@@ -79,5 +79,15 @@ final class PaymentTransactionAccessService
             throw (new ModelNotFoundException)->setModel(PaymentTransaction::class);
         }
         $this->documents->assertDocument($document, $actor, $permission);
+    }
+
+    private function validatedId(int|string $id): int
+    {
+        $id = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($id === false) {
+            throw (new ModelNotFoundException)->setModel(PaymentTransaction::class);
+        }
+
+        return $id;
     }
 }
