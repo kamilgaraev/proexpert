@@ -43,6 +43,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_advance_settings' => AssistantAdvanceSettingsReader::class,
         'get_organization_contacts' => AssistantOrganizationContactsReader::class,
         'get_own_notification_preferences' => AssistantNotificationPreferencesReader::class,
         'get_organization_access_review_summary' => AssistantAccessRecertificationReader::class,
@@ -150,6 +151,7 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if (AssistantAdvanceSettingsReader::matches($query) && in_array($class, [AssistantNotificationPreferencesReader::class, AssistantOrganizationNotificationsReader::class], true)) { continue; }
             if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
             if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }

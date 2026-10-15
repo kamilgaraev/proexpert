@@ -89,7 +89,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
         self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_contract_roster', ['project_id' => 999]));
         foreach (['Какие договоры нашего объекта уже просрочены по сроку окончания? Покажи номера, подрядчиков и даты; договоры без срока выдели отдельно, не называй их просроченными.',
-            'Какие просроченные договоры есть на нашем объекте?', 'У каких договоров нашего объекта не указана дата окончания?'] as $query) {
+            'Какие договоры нашего объекта имеют просроченную дату окончания?', 'У каких договоров нашего объекта не указана дата окончания?',
+            'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.'] as $query) {
             self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', 'Какие действующие договоры нашего проекта и сколько по ним надо оплатить?'));
@@ -97,6 +98,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие действующие договоры нашего проекта и какая по ним выручка?',
             'Какие завершённые договоры нашего объекта имеют срок окончания в прошлом?',
             'Что написано в договоре нашего объекта о сроках?', 'Какие условия договора нашего объекта о сроках окончания?',
+            'Какие договоры нашего объекта просрочили выполнение обязательств?',
+            'Какие активные договоры нашего объекта просрочили выполнение обязательств?',
             'Какие просроченные договоры нашего объекта и сколько по ним оплатить?'] as $mixed) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
@@ -263,7 +266,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         self::assertTrue($method->invoke($service, 'analyze_project_schedule_impact'));
         self::assertTrue($method->invoke($service, 'get_project_workforce_summary'));
         self::assertTrue($method->invoke($service, 'get_project_payment_readiness'));
-        foreach (['get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster'] as $tool) { self::assertTrue($method->invoke($service, $tool)); }
+        foreach (['get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_organization_advance_settings'] as $tool) { self::assertTrue($method->invoke($service, $tool)); }
         self::assertFalse($method->invoke($service, 'approve_payment_request'));
     }
 

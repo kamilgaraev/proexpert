@@ -9,6 +9,7 @@ final class ModulePermissionAliases
     private const CANONICAL_BY_ALIAS = [
         'finance' => 'payments',
         'advance_transactions' => 'advance-accounting',
+        'advance_settings' => 'advance-accounting',
         'projects' => 'project-management',
         'schedule' => 'schedule-management',
         'schedule_management' => 'schedule-management',
