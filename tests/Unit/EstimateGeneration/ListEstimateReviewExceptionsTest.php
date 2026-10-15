@@ -18,6 +18,7 @@ final class ListEstimateReviewExceptionsTest extends TestCase
         foreach (['selected', 'not_selected', 'requires_review'] as $state) {
             $recommendation = ['decision_key' => 'roof.choice', 'selection_state' => $state,
                 'selected_option' => $state === 'selected' ? 'roof.metal' : null,
+                'response_options' => [['value' => 'other', 'label' => 'Другой вариант'], ['value' => 'leave_unresolved', 'label' => 'Решить позже']],
                 'alternatives' => [['id' => 'roof.metal', 'label' => 'Металлическое покрытие']], 'internal' => 'private'];
             $service = new ListEstimateReviewExceptions($this->source([
                 $this->item('technology', 'technology_recommendation', false, null, 'warning', '1.0', ['recommendation' => $recommendation]),
@@ -26,6 +27,7 @@ final class ListEstimateReviewExceptionsTest extends TestCase
             self::assertSame($state, $listed['selection_state']);
             self::assertSame($recommendation['selected_option'], $listed['selected_option']);
             self::assertSame('roof.metal', $listed['alternatives'][0]['id']);
+            self::assertSame($recommendation['response_options'], $listed['response_options']);
             self::assertArrayNotHasKey('internal', $listed);
         }
     }

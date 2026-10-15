@@ -171,13 +171,6 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
         if ($selectedId !== null) {
             usort($options, static fn (array $left, array $right): int => (int) ($right['id'] === $selectedId) <=> (int) ($left['id'] === $selectedId));
         }
-        $responseOptions = [];
-        foreach ($recommendation->responseOptions as $option) {
-            $value = is_array($option) ? ($option['value'] ?? null) : $option;
-            if (is_string($value) && $value !== '') {
-                $responseOptions[] = $value;
-            }
-        }
         $evidenceIds = [];
         foreach ($recommendation->options as $option) {
             foreach ($option->applicabilityEvidence as $id) {
@@ -207,7 +200,7 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
                 ],
                 'evidence' => array_slice($evidenceIds, 0, 16), 'alternatives' => array_slice($options, 0, 8),
                 'work_packages' => array_slice($selected?->system->works ?? [], 0, 32),
-                'response_options' => array_slice($responseOptions, 0, 16), 'selected_option' => $selectedId,
+                'response_options' => array_slice($recommendation->responseOptions, 0, 16), 'selected_option' => $selectedId,
                 'selection_state' => $selection['selection_state'],
             ],
         ];

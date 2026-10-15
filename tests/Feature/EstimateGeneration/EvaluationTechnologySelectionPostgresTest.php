@@ -168,7 +168,11 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
         self::assertSame('pitched_roof.metal_tile', $technology['selected_option']);
         self::assertSame('selected', $technology['selection_state']);
         self::assertArrayHasKey('pitched_roof.metal_tile', array_column($technology['alternatives'], null, 'id'));
-        self::assertSame(['other', 'leave_unresolved'], $technology['response_options']);
+        self::assertSame(['other', 'leave_unresolved'], array_column($technology['response_options'], 'value'));
+        foreach ($technology['response_options'] as $option) {
+            self::assertNotSame('', $option['label']);
+            self::assertStringNotContainsString('estimate_', $option['label']);
+        }
         self::assertCount(1, $models->decisions(...[...$scope, [$first['decision_id']]]));
         self::assertTrue(app(GetEvaluationTechnologies::class)->handle($actor, (int) $session->project_id, (int) $session->id)['composition_refresh_required']);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
