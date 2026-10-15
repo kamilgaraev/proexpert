@@ -28,7 +28,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         return self::hasIntent($query)
             && ! self::hasUnsupportedSubjectScope($query)
             && ! AssistantTemporalIntent::hasNonCurrentScope($query)
-            && ($hasProjectRequirement || preg_match('/максимальн[а-яё]*\s+сумм[а-яё]*\s+(?:одн[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*|настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
+            && ($hasProjectRequirement || preg_match('/максимальн[а-яё]*\s+сумм[а-яё]*\s+(?:для\s+)?(?:одн[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*|настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
             && preg_match('/позиц[а-яё]*|количеств[а-яё]*|печат[а-яё]*|оформлен[а-яё]*|формат[а-яё]*|шаблон[а-яё]*|содержим[а-яё]*|вложен[а-яё]*|файл[а-яё]*/iu', $query) !== 1
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)|остал[а-яё]*|конкретн|по\s+отч[её]ту|до\s+срок/iu', $query) !== 1

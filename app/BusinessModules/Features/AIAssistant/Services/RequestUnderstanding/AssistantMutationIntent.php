@@ -8,7 +8,7 @@ final class AssistantMutationIntent
 {
     private const TOGGLE_COMMANDS = '(?:включи(?:те)?|включить|отключи(?:те)?|отключить)';
 
-    private const TOGGLE_UPDATE = self::TOGGLE_COMMANDS.'\s+(?:уведомл|напомин|обязательн|требован)[а-я]*(?!\pL)';
+    private const TOGGLE_UPDATE = self::TOGGLE_COMMANDS.'\s+'.self::ATTRIBUTE_MODIFIERS.'(?:уведомл|напомин|обязательн|требован)[а-я]*(?!\pL)';
 
     private const PRESENTATION_COMMANDS = 'сделай(?:те)?|сделать|поставь(?:те)?|поставить|выставь(?:те)?|выставить';
 

@@ -58,6 +58,8 @@ final class AssistantMutationIntentTest extends TestCase
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
     {
         foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Отключи мне уведомления администратора о просроченном авансовом отчёте',
+            'Включи нам обязательное указание проекта для подотчётного расхода',
             'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
             self::assertSame('update', AssistantMutationIntent::type($query));
             self::assertTrue(AssistantMutationIntent::containsRequest($query));

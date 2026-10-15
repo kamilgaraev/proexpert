@@ -16,6 +16,8 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
     public function test_settings_toggles_require_confirmation(): void
     {
         foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Отключи мне уведомления администратора о просроченном авансовом отчёте',
+            'Включи нам обязательное указание проекта для подотчётного расхода',
             'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
             $result = (new AssistantRequestUnderstandingResolver)->resolve($query);
             self::assertSame('update', $result->primaryIntent);
