@@ -99,6 +99,7 @@ final class ParticipantProjectAccessTest extends TestCase
 
         $journal = ConstructionJournal::query()->create([
             'organization_id' => $ownerOrganization->id,
+            'performing_organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'name' => 'Общий журнал работ',
             'journal_number' => 'J-001',
@@ -106,6 +107,10 @@ final class ParticipantProjectAccessTest extends TestCase
             'status' => JournalStatusEnum::ACTIVE,
             'created_by_user_id' => $context->user->id,
         ]);
+        $ownerJournal = $journal->replicate();
+        $ownerJournal->performing_organization_id = $ownerOrganization->id;
+        $ownerJournal->journal_number = 'J-OWNER';
+        $ownerJournal->save();
 
         $response = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?per_page=20");
@@ -115,6 +120,7 @@ final class ParticipantProjectAccessTest extends TestCase
 
         $journalIds = collect($response->json('data'))->pluck('id')->all();
         $this->assertContains($journal->id, $journalIds);
+        $this->assertNotContains($ownerJournal->id, $journalIds);
     }
 
     private function participantProjectContext(): array

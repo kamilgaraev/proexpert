@@ -29,7 +29,6 @@ use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectBudgetAmountService;
 use App\Services\Project\ProjectService;
 use BackedEnum;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -64,7 +63,8 @@ final class DealConversionWizardService
         private readonly AuthorizationService $authorization,
         private readonly ContractorSharingInterface $contractorSharing,
         private readonly LoggingService $logging,
-        private readonly ProjectBudgetAmountService $projectBudgetAmountService
+        private readonly ProjectBudgetAmountService $projectBudgetAmountService,
+        private readonly CrmTargetAccessService $targetAccess,
     ) {}
 
     public function preview(int $organizationId, string $dealId, array $data, User $user): array
@@ -103,7 +103,7 @@ final class DealConversionWizardService
                 ->first();
 
             if ($operation instanceof CrmConversionOperation) {
-                if ($operation->payload_hash !== $payloadHash) {
+                if ($operation->payload_hash !== $payloadHash || (string) $operation->crm_deal_id !== (string) $deal->id) {
                     throw new DealConversionException(
                         trans_message('crm.conversion.errors.idempotency_conflict'),
                         409,
@@ -112,10 +112,7 @@ final class DealConversionWizardService
                 }
 
                 if ($operation->status === 'completed') {
-                    return array_merge($operation->result_snapshot ?? [], [
-                        'status' => 'already_converted',
-                        'idempotent_replay' => true,
-                    ]);
+                    return $this->replay($organizationId, $context, $operation, $user, true);
                 }
             }
 
@@ -127,10 +124,7 @@ final class DealConversionWizardService
                 ->first();
 
             if ($completedOperation instanceof CrmConversionOperation) {
-                return array_merge($completedOperation->result_snapshot ?? [], [
-                    'status' => 'already_converted',
-                    'idempotent_replay' => false,
-                ]);
+                return $this->replay($organizationId, $context, $completedOperation, $user, false);
             }
 
             $preview = $this->buildPreview($organizationId, $context, $data, $user, true);
@@ -160,7 +154,7 @@ final class DealConversionWizardService
             }
 
             try {
-                $project = $this->resolveProjectForConvert($organizationId, $preview, $data, $request);
+                $project = $this->resolveProjectForConvert($organizationId, $preview, $data, $request, $user);
                 $contract = $this->resolveContractForConvert(
                     $organizationId,
                     $preview,
@@ -171,6 +165,13 @@ final class DealConversionWizardService
                     $context,
                 );
 
+                $this->targetAccess->assertOperation($organizationId, $user, 'crm.deals.link');
+                if ($preview['project']['mode'] === 'reuse') {
+                    $project = $this->targetAccess->project($organizationId, $user, $project->id, 'crm.deals.link');
+                }
+                if ($preview['contract']['mode'] === 'reuse') {
+                    $contract = $this->targetAccess->contract($organizationId, $user, $contract->id, 'crm.deals.link');
+                }
                 $this->attachCreatedObjects($organizationId, $context, $project, $contract, $user->id);
                 $this->recordConversionEvents($organizationId, $context, $project, $contract, $user->id);
 
@@ -243,8 +244,10 @@ final class DealConversionWizardService
         $warnings = [];
         $blockers = [];
         $amount = $this->resolveAmount($organizationId, $deal, $tender, $proposal, $user);
-        $project = $this->buildProjectPreview($organizationId, $context, $data, $amount);
-        $contract = $this->buildContractPreview($organizationId, $context, $data, $amount);
+        $permission = $includeAuthorization ? 'crm.deals.link' : 'crm.deals.view';
+        $this->targetAccess->assertOperation($organizationId, $user, $permission);
+        $project = $this->buildProjectPreview($organizationId, $context, $data, $amount, $user, $permission);
+        $contract = $this->buildContractPreview($organizationId, $context, $data, $amount, $user, $permission);
 
         $this->appendSourceBlockers($context, $blockers, $warnings);
         $this->appendLinkBlockers($context, $project, $contract, $blockers);
@@ -285,25 +288,16 @@ final class DealConversionWizardService
         return $preview;
     }
 
-    private function resolveProjectForConvert(int $organizationId, array $preview, array $data, Request $request): Project
+    private function resolveProjectForConvert(int $organizationId, array $preview, array $data, Request $request, User $actor): Project
     {
         if ($preview['project']['mode'] === 'reuse') {
             $projectId = (int) ($preview['project']['existing']['id'] ?? $data['project']['id'] ?? 0);
-            $project = Project::query()
-                ->whereKey($projectId)
-                ->where('organization_id', $organizationId)
-                ->first();
-
-            if (! $project instanceof Project) {
-                throw new ModelNotFoundException;
-            }
-
-            return $project;
+            return $this->targetAccess->project($organizationId, $actor, $projectId, 'crm.deals.link');
         }
 
         $fields = $preview['project']['fields'];
 
-        return $this->projectService->createProject(new ProjectDTO(
+        $project = $this->projectService->createProject(new ProjectDTO(
             name: (string) $fields['name'],
             address: $fields['address'] ?? null,
             latitude: null,
@@ -325,6 +319,14 @@ final class DealConversionWizardService
             accounting_data: null,
             use_in_accounting_reports: false
         ), $request);
+        $project->users()->syncWithoutDetaching([$actor->id => [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_by_user_id' => $actor->id,
+            'assigned_at' => now(),
+        ]]);
+
+        return $project;
     }
 
     private function resolveContractForConvert(
@@ -338,16 +340,7 @@ final class DealConversionWizardService
     ): Contract {
         if ($preview['contract']['mode'] === 'reuse') {
             $contractId = (int) ($preview['contract']['existing']['id'] ?? $data['contract']['id'] ?? 0);
-            $contract = Contract::query()
-                ->whereKey($contractId)
-                ->where('organization_id', $organizationId)
-                ->first();
-
-            if (! $contract instanceof Contract) {
-                throw new ModelNotFoundException;
-            }
-
-            return $contract;
+            return $this->targetAccess->contract($organizationId, $actor, $contractId, 'crm.deals.link');
         }
 
         $fields = $preview['contract']['fields'];
@@ -541,7 +534,7 @@ final class DealConversionWizardService
         ];
     }
 
-    private function buildProjectPreview(int $organizationId, array $context, array $data, array $amount): array
+    private function buildProjectPreview(int $organizationId, array $context, array $data, array $amount, User $actor, string $permission): array
     {
         $deal = $context['deal'];
         $tender = $context['tender'];
@@ -553,7 +546,7 @@ final class DealConversionWizardService
             ?? $tender?->project_id
             ?? $proposal?->project_id;
         $mode = $input['mode'] ?? ($existingId ? 'reuse' : 'create');
-        $existing = $existingId ? $this->findProjectSummary($organizationId, (int) $existingId) : null;
+        $existing = $existingId ? $this->projectSummary($this->targetAccess->project($organizationId, $actor, $existingId, $permission)) : null;
         $fields = [
             'name' => array_key_exists('name', $inputFields)
                 ? $inputFields['name']
@@ -606,7 +599,7 @@ final class DealConversionWizardService
         ];
     }
 
-    private function buildContractPreview(int $organizationId, array $context, array $data, array $amount): array
+    private function buildContractPreview(int $organizationId, array $context, array $data, array $amount, User $actor, string $permission): array
     {
         $deal = $context['deal'];
         $tender = $context['tender'];
@@ -619,7 +612,7 @@ final class DealConversionWizardService
             ?? $tender?->contract_id
             ?? $proposal?->contract_id;
         $mode = $input['mode'] ?? ($existingId ? 'reuse' : 'create');
-        $existing = $existingId ? $this->findContractSummary($organizationId, (int) $existingId) : null;
+        $existing = $existingId ? $this->contractSummary($this->targetAccess->contract($organizationId, $actor, $existingId, $permission)) : null;
         $sideType = $inputFields['contract_side_type'] ?? 'general_contract';
         $isFixedAmount = (bool) ($inputFields['is_fixed_amount'] ?? $amount['amount_visible']);
         $baseAmount = $inputFields['base_amount'] ?? ($amount['amount_visible'] ? $amount['value'] : null);
@@ -1066,24 +1059,28 @@ final class DealConversionWizardService
         ];
     }
 
-    private function findProjectSummary(int $organizationId, int $projectId): ?array
+    private function replay(int $organizationId, array $context, CrmConversionOperation $operation, User $actor, bool $sameKey): array
     {
-        $project = Project::query()
-            ->whereKey($projectId)
-            ->where('organization_id', $organizationId)
-            ->first();
+        $project = $this->targetAccess->project($organizationId, $actor, $operation->project_id, 'crm.deals.link');
+        $contract = $this->targetAccess->contract($organizationId, $actor, $operation->contract_id, 'crm.deals.link');
+        $result = $this->buildConvertResult($operation->id, $context, $project, $contract, $operation->result_snapshot['warnings'] ?? []);
+        $snapshot = $operation->result_snapshot ?? [];
 
-        return $project instanceof Project ? $this->projectSummary($project) : null;
-    }
-
-    private function findContractSummary(int $organizationId, int $contractId): ?array
-    {
-        $contract = Contract::query()
-            ->whereKey($contractId)
-            ->where('organization_id', $organizationId)
-            ->first();
-
-        return $contract instanceof Contract ? $this->contractSummary($contract) : null;
+        return array_replace($snapshot, [
+            'status' => 'already_converted',
+            'idempotent_replay' => $sameKey,
+            'conversion_id' => $operation->id,
+            'project' => $result['project'],
+            'contract' => $result['contract'],
+            'deal' => array_replace($snapshot['deal'] ?? $result['deal'], [
+                'id' => $operation->crm_deal_id, 'project_id' => $project->id, 'contract_id' => $contract->id,
+            ]),
+            'source_links' => [
+                'tender_id' => $operation->tender_id,
+                'commercial_proposal_id' => $operation->commercial_proposal_id,
+            ],
+            'next_actions' => $result['next_actions'],
+        ]);
     }
 
     private function dealSummary(CrmDeal $deal): array
@@ -1157,7 +1154,7 @@ final class DealConversionWizardService
 
     private function can(User $user, string $permission, int $organizationId): bool
     {
-        return $this->authorization->can($user, $permission, ['organization_id' => $organizationId]);
+        return $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId]);
     }
 
     private function canAny(User $user, array $permissions, int $organizationId): bool

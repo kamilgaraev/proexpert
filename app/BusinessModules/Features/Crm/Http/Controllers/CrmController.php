@@ -302,7 +302,7 @@ final class CrmController extends Controller
     public function convertLead(CrmLeadConvertRequest $request, string $id): JsonResponse
     {
         try {
-            $result = $this->workflow->convertLead($this->organizationId($request), $id, $request->validated(), $this->actorId($request));
+            $result = $this->workflow->convertLead($this->organizationId($request), $id, $request->validated(), $this->actorId($request), $request->user());
 
             return AdminResponse::success([
                 'lead' => (new CrmLeadResource($result['lead']))->resolve(),
@@ -363,7 +363,7 @@ final class CrmController extends Controller
     public function storeDeal(CrmDealRequest $request): JsonResponse
     {
         try {
-            $deal = $this->registry->createDeal($this->organizationId($request), $request->validated(), $this->actorId($request));
+            $deal = $this->registry->createDeal($this->organizationId($request), $request->validated(), $this->actorId($request), $request->user());
 
             return AdminResponse::success(new CrmDealResource($deal), trans_message('crm.deals.created'), 201);
         } catch (Throwable $e) {
@@ -374,7 +374,7 @@ final class CrmController extends Controller
     public function updateDeal(CrmDealRequest $request, string $id): JsonResponse
     {
         try {
-            $deal = $this->registry->updateDeal($this->organizationId($request), $id, $request->validated(), $this->actorId($request));
+            $deal = $this->registry->updateDeal($this->organizationId($request), $id, $request->validated(), $this->actorId($request), $request->user());
 
             return AdminResponse::success(new CrmDealResource($deal), trans_message('crm.deals.updated'));
         } catch (Throwable $e) {
@@ -400,7 +400,7 @@ final class CrmController extends Controller
                 'project_id' => ['nullable', 'integer'],
                 'contract_id' => ['nullable', 'integer'],
             ]);
-            $deal = $this->workflow->linkDeal($this->organizationId($request), $id, $validated, $this->actorId($request));
+            $deal = $this->workflow->linkDeal($this->organizationId($request), $id, $validated, $this->actorId($request), $request->user());
 
             return AdminResponse::success(new CrmDealResource($deal), trans_message('crm.deals.linked'));
         } catch (Throwable $e) {
@@ -594,7 +594,8 @@ final class CrmController extends Controller
                 $this->organizationId($request),
                 $batchId,
                 $request->validated('decisions') ?? [],
-                $this->actorId($request)
+                $this->actorId($request),
+                $request->user()
             );
 
             return AdminResponse::success(new CrmImportBatchResource($batch), trans_message('crm.import.confirmed'));
