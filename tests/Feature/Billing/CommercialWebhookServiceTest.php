@@ -189,6 +189,47 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertTrue($oldEnd->equalTo($this->account->fresh()->current_period_end_at));
     }
 
+    #[DataProvider('refundedPrepaidAncestors')]
+    public function test_refunding_nested_prepayments_skips_already_refunded_ancestors(bool $refundBase): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $oldEnd = $now->addDays(30);
+        $this->order->forceFill(['status' => 'paid', 'period_start_at' => $now, 'period_end_at' => $oldEnd])->save();
+        $this->account->forceFill(['status' => 'active', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd])->save();
+        $row = OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id, 'package_slug' => 'machinery', 'status' => 'active', 'access_source' => 'paid_package',
+            'price_paid' => '7900.00', 'source_order_id' => $this->order->id, 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd]);
+        $this->order->refresh();
+        $periods = app(\App\Services\Billing\CommercialPaidPeriodService::class);
+        $prepayments = [];
+        foreach ([1, 2] as $number) {
+            $renewal = $this->order->replicate()->fill(['public_id' => (string) \Illuminate\Support\Str::uuid(),
+                'client_idempotency_key' => 'nested-renewal-'.$number, 'billing_period' => '12_months', 'renew_subscription' => true,
+                'current_package_slugs' => ['machinery']]);
+            $renewal->save();
+            $periods->prepare($renewal, $this->account, collect([$row]));
+            $this->account->forceFill(['billing_period' => '12_months', 'current_period_start_at' => $renewal->period_start_at, 'current_period_end_at' => $renewal->period_end_at])->save();
+            $row->forceFill(['source_order_id' => $renewal->id, 'current_period_start_at' => $renewal->period_start_at, 'current_period_end_at' => $renewal->period_end_at])->save();
+            $prepayments[] = $renewal;
+        }
+        $prepayments[0]->forceFill(['status' => 'refunded'])->save();
+        $prepayments[1]->forceFill(['status' => 'refunded'])->save();
+        if ($refundBase) {
+            $this->order->forceFill(['status' => 'refunded'])->save();
+        }
+        $this->assertTrue($periods->restoreAfterRefund($prepayments[1], $this->account, collect([$row])));
+        $this->assertSame($refundBase ? null : $this->order->id, $row->fresh()->source_order_id);
+        $this->assertSame($refundBase ? 'expired' : 'active', $row->fresh()->status->value);
+        $this->assertSame($refundBase ? 'suspended' : 'active', $this->account->fresh()->status->value);
+        $this->assertTrue(($refundBase ? $now : $oldEnd)->equalTo($this->account->fresh()->current_period_end_at));
+    }
+
+    public static function refundedPrepaidAncestors(): array
+    {
+        return ['base remains paid' => [false], 'all periods refunded' => [true]];
+    }
+
     public function test_verified_credit_payment_grants_pack_once_without_changing_subscription(): void
     {
         $this->order->forceFill([

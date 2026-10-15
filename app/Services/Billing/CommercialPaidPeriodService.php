@@ -44,7 +44,7 @@ final class CommercialPaidPeriodService
                 'offer_type' => $account->offer_type->value,
                 'package_order_ids' => $packages->pluck('source_order_id', 'package_slug')->all(),
                 'package_states' => $packages->mapWithKeys(fn ($row) => [$row->package_slug => $row->only([
-                    'access_source', 'price_paid', 'status', 'cancel_at', 'canceled_at',
+                    'access_source', 'price_paid', 'status', 'cancel_at', 'canceled_at', 'current_period_start_at', 'current_period_end_at',
                 ])])->all(),
             ];
             $start = $account->current_period_end_at !== null && $account->current_period_end_at->greaterThan($now)
@@ -70,22 +70,33 @@ final class CommercialPaidPeriodService
             return false;
         }
 
-        $end = CarbonImmutable::parse($snapshot['end_at']);
+        $sourceOrders = [];
+        $accountSnapshot = null;
+        $accountEnd = null;
         foreach ($packages as $row) {
-            $state = $snapshot['package_states'][$row->package_slug] ?? [];
+            $packageSnapshot = $this->unrefundedSnapshot($order, $snapshot, $row->package_slug, $sourceOrders);
+            $state = $packageSnapshot['package_states'][$row->package_slug] ?? [];
+            $start = $state['current_period_start_at'] ?? $packageSnapshot['start_at'];
+            $end = CarbonImmutable::parse($state['current_period_end_at'] ?? $packageSnapshot['end_at']);
+            if ($accountEnd === null || $end->greaterThan($accountEnd)) {
+                $accountEnd = $end;
+                $accountSnapshot = array_replace($packageSnapshot, ['start_at' => $start]);
+            }
             $row->forceFill([
                 'status' => $end->isFuture() ? ($state['status'] ?? 'active') : 'expired',
                 'access_source' => $state['access_source'] ?? $row->access_source,
                 'price_paid' => $state['price_paid'] ?? $row->price_paid,
-                'current_period_start_at' => $snapshot['start_at'],
+                'current_period_start_at' => $start,
                 'current_period_end_at' => $end,
-                'source_order_id' => $snapshot['package_order_ids'][$row->package_slug] ?? null,
+                'source_order_id' => $packageSnapshot['package_order_ids'][$row->package_slug] ?? null,
                 'cancel_at' => $end->isFuture() ? ($state['cancel_at'] ?? null) : null,
                 'canceled_at' => $end->isFuture() ? ($state['canceled_at'] ?? null) : now(),
             ])->save();
         }
-        if ($packages->count() === count($order->selected_package_slugs)
+        if ($accountSnapshot !== null && $accountEnd !== null && $packages->count() === count($order->selected_package_slugs)
             && $account->current_period_end_at?->equalTo($order->period_end_at)) {
+            $snapshot = $accountSnapshot;
+            $end = $accountEnd;
             $account->forceFill([
                 'status' => $end->isFuture() ? 'active' : 'suspended',
                 'billing_period' => $snapshot['billing_period'],
@@ -102,5 +113,34 @@ final class CommercialPaidPeriodService
         }
 
         return true;
+    }
+
+    /** @param array<int, CommercialOrder|null> $sourceOrders */
+    private function unrefundedSnapshot(CommercialOrder $order, array $snapshot, string $slug, array &$sourceOrders): array
+    {
+        $expired = ['start_at' => null, 'end_at' => now()->toJSON(), 'billing_period' => '30_days', 'offer_type' => 'packages',
+            'package_order_ids' => [], 'package_states' => []];
+        $visited = [];
+        while (($sourceId = (int) ($snapshot['package_order_ids'][$slug] ?? 0)) > 0) {
+            if (isset($visited[$sourceId])) {
+                return $expired;
+            }
+            $visited[$sourceId] = true;
+            if (! array_key_exists($sourceId, $sourceOrders)) {
+                $sourceOrders[$sourceId] = CommercialOrder::query()->whereKey($sourceId)->where('organization_id', $order->organization_id)
+                    ->where('commercial_account_id', $order->commercial_account_id)->first();
+            }
+            $source = $sourceOrders[$sourceId];
+            if ($source?->status->value === 'paid') {
+                return $snapshot;
+            }
+            if ($source?->status->value !== 'refunded' || ! $source->renew_subscription
+                || ! is_array($source->paid_period_snapshot) || empty($source->paid_period_snapshot['end_at'])) {
+                return $expired;
+            }
+            $snapshot = $source->paid_period_snapshot;
+        }
+
+        return $snapshot;
     }
 }
