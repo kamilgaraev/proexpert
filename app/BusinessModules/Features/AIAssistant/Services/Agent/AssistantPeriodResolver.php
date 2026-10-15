@@ -331,8 +331,8 @@ final class AssistantPeriodResolver
                 continue;
             }
 
-            $suffix = preg_replace('/^[\s,;:–—]+/u', '', $matches['suffix']) ?? trim($matches['suffix']);
-            $throughToday = preg_match('/^(?:(?:\d{4}(?:\s+года)?|(?:этого|текущего|прошлого)\s+года)[\s,;:–—]+)?(?:по\s+(?:сегодняшний|текущий)\s+день|по\s+сегодня|до\s+сегодня(?:шнего\s+дня)?)(?!\pL)/u', $suffix) === 1;
+            $suffix = preg_replace('/^(?:[\s,;:–—]|-(?=\s|(?:по|до)\s))+/u', '', $matches['suffix']) ?? trim($matches['suffix']);
+            $throughToday = preg_match('/^(?:(?:\d{4}(?:\s+года)?|(?:этого|текущего|прошлого)\s+года)[\s,;:–—-]+)?(?:по\s+(?:сегодняшний|текущий)\s+день|по\s+сегодня|до\s+сегодня(?:шнего\s+дня)?)(?!\pL)/u', $suffix) === 1;
             $year = $throughToday || $month < (int) $now->month ? (int) $now->year : (int) $now->year - 1;
             if (preg_match('/^([+-]?\d[\p{L}\d+-]*)/u', $suffix, $yearMatch) === 1) {
                 if (preg_match('/^\d{4}$/', $yearMatch[1]) !== 1 || (int) $yearMatch[1] < 1) {
