@@ -45,7 +45,7 @@ final readonly class DocumentNormativeReferenceAllocator
             is_string($quantityKey) && str_starts_with($quantityKey, 'rough.') => ['rough_finishing', 'office_finishing', 'custom-finishing'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'finish.') => ['finish_finishing', 'office_finishing', 'custom-finishing'],
             $quantityKey === 'openings.gates' => ['openings', 'gates', 'custom-openings'],
-            is_string($quantityKey) && str_starts_with($quantityKey, 'openings.') => ['openings', 'custom-openings'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'openings.') => ['openings', 'entrance_group', 'custom-openings'],
             $quantityKey === 'warehouse.lighting' || str_contains($text, 'освещ') => ['lighting', 'custom-electrical'],
             $quantityKey === 'office.ceiling' || $quantityKey === 'sanitary.tile' => ['finish_finishing', 'office_finishing', 'custom-finishing'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'sewerage.') => ['sewerage', 'water_sewerage', 'custom-sewerage'],

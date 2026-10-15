@@ -645,8 +645,13 @@ final class NormativeWorkItemPlannerService
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
-        $separateWaterScope = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal'
-            && in_array($packageKey, ['plumbing', 'sewerage'], true);
+        $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
+        $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);
+        $openingQuantityKeys = $universal ? match ($packageKey) {
+            'gates' => ['warehouse.gates', 'warehouse.loading_nodes', 'openings.gates'],
+            'entrance_group' => ['openings.windows', 'openings.doors'],
+            default => null,
+        } : null;
         $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
@@ -663,7 +668,8 @@ final class NormativeWorkItemPlannerService
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
                 && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
-                && (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
+                && ($openingQuantityKeys === null || in_array($definition['quantity_key'] ?? null, $openingQuantityKeys, true))
+                && ($universal || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
                 && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));
     }

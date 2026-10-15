@@ -145,6 +145,9 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             'house facade' => ['house', 'Монтаж фасадных панелей', 'м2', 'facade', 'structures'],
             'warehouse facade' => ['warehouse', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
             'industrial facade' => ['industrial', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
+            'mixed windows' => ['mixed_warehouse_office', 'Монтаж окон', 'шт', 'entrance_group', 'structures'],
+            'mixed doors' => ['mixed_warehouse_office', 'Монтаж дверей', 'шт', 'entrance_group', 'structures'],
+            'mixed gates' => ['mixed_warehouse_office', 'Монтаж ворот', 'шт', 'gates', 'structures'],
         ];
     }
 
@@ -179,6 +182,47 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
                 self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
             }
         }
+    }
+
+    public function test_real_saved_mixed_opening_takeoffs_are_used_once_in_their_specialized_package(): void
+    {
+        [$context, $session] = $this->fixture();
+        $session->input_payload = [...$session->input_payload, 'object_type' => 'mixed_warehouse_office'];
+        $session->save();
+        $document = $this->document($session, 'Ведомость окон, дверей, ворот и погрузочных узлов');
+        $quantities = ['openings.windows' => 10, 'openings.doors' => 20, 'warehouse.gates' => 3, 'warehouse.loading_nodes' => 4];
+        foreach ($quantities as $key => $quantity) {
+            EstimateGenerationQuantityTakeoff::query()->create([
+                'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
+                'session_id' => $session->id, 'document_id' => $document->id, 'scope_key' => $key,
+                'name' => $key, 'unit' => 'шт', 'quantity' => $quantity, 'confidence' => 0.8,
+                'source_element_ids' => [], 'work_intent' => ['quantity_key' => $key],
+                'source_refs' => [['document_id' => $document->id, 'source_version' => $document->source_version]],
+                'normalized_payload' => ['quantity_key' => $key],
+            ]);
+        }
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures']];
+        $draft = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
+        $matches = [];
+        foreach ($draft['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    $key = $item['quantity_formula'] ?? null;
+                    if (is_string($key) && array_key_exists($key, $quantities)) {
+                        $matches[$key][] = ['package' => $estimate['key'], 'item' => $item];
+                    }
+                }
+            }
+        }
+        foreach ($quantities as $key => $quantity) {
+            self::assertCount(1, $matches[$key] ?? [], $key);
+            self::assertSame(str_starts_with($key, 'openings.') ? 'entrance_group' : 'gates', $matches[$key][0]['package']);
+            self::assertSame((string) $quantity, $matches[$key][0]['item']['quantity']);
+            self::assertSame((int) $document->id, $matches[$key][0]['item']['source_refs'][0]['document_id']);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
     public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void

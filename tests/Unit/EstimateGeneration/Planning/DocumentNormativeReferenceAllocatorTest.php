@@ -104,6 +104,18 @@ final class DocumentNormativeReferenceAllocatorTest extends TestCase
         self::assertCount(3, $allocation['unresolved']);
     }
 
+    public function test_mixed_profile_routes_windows_and_doors_to_the_entrance_and_gates_to_their_own_package(): void
+    {
+        $planner = new PackagePlannerService;
+        $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => 'mixed_warehouse_office']]))->packages;
+        $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+            'Монтаж окон', 'Монтаж дверей', 'Монтаж ворот',
+        ]), $packages);
+        self::assertCount(2, $allocation['by_package']['entrance_group'] ?? []);
+        self::assertCount(1, $allocation['by_package']['gates'] ?? []);
+        self::assertSame([], $allocation['unresolved']);
+    }
+
     public function test_document_packages_use_the_existing_evaluation_section_taxonomy(): void
     {
         foreach (['custom-electrical' => 'electricity', 'custom-walls' => 'structures', 'custom-openings' => 'structures',
