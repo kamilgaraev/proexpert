@@ -87,14 +87,14 @@ final class BankRefundService
         }, 3);
     }
 
-    public function completeFromBank(CommercialBankOperation $operation): void
+    public function completeFromBank(CommercialBankOperation $operation, ?string $transactionTypeCode = null): void
     {
         preg_match_all('/(?<![A-Z0-9])MOST-R-[0-9A-F]{16}(?![A-Z0-9])/i', $operation->purpose, $matches);
         $references = array_values(array_unique(array_map('strtoupper', $matches[0])));
         if (count($references) !== 1) {
             return;
         }
-        $organizationId = DB::transaction(function () use ($operation, $references): ?int {
+        $organizationId = DB::transaction(function () use ($operation, $references, $transactionTypeCode): ?int {
             $candidate = CommercialBankRefund::query()->where('reference', $references[0])->with('invoice.order')->first();
             if ($candidate === null) {
                 return null;
@@ -111,6 +111,11 @@ final class BankRefundService
                 || $outgoing->currency !== 'RUB' || $outgoing->recipient_account !== $source->payer_account
                 || $outgoing->payer_account !== config('bank_billing.seller_account')) {
                 $outgoing->forceFill(['review_reason' => 'refund_mismatch'])->save();
+
+                return null;
+            }
+            if (mb_strtolower(str_replace('ё', 'е', trim($transactionTypeCode ?? ''))) !== 'платежное поручение') {
+                $outgoing->forceFill(['review_reason' => 'refund_execution_pending'])->save();
 
                 return null;
             }

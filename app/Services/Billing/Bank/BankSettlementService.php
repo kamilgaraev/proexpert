@@ -68,7 +68,8 @@ final class BankSettlementService
             return $operation;
         }
         if ($direction === 'debit') {
-            app(BankRefundService::class)->completeFromBank($operation);
+            $transactionType = $transaction['transactionTypeCode'] ?? null;
+            app(BankRefundService::class)->completeFromBank($operation, is_string($transactionType) ? $transactionType : null);
         } else {
             $this->match($operation);
         }

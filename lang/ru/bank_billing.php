@@ -69,6 +69,7 @@ return [
     'review_period_elapsed' => 'Период изменения состава истёк; согласуйте возврат и новый счёт',
     'review_commercial_composition_changed' => 'Оплаченный состав изменился после выставления счёта; согласуйте возврат и новый расчёт',
     'review_funded_renewal_conflict' => 'Сначала урегулируйте предоплату будущего продления',
+    'review_refund_execution_pending' => 'Исполнение исходящего перевода ещё не подтверждено платёжным поручением',
     'review_payment_before_invoice' => 'Перевод поступил до выставления счёта',
     'review_overpayment' => 'Переплата',
     'review_refund_mismatch' => 'Реквизиты или сумма возврата отличаются',

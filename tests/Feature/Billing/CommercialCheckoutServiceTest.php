@@ -1194,6 +1194,43 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
+    public function test_bank_refund_waits_for_executed_payment_order_instead_of_a_memorial_order(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'before-memorial-return', $invoice->amount_minor));
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, $invoice->amount_minor, 'payment',
+            'Возврат полной оплаты по заявлению покупателя', fake()->uuid());
+        $refund = \App\Models\CommercialBankRefund::query()->sole();
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $refunds->decide($operator, (int) $refund->id, true);
+        $outgoing = $this->bankTransaction($invoice, 'memorial-return', $invoice->amount_minor);
+        $outgoing['creditDebitIndicator'] = 'Debit';
+        $outgoing['description'] = $refund->reference;
+        $outgoing['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+        $outgoing['CreditorAccount']['identification'] = $refund->operation->payer_account;
+        $outgoing['transactionTypeCode'] = 'Мемориальный ордер';
+        $operation = $settlement->ingest($outgoing);
+        $this->assertSame('awaiting_bank', $refund->refresh()->status);
+        $this->assertSame('refund_execution_pending', $operation->review_reason);
+        $this->assertSame('paid', $invoice->refresh()->status);
+        $this->assertSame(2, OrganizationPackageSubscription::query()->where('status', 'active')->count());
+        $outgoing['transactionTypeCode'] = 'Неопределенное значение';
+        $settlement->ingest($outgoing);
+        $this->assertSame('awaiting_bank', $refund->refresh()->status);
+        $outgoing['transactionTypeCode'] = 'Платежное поручение';
+        $settlement->ingest($outgoing);
+        $settlement->ingest($outgoing);
+        $this->assertSame('completed', $refund->refresh()->status);
+        $this->assertSame('refunded', $invoice->refresh()->status);
+        $this->assertNull($operation->refresh()->review_reason);
+        $this->assertSame(2, $invoice->operations()->count());
+    }
+
     public function test_bank_sync_reports_a_busy_lock_and_recovers_after_release(): void
     {
         $this->prepareBankBilling();
@@ -1540,7 +1577,7 @@ class CommercialCheckoutServiceTest extends TestCase
 
     private function bankTransaction(\App\Models\CommercialBankInvoice $invoice, string $id, int $amount): array
     {
-        return ['transactionId' => $id, 'paymentId' => $id, 'status' => 'Booked', 'creditDebitIndicator' => 'Credit',
+        return ['transactionId' => $id, 'paymentId' => $id, 'status' => 'Booked', 'creditDebitIndicator' => 'Credit', 'transactionTypeCode' => 'Платежное поручение',
             'documentProcessDate' => now('Europe/Moscow')->toDateString(), 'description' => $invoice->snapshot['purpose'],
             'Amount' => ['amount' => \App\Services\Billing\Bank\BankMoney::decimal($amount), 'currency' => 'RUB'],
             'DebtorParty' => ['inn' => $this->organization->tax_number], 'DebtorAccount' => ['identification' => '40702810000000000002'],
