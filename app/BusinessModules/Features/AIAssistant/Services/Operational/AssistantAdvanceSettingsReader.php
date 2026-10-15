@@ -82,12 +82,12 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             return false;
         }
         $eventQuery = substr($query, $notification[0][1] + strlen($notification[0][0]));
-        if (preg_match_all('/(?<!\pL)(?:о|об|обо|при|после|когда|в\s+случае)\s+([^.!?;]+)/iu', $eventQuery, $events) < 1) {
+        if (preg_match_all('/(?<!\pL)(?:о|об|обо|при|после|когда|если|в\s+случае)\s+([^.!?;]+)/iu', $eventQuery, $events) < 1) {
             return false;
         }
         foreach ($events[1] as $event) {
             foreach (preg_split('/,|\s+(?:и|или)\s+/iu', $event) ?: [] as $part) {
-                $part = preg_replace('/^\s*(?:о|об|обо|при|после|когда|в\s+случае)\s+/iu', '', trim($part)) ?? $part;
+                $part = preg_replace('/^\s*(?:о|об|обо|при|после|когда|если|в\s+случае)\s+/iu', '', trim($part)) ?? $part;
                 if (preg_match('/^(?:просроч[а-яё]*\s+авансов[а-яё]*\s+отч[её]т[а-яё]*|крупн[а-яё]*\s+(?:подотч[её]тн[а-яё]*\s+)?операц[а-яё]*)(?:\s+подотч[её]тн[а-яё]*\s+средств)?$/iu', $part) === 1) {
                     continue;
                 }
