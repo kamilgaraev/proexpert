@@ -38,6 +38,7 @@ final class RecordEstimateGenerationFeedback
         if ($requestId !== null && (! is_string($requestId) || ! Str::isUuid($requestId))) {
             throw ValidationException::withMessages(['request_id' => trans_message('estimate_generation.feedback_request_invalid')]);
         }
+        $requestId = $requestId === null ? null : strtolower($requestId);
         $command = [
             'state_version' => $expectedVersion,
             'feedback_type' => $data['feedback_type'],

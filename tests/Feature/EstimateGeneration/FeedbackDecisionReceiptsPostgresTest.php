@@ -198,6 +198,20 @@ final class FeedbackDecisionReceiptsPostgresTest extends EstimateGenerationCanon
         self::assertSame(['work-1'], array_column($session->draft_payload['local_estimates'][0]['sections'][0]['work_items'], 'key'));
     }
 
+    public function test_uppercase_and_lowercase_uuid_share_one_receipt_without_state_transition(): void
+    {
+        [$rights, $session, $input] = $this->fixture();
+        $input['request_id'] = strtoupper($input['request_id']);
+        $input['feedback_type'] = 'normative_correction';
+        $input['payload'] = [];
+        $id = $this->record($rights->member, $session, $input);
+        $input['request_id'] = strtolower($input['request_id']);
+        self::assertSame($id, $this->record($rights->member, $session, $input));
+        self::assertSame(1, EstimateGenerationFeedback::query()->where('session_id', $session->id)->count());
+        self::assertSame([$input['request_id']], array_keys($session->fresh()->input_payload['feedback_receipts']));
+        self::assertSame(3, $session->fresh()->state_version);
+    }
+
     private function record(User $actor, EstimateGenerationSession $session, array $input): int
     {
         return app(RecordEstimateGenerationFeedback::class)->handle((int) $session->id, (int) $session->organization_id,
