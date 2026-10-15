@@ -13,6 +13,53 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeCandidateFeedbackServiceTest extends TestCase
 {
+    public function test_group_resolution_requires_the_same_explicit_entity_and_technological_work(): void
+    {
+        foreach (['keep_item', 'merge_with_existing'] as $action) {
+            foreach (['different_entity', 'missing_entity', 'missing_work_identity', 'quantity_only', 'different_technology', 'invalid_technology'] as $variant) {
+                $item = ['item_type' => 'priced_work', 'name' => 'Окраска стен', 'unit' => 'm2', 'quantity' => 20,
+                    'normative_search_key' => 'finish.paint', 'validation_flags' => ['requires_duplicate_review'],
+                    'metadata' => ['scope_entity_id' => 'entity:room-a', 'composition_work_key' => 'finish.paint']];
+                $other = $item;
+                if ($variant === 'different_entity') {
+                    $other['metadata']['scope_entity_id'] = 'entity:room-b';
+                } elseif ($variant === 'missing_entity') {
+                    unset($other['metadata']['scope_entity_id']);
+                } elseif ($variant === 'different_technology') {
+                    $item['metadata']['technology_package_id'] = 'technology:a';
+                    $other['metadata']['technology_package_id'] = 'technology:b';
+                } elseif ($variant === 'invalid_technology') {
+                    $item['metadata']['technology_package_id'] = $other['metadata']['technology_package_id'] = ['not' => 'a package'];
+                } else {
+                    unset($item['metadata']['composition_work_key'], $other['metadata']['composition_work_key']);
+                    if ($variant === 'quantity_only') {
+                        $item['metadata']['quantity_key'] = $other['metadata']['quantity_key'] = 'room.area';
+                    }
+                }
+                $draft = $this->drafts([['key' => 'work-1', ...$item], ['key' => 'work-2', ...$other]]);
+                try {
+                    $this->service()->applyDuplicateResolutionToDraft($draft, 'work-2', [
+                        'action' => $action, 'target_work_item_key' => 'work-1',
+                    ]);
+                    self::fail('Group resolution removed unproven work: '.$action.'/'.$variant);
+                } catch (ValidationException $error) {
+                    self::assertSame(['estimate_generation.duplicate_identity_unverified'], $error->errors()['work_item_key']);
+                }
+            }
+        }
+    }
+
+    public function test_explicit_single_removal_does_not_remove_a_similar_work_in_another_room(): void
+    {
+        $item = ['item_type' => 'priced_work', 'name' => 'Окраска стен', 'unit' => 'm2', 'quantity' => 20,
+            'validation_flags' => ['requires_duplicate_review'], 'metadata' => ['scope_entity_id' => 'entity:room-a']];
+        $draft = $this->drafts([['key' => 'work-1', ...$item], ['key' => 'work-2', ...$item,
+            'metadata' => ['scope_entity_id' => 'entity:room-b']]]);
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'work-2', ['action' => 'remove_item']);
+        self::assertSame(['work-1'], array_column($updated['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+        self::assertSame(['work-2'], $updated['review_decisions'][0]['removed_work_item_keys']);
+    }
+
     public function test_rejects_current_normative_match_and_marks_work_item_not_calculated(): void
     {
         $draft = $this->draft([
@@ -372,6 +419,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     public function test_merges_duplicate_work_item_into_existing_target_and_preserves_evidence(): void
     {
         $duplicateWorkItem = [
+            'metadata' => ['scope_entity_id' => 'entity:foundation', 'composition_work_key' => 'foundation.concrete'],
             'item_type' => 'priced_work',
             'name' => 'Concrete works',
             'normative_search_text' => 'concrete works',
@@ -444,6 +492,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
             ...$sharedWorkItem,
             'quantity_formula' => 'roof.area',
             'metadata' => [
+                'scope_entity_id' => 'entity:roof',
                 'quantity_key' => 'roof.area',
                 'composition_work_key' => 'roof.vapor_barrier',
                 'material_scenario_work_key' => 'roof.vapor_barrier',
@@ -458,6 +507,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
                 ...$sharedWorkItem,
                 'quantity_formula' => 'roof.area',
                 'metadata' => [
+                    'scope_entity_id' => 'entity:roof',
                     'quantity_key' => 'roof.area',
                     'composition_work_key' => 'roof.membrane',
                     'material_scenario_work_key' => 'roof.membrane',
@@ -500,12 +550,14 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
             [
                 'key' => 'document-vapor-barrier',
                 ...$sharedWorkItem,
-                'metadata' => ['quantity_key' => 'roof.vapor_barrier'],
+                'metadata' => ['scope_entity_id' => 'entity:roof', 'composition_work_key' => 'roof.vapor_barrier',
+                    'quantity_key' => 'roof.vapor_barrier'],
             ],
             [
                 'key' => 'planner-vapor-barrier',
                 ...$sharedWorkItem,
                 'metadata' => [
+                    'scope_entity_id' => 'entity:roof',
                     'quantity_key' => 'roof.vapor_barrier',
                     'composition_work_key' => 'roof.vapor_barrier',
                     'material_scenario_work_key' => 'roof.vapor_barrier',

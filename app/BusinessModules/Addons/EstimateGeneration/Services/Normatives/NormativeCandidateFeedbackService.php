@@ -756,6 +756,7 @@ final class NormativeCandidateFeedbackService
             array_splice($workItems, $workIndex, 1);
             $keptKey = $this->firstRemainingDuplicateKey($workItems, $signature);
         } else {
+            $this->assertPhysicalDuplicateIdentity($workItems, $matchingIndexes);
             $targetKey = $action === 'merge_with_existing'
                 ? ($targetWorkItemKey ?? $keptKey)
                 : $keptKey;
@@ -838,6 +839,30 @@ final class NormativeCandidateFeedbackService
         }
 
         return $draft;
+    }
+
+    /** A matching name/quantity/norm is only a review candidate, never proof that another row can be removed. */
+    private function assertPhysicalDuplicateIdentity(array $workItems, array $indexes): void
+    {
+        $expected = null;
+        foreach ($indexes as $index) {
+            $metadata = $workItems[$index]['metadata'] ?? [];
+            $entity = is_array($metadata) ? ($metadata['scope_entity_id'] ?? null) : null;
+            $work = is_array($metadata) ? ($metadata['material_scenario_work_key'] ?? $metadata['composition_work_key'] ?? null) : null;
+            if (! is_string($entity) || trim($entity) === '' || ! is_string($work) || trim($work) === '') {
+                throw $this->validationException(['work_item_key' => [$this->message('estimate_generation.duplicate_identity_unverified')]]);
+            }
+            foreach (['technology_package_id', 'technology_formula_id'] as $field) {
+                if (isset($metadata[$field]) && (! is_string($metadata[$field]) && ! is_int($metadata[$field]))) {
+                    throw $this->validationException(['work_item_key' => [$this->message('estimate_generation.duplicate_identity_unverified')]]);
+                }
+            }
+            $identity = [trim($entity), trim($work), $metadata['technology_package_id'] ?? null, $metadata['technology_formula_id'] ?? null];
+            if ($expected !== null && $expected !== $identity) {
+                throw $this->validationException(['work_item_key' => [$this->message('estimate_generation.duplicate_identity_unverified')]]);
+            }
+            $expected = $identity;
+        }
     }
 
     /**
