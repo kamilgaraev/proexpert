@@ -36,5 +36,7 @@ final class AssistantTemporalIntentTest extends TestCase
             'Будет ли администратор получать уведомление?'] as $query) {
             self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
+        self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope('Сколько составляет лимит подотчётных средств — 5000 рублей?'));
+        self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope('Какие настройки подотчёта в 2026 году?'));
     }
 }

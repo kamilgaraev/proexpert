@@ -24,6 +24,7 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
     public function test_organization_and_personal_queries_bind_current_scope_and_expose_tools(): void
     {
         foreach ([
+            ['Сколько составляет лимит подотчётных средств — 5000 рублей?', 'get_organization_advance_settings'],
             ['Какой срок подотчёта?', 'get_organization_advance_settings'],
             ['Сколько дней даётся на подотчёт?', 'get_organization_advance_settings'],
             ['Уведомляют ли администратора о просроченном авансовом отчёте?', 'get_organization_advance_settings'],

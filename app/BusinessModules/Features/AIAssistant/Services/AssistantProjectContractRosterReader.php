@@ -30,6 +30,7 @@ final readonly class AssistantProjectContractRosterReader
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
             && ! AssistantMutationIntent::containsRequest($query)
             && ! AssistantTemporalIntent::hasExplicitWindow($query)
+            && preg_match('/(?:позже|раньше)\s+вс(?:его|ех)|сам[а-яё]*\s+(?:поздн|ранн|дальн|дал[её]к|близк)|отсортир|по\s+убыван|в\s+обратн|максимальн|минимальн/iu', $query) !== 1
             && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
             && preg_match('/написан|содержани|текст|услови|пункт/iu', $query) !== 1
             && preg_match('/исполнени[ея]|выполнени[ея]|обязательств/iu', $query) !== 1
