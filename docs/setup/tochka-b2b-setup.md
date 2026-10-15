@@ -34,7 +34,7 @@ TOCHKA_CORRESPONDENT_ACCOUNT=
 TOCHKA_START_DATE=2026-10-15
 ```
 
-`YOOKASSA_MODE=yookassa_live` сохраняет корректный транспорт для прежних операций; флаг `YOOKASSA_PAYMENTS_ENABLED=false` и основной провайдер `tochka` запрещают новые платежи. Ключи ЮKassa для банковской оплаты не нужны.
+`YOOKASSA_MODE=yookassa_live` сохраняется только как настройка кода интеграции. При основном провайдере `tochka` или флаге `YOOKASSA_PAYMENTS_ENABLED=false` ЮKassa полностью исключена из обработки: новые платежи и автосписания, уведомления, ручная и фоновая сверка, возвраты и любые обращения к её API запрещены. Отключённый webhook возвращает HTTP 410 до разбора уведомления. Ключи ЮKassa для банковской оплаты не нужны.
 
 Также заполните существующие `LEGAL_PROVIDER_NAME`, `LEGAL_PROVIDER_STATUS`, `LEGAL_PROVIDER_INN`, `LEGAL_PROVIDER_REGISTRATION_NUMBER`, `LEGAL_PROVIDER_ADDRESS`, `LEGAL_PROVIDER_EMAIL`, `LEGAL_PROVIDER_TAX_STATUS`. Укажите ИП, ОГРНИП и актуальный статус АУСН/НДС. Не подставляйте примерные реквизиты. После проверки файла, доступа контейнеров, банковских прав и всех реквизитов выставьте `TOCHKA_ENABLED=true` штатным способом изменения конфигурации и выпуска.
 
