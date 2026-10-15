@@ -27,6 +27,7 @@ use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
@@ -455,6 +456,21 @@ final class CfoCommandCenterService
         $checkQuery = $this->applyBudgetDimensionFilters(
             BudgetLimitCheck::query()
                 ->where('organization_id', $filters->organizationId)
+                ->whereNotExists(static function (QueryBuilder $newer): void {
+                    $newer->selectRaw('1')
+                        ->from('budget_limit_checks as newer_check')
+                        ->whereColumn('newer_check.organization_id', 'budget_limit_checks.organization_id')
+                        ->whereColumn('newer_check.payment_document_id', 'budget_limit_checks.payment_document_id')
+                        ->whereColumn('newer_check.period_month', 'budget_limit_checks.period_month')
+                        ->whereColumn('newer_check.currency', 'budget_limit_checks.currency')
+                        ->where(static function (QueryBuilder $time): void {
+                            $time->whereColumn('newer_check.created_at', '>', 'budget_limit_checks.created_at')
+                                ->orWhere(static function (QueryBuilder $tie): void {
+                                    $tie->whereColumn('newer_check.created_at', 'budget_limit_checks.created_at')
+                                        ->whereColumn('newer_check.id', '>', 'budget_limit_checks.id');
+                                });
+                        });
+                })
                 ->whereBetween('period_month', [$filters->periodStartMonth(), $filters->periodEndMonth()]),
             $filters,
         );
