@@ -42,6 +42,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'request_id' => ['nullable', 'uuid'],
             'state_version' => ['required', 'integer', 'min:0'],
             'feedback_type' => ['required', 'string', Rule::in(['normative_rejection', 'normative_correction', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'])],
             'section_key' => ['nullable', 'string', 'max:255'],

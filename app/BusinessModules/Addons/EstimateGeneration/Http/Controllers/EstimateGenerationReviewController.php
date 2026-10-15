@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeC
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -105,7 +106,7 @@ final class EstimateGenerationReviewController extends Controller
     {
         try {
             $this->guard($request, $project, $session);
-            $feedbackId = $this->recordFeedback->handle((int) $session->getKey(), (int) $request->user()->current_organization_id, (int) $project->getKey(), (int) $request->user()->getKey(), (int) $request->validated('state_version'), $request->validated());
+            $feedbackId = $this->recordFeedback->handle((int) $session->getKey(), (int) $request->user()->current_organization_id, (int) $project->getKey(), $request->user(), (int) $request->validated('state_version'), $request->validated());
             $session = $session->fresh() ?? $session;
             $payload = ['feedback_id' => $feedbackId, 'session' => $this->sessionPayload($session), 'review_queue' => $this->reviewItems->forSession($session)];
             if ((string) ($request->validated('response_scope') ?? 'full') !== 'review_queue') {
@@ -118,6 +119,10 @@ final class EstimateGenerationReviewController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Feedback failed', ['failure_code' => 'feedback_failed', 'session_id' => $session->id]);
 
