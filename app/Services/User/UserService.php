@@ -1175,7 +1175,7 @@ class UserService
      * @return User The created or updated user.
      * @throws BusinessLogicException
      */
-    public function createAdminPanelUser(array $userData, string $roleSlug, Request $request): User
+    public function createAdminPanelUser(array $userData, string $roleSlug, Request $request, array $roleSlugs = []): User
     {
         // Проверяем права создающего пользователя (админ/владелец организации)
         $this->ensureUserIsAdmin($request);
@@ -1185,22 +1185,23 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        if ($roleSlug === 'organization_owner') {
-            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        $assigner = $request->user();
+        if (! $assigner instanceof User) {
+            throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
         }
-
-        // Проверяем существование роли (системной или кастомной в организации)
-        $this->validateRoleExists($roleSlug, $intOrganizationId);
+        $roleSlugs = $this->uniqueStringList([$roleSlug, ...$roleSlugs]);
+        $currentInterface = (string) $request->input('current_interface', 'lk');
+        $this->assertCanAssignAdminPanelRoles($assigner, $intOrganizationId, $roleSlugs, $currentInterface);
 
         $userData['email'] = Str::lower(trim((string) $userData['email']));
         $authContext = AuthorizationContext::getOrganizationContext($intOrganizationId);
         $roleType = $this->resolveOrganizationRoleType($roleSlug, $intOrganizationId);
-        $assignedBy = $request->user();
-        $assigner = $assignedBy instanceof User ? $assignedBy : null;
-
         $existingUser = $this->userRepository->findByEmail($userData['email']);
 
         if ($existingUser instanceof User) {
+            $this->adminUserRolePolicy->assertCanManageUser(
+                $assigner, $existingUser, $intOrganizationId, $existingUser->name !== $userData['name']
+            );
             if ($this->authorizationService->hasRole($existingUser, $roleSlug, $authContext->id)) {
                 throw new BusinessLogicException(trans_message('landing_users.admin_panel_email_exists'), 409);
             }
@@ -1212,6 +1213,8 @@ class UserService
                 $roleSlug,
                 $authContext,
                 $roleType,
+                $roleSlugs,
+                $currentInterface,
                 $assigner
             ): User {
                 $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true);
@@ -1224,6 +1227,9 @@ class UserService
                     $assigner
                 );
                 $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
+                if (count($roleSlugs) > 1) {
+                    $this->syncAdminPanelUserRoles($existingUser, $intOrganizationId, $roleSlugs, $assigner, $currentInterface);
+                }
 
                 return $this->userRepository->find($existingUser->id) ?? $existingUser->refresh();
             });
@@ -1239,6 +1245,8 @@ class UserService
                 $roleSlug,
                 $authContext,
                 $roleType,
+                $roleSlugs,
+                $currentInterface,
                 $assigner
             ): User {
                 $newUser = $this->userRepository->create($userData);
@@ -1251,6 +1259,9 @@ class UserService
                     $roleType,
                     $assigner
                 );
+                if (count($roleSlugs) > 1) {
+                    $this->syncAdminPanelUserRoles($newUser, $intOrganizationId, $roleSlugs, $assigner, $currentInterface);
+                }
 
                 return $newUser->refresh();
             });
@@ -1508,9 +1519,7 @@ class UserService
              throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/изменение.', 404);
         }
 
-        // Запрещаем обновлять владельца организации через этот интерфейс
-        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $intOrganizationId)) {
-            // Эта проверка может быть избыточной, если owner не входит в $allowedRoles, но на всякий случай
+        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $this->getOrganizationContextId($intOrganizationId))) {
             throw new BusinessLogicException('Владельца организации нельзя изменять через этот интерфейс.', 403);
         }
 
@@ -1537,6 +1546,15 @@ class UserService
              // Ничего не передано для обновления
              return $targetUser; // Возвращаем как есть
         }
+
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
+        }
+        $changesIdentity = collect($updateData)->contains(
+            static fn ($value, $key): bool => $targetUser->getAttribute($key) !== $value
+        );
+        $this->adminUserRolePolicy->assertCanManageUser($actor, $targetUser, $intOrganizationId, $changesIdentity);
 
         return DB::transaction(function () use (
             $targetUser,
@@ -1576,25 +1594,14 @@ class UserService
     {
         $roleSlugs = $this->uniqueStringList($roleSlugs);
 
-        if ($roleSlugs === []) {
-            throw new BusinessLogicException(trans_message('landing_users.validation.role_required'), 422);
+        if (! $assignedBy instanceof User
+            || ! $user->organizations()->where('organizations.id', $organizationId)->exists()) {
+            throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
         }
-
-        if (in_array('organization_owner', $roleSlugs, true)) {
-            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
-        }
+        $this->adminUserRolePolicy->assertCanManageUser($assignedBy, $user, $organizationId);
+        $this->assertCanAssignAdminPanelRoles($assignedBy, $organizationId, $roleSlugs, $currentInterface);
 
         $allowedRoleSlugs = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface, true);
-        $allowedRoleLookup = array_flip($allowedRoleSlugs);
-        $invalidRoleSlugs = array_values(array_filter(
-            $roleSlugs,
-            static fn (string $roleSlug): bool => !isset($allowedRoleLookup[$roleSlug])
-        ));
-
-        if ($invalidRoleSlugs !== []) {
-            throw new BusinessLogicException(trans_message('landing_users.validation.role_invalid'), 422);
-        }
-
         $customRoles = OrganizationCustomRole::query()
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
@@ -1628,6 +1635,34 @@ class UserService
             'replace',
             $assignedBy
         );
+    }
+
+    private function assertCanAssignAdminPanelRoles(User $actor, int $organizationId, array $roleSlugs, string $currentInterface): void
+    {
+        if ($roleSlugs === []) {
+            throw new BusinessLogicException(trans_message('landing_users.validation.role_required'), 422);
+        }
+
+        if (in_array('organization_owner', $roleSlugs, true)) {
+            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
+
+        $allowedRoleSlugs = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface, true);
+        $allowedRoleLookup = array_flip($allowedRoleSlugs);
+        $invalidRoleSlugs = array_values(array_filter(
+            $roleSlugs,
+            static fn (string $roleSlug): bool => !isset($allowedRoleLookup[$roleSlug])
+        ));
+
+        if ($invalidRoleSlugs !== []) {
+            throw new BusinessLogicException(trans_message('landing_users.validation.role_invalid'), 422);
+        }
+
+        foreach ($roleSlugs as $roleSlug) {
+            $this->adminUserRolePolicy->assertCanAssign(
+                $actor, $organizationId, $roleSlug, $this->resolveOrganizationRoleType($roleSlug, $organizationId)
+            );
+        }
     }
 
     public function syncOrganizationRoleAssignments(
@@ -1759,8 +1794,8 @@ class UserService
             throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/удаление.', 404);
         }
 
-        // Запрещаем удалять владельца
-        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $intOrganizationId)) {
+        $this->adminUserRolePolicy->assertCanManageUser($requestingUser, $targetUser, $intOrganizationId);
+        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $this->getOrganizationContextId($intOrganizationId))) {
              throw new BusinessLogicException('Владельца организации удалить нельзя.', 403);
         }
         // Запрещаем удалять себя

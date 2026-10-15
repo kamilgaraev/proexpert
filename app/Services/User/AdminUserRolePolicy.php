@@ -6,6 +6,7 @@ namespace App\Services\User;
 
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\RolePayloadFormatter;
@@ -54,8 +55,31 @@ final class AdminUserRolePolicy
         return array_column($this->optionsFor($actor, $organizationId), 'slug');
     }
 
-    public function assertCanAssign(User $actor, int $organizationId, string $roleSlug): void
+    public function assertCanAssign(
+        User $actor,
+        int $organizationId,
+        string $roleSlug,
+        string $roleType = UserRoleAssignment::TYPE_SYSTEM
+    ): void
     {
+        if ($roleType === UserRoleAssignment::TYPE_CUSTOM) {
+            $role = OrganizationCustomRole::query()->where('organization_id', $organizationId)
+                ->where('slug', $roleSlug)->where('is_active', true)->first();
+            if (! $role) {
+                throw new BusinessLogicException(trans_message('user.role_assignment_forbidden'), 422);
+            }
+
+            $authorization = $this->authorizationService->forCurrentChecks(true);
+            $resolver = app(PermissionResolver::class)->forCurrentChecks();
+            foreach ($resolver->getCustomRolePermissions($roleSlug, $organizationId) as $permission) {
+                if (! $authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
+                    throw new BusinessLogicException(trans_message('user.role_assignment_forbidden'), 422);
+                }
+            }
+
+            return;
+        }
+
         if (! in_array($roleSlug, $this->assignableRoleSlugsFor($actor, $organizationId), true)) {
             throw new BusinessLogicException(trans_message('user.role_assignment_forbidden'), 422);
         }
