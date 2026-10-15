@@ -97,6 +97,11 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи даты окончания договоров нашего объекта'] as $query) {
             self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
+        foreach (['Покажи действующие договоры нашего объекта на сегодня',
+            'Какие активные договоры нашего объекта действуют на сегодняшний день?'] as $query) {
+            self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectContractRosterReader::matches('Какие активные договоры действуют на сегодняшний день?'));
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', 'Какие действующие договоры нашего проекта и сколько по ним надо оплатить?'));
         foreach (['Какие действующие договоры нашего проекта и сколько затрат за сентябрь?',
             'Какие действующие договоры нашего проекта и какая по ним выручка?',
@@ -116,6 +121,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи активные договоры нашего объекта и установи для них дату окончания',
             'Покажи активные договоры нашего объекта и поставь по ним новые сроки окончания',
             'Покажи активные договоры нашего объекта и продли их сроки окончания',
+            'Какие активные договоры заканчиваются сегодня?',
             'Какие просроченные договоры нашего объекта и сколько по ним оплатить?'] as $mixed) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));

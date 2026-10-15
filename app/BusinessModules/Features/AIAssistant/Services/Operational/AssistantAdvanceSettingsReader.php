@@ -26,7 +26,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         $hasProjectRequirement = preg_match('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект/iu', $query) === 1;
         return self::hasIntent($query)
             && ! AssistantTemporalIntent::hasNonCurrentScope($query)
-            && ($hasProjectRequirement || preg_match('/настройк|лимит|правил|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
+            && ($hasProjectRequirement || preg_match('/настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)|остал[а-яё]*|конкретн|по\s+отч[её]ту|до\s+срок/iu', $query) !== 1
             && preg_match('/(?:каки[её]|покажи(?:те)?|перечисли(?:те)?)\s+авансов[а-яё]*\s+отч[её]т|авансов[а-яё]*\s+отч[её]т[а-яё]*\s+(?:просроч|задерж)/iu', $query) !== 1

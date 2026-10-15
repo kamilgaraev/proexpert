@@ -16,6 +16,10 @@ final class AssistantTemporalIntentTest extends TestCase
             self::assertTrue(AssistantTemporalIntent::hasExplicitWindow($query), $query);
         }
         self::assertFalse(AssistantTemporalIntent::hasExplicitWindow('Какие договоры просрочены по сроку окончания?'));
+        self::assertFalse(AssistantTemporalIntent::hasExplicitWindow('Покажи действующие договоры нашего объекта на сегодня'));
+        self::assertFalse(AssistantTemporalIntent::hasExplicitWindow('Какие активные договоры действуют на сегодняшний день?'));
+        self::assertTrue(AssistantTemporalIntent::hasExplicitWindow('Какие активные договоры заканчиваются сегодня?'));
+        self::assertTrue(AssistantTemporalIntent::hasExplicitWindow('Какие активные договоры имеют дату окончания на сегодня?'));
     }
 
     public function test_current_settings_are_not_an_historical_or_future_source(): void

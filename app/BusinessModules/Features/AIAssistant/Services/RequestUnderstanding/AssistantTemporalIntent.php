@@ -10,6 +10,9 @@ final class AssistantTemporalIntent
 
     public static function hasExplicitWindow(string $query): bool
     {
+        if (preg_match('/(?:заканчив|оканчива|истека)[а-яё]*[^.!?;]{0,60}сегодня|(?:срок|дат)[а-яё]*\s+окончан[а-яё]*\s+(?:на\s+)?сегодня/iu', $query) !== 1) {
+            $query = preg_replace('/(?:по\s+состоянию\s+)?на\s+сегодня(?:шний\s+день)?/iu', '', $query) ?? $query;
+        }
         return preg_match('/'.self::CALENDAR.'|сегодня|завтра|вчера|(?<!\pL)(?:день|дня|дней|сутки|суток|недел[а-яё]*|месяц[а-яё]*|год|года|году|лет|квартал[а-яё]*|период[а-яё]*)(?!\pL)/iu', $query) === 1;
     }
 
