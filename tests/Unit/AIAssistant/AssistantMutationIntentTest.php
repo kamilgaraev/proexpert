@@ -30,7 +30,8 @@ final class AssistantMutationIntentTest extends TestCase
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
         foreach (['Покажи активные договоры нашего объекта и поставь им новый срок окончания',
-            'Покажи активные договоры нашего объекта и установи для них дату окончания'] as $query) {
+            'Покажи активные договоры нашего объекта и установи для них дату окончания',
+            'Покажи активные договоры нашего объекта и поставь по ним новые сроки окончания'] as $query) {
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
     }

@@ -21,7 +21,8 @@ final class AssistantTemporalIntentTest extends TestCase
     public function test_current_settings_are_not_an_historical_or_future_source(): void
     {
         foreach (['действовал в сентябре', 'были в прошлом месяце', 'были вчера', 'на дату 2026-10-01',
-            'раньше', 'будут завтра', 'в следующем месяце'] as $query) {
+            'раньше', 'будут завтра', 'в следующем месяце', 'через неделю', 'неделю назад',
+            'через три дня', 'спустя два месяца', 'пять дней назад'] as $query) {
             self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
         foreach (['Какой срок подотчёта?', 'Сколько дней даётся на подотчёт?', 'Какие настройки действуют сейчас?',
