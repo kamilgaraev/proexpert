@@ -178,13 +178,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                                 providerCode: 'empty_timeweb_response',
                             );
                         } else {
-                            $reportedModel = Arr::get($payload, 'model');
-                            if (is_string($reportedModel) && $reportedModel !== $model) {
-                                throw new OcrProviderException(
-                                    'estimate_generation.ocr_malformed_response',
-                                    providerCode: 'timeweb_model_mismatch',
-                                );
-                            }
                             $this->pagesFromContent($content);
                             $status = 'succeeded';
                         }
@@ -194,6 +187,15 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                             $this->messageKeyForStatus($response->status()),
                             $response->status(),
                             providerCode: 'timeweb_http_failed',
+                        );
+                    }
+                }
+                if ($status === 'succeeded') {
+                    $reportedModel = $this->reportedModel($payload);
+                    if ($reportedModel === null || $reportedModel !== $model) {
+                        throw new OcrProviderException(
+                            'estimate_generation.ocr_malformed_response',
+                            providerCode: $reportedModel === null ? 'timeweb_model_unreported' : 'timeweb_model_mismatch',
                         );
                     }
                 }
@@ -215,7 +217,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                             new DateTimeImmutable, $durationMs, $httpCode, null, $priceSnapshot->toArray());
                     } else {
                         $attempts->storeResponse($physicalContext->attemptId, $fingerprint, $owner, $payload, $status, $httpCode,
-                            $durationMs, is_string($payload['model'] ?? null) ? $payload['model'] : null, $priceSnapshot->toArray());
+                            $durationMs, $this->reportedModel($payload), $priceSnapshot->toArray());
                     }
                 }
                 if (! $replay || ! $claim->usageRecorded) {
@@ -276,7 +278,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
 
         return new OcrRecognitionResult(
             provider: self::PROVIDER,
-            model: (string) Arr::get($payload, 'model', $model),
+            model: $model,
             pages: $pages,
             rawPayload: $payload,
             metadata: [
@@ -294,6 +296,14 @@ final class TimewebVisionOcrClient implements OcrClientInterface
     private function retryableStatus(int $status): bool
     {
         return in_array($status, [408, 429], true) || $status >= 500;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function reportedModel(array $payload): ?string
+    {
+        $model = $payload['model'] ?? null;
+
+        return is_string($model) && preg_match('/^[A-Za-z0-9._\/-]{1,160}$/D', $model) === 1 ? $model : null;
     }
 
     /** @param array<string, mixed> $payload */
@@ -322,7 +332,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 requestedModel: $model,
                 status: $status,
                 durationMs: $durationMs,
-                reportedModel: is_string($payload['model'] ?? null) ? $payload['model'] : null,
+                reportedModel: $this->reportedModel($payload),
                 usageStatus: $usageAvailable ? 'measured' : 'unavailable',
                 inputTokens: $usage['input_tokens'],
                 outputTokens: $usage['output_tokens'],

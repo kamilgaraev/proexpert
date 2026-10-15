@@ -16,7 +16,8 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
 
     public function record(AiUsageData $data): void
     {
-        $cost = $data->usageStatus === 'measured' ? $this->calculator->calculate(
+        $modelMatchesTariff = $data->provider !== 'timeweb' || $data->reportedModel === $data->requestedModel;
+        $cost = $data->usageStatus === 'measured' && $modelMatchesTariff ? $this->calculator->calculate(
             $data->inputTokens,
             $data->cachedInputTokens,
             $data->outputTokens,
@@ -66,14 +67,17 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
             'created_at' => now(),
         ];
 
-        $persist = function () use ($data, $attributes, $cost): void {
+        $persist = function () use ($data, $attributes): void {
             $this->database->table('estimate_generation_ai_usage')->insertOrIgnore($attributes);
             $existing = $this->database->table('estimate_generation_ai_usage')->where('attempt_id', $data->context->attemptId)->first();
             if ($existing === null || ! hash_equals((string) $existing->immutable_fingerprint, $data->immutableFingerprint)) {
                 throw new UsageInvariantViolation('AI usage attempt collision.');
             }
             if ($data->context->creditOperationId !== null) {
-                ($this->creditUsage ?? app(EstimatorCreditUsageTransfer::class))->record($data, $cost);
+                // Replays use the original receipt, including historical pricing decisions.
+                ($this->creditUsage ?? app(EstimatorCreditUsageTransfer::class))->record($data, new AiCost(
+                    $existing->cost_amount, $existing->currency, $existing->pricing_status,
+                ));
             }
             $this->database->table('estimate_generation_vision_physical_attempts')
                 ->where('attempt_id', $data->context->attemptId)->where('organization_id', $data->context->organizationId)

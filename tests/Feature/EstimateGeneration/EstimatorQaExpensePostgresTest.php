@@ -71,6 +71,29 @@ final class EstimatorQaExpensePostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
+    public function test_measured_tokens_without_the_requested_model_keep_the_full_supplier_exposure(): void
+    {
+        foreach ([null, 'openai/gpt-6-sol'] as $reportedModel) {
+            $runId = $this->enableRun();
+            [$session, $actor] = $this->fixture();
+            $attempt = $this->send($session, $actor, '80');
+            $usage = $this->usage($session, $attempt, 'malformed_response', '1', $reportedModel);
+            app(AiUsageStore::class)->record($usage);
+            app(AiUsageStore::class)->record($usage);
+
+            $row = DB::table('estimate_generation_ai_usage')->where('attempt_id', $attempt)->sole();
+            self::assertSame('measured', $row->usage_status);
+            self::assertSame(1000000, (int) $row->input_tokens);
+            self::assertSame($reportedModel, $row->reported_model);
+            self::assertSame('unavailable', $row->pricing_status);
+            self::assertNull($row->cost_amount);
+            self::assertNull($row->currency);
+            [$nextSession, $nextActor] = $this->fixture();
+            $this->assertBlocked($nextSession, $nextActor, '11');
+            self::assertSame(1, DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)->count());
+        }
+    }
+
     public function test_run_tariff_and_closed_status_cannot_change_or_resume(): void
     {
         $runId = $this->enableRun();
@@ -224,7 +247,7 @@ final class EstimatorQaExpensePostgresTest extends EstimateGenerationCanonicalPo
         }
     }
 
-    private function usage(EstimateGenerationSession $session, string $id, string $status, ?string $cost): AiUsageData
+    private function usage(EstimateGenerationSession $session, string $id, string $status, ?string $cost, ?string $reportedModel = 'openai/gpt-6-luna'): AiUsageData
     {
         $price = AiPriceSnapshot::fromArray(['currency' => 'RUB', 'source' => 'fixture', 'version' => 'qa-fixture',
             'effective_at' => '2026-10-12T00:00:00+00:00', 'input_per_million' => $cost ?? '80',
@@ -232,7 +255,7 @@ final class EstimatorQaExpensePostgresTest extends EstimateGenerationCanonicalPo
 
         return new AiUsageData(new AiOperationContext((string) Str::uuid(), $id, (int) $session->organization_id,
             (int) $session->project_id, (int) $session->id, 'plan_work_items', 'estimate_composition', 1),
-            'timeweb', 'openai/gpt-6-luna', $status, 1, usageStatus: $cost === null ? 'unavailable' : 'measured',
+            'timeweb', 'openai/gpt-6-luna', $status, 1, reportedModel: $reportedModel, usageStatus: $cost === null ? 'unavailable' : 'measured',
             inputTokens: $cost === null ? 0 : 1000000, httpCode: $status === 'http_failed' ? 500 : ($status === 'ambiguous' ? null : 200), priceSnapshot: $price);
     }
 }

@@ -1078,6 +1078,69 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         }
     }
 
+    public function test_unknown_actual_model_is_not_billed_and_historical_receipts_are_frozen_on_replay(): void
+    {
+        foreach ([null, 'openai/gpt-6-sol', 'historical'] as $case) {
+            [$organization, $actor, $request] = $this->fixture();
+            $credits = app(AICreditService::class);
+            $credits->grant($organization, 10000, 'purchase', null, 'test:physical-wallet');
+            $quote = $credits->quoteEstimator($organization, $actor, $request);
+            $reservation = $credits->beginEstimator($organization, $actor, $quote['quote_id'], $request);
+            DB::table('estimate_generation_credit_operations')->insert(['operation_id' => $request->operationId,
+                'organization_id' => $request->organizationId, 'project_id' => $request->projectId, 'session_id' => $request->sessionId,
+                'actor_user_id' => $actor->id, 'kind' => $request->kind, 'status' => 'reserved', 'approved_state_version' => $request->stateVersion,
+                'input_hash' => $request->inputHash, 'source_version' => $request->sourceVersion, 'manifest_hash' => $request->manifestHash,
+                'plan_hash' => $request->planHash, 'processing_plan' => CanonicalPipelineJson::encode($this->plan()),
+                'credit_request' => CanonicalPipelineJson::encode($request->identity()), 'quote_id' => $reservation->ai_credit_quote_id,
+                'reservation_id' => $reservation->id, 'maximum_provider_cost_micro_rub' => $request->maximumProviderCostMicroRub,
+                'maximum_calls' => $request->maximumCalls, 'created_at' => now(), 'updated_at' => now()]);
+            $attemptId = (string) Str::uuid();
+            $admission = app(EstimatorCreditAttemptAdmission::class);
+            $arguments = [$request->operationId, $attemptId, $request->organizationId, $request->projectId, $request->sessionId,
+                'estimate_composition', new AiCost('0.030000', 'RUB', 'available')];
+            DB::transaction(fn () => $admission->admit(...$arguments));
+            $context = new AiOperationContext((string) Str::uuid(), $attemptId, $request->organizationId,
+                $request->projectId, $request->sessionId, 'plan_work_items', 'estimate_composition', 1,
+                creditOperationId: $request->operationId);
+            $usage = new AiUsageData($context, 'timeweb', 'openai/gpt-6-luna', 'malformed_response', 10,
+                reportedModel: $case === 'historical' ? null : $case, usageStatus: 'measured',
+                inputTokens: 1000, outputTokens: 100, priceSnapshot: AiPriceSnapshot::fromArray($request->supplierTariff));
+            if ($case === 'historical') {
+                // Seed an already persisted legacy receipt with the old available-cost policy.
+                $seedAttempt = (string) Str::uuid();
+                $legacyContext = new AiOperationContext($context->correlationId, $seedAttempt, $request->organizationId,
+                    $request->projectId, $request->sessionId, 'plan_work_items', 'estimate_composition', 1);
+                $legacyUsage = new AiUsageData($legacyContext, 'timeweb', 'openai/gpt-6-luna', 'malformed_response', 10,
+                    reportedModel: 'openai/gpt-6-luna', usageStatus: 'measured', inputTokens: 1000, outputTokens: 100,
+                    priceSnapshot: AiPriceSnapshot::fromArray($request->supplierTariff));
+                app(EloquentAiUsageStore::class)->record($legacyUsage);
+                $historical = (array) DB::table('estimate_generation_ai_usage')->where('attempt_id', $seedAttempt)->sole();
+                unset($historical['id']);
+                DB::table('estimate_generation_ai_usage')->insert(array_replace($historical, [
+                    'attempt_id' => $attemptId,
+                    'immutable_fingerprint' => $usage->immutableFingerprint, 'reported_model' => null,
+                    'cost_amount' => '0.123456', 'currency' => 'RUB', 'pricing_status' => 'available',
+                ]));
+            }
+            $store = app(EloquentAiUsageStore::class);
+            $store->record($usage);
+            $store->record($usage);
+            $row = DB::table('estimate_generation_ai_usage')->where('attempt_id', $attemptId)->sole();
+            self::assertSame(1000, (int) $row->input_tokens);
+            self::assertSame('measured', $row->usage_status);
+            self::assertSame($case === 'historical' ? 'available' : 'unavailable', $row->pricing_status);
+            self::assertSame($case === 'historical' ? '0.12345600' : null, $row->cost_amount);
+            $receipt = DB::table('ai_credit_provider_usages')->where('usage_key', $attemptId)->sole();
+            self::assertSame($case === 'historical' ? 123456 : 0, (int) $receipt->cost_micro_rub);
+            self::assertFalse((bool) $receipt->is_successful);
+            self::assertSame($case === 'historical', json_decode($receipt->metadata, true, flags: JSON_THROW_ON_ERROR)['cost_available']);
+            self::assertSame($case === 'historical' ? 'recorded' : 'unavailable',
+                DB::table('estimate_generation_credit_attempts')->where('attempt_id', $attemptId)->value('status'));
+            self::assertSame('running', DB::table('estimate_generation_credit_operations')
+                ->where('operation_id', $request->operationId)->value('status'));
+        }
+    }
+
     public function test_a_physical_call_is_bound_to_one_reserved_operation_and_a_rollback_does_not_consume_its_slot(): void
     {
         [$organization, $actor, $request] = $this->fixture();
@@ -1127,7 +1190,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
         $usage = new AiUsageData(new AiOperationContext((string) Str::uuid(), $attemptId, $request->organizationId,
             $request->projectId, $request->sessionId, 'plan_work_items', 'estimate_composition', 1, creditOperationId: $request->operationId),
-            'timeweb', 'openai/gpt-6-luna', 'succeeded', 10, usageStatus: 'measured', inputTokens: 1000, outputTokens: 100,
+            'timeweb', 'openai/gpt-6-luna', 'succeeded', 10, reportedModel: 'openai/gpt-6-luna', usageStatus: 'measured', inputTokens: 1000, outputTokens: 100,
             reasoningTokens: 20, priceSnapshot: AiPriceSnapshot::fromArray($request->supplierTariff));
         $store = app(EloquentAiUsageStore::class);
         $store->record($usage);
