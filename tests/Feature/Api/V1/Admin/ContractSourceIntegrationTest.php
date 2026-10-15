@@ -359,6 +359,7 @@ final class ContractSourceIntegrationTest extends TestCase
             Mockery::mock(ContractorSharingInterface::class),
             Mockery::mock(LoggingService::class),
             $this->withoutConstructor(ProjectBudgetAmountService::class),
+            $this->withoutConstructor(\App\BusinessModules\Features\Crm\Services\CrmTargetAccessService::class),
         );
         $project = new Project;
         $project->forceFill(['id' => 1, 'organization_id' => 7]);

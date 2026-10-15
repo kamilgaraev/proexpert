@@ -681,7 +681,7 @@ final class CrmDealConversionWorkflowTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can', 'canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
@@ -699,7 +699,7 @@ final class CrmDealConversionWorkflowTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturnUsing(
+            $mock->shouldReceive('can', 'canCurrent')->andReturnUsing(
                 static fn (User $user, string $permission, array $context = []): bool => ! in_array($permission, [
                     'crm.amounts.view',
                     'tenders.amounts.view',
@@ -723,7 +723,7 @@ final class CrmDealConversionWorkflowTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturnUsing(
+            $mock->shouldReceive('can', 'canCurrent')->andReturnUsing(
                 static fn (User $user, string $permission, array $context = []): bool => $permission !== 'crm.deals.link'
             );
             $mock->shouldReceive('hasRole')->andReturn(true);

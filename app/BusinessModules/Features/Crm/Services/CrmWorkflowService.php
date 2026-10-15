@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Crm\Models\CrmContact;
 use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Crm\Models\CrmLead;
 use App\BusinessModules\Features\Crm\Models\CrmPipelineStage;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -42,9 +43,9 @@ final class CrmWorkflowService
         return $this->registry->findLead($organizationId, $lead->id);
     }
 
-    public function convertLead(int $organizationId, string $leadId, array $data, ?int $actorUserId): array
+    public function convertLead(int $organizationId, string $leadId, array $data, ?int $actorUserId, ?User $actor = null): array
     {
-        return DB::transaction(function () use ($organizationId, $leadId, $data, $actorUserId): array {
+        return DB::transaction(function () use ($organizationId, $leadId, $data, $actorUserId, $actor): array {
             $lead = $this->registry->findLead($organizationId, $leadId);
 
             if ($lead->status === 'converted' || $lead->converted_deal_id !== null) {
@@ -62,7 +63,7 @@ final class CrmWorkflowService
             $dealData['owner_user_id'] = $dealData['owner_user_id'] ?? $lead->owner_user_id;
             $dealData['source_id'] = $lead->source_id;
             $dealData['amount'] = $dealData['amount'] ?? $lead->estimated_amount;
-            $deal = $this->registry->createDeal($organizationId, $dealData, $actorUserId);
+            $deal = $this->registry->createDeal($organizationId, $dealData, $actorUserId, $actor, 'crm.leads.convert');
 
             $lead->update([
                 'company_id' => $company->id,
@@ -161,10 +162,10 @@ final class CrmWorkflowService
         return $this->registry->findActivity($organizationId, $activity->id);
     }
 
-    public function linkDeal(int $organizationId, string $dealId, array $data, ?int $actorUserId): CrmDeal
+    public function linkDeal(int $organizationId, string $dealId, array $data, ?int $actorUserId, ?User $actor = null): CrmDeal
     {
         $deal = $this->registry->findDeal($organizationId, $dealId);
-        $data = $this->registry->validateDealReferences($organizationId, $data, $deal);
+        $data = $this->registry->validateDealReferences($organizationId, $data, $deal, $actor, 'crm.deals.link');
         $deal->update([
             'project_id' => array_key_exists('project_id', $data) ? $data['project_id'] : $deal->project_id,
             'contract_id' => array_key_exists('contract_id', $data) ? $data['contract_id'] : $deal->contract_id,

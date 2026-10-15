@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Crm\Services;
 
+use App\Models\User;
+
 use App\BusinessModules\Features\Crm\Models\CrmCompany;
 use App\BusinessModules\Features\Crm\Models\CrmContact;
 use App\BusinessModules\Features\Crm\Models\CrmDeal;
@@ -146,9 +148,9 @@ final class CrmImportService
             ->paginate($perPage);
     }
 
-    public function confirm(int $organizationId, string $batchId, array $decisions, ?int $actorUserId): CrmImportBatch
+    public function confirm(int $organizationId, string $batchId, array $decisions, ?int $actorUserId, ?User $actor = null): CrmImportBatch
     {
-        return DB::transaction(function () use ($organizationId, $batchId, $decisions, $actorUserId): CrmImportBatch {
+        return DB::transaction(function () use ($organizationId, $batchId, $decisions, $actorUserId, $actor): CrmImportBatch {
             $batch = CrmImportBatch::query()
                 ->forOrganization($organizationId)
                 ->lockForUpdate()
@@ -177,7 +179,7 @@ final class CrmImportService
                     continue;
                 }
 
-                $entity = $this->persistRow($organizationId, $batch->entity_type, $row, $actorUserId);
+                $entity = $this->persistRow($organizationId, $batch->entity_type, $row, $actorUserId, $actor);
                 $row->update([
                     'created_entity_id' => $entity?->id,
                     'status' => $entity === null ? 'skipped' : 'imported',
@@ -380,20 +382,21 @@ final class CrmImportService
         int $organizationId,
         string $entityType,
         CrmImportRow $row,
-        ?int $actorUserId
+        ?int $actorUserId,
+        ?User $actor = null,
     ): CrmCompany|CrmContact|CrmLead|CrmDeal|null
     {
         $values = $row->normalized_values ?? [];
 
         if ($row->decision === 'update' && $row->created_entity_id !== null) {
-            return $this->updateImportedRow($organizationId, $entityType, (string) $row->created_entity_id, $values, $actorUserId);
+            return $this->updateImportedRow($organizationId, $entityType, (string) $row->created_entity_id, $values, $actorUserId, $actor);
         }
 
         return match ($entityType) {
             'companies' => $this->registry->createCompany($organizationId, $values, $actorUserId),
             'contacts' => $this->registry->createContact($organizationId, $values, $actorUserId),
             'leads' => $this->registry->createLead($organizationId, $values, $actorUserId),
-            'deals' => $this->registry->createDeal($organizationId, $values, $actorUserId),
+            'deals' => $this->registry->createDeal($organizationId, $values, $actorUserId, $actor, 'crm.import.confirm'),
             default => null,
         };
     }
@@ -403,13 +406,14 @@ final class CrmImportService
         string $entityType,
         string $targetId,
         array $values,
-        ?int $actorUserId
+        ?int $actorUserId,
+        ?User $actor = null,
     ): CrmCompany|CrmContact|CrmLead|CrmDeal|null {
         return match ($entityType) {
             'companies' => $this->registry->updateCompany($organizationId, $targetId, $values, $actorUserId),
             'contacts' => $this->registry->updateContact($organizationId, $targetId, $values, $actorUserId),
             'leads' => $this->registry->updateLead($organizationId, $targetId, $values, $actorUserId),
-            'deals' => $this->registry->updateDeal($organizationId, $targetId, $values, $actorUserId),
+            'deals' => $this->registry->updateDeal($organizationId, $targetId, $values, $actorUserId, $actor, 'crm.import.confirm'),
             default => null,
         };
     }

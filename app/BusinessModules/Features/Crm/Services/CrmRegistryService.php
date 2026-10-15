@@ -17,6 +17,7 @@ use App\BusinessModules\Features\Crm\Models\CrmPipelineStage;
 use App\BusinessModules\Features\Crm\Models\CrmSource;
 use App\Models\Contract;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -31,7 +32,8 @@ final class CrmRegistryService
 {
     public function __construct(
         private readonly CrmTextNormalizer $normalizer,
-        private readonly CrmTimelineService $timeline
+        private readonly CrmTimelineService $timeline,
+        private readonly CrmTargetAccessService $targetAccess,
     ) {
     }
 
@@ -483,10 +485,10 @@ final class CrmRegistryService
         });
     }
 
-    public function createDeal(int $organizationId, array $data, ?int $actorUserId): CrmDeal
+    public function createDeal(int $organizationId, array $data, ?int $actorUserId, ?User $actor = null, string $permission = 'crm.deals.create'): CrmDeal
     {
-        return DB::transaction(function () use ($organizationId, $data, $actorUserId): CrmDeal {
-            $data = $this->validateDealReferences($organizationId, $data);
+        return DB::transaction(function () use ($organizationId, $data, $actorUserId, $actor, $permission): CrmDeal {
+            $data = $this->validateDealReferences($organizationId, $data, actor: $actor, permission: $permission);
             $this->ensureCompanyBelongsToOrganization($organizationId, $data['company_id'] ?? null, true);
             $this->ensureContactBelongsToOrganization($organizationId, $data['primary_contact_id'] ?? null);
             $deal = CrmDeal::query()->create($this->dealAttributes($organizationId, $data, $actorUserId));
@@ -496,11 +498,11 @@ final class CrmRegistryService
         });
     }
 
-    public function updateDeal(int $organizationId, string $id, array $data, ?int $actorUserId): CrmDeal
+    public function updateDeal(int $organizationId, string $id, array $data, ?int $actorUserId, ?User $actor = null, string $permission = 'crm.deals.update'): CrmDeal
     {
-        return DB::transaction(function () use ($organizationId, $id, $data, $actorUserId): CrmDeal {
+        return DB::transaction(function () use ($organizationId, $id, $data, $actorUserId, $actor, $permission): CrmDeal {
             $deal = $this->findDeal($organizationId, $id);
-            $data = $this->validateDealReferences($organizationId, $data, $deal);
+            $data = $this->validateDealReferences($organizationId, $data, $deal, $actor, $permission);
             if (array_key_exists('company_id', $data)) {
                 $this->ensureCompanyBelongsToOrganization($organizationId, $data['company_id'] ?? null, true);
             }
@@ -932,8 +934,11 @@ final class CrmRegistryService
         return ($filters['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
     }
 
-    public function validateDealReferences(int $organizationId, array $data, ?CrmDeal $deal = null): array
+    public function validateDealReferences(int $organizationId, array $data, ?CrmDeal $deal = null, ?User $actor = null, string $permission = 'crm.deals.link'): array
     {
+        if ($actor !== null) {
+            $this->targetAccess->assertInput($organizationId, $actor, $permission, $data);
+        }
         if ($deal === null || array_key_exists('owner_user_id', $data)) {
             $this->ensureOwnerBelongsToOrganization($organizationId, $data['owner_user_id'] ?? null);
         }
