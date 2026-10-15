@@ -132,6 +132,9 @@ interface ProjectModelRepository
         string $factId,
     ): ?Fact;
 
+    /** @param list<string> $factIds @return list<Fact> */
+    public function factsByIds(int $organizationId, int $projectId, int $sessionId, array $factIds): array;
+
     /** @return list<Decision> */
     public function decisions(int $organizationId, int $projectId, int $sessionId, array $decisionIds): array;
 
