@@ -154,8 +154,8 @@ final class RoomLocationVisionPublicationTest extends TestCase
                 $evidence = array_column($models->evidence, null, 'id');
                 foreach (array_filter($models->facts, static fn ($fact): bool => $fact->type === 'room_number') as $number) {
                     self::assertCount(3, $number->evidenceIds);
-                    self::assertSame('-1', $entities[$number->entityId]->attributes['floor_id']);
-                    self::assertSame('A', $entities[$number->entityId]->attributes['zone_id']);
+                    self::assertArrayNotHasKey('floor_id', $entities[$number->entityId]->attributes);
+                    self::assertArrayNotHasKey('zone_id', $entities[$number->entityId]->attributes);
                     self::assertSame(['room_number', 'room_floor', 'room_zone'], array_map(
                         static fn (string $id): string => $evidence[$id]->literalFact->factKey, $number->evidenceIds));
                 }

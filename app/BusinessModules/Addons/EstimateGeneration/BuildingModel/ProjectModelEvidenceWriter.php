@@ -168,16 +168,8 @@ final readonly class ProjectModelEvidenceWriter
                 if ($roomLocationFact) {
                     $entityIdentity .= '|room-location:'.$claim->factType.'|document:'.$documentId.'|page:'.$pageNumber;
                 }
-                if ($locationClaims !== []) {
-                    // Observation order and source polygons identify evidence, not another room.
-                    $locationLiterals = [];
-                    foreach ($locationClaims as $locationClaim) {
-                        $locationLiterals[$locationClaim->factType] = (new RoomLocationObservation)->label($locationClaim);
-                    }
-                    ksort($locationLiterals, SORT_STRING);
-                    $entityIdentity .= '|room-location:v3:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($locationLiterals));
-                }
                 $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
+                $stableNumberContext = $roomNumberFact && ! $nativeNamedRoom;
                 if ($nativeNamedRoom) {
                     // New parser metadata must not collide with immutable older room rows.
                     $entityIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
@@ -194,14 +186,17 @@ final readonly class ProjectModelEvidenceWriter
                     }
                     $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
                 }
-                $entityScope = (new ClaimSemanticMatcher)->entityScope($claim);
+                $stableScope = array_intersect_key($claim->locator, array_flip(['room_id', 'entity_scope']));
+                $entityScope = $stableNumberContext
+                    ? ($stableScope === [] ? '' : '|scope:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($stableScope)))
+                    : (new ClaimSemanticMatcher)->entityScope($claim);
                 $entityIdentity .= $entityScope;
-                foreach (['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
+                foreach ($stableNumberContext ? [] : ['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
                     if (isset($projection['attributes']['semantic_type']) && is_string($claim->locator[$locatorField] ?? null)) {
                         $projection['attributes'][$attribute] = $claim->locator[$locatorField];
                     }
                 }
-                foreach ($locationClaims as $locationClaim) {
+                foreach ($stableNumberContext ? [] : $locationClaims as $locationClaim) {
                     $field = $locationClaim->factType === 'room_floor' ? 'floor_id' : 'zone_id';
                     $literal = (new RoomLocationObservation)->label($locationClaim);
                     if (isset($claim->locator[$field]) && $claim->locator[$field] !== $literal) {
@@ -318,6 +313,9 @@ final readonly class ProjectModelEvidenceWriter
                     $evidenceIds,
                     nativeNumericProofs: array_map(static fn (array $proof): array => [...$proof, 'entity_id' => $entityId], $numericProofs),
                 );
+                if ($stableNumberContext || $roomLocationFact) {
+                    $fact = $this->literalRevision($fact);
+                }
                 if (isset($facts[$factId])) {
                     if (! hash_equals($this->canonicalFactPayload($facts[$factId]), $this->canonicalFactPayload($fact))) {
                         throw new ProjectModelFactIdentityCollision('project_model_fact_exact_identity_collision');
@@ -335,6 +333,26 @@ final readonly class ProjectModelEvidenceWriter
                 $conflicts,
             );
         });
+    }
+
+    /** Called under the existing organization/session evidence transaction lock. */
+    private function literalRevision(Fact $fact): Fact
+    {
+        $stored = $this->models->fact($fact->organizationId, $fact->projectId, $fact->sessionId, $fact->id);
+        $base = null;
+        if ($stored === null) {
+            foreach ($this->models->currentFacts($fact->organizationId, $fact->projectId, $fact->sessionId, $fact->entityId) as $current) {
+                if ($current->type === $fact->type && $current->sourceVersion === $fact->sourceVersion
+                    && ($base === null || $current->version > $base->version)) {
+                    $base = $current;
+                }
+            }
+        }
+
+        return new Fact($fact->id, $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion,
+            $fact->entityId, $fact->type, $fact->value, $fact->unit, $fact->confidence, $fact->origin, $fact->status,
+            $fact->evidenceIds, $stored?->version ?? ($base === null ? 1 : $base->version + 1),
+            $stored?->supersedesFactId ?? $base?->id, $fact->nativeNumericProofs);
     }
 
     /**

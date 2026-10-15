@@ -55,7 +55,7 @@ final readonly class CrossDocumentFactLinker
             }
             $entity = $entityById[$fact->entityId.'|'.$fact->sourceVersion];
             $descriptor = $fact->type === 'room_number'
-                ? (new RoomNumberSourceDescriptor)->describe($fact, $entity, $evidenceById)
+                ? (new RoomNumberSourceDescriptor)->describe($fact, $entity, $evidenceById, $factList)
                 : $this->descriptor($entity);
             if ($descriptor === null) {
                 if ($fact->type === 'room_number') {

@@ -41,6 +41,72 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_reprocessed_room_location_does_not_leave_a_stale_number_current(): void
+    {
+        [$actor, $session, $document] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $writer = app(ProjectModelEvidenceWriter::class);
+        $models = app(ProjectModelRepository::class);
+        $other = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+            'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'room-reference.pdf', 'mime_type' => 'application/pdf',
+            'status' => 'ready', 'source_version' => 'sha256:'.str_repeat('c', 64), 'checksum_sha256' => str_repeat('c', 64)]);
+        $referenceClaims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $other->id,
+            $other->source_version, 'explication');
+        $referenceDecisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+            [$claim->id], [$claim->evidenceRef], 'explicit', null), $referenceClaims);
+        $writer->writeArbitration($referenceClaims, $referenceDecisions, (int) $other->id, 1);
+        $entityId = null;
+        $history = [];
+        $original = null;
+        foreach ([['-1', 'A'], ['-1', 'B'], ['-1', null], ['2', 'A'], [null, 'A']] as $revision => [$floor, $zone]) {
+            $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id,
+                $document->source_version, 'floor_plan', $floor);
+            $claims = array_values(array_filter($claims, static fn (ObservationClaim $claim): bool => $zone !== null || $claim->factType !== 'room_zone'));
+            $claims = array_map(static fn (ObservationClaim $claim): ObservationClaim => $claim->factType === 'room_zone'
+                ? new ObservationClaim($claim->id, $claim->observerRole, $claim->entityKey, $claim->factType,
+                    ['type' => 'string', 'data' => $zone], $claim->unit, $claim->evidenceRef, $claim->explicitEvidence,
+                    ...[...$scope, $claim->sourceVersion, $claim->locator, $claim->confidence]) : $claim, $claims);
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            $writer->writeArbitration($claims, $decisions, (int) $document->id, 1);
+            $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+            $proofs = array_column($capture['snapshot']->evidence, null, 'id');
+            $numbers = array_values(array_filter($capture['snapshot']->facts, static fn ($fact): bool => $fact->type === 'room_number'
+                && $proofs[$fact->evidenceIds[0]]->sourceArtifactId === 'document:'.$document->id));
+            self::assertCount(1, $numbers, 'Location revision '.$revision.' must keep one current room number.');
+            $entityId ??= $numbers[0]->entityId;
+            self::assertSame($entityId, $numbers[0]->entityId);
+            self::assertSame($revision + 1, $numbers[0]->version);
+            self::assertSame($history === [] ? null : $history[array_key_last($history)]->id, $numbers[0]->supersedesFactId);
+            $history[] = $numbers[0];
+            $original ??= [$claims, $decisions];
+            $evidence = array_column($capture['snapshot']->evidence, null, 'id');
+            $floorProofs = array_values(array_filter($numbers[0]->evidenceIds,
+                static fn (string $id): bool => $evidence[$id]->literalFact?->factKey === 'room_floor'));
+            self::assertCount($floor === null ? 0 : 1, $floorProofs);
+            if ($floor !== null) {
+                self::assertSame(hash('sha256', $floor), $evidence[$floorProofs[0]]->literalFact->valueHash);
+            }
+            $zoneProofs = array_values(array_filter($numbers[0]->evidenceIds,
+                static fn (string $id): bool => $evidence[$id]->literalFact?->factKey === 'room_zone'));
+            self::assertCount($zone === null ? 0 : 1, $zoneProofs);
+            if ($zone !== null) {
+                self::assertSame(hash('sha256', $zone), $evidence[$zoneProofs[0]]->literalFact->valueHash);
+            }
+            $linked = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'],
+                $capture['snapshot']->facts, $capture['snapshot']->evidence);
+            self::assertCount($revision === 0 ? 1 : 0, $linked->links);
+        }
+        $writer->writeArbitration($original[0], $original[1], (int) $document->id, 1);
+        $current = array_values(array_filter($models->currentFacts(...[...$scope, $entityId]),
+            static fn ($fact): bool => $fact->type === 'room_number'));
+        self::assertSame($history[array_key_last($history)]->id, $current[0]->id, 'Replaying an older result cannot restore its stale floor.');
+        foreach ($history as $fact) {
+            self::assertEquals($fact, $models->fact(...[...$scope, $fact->id]));
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_diagonal_source_survives_vision_and_postgres_without_a_fabricated_area(): void
     {
         [$actor, $session, $document] = $this->fixture();
@@ -197,12 +263,13 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
         $currentIds = array_column($numbers, 'entityId');
         sort($currentIds);
         self::assertSame($originalIds, $currentIds);
-        self::assertSame($before['token'], $after['token']);
+        self::assertNotSame($before['token'], $after['token']);
         foreach ($before['snapshot']->facts as $fact) {
-            self::assertContainsEquals($fact, $after['snapshot']->facts);
+            self::assertEquals($fact, $models->fact(...[...$scope, $fact->id]));
         }
         $secondRun = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($after['source_entities'], $after['snapshot']->facts, $after['snapshot']->evidence);
-        self::assertSame($firstRun->links, $secondRun->links);
+        self::assertCount(1, $secondRun->links);
+        self::assertSame($firstRun->links[0]['status'], $secondRun->links[0]['status']);
         $storedSources = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->get()
             ->map(static fn ($row): mixed => json_decode($row->locator, true, flags: JSON_THROW_ON_ERROR)['fact_source']['value'] ?? null)->all();
         self::assertContainsEquals($polygon, $storedSources);
@@ -236,8 +303,8 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
         self::assertCount(2, $numbers);
         foreach ($numbers as $number) {
             self::assertSame('confirmed', $number->status);
-            self::assertSame('-1', $entities[$number->entityId]->attributes['floor_id']);
-            self::assertSame('A', $entities[$number->entityId]->attributes['zone_id']);
+            self::assertArrayNotHasKey('floor_id', $entities[$number->entityId]->attributes);
+            self::assertArrayNotHasKey('zone_id', $entities[$number->entityId]->attributes);
             self::assertSame(['room_number', 'room_floor', 'room_zone'], array_map(
                 static fn (string $id): string => $evidence[$id]->literalFact->factKey, $number->evidenceIds));
             self::assertSame(hash('sha256', '-1'), $evidence[$number->evidenceIds[1]]->literalFact->valueHash);
