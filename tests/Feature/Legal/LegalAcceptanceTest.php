@@ -39,7 +39,7 @@ final class LegalAcceptanceTest extends TestCase
             ->assertJsonPath('data.provider.registration_number', '326169000250677')
             ->assertJsonPath('data.provider.address', '420021, Республика Татарстан, г. Казань, ул. Космонавтов, д. 42А')
             ->assertJsonPath('data.provider.email', 'info@1мост.рф')
-            ->assertJsonPath('data.provider.bank_name', 'Точка Банк')
+            ->assertJsonPath('data.provider.bank_name', 'ООО «Банк Точка»')
             ->assertJsonPath('data.provider.bank_details', '');
         $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0'), 'Idempotency-Key' => 'empty-requisites-test'])
             ->postJson('/api/v1/landing/auth/register', [])->assertUnprocessable();
