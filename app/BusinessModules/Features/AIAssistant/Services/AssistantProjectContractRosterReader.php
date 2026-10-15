@@ -28,7 +28,7 @@ final readonly class AssistantProjectContractRosterReader
         $hasPluralContracts = preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)|(?:действующие|активные|какие)\s+договора(?!\pL)/iu', $query) === 1;
         return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
-            && preg_match('/(?<!\pL)(?:подрядчика|подрядчиком|контрагента|контрагентом|поставщика|поставщиком|заказчика|заказчиком|исполнителя|исполнителем)(?!\pL)|по\s+(?:подрядчик|контрагент|заказчик|исполнител)[а-яё]*|сгруппир/iu', $query) !== 1
+            && preg_match('/(?<!\pL)(?:подрядчика|подрядчиком|контрагента|контрагентом|поставщика|поставщиком|заказчика|заказчиком|исполнителя|исполнителем)(?!\pL)|по\s+(?:подрядчик|контрагент|поставщик|заказчик|исполнител)[а-яё]*|сгруппир/iu', $query) !== 1
             && ! AssistantMutationIntent::containsRequest($query)
             && ! AssistantMutationIntent::containsFollowUpCommand($query)
             && ! AssistantMutationIntent::hasPresentationRequest($query)

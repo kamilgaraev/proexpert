@@ -37,6 +37,12 @@ final class AssistantTemporalIntentTest extends TestCase
             self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
         self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope('Сколько составляет лимит подотчётных средств — 5000 рублей?'));
+        foreach (['5000.00 рублей', '5000.50 RUB', '12.05 рублей', '12.05 ₽', '5000,00 рублей'] as $amount) {
+            $query = 'Сколько составляет лимит подотчётных средств — '.$amount.'?';
+            self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
+            self::assertFalse(AssistantTemporalIntent::hasExplicitWindow($query), $query);
+        }
+        self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope('Какие настройки были 12.05?'));
         self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope('Какие настройки подотчёта в 2026 году?'));
         foreach (['по состоянию на сегодня', 'по состоянию на сейчас', 'по состоянию на текущую дату'] as $query) {
             self::assertFalse(AssistantTemporalIntent::hasNonCurrentScope($query), $query);

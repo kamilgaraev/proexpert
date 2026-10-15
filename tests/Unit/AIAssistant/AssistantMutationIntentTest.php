@@ -28,7 +28,9 @@ final class AssistantMutationIntentTest extends TestCase
             'Задай фильтр по активным договорам', 'Установи фильтр по активным договорам',
             'Настрой сортировку по сроку окончания', 'Сделай общую сумму расходов по проекту',
             'Сделай сумму расходов по проекту', 'Сделай договоры таблицей', 'Сделай договоры списком',
-            'Сделай даты окончания договоров жирным шрифтом', 'Сделай сроки окончания договоров отдельной колонкой'] as $query) {
+            'Сделай даты окончания договоров жирным шрифтом', 'Сделай сроки окончания договоров отдельной колонкой',
+            'Поставь даты окончания договоров в отдельную колонку', 'Выставь сроки окончания договоров отдельной колонкой',
+            'Поставь в таблицу даты окончания договоров'] as $query) {
             self::assertNull(AssistantMutationIntent::type($query), $query);
             self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
         }
@@ -49,6 +51,7 @@ final class AssistantMutationIntentTest extends TestCase
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
         self::assertTrue(AssistantMutationIntent::containsRequest('Сделай даты окончания договоров жирным шрифтом и продли их на день'));
+        self::assertTrue(AssistantMutationIntent::containsRequest('Поставь даты окончания договоров в таблицу и поставь им новый срок окончания'));
     }
 
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
