@@ -70,7 +70,7 @@ class ApprovePaymentRequestTool implements AIToolInterface
         }
 
         try {
-            $success = $this->approvalService->approveByUser($document, $user->id, $comment);
+            $success = $this->approvalService->approveByUser($document, $user->id, $comment, null, $user);
 
             if ($success) {
                 return [
@@ -83,6 +83,11 @@ class ApprovePaymentRequestTool implements AIToolInterface
             return [
                 'status' => 'error',
                 'message' => 'Не удалось одобрить документ. Возможно, вы уже его одобряли или у вас недостаточно прав.'
+            ];
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return [
+                'status' => 'error',
+                'message' => "Платежный документ с ID {$documentId} не найден в вашей организации."
             ];
         } catch (\Exception $e) {
             Log::error('AI Tool Error (ApprovePaymentRequestTool): ' . $e->getMessage());

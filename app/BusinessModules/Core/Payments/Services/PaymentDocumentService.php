@@ -432,7 +432,8 @@ class PaymentDocumentService
     public function registerPayment(
         PaymentDocument $document,
         string|int|float $amount,
-        array $paymentData
+        array $paymentData,
+        ?\Closure $authorizeLocked = null,
     ): PaymentDocument {
         $paymentAmount = BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
 
@@ -449,6 +450,7 @@ class PaymentDocumentService
                 ->whereKey($document->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            $authorizeLocked?->__invoke($document);
             $idempotencyKey = $paymentData['idempotency_key']
                 ?? (isset($paymentData['bank_transaction_id'])
                     ? 'bank:'.(string) $paymentData['bank_transaction_id']

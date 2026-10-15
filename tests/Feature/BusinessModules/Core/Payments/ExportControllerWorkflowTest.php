@@ -56,8 +56,11 @@ class ExportControllerWorkflowTest extends TestCase
                 'document_ids' => [$foreignDocument->id],
             ]);
 
-        $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['document_ids.0']);
+        $response->assertNotFound();
+        $missing = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/export/1c', ['document_ids' => [2147483647]])
+            ->assertNotFound();
+        $this->assertSame($response->json('message'), $missing->json('message'));
     }
 
     public function test_print_order_rejects_foreign_document_without_server_error(): void

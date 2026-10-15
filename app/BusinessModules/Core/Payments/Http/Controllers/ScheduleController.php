@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,12 +22,14 @@ class ScheduleController extends Controller
 {
     public function __construct(
         private readonly PaymentScheduleService $paymentScheduleService,
+        private readonly PaymentDocumentAccessService $access,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $this->guardDocumentInput($request, $organizationId, 'payments.schedule.view');
             $validated = $request->validate([
                 'payment_document_id' => [
                     'nullable',
@@ -37,7 +41,7 @@ class ScheduleController extends Controller
 
             $query = PaymentSchedule::query()
                 ->with(['paymentDocument.project'])
-                ->whereHas('paymentDocument', fn ($builder) => $builder->where('organization_id', $organizationId));
+                ->whereHas('paymentDocument', fn ($builder) => $this->access->scope($builder, $organizationId, $this->actor($request), 'payments.schedule.view'));
 
             if (! empty($validated['payment_document_id'])) {
                 $query->where('payment_document_id', $validated['payment_document_id']);
@@ -58,6 +62,8 @@ class ScheduleController extends Controller
                     'pending_amount' => (float) $schedules->where('status', 'pending')->sum('amount'),
                 ],
             ], trans_message('payments.schedule.loaded'));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
@@ -74,6 +80,8 @@ class ScheduleController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->guardDocumentInput($request, $organizationId, 'payments.schedule.create');
             $validated = $request->validate([
                 'payment_document_id' => [
                     'required',
@@ -87,14 +95,13 @@ class ScheduleController extends Controller
                 'installments.*.notes' => ['nullable', 'string', 'max:500'],
             ]);
 
-            $document = PaymentDocument::query()
-                ->where('organization_id', $organizationId)
-                ->findOrFail((int) $validated['payment_document_id']);
+            $document = $this->access->find($organizationId, $actor, (int) $validated['payment_document_id'], 'payments.schedule.create');
 
             $schedules = $this->paymentScheduleService->replacePendingSchedule(
                 $document,
                 $validated['installments'],
-                $request->user()
+                $actor,
+                fn ($locked) => $this->access->assertDocument($locked, $actor, 'payments.schedule.create')
             );
 
             return AdminResponse::success(
@@ -129,7 +136,7 @@ class ScheduleController extends Controller
 
             $schedules = PaymentSchedule::query()
                 ->with(['paymentDocument.project', 'paymentDocument.counterpartyOrganization'])
-                ->whereHas('paymentDocument', fn ($query) => $query->where('organization_id', $organizationId))
+                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view'))
                 ->where('status', 'pending')
                 ->whereBetween('due_date', [now(), now()->addDays($days)])
                 ->orderBy('due_date')
@@ -223,7 +230,7 @@ class ScheduleController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $schedules = PaymentSchedule::query()
                 ->with(['paymentDocument.project', 'paymentDocument.counterpartyOrganization'])
-                ->whereHas('paymentDocument', fn ($query) => $query->where('organization_id', $organizationId))
+                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view'))
                 ->where('status', 'pending')
                 ->where('due_date', '<', now())
                 ->orderBy('due_date')
@@ -241,6 +248,24 @@ class ScheduleController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('payments.schedule.load_error'), 500);
+        }
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new ModelNotFoundException;
+        }
+
+        return $actor;
+    }
+
+    private function guardDocumentInput(Request $request, int $organizationId, string $permission): void
+    {
+        $id = filter_var($request->input('payment_document_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($id !== false) {
+            $this->access->find($organizationId, $this->actor($request), $id, $permission);
         }
     }
 

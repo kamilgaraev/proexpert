@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 
 use App\Models\User;
 use DateTime;
+use Closure;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -20,67 +22,81 @@ final class PaymentDocumentWorkflowService
     public function __construct(
         private readonly PaymentDocumentService $documents,
         private readonly PaymentPurposeGenerator $purposeGenerator,
+        private readonly PaymentDocumentAccessService $access,
+        private readonly PaymentDocumentReferenceAccessService $references,
     ) {}
 
     /**
      * @param  array<string, mixed>  $data
      * @return array{document: PaymentDocument, warnings: array<int, string>}
      */
-    public function create(int $organizationId, int $userId, array $data): array
+    public function create(int $organizationId, int $userId, array $data, ?User $actor = null): array
     {
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $userId;
+        $actor = $this->access->actor($userId, $actor);
 
+        return DB::transaction(function () use ($organizationId, $actor, $data): array {
+            $this->references->assertInput($organizationId, $actor, 'payments.invoice.create', $data);
+            $warnings = [];
 
-        $warnings = [];
+            if (! empty($data['estimate_splits'])) {
+                $deviationAnalysis = $this->documents->analyzePriceDeviation($data['estimate_splits']);
 
-        if (! empty($data['estimate_splits'])) {
-            $deviationAnalysis = $this->documents->analyzePriceDeviation($data['estimate_splits']);
+                if (($deviationAnalysis['is_blocked'] ?? false) && empty($data['overprice_justification'])) {
+                    throw new PaymentDocumentDeviationBlockedException(
+                        $deviationAnalysis,
+                        trans_message('payments.documents.deviation_justification_required')
+                    );
+                }
 
-            if (($deviationAnalysis['is_blocked'] ?? false) && empty($data['overprice_justification'])) {
-                throw new PaymentDocumentDeviationBlockedException(
-                    $deviationAnalysis,
-                    trans_message('payments.documents.deviation_justification_required')
+                if ($deviationAnalysis['requires_approval'] ?? false) {
+                    $warnings[] = trans_message('payments.documents.deviation_warning');
+                }
+            }
+
+            $document = $this->documents->create($data);
+            $this->access->assertDocument($document, $actor, 'payments.invoice.create');
+
+            if (! empty($data['overprice_justification'])) {
+                $document->notes = trim(
+                    ($document->notes ?? '')
+                    ."\n\n"
+                    .trans_message('payments.documents.overprice_justification_note')
+                    ."\n"
+                    .$data['overprice_justification']
                 );
+                $document->saveQuietly();
             }
 
-            if ($deviationAnalysis['requires_approval'] ?? false) {
-                $warnings[] = trans_message('payments.documents.deviation_warning');
-            }
-        }
+            $document->load('estimateSplits.estimateItem');
 
-        $document = $this->documents->create($data);
-
-        if (! empty($data['overprice_justification'])) {
-            $document->notes = trim(
-                ($document->notes ?? '')
-                ."\n\n"
-                .trans_message('payments.documents.overprice_justification_note')
-                ."\n"
-                .$data['overprice_justification']
-            );
-            $document->saveQuietly();
-        }
-
-        $document->load('estimateSplits.estimateItem');
-
-        return [
-            'document' => $document,
-            'warnings' => $warnings,
-        ];
+            return [
+                'document' => $document,
+                'warnings' => $warnings,
+            ];
+        });
     }
 
     /**
      * @param  array<string, mixed>  $data
      */
-    public function update(PaymentDocument $document, array $data): PaymentDocument
+    public function update(PaymentDocument $document, array $data, User $actor): PaymentDocument
     {
-        return $this->documents->update($document, $data);
+        return $this->mutate($document, $actor, 'payments.invoice.edit', function (PaymentDocument $current) use ($actor, $data): PaymentDocument {
+            $this->references->assertInput((int) $current->organization_id, $actor, 'payments.invoice.edit', $data,
+                $current->project_id === null ? null : (int) $current->project_id);
+
+            return $this->documents->update($current, $data);
+        });
     }
 
     public function submit(PaymentDocument $document, ?User $user, ?string $budgetOverrideReason): PaymentDocument
     {
-        return $this->documents->submit($document, $user, $budgetOverrideReason);
+        $actor = $this->access->actor((int) ($user?->id ?? 0), $user);
+
+        return $this->mutate($document, $actor, 'payments.invoice.issue',
+            fn (PaymentDocument $current): PaymentDocument => $this->documents->submit($current, $actor, $budgetOverrideReason));
     }
 
     public function schedule(
@@ -89,36 +105,45 @@ final class PaymentDocumentWorkflowService
         ?User $user,
         ?string $budgetOverrideReason
     ): PaymentDocument {
-        return $this->documents->schedule(
-            $document,
+        $actor = $this->access->actor((int) ($user?->id ?? 0), $user);
+
+        return $this->mutate($document, $actor, 'payments.schedule.create', fn (PaymentDocument $current): PaymentDocument => $this->documents->schedule(
+            $current,
             $scheduledAt !== null ? new DateTime($scheduledAt) : null,
-            $user,
+            $actor,
             $budgetOverrideReason
-        );
+        ));
     }
 
     /**
      * @param  array<string, mixed>  $data
      */
-    public function registerPayment(PaymentDocument $document, int $userId, array $data): PaymentDocument
+    public function registerPayment(PaymentDocument $document, int $userId, array $data, ?User $actor = null): PaymentDocument
     {
         if (! isset($data['transaction_date']) && isset($data['payment_date'])) {
             $data['transaction_date'] = $data['payment_date'];
         }
 
         $data['created_by_user_id'] = $userId;
+        $actor = $this->access->actor($userId, $actor);
+        $document = $this->access->find((int) $actor->current_organization_id, $actor, $document->id, 'payments.transaction.register');
 
-        return $this->documents->registerPayment($document, $data['amount'], $data);
+        return $this->documents->registerPayment($document, $data['amount'], $data,
+            fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $actor, 'payments.transaction.register'));
     }
 
     public function cancel(PaymentDocument $document, string $reason, ?User $user): PaymentDocument
     {
-        return $this->documents->cancel($document, $reason, $user);
+        $actor = $this->access->actor((int) ($user?->id ?? 0), $user);
+
+        return $this->mutate($document, $actor, 'payments.invoice.cancel',
+            fn (PaymentDocument $current): PaymentDocument => $this->documents->cancel($current, $reason, $actor));
     }
 
-    public function delete(PaymentDocument $document): void
+    public function delete(PaymentDocument $document, User $actor): void
     {
-        $this->documents->delete($document);
+        $this->mutate($document, $actor, 'payments.invoice.delete',
+            fn (PaymentDocument $current): bool => $this->documents->delete($current));
     }
 
     /**
@@ -127,6 +152,11 @@ final class PaymentDocumentWorkflowService
      */
     public function bulkAction(int $organizationId, array $ids, string $action, ?User $user, array $payload): array
     {
+        $permission = PaymentDocumentAccessService::bulkPermission($action);
+        if ($permission === null) {
+            throw (new ModelNotFoundException)->setModel(PaymentDocument::class);
+        }
+        $user = $this->access->actor((int) ($user?->id ?? 0), $user);
         $results = [
             'total_requested' => count($ids),
             'success' => 0,
@@ -134,11 +164,8 @@ final class PaymentDocumentWorkflowService
             'errors' => [],
         ];
 
-        DB::transaction(function () use ($organizationId, $ids, $action, $user, $payload, &$results): void {
-            $documents = PaymentDocument::forOrganization($organizationId)
-                ->whereIn('id', $ids)
-                ->lockForUpdate()
-                ->get();
+        DB::transaction(function () use ($organizationId, $ids, $action, $user, $permission, $payload, &$results): void {
+            $documents = $this->access->bulk($organizationId, $user, $ids, $permission, true);
 
             foreach ($documents as $document) {
                 try {
@@ -182,7 +209,7 @@ final class PaymentDocumentWorkflowService
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function applyBulkAction(PaymentDocument $document, string $action, ?User $user, array $payload): void
+    private function applyBulkAction(PaymentDocument $document, string $action, User $user, array $payload): void
     {
         match ($action) {
             'submit' => $this->documents->submit(
@@ -192,7 +219,7 @@ final class PaymentDocumentWorkflowService
             ),
             'approve' => $this->documents->approve(
                 $document,
-                $user?->id,
+                $user->id,
                 $this->nullableString($payload['budget_override_reason'] ?? null)
             ),
             'cancel' => $this->documents->cancel(
@@ -208,9 +235,9 @@ final class PaymentDocumentWorkflowService
             ),
             'pay' => $this->documents->registerPayment($document, (string) $document->remaining_amount, [
                 'notes' => trans_message('payments.documents.bulk_payment_note'),
-                'created_by_user_id' => $user?->id,
+                'created_by_user_id' => $user->id,
                 'budget_override_reason' => $this->nullableString($payload['budget_override_reason'] ?? null),
-            ]),
+            ], fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $user, 'payments.transaction.register')),
             default => null,
         };
     }
@@ -218,5 +245,15 @@ final class PaymentDocumentWorkflowService
     private function nullableString(mixed $value): ?string
     {
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    private function mutate(PaymentDocument $document, User $actor, string $permission, Closure $operation): mixed
+    {
+        return DB::transaction(function () use ($document, $actor, $permission, $operation): mixed {
+            $current = $this->access->find((int) $actor->current_organization_id, $actor, $document->id, $permission, true);
+            $this->access->assertDocument($current, $actor, $permission);
+
+            return $operation($current);
+        });
     }
 }
