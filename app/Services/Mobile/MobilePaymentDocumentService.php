@@ -45,8 +45,8 @@ final class MobilePaymentDocumentService
         ], $user);
 
         return [
-            'items' => collect($page->items())->map(fn (PaymentDocument $document): array =>
-                $this->withMobileActionUrls($this->presenter->brief($document, $user), (int) $document->id))->all(),
+            'items' => array_map(fn (array $document): array => $this->withMobileActionUrls($document, (int) $document['id']),
+                $this->presenter->collection($page->items(), $user)),
             'meta' => [
                 'current_page' => $page->currentPage(),
                 'per_page' => $page->perPage(),

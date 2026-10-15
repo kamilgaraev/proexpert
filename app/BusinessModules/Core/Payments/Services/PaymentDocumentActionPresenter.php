@@ -10,7 +10,33 @@ use App\Models\User;
 
 final class PaymentDocumentActionPresenter
 {
-    public function present(PaymentDocument $document, ?User $user): array
+    public function prepareAccess(iterable $documents, ?User $user): array
+    {
+        $access = ['permissions' => [], 'roles' => []];
+        if (! $user) return $access;
+        foreach (collect($documents)->groupBy('organization_id') as $organizationId => $items) {
+            foreach (['payments.invoice.issue', 'payments.transaction.approve', 'payments.schedule.create', 'payments.transaction.register'] as $permission) {
+                $ids = app(PaymentDocumentAccessService::class)->query((int) $organizationId, $user, $permission)
+                    ->whereKey($items->pluck('id')->all())->pluck('id')->all();
+                $access['permissions'][$organizationId][$permission] = array_fill_keys($ids, true);
+            }
+            $contextId = null;
+            foreach ($items as $document) {
+                foreach ($document->approvals as $approval) {
+                    if ($approval->approval_permission !== null || ! $approval->approval_role || $approval->approver_user_id !== null) continue;
+                    $key = $organizationId.':'.$approval->approval_role;
+                    if (! array_key_exists($key, $access['roles'])) {
+                        $contextId ??= \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $organizationId)->id;
+                        $access['roles'][$key] = $user->hasRole($approval->approval_role, $contextId);
+                    }
+                }
+            }
+        }
+
+        return $access;
+    }
+
+    public function present(PaymentDocument $document, ?User $user, ?array $access = null): array
     {
         $needsFinancialRoute = $document->requiresActInvoiceFinancialApproval()
             && ((in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)
@@ -58,10 +84,11 @@ final class PaymentDocumentActionPresenter
 
         if ($definition !== null && $remainingAmount > 0.0001) {
             [$key, $href, $permission] = $definition;
-            $hasPermission = $user !== null && app(PaymentDocumentAccessService::class)
-                ->query((int) $document->organization_id, $user, $permission)->whereKey($document->id)->exists();
+            $hasPermission = $user !== null && ($access !== null
+                ? isset($access['permissions'][$document->organization_id][$permission][$document->id])
+                : app(PaymentDocumentAccessService::class)->query((int) $document->organization_id, $user, $permission)->whereKey($document->id)->exists());
             $waitingForApprovalLevel = $key === 'approve_payment_document' && $document->requiresActInvoiceFinancialApproval()
-                && $user !== null && ! app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document, $user);
+                && $user !== null && ! app(ApprovalWorkflowService::class)->isAssignedToCurrentApproval($document, $user, $access['roles'] ?? null);
             $isEnabled = $hasPermission && ! $waitingForApprovalLevel;
             if ($hasPermission && $waitingForApprovalLevel) {
                 $blockerKey = 'approval_level_unavailable';

@@ -623,13 +623,22 @@ class PaymentDocument extends Model
 
     public function hasCompletedFinancialApproval(): bool
     {
+        if ($this->relationLoaded('approvals')) {
+            $approvals = $this->approvals->where('organization_id', $this->organization_id)
+                ->reject(static fn (PaymentApproval $approval): bool => $approval->decision_comment === PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+            return $approvals->isNotEmpty() && ! $approvals->contains(static fn (PaymentApproval $approval): bool => $approval->status !== 'approved');
+        }
         return $this->hasFinancialApprovalRoute()
-            && ! $this->approvals()->where('status', '!=', 'approved')->exists();
+            && ! $this->approvals()->where('organization_id', $this->organization_id)->where('status', '!=', 'approved')->exists();
     }
 
     public function hasFinancialApprovalRoute(): bool
     {
-        return $this->approvals()->where(static function ($query): void {
+        if ($this->relationLoaded('approvals')) {
+            return $this->approvals->where('organization_id', $this->organization_id)
+                ->contains(static fn (PaymentApproval $approval): bool => $approval->decision_comment !== PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+        }
+        return $this->approvals()->where('organization_id', $this->organization_id)->where(static function ($query): void {
             $query->whereNull('decision_comment')
                 ->orWhere('decision_comment', '!=', PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
         })->exists();
@@ -641,7 +650,8 @@ class PaymentDocument extends Model
             && $this->status === PaymentDocumentStatus::APPROVED
             && (float) $this->paid_amount <= 0
             && ! $this->hasFinancialApprovalRoute()
-            && ! $this->transactions()->exists();
+            && ! (array_key_exists('transactions_exists', $this->getAttributes())
+                ? (bool) $this->getAttribute('transactions_exists') : $this->transactions()->exists());
     }
 
     /**

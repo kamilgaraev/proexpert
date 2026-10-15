@@ -567,11 +567,12 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
 
     public static function futureApprovalDecisions(): array
     {
-        return ['approve' => ['approve'], 'reject' => ['reject']];
+        return ['approve' => ['approve'], 'reject' => ['reject'],
+            'approve legacy role' => ['approve', true], 'reject legacy role' => ['reject', true]];
     }
 
     #[DataProvider('futureApprovalDecisions')]
-    public function test_a_future_assignee_waits_for_the_current_financial_level(string $decision): void
+    public function test_a_future_assignee_waits_for_the_current_financial_level(string $decision, bool $legacyRole = false): void
     {
         Queue::fake();
         Notification::fake();
@@ -590,6 +591,9 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         app(PaymentDocumentService::class)->submit($document, $context->user);
         $url = '/api/v1/mobile/payments/documents/'.$document->id;
         $secondContext = new AdminApiTestContext($context->organization, $second, '');
+        if ($legacyRole) $document->approvals()->update(['approval_role' => 'web_admin', 'approval_permission' => null]);
+        $this->assertFalse(app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter::class)
+            ->detailed($document->fresh(), $second)['can_be_approved_by_current_user']);
         $headers = $secondContext->mobileAuthHeaders();
         $this->withHeaders($headers)->getJson($url)->assertOk()
             ->assertJsonPath('data.can_approve', false)->assertJsonPath('data.can_reject', false)
@@ -610,6 +614,8 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->fresh()->status);
         $this->assertSame(2, $document->approvals()->where('status', 'pending')->count());
         $workflow->approveByUser($document->fresh(), $context->user->id);
+        $this->assertTrue(app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter::class)
+            ->detailed($document->fresh(), $second)['can_be_approved_by_current_user']);
         $this->withHeaders($headers)->getJson($url)->assertOk()->assertJsonPath('data.can_approve', true)
             ->assertJsonPath('data.can_reject', true)->assertJsonPath('data.action_summary.primary_action.href', $url.'/approve');
         $this->assertCount(1, $workflow->getPendingApprovalsForUser($second->id, $context->organization->id));
@@ -654,6 +660,163 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         Notification::assertSentToTimes($context->user, PaymentApprovedNotification::class, 1);
         Notification::assertSentToTimes($allowed, PaymentApprovedNotification::class, 1);
         Notification::assertSentToTimes($projectOnly, PaymentApprovedNotification::class, 1);
+    }
+
+    public function test_reminders_recheck_scope_permissions_and_only_notify_the_current_level(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id, 'status' => PaymentDocumentStatus::PENDING_APPROVAL,
+            'submitted_at' => now()->subDays(2)])->save();
+        $allowed = $this->createOrganizationApprover($context);
+        $denied = $this->createOrganizationApprover($context, 'assigned_projects');
+        $noPermission = $this->createOrganizationApprover($context);
+        $this->assignPaymentPermissions(new AdminApiTestContext($context->organization, $noPermission, ''), ['payments.invoice.view']);
+        $inactive = $this->createOrganizationApprover($context);
+        $context->organization->users()->updateExistingPivot($inactive->id, ['is_active' => false]);
+        $future = $this->createOrganizationApprover($context);
+        $foreign = User::factory()->create();
+        $rows = [];
+        foreach ([$allowed, $denied, $noPermission, $inactive, $foreign, $future] as $user) {
+            $rows[$user->id] = PaymentApproval::query()->create([
+                'payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+                'approver_user_id' => $user->id, 'approval_level' => $user->is($future) ? 2 : 1,
+                'approval_order' => 1, 'status' => 'pending',
+            ]);
+        }
+        app()->call([new \App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob, 'handle']);
+        Notification::assertSentToTimes($allowed, PaymentApprovalRequiredNotification::class, 1);
+        foreach ([$denied, $noPermission, $inactive, $foreign, $future] as $user) {
+            Notification::assertNotSentTo($user, PaymentApprovalRequiredNotification::class);
+            $this->assertNull($rows[$user->id]->fresh()->last_reminder_at);
+        }
+        $this->assertSame(1, $rows[$allowed->id]->fresh()->reminder_count);
+        app()->call([new \App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob, 'handle']);
+        Notification::assertSentToTimes($allowed, PaymentApprovalRequiredNotification::class, 1);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_permission_based_reminders_use_the_same_project_scope_and_current_level(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id])->save();
+        $denied = $this->createOrganizationApprover($context, 'assigned_projects');
+        app(PaymentDocumentService::class)->submit($document, $context->user);
+        $document->forceFill(['submitted_at' => now()->subDays(2)])->save();
+        Notification::fake();
+        app()->call([new \App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob, 'handle']);
+        Notification::assertSentToTimes($context->user, PaymentApprovalRequiredNotification::class, 1);
+        Notification::assertNotSentTo($denied, PaymentApprovalRequiredNotification::class);
+        $this->assertSame(1, $document->approvals()->where('approval_level', 1)->firstOrFail()->reminder_count);
+        $this->assertNull($document->approvals()->where('approval_level', 2)->firstOrFail()->last_reminder_at);
+    }
+
+    public static function paymentListConsumers(): array
+    {
+        return ['admin' => ['admin'], 'mobile' => ['mobile']];
+    }
+
+    #[DataProvider('paymentListConsumers')]
+    public function test_list_action_queries_are_batched_instead_of_growing_per_document(string $consumer): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        for ($index = 0; $index < 6; $index++) {
+            $document = $this->createSubmittedActInvoice($context);
+            $document->forceFill(['project_id' => $project->id, 'status' => PaymentDocumentStatus::PENDING_APPROVAL])->save();
+            PaymentApproval::query()->create([
+                'payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+                'approver_user_id' => $context->user->id, 'approval_level' => 1, 'approval_order' => 1, 'status' => 'pending',
+            ]);
+        }
+        $headers = $consumer === 'admin' ? $context->authHeaders() : $context->mobileAuthHeaders();
+        $baseUrl = '/api/v1/'.$consumer.'/payments/documents?project_id='.$project->id;
+        $this->withHeaders($headers)->getJson($baseUrl.'&per_page=1')->assertOk();
+        $queries = [];
+        $recording = true;
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$queries, &$recording): void {
+            if ($recording && (str_contains($event->sql, '"payment_approvals"')
+                || (str_contains($event->sql, '"payment_documents"') && str_contains($event->sql, '"organization_user"')))) {
+                $queries[] = $event->sql;
+            }
+        });
+        try {
+            $this->withHeaders($headers)->getJson($baseUrl.'&per_page=1')->assertOk();
+            $singleCount = count($queries);
+            $this->assertGreaterThan(0, $singleCount);
+            $queries = [];
+            $response = $this->withHeaders($headers)->getJson($baseUrl.'&per_page=6')->assertOk();
+            $items = $response->json($consumer === 'admin' ? 'data' : 'data.items');
+            $this->assertCount(6, $items);
+            foreach ($items as $item) $this->assertTrue($item['action_summary']['primary_action']['is_enabled']);
+            $this->assertLessThanOrEqual($singleCount + 1, count($queries), implode("\n", $queries));
+        } finally {
+            $recording = false;
+        }
+    }
+
+    public static function datedPaymentListConsumers(): array
+    {
+        return ['overdue' => ['overdue', -1], 'upcoming' => ['upcoming', 1]];
+    }
+
+    #[DataProvider('datedPaymentListConsumers')]
+    public function test_dated_lists_batch_recovery_queries_for_approved_act_invoices(string $endpoint, int $dueInDays): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $createInvoice = function () use ($context, $project, $dueInDays): void {
+            $document = $this->createSubmittedActInvoice($context);
+            $document->forceFill(['project_id' => $project->id, 'status' => PaymentDocumentStatus::APPROVED,
+                'due_date' => now()->addDays($dueInDays)->toDateString()])->save();
+        };
+        $createInvoice();
+        $url = '/api/v1/admin/payments/documents/'.$endpoint;
+        $this->withHeaders($context->authHeaders())->getJson($url)->assertOk();
+        $queries = [];
+        $recording = true;
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$queries, &$recording): void {
+            if ($recording && (str_contains($event->sql, '"payment_approvals"')
+                || str_contains($event->sql, '"payment_transactions"')
+                || (str_contains($event->sql, '"payment_documents"') && str_contains($event->sql, '"organization_user"')))) {
+                $queries[] = $event->sql;
+            }
+        });
+        try {
+            $this->withHeaders($context->authHeaders())->getJson($url)->assertOk()->assertJsonCount(1, 'data');
+            $singleCount = count($queries);
+            $this->assertGreaterThan(0, $singleCount);
+            $recording = false;
+            for ($index = 0; $index < 5; $index++) $createInvoice();
+            $queries = [];
+            $recording = true;
+            $response = $this->withHeaders($context->authHeaders())->getJson($url)->assertOk()->assertJsonCount(6, 'data');
+            foreach ($response->json('data') as $item) {
+                $this->assertSame('submit_payment_document', $item['action_summary']['primary_action']['key']);
+                $this->assertTrue($item['action_summary']['primary_action']['is_enabled']);
+            }
+            $this->assertLessThanOrEqual($singleCount + 1, count($queries), implode("\n", $queries));
+        } finally {
+            $recording = false;
+        }
     }
 
     public function test_a_new_rule_cannot_assign_an_approver_without_project_access(): void

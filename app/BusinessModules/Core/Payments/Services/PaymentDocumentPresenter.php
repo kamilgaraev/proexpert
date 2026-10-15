@@ -20,7 +20,7 @@ final class PaymentDocumentPresenter
     /**
      * @return array<string, mixed>
      */
-    public function brief(PaymentDocument $document, ?User $user): array
+    public function brief(PaymentDocument $document, ?User $user, ?array $access = null): array
     {
         $problemFlags = $this->buildProblemFlags($document);
 
@@ -57,7 +57,7 @@ final class PaymentDocumentPresenter
             'workflow_summary' => $this->buildWorkflowSummary($document, $problemFlags, []),
             'budget_limit_check' => $this->budgetLimitService->check($document, $user),
             'can_be_cancelled' => $document->canBeCancelled(),
-            'action_summary' => $this->actions->present($document, $user),
+            'action_summary' => $this->actions->present($document, $user, $access),
             'created_at' => $document->created_at->toDateTimeString(),
         ];
     }
@@ -70,7 +70,7 @@ final class PaymentDocumentPresenter
         $basic = $this->brief($document, $user);
         $canApprove = false;
 
-        if (in_array($document->status->value, ['submitted', 'pending_approval'], true) && $user) {
+        if (! $document->requiresActInvoiceFinancialApproval() && in_array($document->status->value, ['submitted', 'pending_approval'], true) && $user) {
             $orgId = (int) $document->organization_id;
             $context = ['organization_id' => $orgId];
 
@@ -84,9 +84,9 @@ final class PaymentDocumentPresenter
         }
 
         $contractId = null;
-        if ($document->requiresActInvoiceFinancialApproval()
-            && ! $document->approvals()->where('status', 'pending')->exists()) {
-            $canApprove = false;
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $canApprove = $user !== null && in_array($document->status->value, ['submitted', 'pending_approval'], true)
+                && app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document, $user);
         }
         if ($document->invoiceable_type === 'App\\Models\\Contract' && $document->invoiceable_id) {
             $contractId = $document->invoiceable_id;
@@ -175,10 +175,15 @@ final class PaymentDocumentPresenter
      */
     public function collection(iterable $documents, ?User $user): array
     {
+        $documents = new \Illuminate\Database\Eloquent\Collection(collect($documents)->all());
+        $documents->loadMissing('approvals');
+        $documents->filter(fn (PaymentDocument $document): bool => ! array_key_exists('transactions_exists', $document->getAttributes()))
+            ->loadExists('transactions');
+        $access = $this->actions->prepareAccess($documents, $user);
         $items = [];
 
         foreach ($documents as $document) {
-            $items[] = $this->brief($document, $user);
+            $items[] = $this->brief($document, $user, $access);
         }
 
         return $items;

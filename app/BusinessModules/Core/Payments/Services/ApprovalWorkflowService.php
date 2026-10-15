@@ -303,11 +303,37 @@ class ApprovalWorkflowService
     public function canDecideCurrentApproval(PaymentDocument $document, User $user, string $permission = self::PAYMENT_APPROVAL_PERMISSION): bool
     {
         return $this->userHasPermission($user, $permission, (int) $document->organization_id, $document->project_id)
-            && ($this->approvalQueryForUser($document, $user->id, $user, $permission)->exists()
-                || $this->legacyRoleApprovalForUser($document, $user->id, false) !== null);
+            && $this->isAssignedToCurrentApproval($document, $user);
     }
 
-    private function legacyRoleApprovalForUser(PaymentDocument $document, int $userId, bool $lock = true): ?PaymentApproval
+    public function isAssignedToCurrentApproval(PaymentDocument $document, User $user, ?array $roleAccess = null): bool
+    {
+        $document->loadMissing('approvals');
+        $pending = $document->approvals->where('organization_id', $document->organization_id)->where('status', 'pending');
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $pending = $pending->where('approval_level', $pending->min('approval_level'));
+        }
+        foreach ($pending as $approval) {
+            if ($approval->approver_user_id !== null) {
+                if ((int) $approval->approver_user_id === (int) $user->id) return true;
+                continue;
+            }
+            if ($approval->approval_permission === self::PAYMENT_APPROVAL_PERMISSION) return true;
+            if ($approval->approval_permission === null && $approval->approval_role) {
+                $key = $document->organization_id.':'.$approval->approval_role;
+                if ($roleAccess !== null) {
+                    if ($roleAccess[$key] ?? false) return true;
+                } else {
+                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $document->organization_id);
+                    if ($user->hasRole($approval->approval_role, $context->id)) return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function legacyRoleApprovalForUser(PaymentDocument $document, int $userId): ?PaymentApproval
     {
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $document->organization_id);
         $user = User::find($userId);
@@ -321,9 +347,11 @@ class ApprovalWorkflowService
             ->where('status', 'pending')
             ->whereNull('approval_permission')
             ->whereNotNull('approval_role')
+            ->when($document->requiresActInvoiceFinancialApproval(), fn ($query) => $query->where(
+                fn ($assigned) => $assigned->whereNull('approver_user_id')->orWhere('approver_user_id', $userId)))
             ->when($document->requiresActInvoiceFinancialApproval(), fn ($query) => $query->where('approval_level',
                 $document->approvals()->where('organization_id', $document->organization_id)->where('status', 'pending')->min('approval_level')))
-            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->lockForUpdate()
             ->get();
 
         return $legacyApprovals->first(function (PaymentApproval $approval) use ($user, $userId, $context): bool {
