@@ -96,7 +96,6 @@ final class NormativeWorkItemPlannerService
             $item['item_type'] = 'quantity_review';
             $item['pricing_status'] = 'not_applicable';
             $item['pricing_blocker'] = 'quantity_review_required';
-            $item['skip_normative_matching'] = true;
             $item['validation_flags'] = array_values(array_unique([...$item['validation_flags'], 'quantity_review_required']));
             $item['metadata']['display_role'] = 'quantity_review';
             $item['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';

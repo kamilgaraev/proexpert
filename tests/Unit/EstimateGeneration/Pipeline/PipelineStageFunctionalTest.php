@@ -124,6 +124,120 @@ final class PipelineStageFunctionalTest extends TestCase
     }
 
     #[Test]
+    public function confirmed_document_quantity_returns_to_the_normative_gate(): void
+    {
+        $plan = $this->unknownDocumentPlan();
+        $feedback = new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService(
+            $this->createMock(EstimateValidationService::class),
+            $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class),
+            static fn (string $key): string => $key,
+        );
+        $item = $plan['local_estimates'][0]['sections'][0]['work_items'][0];
+        $confirmed = $feedback->applyQuantityConfirmationToDraft($plan, $item['key'], [
+            'quantity' => 12, 'unit' => 'м2', 'quantity_basis' => 'Проверено по ведомости: 12 м2',
+        ]);
+        $workflow = new NormativeMatchingWorkflow(
+            new NormativeRetrievalService(new class implements NormativeCandidateSource
+            {
+                public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+                {
+                    throw new \LogicException('A missing dataset must block before retrieval.');
+                }
+            }, new NormativeHardGate, 16, null),
+            new class implements NormativeCandidateRerankerInterface
+            {
+                public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+                {
+                    throw new \LogicException('A missing dataset must block before reranking.');
+                }
+            },
+        );
+        $results = new StageResultFactory(new InMemoryPipelineArtifactStore, PipelineDefinitionGraph::standard());
+        $stage = new MatchNormativesStage($this->createMock(ResourceAssemblyService::class), $workflow, new NormativeWorkIntentFactory, $results);
+        $before = $stage->execute($this->documentStageContext(ProcessingStage::MatchNormatives, [ProcessingStage::PlanWorkItems->value => $plan], $results));
+        self::assertSame('quantity_review', $before->transientData['local_estimates'][0]['sections'][0]['work_items'][0]['item_type']);
+        self::assertArrayNotHasKey('normative_retrieval', $before->transientData['local_estimates'][0]['sections'][0]['work_items'][0]);
+        $plan['local_estimates'] = $confirmed['local_estimates'];
+        $after = $stage->execute($this->documentStageContext(ProcessingStage::MatchNormatives, [ProcessingStage::PlanWorkItems->value => $plan], $results));
+        $matched = $after->transientData['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('priced_work', $matched['item_type']);
+        self::assertSame(12.0, $matched['quantity']);
+        self::assertSame('normative_dataset_not_pinned', $matched['pricing_blocker']);
+        self::assertSame(['normative_dataset_not_pinned'], $matched['normative_retrieval']['blocking_issues']);
+    }
+
+    #[Test]
+    public function real_price_stage_keeps_unknown_document_costs_null(): void
+    {
+        $plan = $this->unknownDocumentPlan();
+        $observed = $plan['local_estimates'][0]['sections'][0]['work_items'][0];
+        $observed['key'] .= '-observed';
+        $observed['quantity'] = '12';
+        $plan['local_estimates'][0]['sections'][0]['work_items'][] = $observed;
+        $data = ['regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => $plan['local_estimates']];
+        $results = new StageResultFactory(new InMemoryPipelineArtifactStore, PipelineDefinitionGraph::standard());
+        $result = (new ResolvePricesStage(new EstimatePricingService, $results))->execute(
+            $this->documentStageContext(ProcessingStage::ResolvePrices, [ProcessingStage::AssembleResources->value => $data], $results),
+        );
+        [$unknown, $known] = $result->transientData['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertNull($unknown['quantity']);
+        foreach (['work_cost', 'materials_cost', 'machinery_cost', 'labor_cost', 'other_cost', 'total_cost'] as $field) {
+            self::assertNull($unknown[$field], $field);
+        }
+        self::assertSame('not_calculated', $unknown['pricing_status']);
+        self::assertSame('quantity_review_required', $unknown['pricing_blocker']);
+        self::assertSame(0, $known['total_cost']);
+    }
+
+    private function unknownDocumentPlan(): array
+    {
+        $section = ['key' => 'walls-section', 'construction_part' => 'walls'];
+        $package = ['key' => 'walls', 'scope_type' => 'walls'];
+        $items = (new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService))->build($package, $section, [
+            'source_documents' => [[
+                'id' => 82, 'filename' => 'volumes.pdf', 'status' => 'ready', 'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'], 'text' => 'ФЕР08-02-001-01 Кладка стен м2',
+            ]],
+        ]);
+        $references = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference'));
+        self::assertCount(1, $references);
+
+        return [
+            'object_profile' => ['object_type' => 'house'], 'package_plan' => [], 'document_requirements' => [],
+            'generation_mode' => 'strict', 'regional_context' => [], 'normative_context_pin' => [],
+            'estimate_composition' => ['schema_version' => 1, 'snapshot_token' => str_repeat('c', 64), 'input_fingerprint' => str_repeat('d', 64), 'intents_count' => 1, 'derived_quantities' => []],
+            'local_estimates' => [[...$package, 'sections' => [[...$section, 'work_items' => $references]]]],
+        ];
+    }
+
+    private function documentStageContext(ProcessingStage $stage, array $payloads, StageResultFactory $results): PipelineContext
+    {
+        $base = 'sha256:'.str_repeat('a', 64);
+        $graph = PipelineDefinitionGraph::standard();
+        $outputs = [];
+        foreach ($payloads as $key => $payload) {
+            $dependencyStage = ProcessingStage::from($key);
+            $versions = [];
+            foreach ($graph->get($dependencyStage)->dependencies as $dependency) {
+                $versions[$dependency->value] = $base;
+            }
+            $result = $results->make(new PipelineContext(1, 2, 3, 1, $base, 'generating',
+                generationAttemptId: '00000000-0000-4000-8000-000000000002', baseInputVersion: $base,
+                stage: $dependencyStage, dependencyVersions: $versions), $dependencyStage, $payload);
+            $outputs[$key] = $result->output;
+        }
+        $versions = [];
+        foreach ($graph->get($stage)->dependencies as $dependency) {
+            $versions[$dependency->value] = $outputs[$dependency->value]->version;
+        }
+
+        return new PipelineContext(1, 2, 3, 1, $base, 'generating',
+            priorOutputs: new PipelinePriorOutputs($outputs, $payloads),
+            generationAttemptId: '00000000-0000-4000-8000-000000000002', baseInputVersion: $base,
+            stage: $stage, dependencyVersions: $versions);
+    }
+
+    #[Test]
     public function it_excludes_a_work_item_and_records_a_scope_boundary_when_its_modern_pin_has_no_candidate(): void
     {
         $artifacts = new InMemoryPipelineArtifactStore;

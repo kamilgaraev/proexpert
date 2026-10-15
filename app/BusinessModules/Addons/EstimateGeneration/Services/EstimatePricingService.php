@@ -37,15 +37,17 @@ class EstimatePricingService
     {
         foreach ($workItems as &$workItem) {
             if ((string) ($workItem['item_type'] ?? 'priced_work') === 'quantity_review') {
+                $unresolvedCost = ($workItem['quantity'] ?? null) === null ? null : 0;
                 $workItem['materials'] = [];
                 $workItem['labor'] = [];
                 $workItem['machinery'] = [];
                 $workItem['other_resources'] = [];
-                $workItem['work_cost'] = 0;
-                $workItem['materials_cost'] = 0;
-                $workItem['machinery_cost'] = 0;
-                $workItem['labor_cost'] = 0;
-                $workItem['total_cost'] = 0;
+                $workItem['work_cost'] = $unresolvedCost;
+                $workItem['materials_cost'] = $unresolvedCost;
+                $workItem['machinery_cost'] = $unresolvedCost;
+                $workItem['labor_cost'] = $unresolvedCost;
+                $workItem['other_cost'] = $unresolvedCost;
+                $workItem['total_cost'] = $unresolvedCost;
                 $workItem['price_source'] = null;
                 $workItem['price_snapshot'] = null;
                 $workItem['pricing_status'] = 'not_calculated';

@@ -7,6 +7,7 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
@@ -29,6 +30,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -88,20 +90,44 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         if (in_array(null, $quantities, true)) {
             self::assertNotNull($planContext->baseInputVersion);
             $draft = [...$result->transientData, 'source_input_version' => $planContext->baseInputVersion];
-            app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $draft, $planContext->baseInputVersion);
-            $packageIds = EstimateGenerationPackage::query()->where('session_id', $session->id)->pluck('id');
-            $storedItems = EstimateGenerationPackageItem::query()->whereIn('package_id', $packageIds)->get()->keyBy('logical_key');
-            foreach ($references as $reference) {
-                $stored = $storedItems->get($reference['key']);
-                self::assertInstanceOf(EstimateGenerationPackageItem::class, $stored);
-                if ($reference['quantity'] === null) {
-                    self::assertNull($stored->quantity);
-                    $payload = (new EstimateGenerationPackagePresenter)->item($stored);
-                    self::assertNull($payload['quantity']);
-                    self::assertSame($reference['source_refs'], $payload['source_refs']);
-                    self::assertSame('quantity_review_required', $payload['pricing_blocker']);
+            foreach ($draft['local_estimates'] as $localIndex => $local) {
+                foreach ($local['sections'] as $sectionIndex => $section) {
+                    foreach ($section['work_items'] as $itemIndex => $item) {
+                        if ($item['item_type'] === 'quantity_review' && $item['quantity'] === null) {
+                            $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = app(EstimatePricingService::class)->price([$item])[0];
+                        }
+                    }
                 }
             }
+            foreach ([false, true] as $universal) {
+                $persistedDraft = $universal ? (new UniversalDraftProjector)->project($draft, static fn (array $item): bool => false) : $draft;
+                app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $persistedDraft, $planContext->baseInputVersion);
+                $packageIds = EstimateGenerationPackage::query()->where('session_id', $session->id)->pluck('id');
+                $storedItems = EstimateGenerationPackageItem::query()->whereIn('package_id', $packageIds)->get()->keyBy('logical_key');
+                foreach ($this->references($persistedDraft) as $reference) {
+                    $stored = $storedItems->get($reference['key']);
+                    self::assertInstanceOf(EstimateGenerationPackageItem::class, $stored);
+                    if ($reference['quantity'] === null) {
+                        self::assertNull($stored->quantity);
+                        $payload = (new EstimateGenerationPackagePresenter)->item($stored);
+                        self::assertNull($payload['quantity']);
+                        foreach (['unit_price', 'direct_cost', 'overhead_cost', 'profit_cost', 'total_cost'] as $field) {
+                            self::assertNull($stored->getRawOriginal($field), $field);
+                            self::assertNull($payload[$field], $field);
+                        }
+                        self::assertSame($reference['source_refs'], $payload['source_refs']);
+                        self::assertSame($reference['pricing_blocker'], $payload['pricing_blocker']);
+                    }
+                }
+            }
+            $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_001600_allow_unknown_estimate_review_costs.php');
+            try {
+                $migration->down();
+                self::fail('Unknown costs must prevent a destructive rollback.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('estimate_generation.unknown_review_cost_rollback_unsafe', $exception->getMessage());
+            }
+            self::assertTrue(EstimateGenerationPackageItem::query()->whereIn('package_id', $packageIds)->whereNull('total_cost')->exists());
         }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }

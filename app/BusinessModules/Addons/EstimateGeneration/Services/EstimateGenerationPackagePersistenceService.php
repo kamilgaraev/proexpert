@@ -1030,6 +1030,7 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
     {
         $workComposition = $this->workComposition($workItem);
         $quantityCalculation = $this->itemMetadata->quantityCalculation($workItem);
+        $unknownCost = array_key_exists('total_cost', $workItem) && $workItem['total_cost'] === null;
 
         return [
             'package_id' => $package->id,
@@ -1047,14 +1048,14 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
             'normative_confidence' => isset($workItem['normative_match']['confidence'])
                 ? (float) $workItem['normative_match']['confidence']
                 : null,
-            'unit_price' => $this->unitPrice($workItem),
-            'direct_cost' => (string) BigDecimal::of((string) ($workItem['materials_cost'] ?? '0'))
+            'unit_price' => $unknownCost ? ($workItem['unit_price'] ?? null) : $this->unitPrice($workItem),
+            'direct_cost' => $unknownCost ? null : (string) BigDecimal::of((string) ($workItem['materials_cost'] ?? '0'))
                 ->plus((string) ($workItem['labor_cost'] ?? '0'))
                 ->plus((string) ($workItem['machinery_cost'] ?? '0'))
                 ->toScale(2, RoundingMode::HalfUp),
-            'overhead_cost' => '0.00',
-            'profit_cost' => '0.00',
-            'total_cost' => (string) ($workItem['total_cost'] ?? '0.00'),
+            'overhead_cost' => $unknownCost ? null : '0.00',
+            'profit_cost' => $unknownCost ? null : '0.00',
+            'total_cost' => $unknownCost ? null : (string) ($workItem['total_cost'] ?? '0.00'),
             'resources' => [
                 'materials' => $workItem['materials'] ?? [],
                 'labor' => $workItem['labor'] ?? [],
