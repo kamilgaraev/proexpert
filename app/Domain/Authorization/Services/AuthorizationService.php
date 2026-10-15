@@ -744,7 +744,26 @@ class AuthorizationService
      */
     protected function getContextHierarchy(AuthorizationContext $context): Collection
     {
-        return $this->rememberRead('context_hierarchy_'.$context->id, fn () => collect($context->getHierarchy()));
+        return $this->rememberRead('context_hierarchy_'.$context->id, function () use ($context): Collection {
+            if ($this->readCache === null) {
+                return collect($context->getHierarchy());
+            }
+            $hierarchy = [];
+            $current = $context;
+            while ($current !== null) {
+                $hierarchy[] = $current;
+                if ($current->parent_context_id === null) {
+                    break;
+                }
+                $parent = $this->rememberRead(
+                    'parent_context_'.$current->parent_context_id,
+                    fn () => $current->parentContext()->first(),
+                );
+                $current = $parent === null ? null : clone $parent;
+            }
+
+            return collect(array_reverse($hierarchy));
+        });
     }
 
     /**

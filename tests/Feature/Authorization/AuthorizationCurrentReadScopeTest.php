@@ -163,7 +163,12 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             str_starts_with($query['query'], 'select * from "authorization_contexts" where "authorization_contexts"."id" = ?')
             && (int) ($query['bindings'][0] ?? 0) === (int) $organizationContext->id);
         $this->assertCount(1, $siblings);
-        $this->assertLessThanOrEqual($contexts->count(), count($parents));
+        $this->assertCount(1, $parents);
+
+        $otherOrganization = Organization::withoutEvents(fn () => Organization::factory()->verified()->create());
+        $otherProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $otherOrganization->id]));
+        $otherContext = AuthorizationContext::getProjectContext($otherProject->id, $otherOrganization->id);
+        $this->assertNotContains('organization_owner', $authorization->getUserRoles($fixture->owner, $otherContext)->pluck('role_slug')->all());
 
         $fixture->ownerAssignment->update(['is_active' => false]);
         $fresh = app(AuthorizationService::class)->forCurrentChecks(true);
