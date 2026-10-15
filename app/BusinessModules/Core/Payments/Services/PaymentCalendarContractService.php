@@ -31,11 +31,12 @@ final class PaymentCalendarContractService
     public function build(
         PaymentCalendarSourceFilters $filters,
         ?PaymentCalendarCashGapOptions $cashGapOptions = null,
+        ?\Closure $scopeDocument = null,
     ): array
     {
         return $this->fromItems(array_merge(
-            $this->sourceService->collect($filters),
-            $this->sourceService->collectUndated($filters),
+            $this->sourceService->collect($filters, scopeDocument: $scopeDocument),
+            $this->sourceService->collectUndated($filters, $scopeDocument),
         ), $filters, $cashGapOptions);
     }
 

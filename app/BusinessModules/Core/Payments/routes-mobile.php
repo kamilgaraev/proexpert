@@ -15,6 +15,7 @@ Route::prefix('api/v1/mobile/payments/documents')
         Route::get('/{id}', [MobilePaymentDocumentController::class, 'show'])->whereNumber('id')->name('show');
         Route::put('/{id}', [MobilePaymentDocumentController::class, 'update'])->whereNumber('id')->name('update');
         Route::post('/{id}/submit', [MobilePaymentDocumentController::class, 'submit'])->whereNumber('id')->name('submit');
+        Route::post('/{id}/schedule', [MobilePaymentDocumentController::class, 'schedule'])->whereNumber('id')->name('schedule');
         Route::post('/{id}/approve', [MobilePaymentDocumentController::class, 'approve'])->whereNumber('id')->name('approve');
         Route::post('/{id}/reject', [MobilePaymentDocumentController::class, 'reject'])->whereNumber('id')->name('reject');
         Route::post('/{id}/payments', [MobilePaymentDocumentController::class, 'registerPayment'])->whereNumber('id')->name('payments.store');

@@ -1037,17 +1037,24 @@ final class PlanFactReportService implements PlanFactSourceSnapshotReport
         $sourceType = (string) $row->source_type;
         $sourceId = $row->source_id;
         $paymentDocumentId = $row->payment_document_id ?? null;
-        $routeHint = $sourceType === 'payment_transaction'
-            ? [
+        $documentId = match ($sourceType) {
+            'budget_limit_reservation' => $paymentDocumentId,
+            'payment_document_commitment' => $sourceId,
+            default => null,
+        };
+        $routeHint = match (true) {
+            $sourceType === 'payment_transaction' => [
                 'name' => 'admin.payments.transactions.show',
                 'params' => ['id' => $sourceId],
                 'api_path' => "/api/v1/admin/payments/transactions/{$sourceId}",
-            ]
-            : [
+            ],
+            $documentId !== null && (int) $documentId > 0 => [
                 'name' => 'admin.payments.documents.show',
-                'params' => ['id' => $paymentDocumentId ?? $sourceId],
-                'api_path' => '/api/v1/admin/payments/documents/'.(string) ($paymentDocumentId ?? $sourceId),
-            ];
+                'params' => ['id' => $documentId],
+                'api_path' => '/api/v1/admin/payments/documents/'.(string) $documentId,
+            ],
+            default => [],
+        };
         $amount = round((float) $row->amount, 2);
 
         return new PlanFactDrillDownItem(

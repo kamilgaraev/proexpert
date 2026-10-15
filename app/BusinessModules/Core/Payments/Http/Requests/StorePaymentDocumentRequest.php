@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use Illuminate\Foundation\Http\FormRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\Concerns\AuthorizesPaymentDocuments;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -15,12 +16,11 @@ use function trans_message;
 
 class StorePaymentDocumentRequest extends FormRequest
 {
+    use AuthorizesPaymentDocuments;
+
     public function authorize(): bool
     {
-        $organizationId = $this->getCurrentOrganizationId();
-
-        return $organizationId > 0
-            && (bool) $this->user()?->can('payments.invoice.create', ['organization_id' => $organizationId]);
+        return $this->authorizePaymentAccess('payments.invoice.create', false, true);
     }
 
     public function rules(): array

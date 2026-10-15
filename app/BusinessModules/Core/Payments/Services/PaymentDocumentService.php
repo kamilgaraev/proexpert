@@ -71,8 +71,7 @@ class PaymentDocumentService
                         ->first();
 
                     if ($existingDocument instanceof PaymentDocument) {
-                        if ($existingDocument->requiresActInvoiceFinancialApproval()
-                            && $existingDocument->status === PaymentDocumentStatus::SUBMITTED) {
+                        if ($this->canAutomaticallySubmitActInvoice($existingDocument, $createdBy)) {
                             $existingDocument = $this->submit($existingDocument, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
                         }
                         DB::commit();
@@ -135,8 +134,7 @@ class PaymentDocumentService
                     event(new PaymentRequestReceived($document, $document->payee_contractor_id));
                 }
 
-                if ($document->requiresActInvoiceFinancialApproval()
-                    && $document->status === PaymentDocumentStatus::SUBMITTED) {
+                if ($this->canAutomaticallySubmitActInvoice($document, $createdBy)) {
                     $document = $this->submit($document, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
                 }
                 DB::commit();
@@ -160,8 +158,7 @@ class PaymentDocumentService
                     if ($existingDocument instanceof PaymentDocument
                         && BigDecimal::of((string) $existingDocument->amount)
                             ->isEqualTo(BigDecimal::of((string) $data['amount']))) {
-                        if ($existingDocument->requiresActInvoiceFinancialApproval()
-                            && $existingDocument->status === PaymentDocumentStatus::SUBMITTED) {
+                        if ($this->canAutomaticallySubmitActInvoice($existingDocument, $createdBy)) {
                             return $this->submit($existingDocument, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
                         }
 
@@ -210,6 +207,16 @@ class PaymentDocumentService
             trans_message('payments.validation.document_create_attempts_exceeded'),
             $maxAttempts
         ));
+    }
+
+    private function canAutomaticallySubmitActInvoice(PaymentDocument $document, ?User $user): bool
+    {
+        return $user !== null
+            && $document->requiresActInvoiceFinancialApproval()
+            && $document->status === PaymentDocumentStatus::SUBMITTED
+            && app(PaymentDocumentAccessService::class)
+                ->query((int) $document->organization_id, $user, 'payments.invoice.issue')
+                ->whereKey($document->id)->exists();
     }
 
     /**
@@ -461,7 +468,9 @@ class PaymentDocumentService
     public function registerPayment(
         PaymentDocument $document,
         string|int|float $amount,
-        array $paymentData
+        array $paymentData,
+        ?\Closure $authorizeLocked = null,
+        ?array $expectedContracts = null,
     ): PaymentDocument {
         $paymentAmount = BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
 
@@ -473,11 +482,15 @@ class PaymentDocumentService
         DB::beginTransaction();
 
         try {
-            $this->contractPaymentLock->lockForPaymentDocument($document);
+            $this->contractPaymentLock->lockForPaymentDocument($document, $expectedContracts);
             $document = PaymentDocument::query()
                 ->whereKey($document->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            if ($expectedContracts !== null) {
+                $this->contractPaymentLock->assertContractUnchanged($document, $expectedContracts);
+            }
+            $authorizeLocked?->__invoke($document);
             $idempotencyKey = $paymentData['idempotency_key']
                 ?? (isset($paymentData['bank_transaction_id'])
                     ? 'bank:'.(string) $paymentData['bank_transaction_id']

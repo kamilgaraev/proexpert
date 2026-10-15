@@ -327,6 +327,10 @@ final class AssistantDirectorDecisionsTest extends TestCase
             }
             \App\Models\TimeEntry::query()->create(['organization_id' => $this->fixture->organization->id, 'project_id' => $this->project->id,
                 'worker_type' => 'external', 'worker_name' => 'Другой месяц', 'work_date' => '2026-10-10', 'hours_worked' => '99.00', 'title' => 'Работа', 'status' => 'submitted']);
+            foreach (['approved' => '50.50', 'draft' => '1.25'] as $status => $hours) {
+                \App\Models\TimeEntry::query()->create(['organization_id' => $this->fixture->organization->id, 'project_id' => $this->project->id,
+                    'worker_type' => 'external', 'worker_name' => 'Работник 1', 'work_date' => '2026-09-10', 'hours_worked' => $hours, 'title' => 'Работа', 'status' => $status]);
+            }
             $order = \App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder::query()->create(['organization_id' => $this->fixture->organization->id,
                 'project_id' => $this->project->id, 'created_by_user_id' => $this->fixture->owner->id, 'order_number' => 'WORKFORCE-1', 'title' => 'Наряд', 'status' => 'submitted']);
             $sheet = \App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet::query()->create(['organization_id' => $this->fixture->organization->id,
@@ -342,8 +346,11 @@ final class AssistantDirectorDecisionsTest extends TestCase
         $reader = app(AssistantProjectWorkforceReader::class);
         $arguments = ['project_id' => $this->project->id, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30'];
         $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $arguments);
-        self::assertSame('256.25', $read['data']['sections']['time_entry']['hours_total']);
+        self::assertSame('308.00', $read['data']['sections']['time_entry']['hours_total']);
         self::assertSame(25, $read['data']['sections']['time_entry']['by_status']['submitted']);
+        self::assertSame(['submitted' => '256.25', 'approved' => '50.50', 'draft' => '1.25'], $read['data']['sections']['time_entry']['hours_by_status']);
+        self::assertStringContainsString('Утверждённых записей: 1; учтено 50.50 ч.', $read['server_formatted_answer']);
+        self::assertStringContainsString('Записей на утверждении: 25; учтено 256.25 ч.', $read['server_formatted_answer']);
         self::assertSame(25, $read['data']['sections']['time_entry']['worker_names_count']);
         self::assertCount(20, $read['data']['sections']['time_entry']['worker_names']);
         self::assertSame('3.50', $read['data']['sections']['production_labor_timesheet']['hours_total']);

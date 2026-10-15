@@ -42,7 +42,7 @@ final class MobilePaymentDocumentService
             'search' => $filters['search'] ?? null,
             'page' => $filters['page'] ?? 1,
             'per_page' => min(50, (int) ($filters['per_page'] ?? 20)),
-        ]);
+        ], $user);
 
         return [
             'items' => collect($page->items())->map(fn (PaymentDocument $document): array => $this->presenter->brief($document, $user))->all(),
@@ -123,7 +123,7 @@ final class MobilePaymentDocumentService
     /** @return array<string, mixed> */
     public function show(int $organizationId, User $user, int $id): array
     {
-        $document = $this->queries->findDetailed($organizationId, $id);
+        $document = $this->queries->findDetailed($organizationId, $id, $user);
         $this->assertCanAccessDocument($user, $document, 'payments.invoice.view');
 
         return $this->withCapabilities($this->presenter->detailed($document, $user), $user, $document);
@@ -155,12 +155,12 @@ final class MobilePaymentDocumentService
                 if ($existing->mobile_payload_hash !== $data['mobile_payload_hash']) {
                     throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
                 }
-                $existing = $this->queries->findDetailed($organizationId, (int) $existing->id);
+                $existing = $this->queries->findDetailed($organizationId, (int) $existing->id, $user, 'payments.invoice.create');
                 $this->assertCanAccessDocument($user, $existing, 'payments.invoice.create');
 
                 return [$existing, false, []];
             }
-            $result = $this->workflow->create($organizationId, (int) $user->id, $data);
+            $result = $this->workflow->create($organizationId, (int) $user->id, $data, $user);
             if ($result['document']->mobile_payload_hash !== $data['mobile_payload_hash']) {
                 throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
             }
@@ -182,7 +182,7 @@ final class MobilePaymentDocumentService
     /** @return array<string, mixed> */
     public function update(int $organizationId, User $user, int $id, array $data): array
     {
-        $document = $this->queries->findForWorkflow($organizationId, $id);
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.invoice.edit');
         $this->assertCanAccessDocument($user, $document, 'payments.invoice.edit');
         if (array_key_exists('project_id', $data)) {
             $targetProjectId = $data['project_id'] === null ? null : (int) $data['project_id'];
@@ -193,7 +193,7 @@ final class MobilePaymentDocumentService
                 $this->assertPermission($user, 'payments.invoice.edit', $organizationId, $targetProjectId);
             }
         }
-        $this->workflow->update($document, $data);
+        $this->workflow->update($document, $data, $user);
 
         return $this->show($organizationId, $user, $id);
     }
@@ -201,39 +201,48 @@ final class MobilePaymentDocumentService
     /** @return array<string, mixed> */
     public function submit(int $organizationId, User $user, int $id, ?string $budgetOverrideReason): array
     {
-        $document = $this->queries->findForWorkflow($organizationId, $id);
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.invoice.issue');
         $this->assertCanAccessDocument($user, $document, 'payments.invoice.issue');
         $submitted = $this->workflow->submit($document, $user, $budgetOverrideReason);
 
         return $this->withCapabilities($this->presenter->detailed($submitted, $user), $user, $submitted);
     }
 
+    public function schedule(int $organizationId, User $user, int $id, ?string $scheduledAt, ?string $budgetOverrideReason): array
+    {
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.schedule.create');
+        $this->assertCanAccessDocument($user, $document, 'payments.schedule.create');
+        $scheduled = $this->workflow->schedule($document, $scheduledAt, $user, $budgetOverrideReason);
+
+        return $this->withCapabilities($this->presenter->detailed($scheduled, $user), $user, $scheduled);
+    }
+
     /** @return array<string, mixed> */
     public function registerPayment(int $organizationId, User $user, int $id, array $data): array
     {
-        $document = $this->queries->findForWorkflow($organizationId, $id);
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.transaction.register');
         $this->assertCanAccessDocument($user, $document, 'payments.transaction.register');
-        $paid = $this->workflow->registerPayment($document, (int) $user->id, $data);
+        $paid = $this->workflow->registerPayment($document, (int) $user->id, $data, $user);
 
         return $this->withCapabilities($this->presenter->detailed($paid, $user), $user, $paid);
     }
 
     public function approve(int $organizationId, User $user, int $id, array $data): array
     {
-        $document = $this->queries->findForWorkflow($organizationId, $id);
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.transaction.approve');
         $this->assertCanAccessDocument($user, $document, 'payments.transaction.approve');
         $this->assertAssignedPendingApproval($document, $user, 'payments.transaction.approve');
-        $this->approvals->approveByUser($document, (int) $user->id, $data['comment'] ?? null, $data['budget_override_reason'] ?? null);
+        $this->approvals->approveByUser($document, (int) $user->id, $data['comment'] ?? null, $data['budget_override_reason'] ?? null, $user);
 
         return $this->show($organizationId, $user, $id);
     }
 
     public function reject(int $organizationId, User $user, int $id, array $data): array
     {
-        $document = $this->queries->findForWorkflow($organizationId, $id);
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.transaction.reject');
         $this->assertCanAccessDocument($user, $document, 'payments.transaction.reject');
         $this->assertAssignedPendingApproval($document, $user, 'payments.transaction.reject');
-        $this->approvals->rejectByUser($document, (int) $user->id, $data['reason']);
+        $this->approvals->rejectByUser($document, (int) $user->id, $data['reason'], $user);
 
         return $this->show($organizationId, $user, $id);
     }

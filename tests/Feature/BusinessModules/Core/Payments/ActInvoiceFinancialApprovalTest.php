@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Events\PaymentApprovalRequested;
 use App\BusinessModules\Core\Payments\Models\PaymentApprovalRule;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovalRequiredNotification;
+use App\BusinessModules\Core\Payments\Notifications\PaymentApprovedNotification;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentActionPresenter;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
@@ -25,12 +26,16 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class ActInvoiceFinancialApprovalTest extends TestCase
 {
@@ -42,12 +47,22 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->enableImmutableAuditWriter();
     }
 
-    public function test_api_creation_starts_approval_and_replay_reuses_the_entire_workflow(): void
+    public static function creationPermissions(): array
+    {
+        return ['creator can issue' => [true], 'creator cannot issue' => [false]];
+    }
+
+    #[DataProvider('creationPermissions')]
+    public function test_api_creation_starts_approval_and_replay_reuses_the_entire_workflow(bool $canIssue): void
     {
         Queue::fake();
         Notification::fake();
         $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $this->activatePayments($context);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        if (! $canIssue) {
+            $this->assignPaymentPermissions($context, ['payments.invoice.create']);
+        }
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $payee = Organization::factory()->verified()->create();
         $contractor = Contractor::query()->create([
@@ -109,6 +124,17 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
         $document = PaymentDocument::query()->findOrFail($response->json('data.id'));
         $this->assertSame(InvoiceDirection::OUTGOING, $document->direction);
+        if (! $canIssue) {
+            $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->status);
+            $this->assertSame(0, $document->approvals()->count());
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload)
+                ->assertCreated()->assertJsonPath('data.id', $document->id);
+            $this->assertSame(0, $document->approvals()->count());
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents/'.$document->id.'/submit')->assertForbidden();
+            Notification::assertNotSentTo($context->user, PaymentApprovalRequiredNotification::class);
+
+            return;
+        }
         $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->status);
         $approvals = $document->approvals()->orderBy('id')->pluck('id')->all();
         $this->assertCount(2, $approvals);
@@ -384,6 +410,99 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         Notification::assertSentToTimes($context->user, PaymentApprovalRequiredNotification::class, 1);
         Notification::assertNotSentTo($foreign, PaymentApprovalRequiredNotification::class);
         $this->assertNull($document->approvals()->where('approver_user_id', $foreign->id)->firstOrFail()->notified_at);
+    }
+
+    public function test_mobile_financial_approval_can_proceed_to_planning_without_a_payment(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $document = $this->createSubmittedActInvoice($context);
+        $url = '/api/v1/mobile/payments/documents/'.$document->id;
+        $headers = $context->mobileAuthHeaders();
+        $this->withHeaders($headers)->postJson($url.'/schedule', ['scheduled_at' => now()->addDays(5)->toDateString()])->assertStatus(422);
+        $this->withHeaders($headers)->postJson($url.'/submit')->assertOk()->assertJsonPath('data.status', 'pending_approval');
+        $this->withHeaders($headers)->postJson($url.'/approve')->assertOk()->assertJsonPath('data.status', 'pending_approval');
+        $this->withHeaders($headers)->postJson($url.'/approve')->assertOk()->assertJsonPath('data.status', 'approved');
+        $this->withHeaders($headers)->postJson($url.'/schedule', ['scheduled_at' => 'not-a-date'])->assertStatus(422);
+        $date = now()->addDays(5)->toDateString();
+        $this->withHeaders($headers)->postJson($url.'/schedule', ['scheduled_at' => $date])
+            ->assertOk()->assertJsonPath('data.status', 'scheduled');
+        $this->assertSame($date, $document->fresh()->scheduled_at->toDateString());
+        $this->assertSame('0.00', $document->fresh()->paid_amount);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_mobile_planning_does_not_disclose_foreign_documents_or_allow_a_role_without_planning_permission(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $foreign = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignDocument = $this->createSubmittedActInvoice($foreign);
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/payments/documents/'.$foreignDocument->id.'/schedule')->assertNotFound();
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['status' => PaymentDocumentStatus::SCHEDULED])->save();
+        $this->assignPaymentPermissions($context, ['payments.invoice.view']);
+        $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/payments/documents/'.$document->id.'/schedule')->assertNotFound();
+        $this->assertSame(PaymentDocumentStatus::SCHEDULED, $document->fresh()->status);
+        $this->assertNull($document->fresh()->scheduled_at);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_final_financial_approval_notification_waits_for_commit_and_describes_planning(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $this->activatePayments($context);
+        $document = $this->createSubmittedActInvoice($context);
+        app(PaymentDocumentService::class)->submit($document, $context->user);
+        $workflow = app(ApprovalWorkflowService::class);
+        $workflow->approveByUser($document->fresh(), $context->user->id);
+        $initialLevel = DB::transactionLevel();
+        DB::beginTransaction();
+        try {
+            $workflow->approveByUser($document->fresh(), $context->user->id);
+            Notification::assertNotSentTo($context->user, PaymentApprovedNotification::class);
+            DB::rollBack();
+        } finally {
+            while (DB::transactionLevel() > $initialLevel) {
+                DB::rollBack();
+            }
+        }
+        $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->fresh()->status);
+        Notification::assertNotSentTo($context->user, PaymentApprovedNotification::class);
+        $workflow->approveByUser($document->fresh(), $context->user->id);
+        Notification::assertSentTo($context->user, PaymentApprovedNotification::class, static function (PaymentApprovedNotification $notification): bool {
+            return in_array('Финансовое согласование завершено. Запланируйте дату оплаты документа.', $notification->toMail(null)->outroLines, true);
+        });
+        $this->assertSame('0.00', $document->fresh()->paid_amount);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    private function assignPaymentPermissions(AdminApiTestContext $context, array $permissions): void
+    {
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->delete();
+        $role = OrganizationCustomRole::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Payment permissions regression',
+            'slug' => 'payment-permissions-'.uniqid(),
+            'system_permissions' => [],
+            'module_permissions' => ['payments' => $permissions],
+            'interface_access' => ['admin', 'mobile'],
+            'conditions' => null,
+            'is_active' => true,
+            'created_by' => $context->user->id,
+        ]);
+        UserRoleAssignment::assignRole(
+            user: $context->user,
+            roleSlug: $role->slug,
+            context: AuthorizationContext::getOrganizationContext((int) $context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
     }
 
     private function createSubmittedActInvoice(AdminApiTestContext $context): PaymentDocument

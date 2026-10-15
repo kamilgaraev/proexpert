@@ -83,7 +83,7 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/overdue', [ScheduleController::class, 'overdue'])
                 ->middleware('authorize:payments.schedule.view')
                 ->name('overdue');
-            Route::get('/documents/{id}', [PaymentDocumentController::class, 'show'])
+            Route::get('/documents/{id}', [PaymentDocumentController::class, 'showForSchedule'])
                 ->middleware('authorize:payments.schedule.view')
                 ->name('documents.show');
         });

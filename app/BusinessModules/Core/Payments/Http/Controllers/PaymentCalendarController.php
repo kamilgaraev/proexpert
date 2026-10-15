@@ -7,10 +7,10 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarCashGapOptions;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarContractService;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
@@ -18,9 +18,11 @@ use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -35,6 +37,7 @@ class PaymentCalendarController extends Controller
         private readonly PaymentCalendarContractService $calendarContractService,
         private readonly PaymentCalendarSourceService $calendarSourceService,
         private readonly AuthorizationService $authorizationService,
+        private readonly PaymentDocumentAccessService $access,
     ) {
     }
 
@@ -122,7 +125,8 @@ class PaymentCalendarController extends Controller
             );
 
             return AdminResponse::success(
-                $this->calendarContractService->build($filters, $this->cashGapOptions($validated)),
+                $this->calendarContractService->build($filters, $this->cashGapOptions($validated),
+                    fn (Builder $query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view')),
                 trans_message('payments.calendar.loaded')
             );
         } catch (ValidationException $e) {
@@ -155,36 +159,35 @@ class PaymentCalendarController extends Controller
     public function reschedule(Request $request, int|string $id): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->access->find($organizationId, $actor, $id, 'payments.schedule.edit');
             $validated = $request->validate([
                 'date' => ['required', 'date'],
                 'reason' => ['nullable', 'required_without:budget_override_reason', 'string', 'max:1000'],
                 'budget_override_reason' => ['nullable', 'required_without:reason', 'string', 'max:1000'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail((int) $id);
+            return DB::transaction(function () use ($organizationId, $actor, $id, $validated): JsonResponse {
+                $document = $this->access->find($organizationId, $actor, $id, 'payments.schedule.edit', true);
+                $this->access->assertDocument($document, $actor, 'payments.schedule.edit');
+                $calendarItem = $this->calendarSourceService->fromPaymentDocument($document);
+                if (!$calendarItem instanceof PaymentCalendarItem || !$calendarItem->editable) {
+                    return AdminResponse::error(trans_message('payments.calendar.reschedule_not_editable'), 422);
+                }
+                $document = $this->paymentDocumentService->schedule(
+                    $document,
+                    new \DateTime($validated['date']),
+                    $actor,
+                    $this->rescheduleReason($validated)
+                );
 
-            $calendarItem = $this->calendarSourceService->fromPaymentDocument($document);
-
-            if (!$calendarItem instanceof PaymentCalendarItem || !$calendarItem->editable) {
-                return AdminResponse::error(trans_message('payments.calendar.reschedule_not_editable'), 422);
-            }
-
-            $reason = $this->rescheduleReason($validated);
-            $document = $this->paymentDocumentService->schedule(
-                $document,
-                new \DateTime($validated['date']),
-                $request->user(),
-                $reason
-            );
-
-            return AdminResponse::success([
-                'id' => $document->id,
-                'scheduled_at' => $document->scheduled_at?->format('Y-m-d'),
-                'status' => $this->statusValue($document->status),
-            ], trans_message('payments.calendar.rescheduled'));
+                return AdminResponse::success([
+                    'id' => $document->id,
+                    'scheduled_at' => $document->scheduled_at?->format('Y-m-d'),
+                    'status' => $this->statusValue($document->status),
+                ], trans_message('payments.calendar.rescheduled'));
+            });
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (ModelNotFoundException $e) {
@@ -199,6 +202,16 @@ class PaymentCalendarController extends Controller
 
             return AdminResponse::error(trans_message('payments.calendar.reschedule_error'), 500);
         }
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new ModelNotFoundException;
+        }
+
+        return $actor;
     }
 
     private function rescheduleReason(array $validated): ?string

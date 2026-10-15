@@ -67,7 +67,7 @@ final class AssistantToolSurface
             '/отч[её]т|report/iu' => ['get_project_report_catalog'],
             '/камер|видеонаблюден/iu' => ['get_project_camera_roster'],
             '/тендер/iu' => ['get_project_tender_decisions'],
-            '/заявк/iu' => ['get_project_site_request_queue'],
+            '/заявк/iu' => ['get_project_site_request_queue', 'get_project_material_request_queue'],
             \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectActReader::INTENT_PATTERN => ['get_project_act_readiness'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {

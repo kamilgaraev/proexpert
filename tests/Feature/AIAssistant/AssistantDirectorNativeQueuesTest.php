@@ -23,6 +23,102 @@ use Tests\TestCase;
 
 final class AssistantDirectorNativeQueuesTest extends TestCase
 {
+    public function test_material_request_queue_excludes_other_types_and_rechecks_type_changes(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $f = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $org = (int) $f->organization->id; $actor = $f->owner;
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
+        Model::withoutEvents(function () use ($org, $actor, $project, $other): void {
+            foreach (range(1, 21) as $i) {
+                SiteRequest::query()->create(['organization_id' => $org, 'project_id' => $project->id, 'user_id' => $actor->id,
+                    'title' => 'MATERIAL-'.$i, 'request_type' => 'material_request', 'status' => 'pending', 'required_date' => today()->subDay()]);
+            }
+            foreach ([[$project, 'equipment_request', 'pending'], [$other, 'material_request', 'pending'], [$project, 'material_request', 'cancelled']] as [$scope, $type, $status]) {
+                SiteRequest::query()->create(['organization_id' => $org, 'project_id' => $scope->id, 'user_id' => $actor->id,
+                    'title' => 'EXCLUDED-'.$type.'-'.$status, 'request_type' => $type, 'status' => $status, 'required_date' => today()->subDay()]);
+            }
+        });
+        DB::table('site_requests')->where('title', 'MATERIAL-21')->where('project_id', $project->id)->update(['request_type' => 'material']);
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectMaterialRequestReader::class);
+        $args = ['project_id' => (int) $project->id];
+        $read = $reader->read($actor, $org, $args);
+        self::assertSame(21, $read['data']['active']);
+        self::assertSame(21, $read['data']['overdue']);
+        self::assertSame(21, $read['data']['unassigned']);
+        self::assertCount(20, $read['data']['examples']);
+        self::assertStringNotContainsString('EXCLUDED', json_encode($read));
+        self::assertStringContainsString('только заявки на материалы', $read['server_formatted_answer']);
+        self::assertTrue($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        SiteRequest::query()->where('title', 'MATERIAL-1')->where('project_id', $project->id)->firstOrFail()->updateQuietly(['request_type' => 'equipment_request']);
+        self::assertFalse($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        self::assertSame(20, $reader->read($actor, $org, $args)['data']['active']);
+    }
+
+    public function test_act_amounts_use_full_status_groups_and_keep_currencies_separate(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $f = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $org = (int) $f->organization->id; $actor = $f->owner;
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org]));
+        $contract = Contract::withoutEvents(fn () => Contract::query()->create(['organization_id' => $org, 'project_id' => $project->id,
+            'number' => 'CURRENCIES', 'date' => today(), 'subject' => 'Работы', 'status' => 'active', 'currency' => 'RUB', 'total_amount' => 10000, 'is_self_execution' => true]));
+        Model::withoutEvents(function () use ($contract, $project): void {
+            foreach ([['pending_approval', 'RUB', '100.10'], ['pending_approval', 'USD', '9.25'],
+                ['approved', 'RUB', '200.20'], ['signed', 'RUB', '20.03'], ['approved', 'USD', '3.00'],
+                ['draft', 'RUB', '9999.00'], ['annulled', 'RUB', '9999.00']] as $i => [$status, $currency, $amount]) {
+                ContractPerformanceAct::query()->create(['contract_id' => $contract->id, 'project_id' => $project->id,
+                    'act_document_number' => 'CURRENCY-'.$i, 'act_date' => today(), 'amount' => $amount, 'currency' => $currency, 'status' => $status]);
+            }
+        });
+        $otherCurrencyContract = Contract::withoutEvents(fn () => Contract::query()->create(['organization_id' => $org, 'project_id' => $project->id,
+            'number' => 'LEGACY-USD', 'date' => today(), 'subject' => 'Работы', 'status' => 'active', 'currency' => 'USD', 'total_amount' => 10000, 'is_self_execution' => true]));
+        foreach ([[$contract, '777.11'], [$otherCurrencyContract, '888.22']] as [$parent, $amount]) {
+            ContractPerformanceAct::withoutEvents(fn () => ContractPerformanceAct::query()->create(['contract_id' => $parent->id, 'project_id' => $project->id,
+                'act_document_number' => 'UNKNOWN-'.$parent->id, 'act_date' => today(), 'amount' => $amount, 'currency' => null, 'status' => 'approved']));
+        }
+        $reader = app(AssistantProjectActReader::class);
+        $read = $reader->read($actor, $org, ['project_id' => (int) $project->id]);
+        self::assertSame(2, $read['data']['pending']);
+        self::assertCount(5, $read['data']['approved_examples']);
+        self::assertStringContainsString('CURRENCY-2', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('CURRENCY-5', $read['server_formatted_answer']);
+        self::assertSame([['currency' => 'RUB', 'amount' => '100.10'], ['currency' => 'USD', 'amount' => '9.25']], $read['data']['amounts_by_status']['pending']);
+        self::assertSame([['currency' => 'RUB', 'amount' => '220.23'], ['currency' => 'USD', 'amount' => '3.00']], $read['data']['amounts_by_status']['approved']);
+        self::assertSame(['pending' => 0, 'approved' => 2], $read['data']['amounts_unknown_currency']);
+        self::assertStringContainsString('Не включены в суммы принятых актов: 2', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('1665.33', $read['server_formatted_answer']);
+        self::assertStringContainsString('220.23 RUB; 3.00 USD', $read['server_formatted_answer']);
+        self::assertTrue($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        $member = $f->addMember(['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'],
+            'contract-management' => ['contracts.view', 'contracts.performance_acts.view']]);
+        $member->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $sumQueries = [];
+        DB::listen(static function ($event) use (&$sumQueries): void { if (stripos($event->sql, 'sum(') !== false) { $sumQueries[] = $event->sql; } });
+        $limited = $reader->read($member, $org, ['project_id' => (int) $project->id]);
+        self::assertSame(2, $limited['data']['pending']);
+        self::assertNull($limited['data']['amounts_by_status']);
+        self::assertSame([], $sumQueries);
+        self::assertStringContainsString('Суммы актов недоступны', $limited['server_formatted_answer']);
+        self::assertStringNotContainsString('220.23', $limited['server_formatted_answer']);
+        $slug = \App\Domain\Authorization\Models\UserRoleAssignment::query()->where('user_id', $member->id)->value('role_slug');
+        $role = \App\Domain\Authorization\Models\OrganizationCustomRole::query()->where('organization_id', $org)->where('slug', $slug)->firstOrFail();
+        $role->updateQuietly(['system_permissions' => ['finance.view']]);
+        self::assertFalse($reader->matchesReference($member, $org, $limited['source_refs'][0]));
+        $granted = $reader->read($member, $org, ['project_id' => (int) $project->id]);
+        self::assertNotNull($granted['data']['amounts_by_status']);
+        $role->updateQuietly(['system_permissions' => []]);
+        self::assertFalse($reader->matchesReference($member, $org, $granted['source_refs'][0]));
+        ContractPerformanceAct::query()->where('contract_id', $contract->id)->where('act_document_number', 'CURRENCY-3')->firstOrFail()->updateQuietly(['currency' => 'USD']);
+        self::assertFalse($reader->matchesReference($actor, $org, $read['source_refs'][0]));
+        ContractPerformanceAct::query()->where('project_id', $project->id)->whereNotNull('currency')->whereIn('status', ['approved', 'signed'])->update(['status' => 'draft']);
+        $unknownOnly = $reader->read($actor, $org, ['project_id' => (int) $project->id]);
+        self::assertSame([], $unknownOnly['data']['amounts_by_status']['approved']);
+        self::assertSame(2, $unknownOnly['data']['amounts_unknown_currency']['approved']);
+        self::assertStringContainsString('итог не подтверждён без валюты актов', $unknownOnly['server_formatted_answer']);
+    }
+
     public function test_native_queues_count_before_limit_and_recheck_current_scope_and_visibility(): void
     {
         Queue::fake(); config(['cache.default' => 'array']);

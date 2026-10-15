@@ -6,6 +6,8 @@ namespace App\BusinessModules\Core\Payments\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
+use App\Models\User;
 
 class BulkActionRequest extends FormRequest
 {
@@ -18,17 +20,27 @@ class BulkActionRequest extends FormRequest
             return false;
         }
 
-        $permission = match ($action) {
-            'submit' => 'payments.invoice.issue',
-            'approve' => 'payments.transaction.approve',
-            'pay' => 'payments.transaction.register',
-            'cancel' => 'payments.invoice.cancel',
-            'schedule' => 'payments.schedule.create',
-            default => null,
-        };
+        $permission = PaymentDocumentAccessService::bulkPermission($action);
+        $actor = $this->user();
+        if ($permission === null || ! $actor instanceof User) {
+            return false;
+        }
+        $ids = $this->input('ids');
+        if (! is_array($ids) || $ids === []) {
+            return true;
+        }
+        $validIds = [];
+        foreach ($ids as $id) {
+            $validId = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if ($validId !== false) {
+                $validIds[] = $validId;
+            }
+        }
+        if ($validIds !== []) {
+            app(PaymentDocumentAccessService::class)->bulk($organizationId, $actor, $validIds, $permission);
+        }
 
-        return $permission !== null
-            && (bool) $this->user()?->can($permission, ['organization_id' => $organizationId]);
+        return true;
     }
 
     public function rules(): array

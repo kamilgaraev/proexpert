@@ -54,6 +54,21 @@ class AssistantPeriodResolverTest extends TestCase
         ];
     }
 
+    public function test_named_month_through_today_uses_the_current_year_and_does_not_reverse_future_months(): void
+    {
+        $resolver = new AssistantPeriodResolver(CarbonImmutable::parse('2026-10-15 10:00:00', 'Europe/Moscow'));
+        foreach (['За октябрь по сегодняшний день', 'За октябрь 2026 года по сегодняшний день', 'За сентябрь до сегодня',
+            'За октябрь, по сегодняшний день', 'За октябрь 2026 года, по сегодняшний день',
+            'За октябрь — по сегодняшний день', 'За октябрь - по сегодняшний день', 'За октябрь 2026 года - по сегодняшний день',
+            'За октябрь: по сегодняшний день', 'За октябрь, 2026 года, по сегодняшний день'] as $text) {
+            $period = $resolver->resolve($text);
+            self::assertSame(str_contains($text, 'сентябрь') ? '2026-09-01' : '2026-10-01', $period?->dateFrom);
+            self::assertSame('2026-10-15', $period?->dateTo);
+        }
+        self::assertNull($resolver->resolve('За декабрь по сегодняшний день'));
+        self::assertNull($resolver->resolve('За октябрь 2025 года по сегодняшний день'));
+    }
+
     public function test_array_with_date_boundaries_returns_period(): void
     {
         $resolver = new AssistantPeriodResolver(CarbonImmutable::parse('2026-05-04 02:09:00', 'Europe/Moscow'));

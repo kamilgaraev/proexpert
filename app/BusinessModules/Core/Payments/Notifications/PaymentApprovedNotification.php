@@ -31,7 +31,9 @@ class PaymentApprovedNotification extends Notification implements ShouldQueue
             ->line("Сумма: {$this->document->formatted_amount}")
             ->line("Получатель: {$this->document->getPayeeName()}")
             ->action('Перейти к документу', url("/admin/payments/documents/{$this->document->id}"))
-            ->line('Документ готов к оплате.');
+            ->line($this->document->requiresActInvoiceFinancialApproval()
+                ? 'Финансовое согласование завершено. Запланируйте дату оплаты документа.'
+                : 'Документ готов к оплате.');
     }
 
     public function toArray($notifiable): array

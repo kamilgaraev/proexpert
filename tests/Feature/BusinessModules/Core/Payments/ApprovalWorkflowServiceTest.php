@@ -112,6 +112,12 @@ final class ApprovalWorkflowServiceTest extends TestCase
 
     private function createDocument(AdminApiTestContext $context, PaymentDocumentStatus $status): PaymentDocument
     {
+        \App\Models\Module::query()->updateOrCreate(['slug' => 'payments'], [
+            'name' => 'Payments', 'version' => '1.0.0', 'type' => 'core', 'billing_model' => 'free',
+            'category' => 'finance', 'permissions' => array_keys(app(\App\BusinessModules\Core\Payments\PaymentsModule::class)->getPermissions()),
+            'is_active' => true,
+        ]);
+
         return PaymentDocument::query()->create([
             'organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::INVOICE,

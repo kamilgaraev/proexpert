@@ -146,7 +146,8 @@ class PaymentTransactionService
         string|float|int|null $amount,
         string $reason,
         string|\DateTimeInterface|null $refundDate,
-        string $idempotencyKey
+        string $idempotencyKey,
+        ?\Closure $authorize = null,
     ): array {
         return DB::transaction(function () use (
             $transactionId,
@@ -155,23 +156,32 @@ class PaymentTransactionService
             $amount,
             $reason,
             $refundDate,
-            $idempotencyKey
+            $idempotencyKey,
+            $authorize,
         ): array {
             $documentId = PaymentTransaction::query()
                 ->where('organization_id', $organizationId)
                 ->whereKey($transactionId)
                 ->firstOrFail(['payment_document_id'])->payment_document_id;
-            $document = PaymentDocument::query()
+            $document = PaymentDocument::query()->useWritePdo()
+                ->where('organization_id', $organizationId)
+                ->whereKey($documentId)
+                ->firstOrFail();
+            $expectedContracts = $this->contractPaymentLock->lockForPaymentDocuments([$document]);
+            $document = PaymentDocument::query()->useWritePdo()
                 ->where('organization_id', $organizationId)
                 ->whereKey($documentId)
                 ->lockForUpdate()
                 ->firstOrFail();
-            $transaction = PaymentTransaction::query()
+            $this->contractPaymentLock->assertContractUnchanged($document, $expectedContracts);
+            $transaction = PaymentTransaction::query()->useWritePdo()
                 ->where('organization_id', $organizationId)
                 ->where('payment_document_id', $document->id)
                 ->whereKey($transactionId)
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            $authorize?->__invoke($transaction, $document);
 
             if (DB::getDriverName() === 'pgsql') {
                 DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [
@@ -207,6 +217,7 @@ class PaymentTransactionService
             }
 
             $alreadyRefunded = BigDecimal::of((string) PaymentTransaction::query()
+                ->where('organization_id', $organizationId)
                 ->where('reverses_transaction_id', $transaction->id)
                 ->where('status', PaymentTransactionStatus::COMPLETED->value)
                 ->sum('amount'))->abs();
