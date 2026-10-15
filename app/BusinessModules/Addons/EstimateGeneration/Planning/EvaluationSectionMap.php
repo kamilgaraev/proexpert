@@ -17,11 +17,12 @@ final class EvaluationSectionMap
         }
 
         return match ($package) {
-            'rough_finishing', 'finish_finishing', 'office_finishing' => 'finishing',
-            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates', 'openings' => 'structures',
-            'roof' => 'roofing', 'earthworks' => 'earthworks',
-            'electrical', 'power_supply', 'lighting', 'low_current', 'server_room' => 'electricity',
-            'plumbing', 'water_sewerage' => 'water_supply', 'heating' => 'heating', 'ventilation' => 'ventilation',
+            'rough_finishing', 'finish_finishing', 'office_finishing', 'custom-finishing' => 'finishing',
+            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates', 'openings', 'custom-walls', 'custom-openings', 'custom-foundation' => 'structures',
+            'roof', 'custom-roof' => 'roofing', 'earthworks', 'custom-earthworks' => 'earthworks',
+            'electrical', 'power_supply', 'lighting', 'low_current', 'server_room', 'custom-electrical' => 'electricity',
+            'plumbing', 'water_sewerage', 'custom-plumbing' => 'water_supply', 'custom-sewerage' => 'sewerage',
+            'heating', 'custom-heating' => 'heating', 'ventilation', 'custom-ventilation' => 'ventilation',
             'process_pipelines' => 'technological_pipelines', 'automation' => 'automation',
             'equipment', 'commissioning' => 'equipment', 'site_preparation' => 'earthworks', default => $package,
         };

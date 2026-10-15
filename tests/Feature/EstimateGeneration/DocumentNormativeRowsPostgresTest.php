@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
@@ -88,6 +89,50 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             'repeated normative reference' => [[10, 20], 'Кладка стен', 'м2', 'walls'],
             'single normative reference' => [[10], 'Кладка стен', 'м2', 'walls'],
             'window reference' => [[10], 'Монтаж окон', 'шт', 'openings'],
+        ];
+    }
+
+    #[DataProvider('profileDocumentRows')]
+    public function test_real_gateway_parser_and_compiler_route_rows_to_profile_packages(string $objectType, string $name, string $unit, string $package, string $selectedSection, ?string $quantityKey = null): void
+    {
+        [$context, $session] = $this->fixture();
+        $session->input_payload = [...$session->input_payload, 'object_type' => $objectType];
+        $session->save();
+        $document = $this->document($session, 'ФЕР 08-02-001-01 '.$name.' 10 '.$unit);
+        if ($objectType === 'custom') {
+            self::assertNotNull($quantityKey);
+            EstimateGenerationQuantityTakeoff::query()->create([
+                'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
+                'session_id' => $session->id, 'document_id' => $document->id, 'scope_key' => $quantityKey,
+                'name' => $name, 'unit' => $unit, 'quantity' => 10, 'confidence' => 0.8,
+                'source_element_ids' => [], 'work_intent' => ['quantity_key' => $quantityKey],
+                'source_refs' => [['document_id' => $document->id, 'source_version' => $document->source_version]],
+                'normalized_payload' => ['quantity_key' => $quantityKey],
+            ]);
+        }
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => [$selectedSection]];
+        $draft = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
+        $packages = array_column($draft['local_estimates'], null, 'key');
+        self::assertArrayHasKey($package, $packages);
+        $references = $this->references($draft);
+        self::assertCount(1, $references);
+        self::assertSame($references, $this->references(['local_estimates' => [$packages[$package]]]));
+        self::assertSame('10', $references[0]['quantity']);
+        self::assertSame((int) $document->id, $references[0]['source_refs'][0]['document_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public static function profileDocumentRows(): array
+    {
+        return [
+            'warehouse power supply' => ['warehouse', 'Прокладка электрического кабеля', 'м', 'power_supply', 'electricity'],
+            'industrial power supply' => ['industrial', 'Прокладка электрического кабеля', 'м', 'power_supply', 'electricity'],
+            'document electrical' => ['custom', 'Прокладка электрического кабеля', 'м', 'custom-electrical', 'electricity', 'electrical.power_lines'],
+            'document walls' => ['custom', 'Кладка наружных стен', 'м2', 'custom-walls', 'structures', 'walls.external_volume'],
+            'document openings' => ['custom', 'Монтаж окон', 'шт', 'custom-openings', 'structures', 'openings.windows'],
+            'document finishing' => ['custom', 'Чистовое покрытие пола', 'м2', 'custom-finishing', 'finishing', 'finish.floor'],
         ];
     }
 
