@@ -154,7 +154,7 @@ final readonly class AssistantProjectAttentionReader
             foreach ($group['items'] as $item) {
                 $owner = $item['owner_name'] === null ? trans_message('ai_assistant_attention.owner_'.$item['owner_state']) : self::text($item['owner_name']);
                 if ($item['owner_state'] === 'inactive') { $owner .= ' ('.trans_message('ai_assistant_attention.owner_inactive').')'; }
-                $line = '- '.self::text($item['title']).'. '.trans_message('ai_assistant_attention.owner', ['owner' => $owner]);
+                $line = '- '.self::text($item['title']).'; '.trans_message('ai_assistant_attention.owner', ['owner' => $owner]);
                 if ($item['deadline'] !== null) { $line .= ' '.trans_message('ai_assistant_attention.deadline', ['date' => substr((string) $item['deadline'], 0, 10)]); }
                 $lines[] = $line;
             }
