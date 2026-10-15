@@ -7,7 +7,14 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
@@ -32,11 +39,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
@@ -88,6 +97,7 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             self::assertNotEmpty($item['source_refs'][0]['source_version']);
         }
         if (in_array(null, $quantities, true)) {
+            $unknownReferenceKeys = array_column(array_filter($references, static fn (array $item): bool => $item['quantity'] === null), 'key');
             self::assertNotNull($planContext->baseInputVersion);
             $draft = [...$result->transientData, 'source_input_version' => $planContext->baseInputVersion];
             foreach ($draft['local_estimates'] as $localIndex => $local) {
@@ -105,10 +115,16 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
                 $packageIds = EstimateGenerationPackage::query()->where('session_id', $session->id)->pluck('id');
                 $storedItems = EstimateGenerationPackageItem::query()->whereIn('package_id', $packageIds)->get()->keyBy('logical_key');
                 foreach ($this->references($persistedDraft) as $reference) {
+                    if ($universal && in_array($reference['key'], $unknownReferenceKeys, true)) {
+                        self::assertSame('priced_work', $reference['item_type']);
+                        self::assertTrue($reference['metadata']['requires_quantity_confirmation']);
+                    }
                     $stored = $storedItems->get($reference['key']);
                     self::assertInstanceOf(EstimateGenerationPackageItem::class, $stored);
                     if ($reference['quantity'] === null) {
                         self::assertNull($stored->quantity);
+                        self::assertNull($stored->pricing_finalized_at);
+                        self::assertNull($stored->quantity_evidence_id);
                         $payload = (new EstimateGenerationPackagePresenter)->item($stored);
                         self::assertNull($payload['quantity']);
                         foreach (['unit_price', 'direct_cost', 'overhead_cost', 'profit_cost', 'total_cost'] as $field) {
@@ -118,6 +134,9 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
                         self::assertSame($reference['source_refs'], $payload['source_refs']);
                         self::assertSame($reference['pricing_blocker'], $payload['pricing_blocker']);
                     }
+                }
+                if ($universal) {
+                    $this->confirmUniversalDocumentQuantity($session, $persistedDraft, $unknownReferenceKeys);
                 }
             }
             $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_001600_allow_unknown_estimate_review_costs.php');
@@ -138,6 +157,8 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             'repeated normative reference' => [[10, 20], 'Кладка стен', 'м2', 'walls'],
             'single normative reference' => [[10], 'Кладка стен', 'м2', 'walls'],
             'missing and measured quantities' => [[null, 12], 'Кладка стен', 'м2', 'walls'],
+            'two missing quantities' => [[null, null], 'Кладка стен', 'м2', 'walls'],
+            'missing quantity and unit' => [[null], 'Кладка стен', '', 'walls'],
             'window reference' => [[10], 'Монтаж окон', 'шт', 'openings'],
         ];
     }
@@ -413,6 +434,72 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         $this->document($session, $text);
         $this->expectException(PipelineStageException::class);
         app(EloquentGenerationPipelineDataGateway::class)->source($context);
+    }
+
+    private function confirmUniversalDocumentQuantity(EstimateGenerationSession $session, array $draft, array $keys): void
+    {
+        foreach ($draft['local_estimates'] as $localIndex => $local) {
+            foreach ($local['sections'] as $sectionIndex => $section) {
+                $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
+                    $section['work_items'], static fn (array $item): bool => in_array($item['key'], $keys, true),
+                ));
+            }
+        }
+        $references = $this->references($draft);
+        self::assertCount(count($keys), $references);
+        self::assertCount(count($keys), array_unique(array_column(array_column($references, 'metadata'), 'quantity_key')));
+        foreach ($references as $item) {
+            self::assertSame('document_source:'.$item['metadata']['source_observation_id'], $item['metadata']['quantity_key']);
+            self::assertArrayNotHasKey('scope_entity_id', $item['metadata']);
+        }
+        config(['estimate-generation.universal_enabled' => true]);
+        $actor = User::query()->findOrFail($session->user_id);
+        $actor->update(['is_active' => true, 'current_organization_id' => $session->organization_id]);
+        $actor->organizations()->attach($session->organization_id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $session->input_payload = [...$session->input_payload, 'evaluation_mode' => 'universal', 'price_policy' => 'catalog',
+            'profile_id' => 'construction', 'selected_sections' => ['structures']];
+        $draft['source_input_version'] = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $draft['evaluation_result'] = (new UniversalEvaluationBuilder)->build($draft, $models->snapshot(...$scope));
+        foreach ($draft['evaluation_result']['scenarios'] as $scenario) {
+            self::assertSame($keys, array_column($scenario['positions'], 'key'));
+            foreach ($scenario['positions'] as $position) {
+                self::assertNull($position['quantity']);
+                self::assertNull($position['total_cost']);
+                self::assertNull($position['entity_id']);
+            }
+        }
+        $session->update(['status' => 'draft', 'input_payload' => $session->input_payload,
+            'draft_payload' => (new BuildMostEstimateDraft)->seal((new UniversalReviewSummaryProjector)->project($draft))]);
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->state_version,
+            'work_item_key' => $keys[0], 'value' => '12.5', 'unit' => $references[0]['unit'] ?? 'м2',
+            'reason' => 'Пользователь отдельно подтвердил объём строки документа после проверки источника'];
+        $saved = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $input);
+        self::assertSame('0', $saved['cost_units']);
+        self::assertEquals($saved, app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], $input));
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $saved['state_version'], (string) Str::uuid());
+        self::assertSame('0', $revision['cost_units']);
+        foreach ($revision['result']['scenarios'] as $scenario) {
+            self::assertSame($keys, array_column($scenario['positions'], 'key'));
+            foreach ($scenario['positions'] as $index => $position) {
+                self::assertSame($index === 0 ? '12.5' : null, $position['quantity']);
+                self::assertNull($position['total_cost']);
+                self::assertSame(CanonicalPipelineJson::encode($references[$index]['source_refs']), CanonicalPipelineJson::encode($position['source_refs']));
+            }
+        }
+        $freshReferences = $this->references($session->fresh()->draft_payload);
+        self::assertSame($saved['quantity_key'], $freshReferences[0]['metadata']['quantity_key']);
+        self::assertArrayNotHasKey('scope_entity_id', $freshReferences[0]['metadata']);
+        self::assertArrayNotHasKey('entity_id', $freshReferences[0]['metadata']);
+        $snapshot = $models->snapshot(...$scope);
+        $position = $revision['result']['scenarios'][0]['positions'][0];
+        $quantityEntity = array_column($snapshot->entities, null, 'id')[$position['entity_id']];
+        self::assertSame('quantity', $quantityEntity->type);
+        self::assertSame($keys[0], $quantityEntity->attributes['identity']['work_item_key']);
     }
 
     private function fixture(): array

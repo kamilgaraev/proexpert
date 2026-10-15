@@ -81,7 +81,7 @@ final class NormativeWorkItemPlannerService
             name: (string) $reference['name'],
             searchText: (string) ($reference['normative_search_text'] ?? $reference['name']),
             category: (string) $reference['work_category'],
-            unit: (string) $reference['unit'],
+            unit: isset($reference['unit']) ? (string) $reference['unit'] : null,
             quantity: $quantity === null ? null : (float) $quantity,
             quantityFormula: (string) $reference['quantity_formula'],
             quantityBasis: (string) $reference['quantity_basis'],
@@ -97,6 +97,9 @@ final class NormativeWorkItemPlannerService
             $item['pricing_status'] = 'not_applicable';
             $item['pricing_blocker'] = 'quantity_review_required';
             $item['validation_flags'] = array_values(array_unique([...$item['validation_flags'], 'quantity_review_required']));
+            if ($item['unit'] === null) {
+                $item['validation_flags'][] = 'unit_requires_confirmation';
+            }
             $item['metadata']['display_role'] = 'quantity_review';
             $item['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
         }
@@ -235,7 +238,7 @@ final class NormativeWorkItemPlannerService
         string $name,
         string $searchText,
         string $category,
-        string $unit,
+        ?string $unit,
         ?float $quantity,
         string $quantityFormula,
         string $quantityBasis,
@@ -248,7 +251,7 @@ final class NormativeWorkItemPlannerService
     ): array {
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? 'custom');
-        $searchKey = $this->normativeSearchKey($packageKey, $scopeType, $category, $searchText, $unit, $quantityFormula, $normativeRateCode);
+        $searchKey = $this->normativeSearchKey($packageKey, $scopeType, $category, $searchText, $unit ?? '', $quantityFormula, $normativeRateCode);
 
         return [
             'key' => $key,

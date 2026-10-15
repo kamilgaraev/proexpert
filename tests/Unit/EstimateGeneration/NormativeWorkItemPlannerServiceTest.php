@@ -73,11 +73,15 @@ final class NormativeWorkItemPlannerServiceTest extends TestCase
             self::assertCount(1, $references);
             $item = $references[0];
             self::assertNull($item['quantity']);
+            self::assertSame(str_ends_with($line, 'м2') ? 'м2' : null, $item['unit']);
             self::assertNull($item['total_cost']);
             self::assertSame('quantity_review', $item['item_type']);
             self::assertSame('not_applicable', $item['pricing_status']);
             self::assertSame('quantity_review_required', $item['pricing_blocker']);
             self::assertContains('quantity_review_required', $item['validation_flags']);
+            if ($item['unit'] === null) {
+                self::assertContains('unit_requires_confirmation', $item['validation_flags']);
+            }
             self::assertSame(82, $item['source_refs'][0]['document_id']);
             self::assertSame($line, $item['source_refs'][0]['excerpt']);
             $projection = (new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter))->projectionForDraft([

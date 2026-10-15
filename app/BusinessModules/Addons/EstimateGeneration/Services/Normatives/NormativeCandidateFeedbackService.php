@@ -677,14 +677,20 @@ final class NormativeCandidateFeedbackService
             ]);
         }
 
+        $confirmedUnit = $unit ?? $this->nullableString($workItem['unit'] ?? null);
+        if ($confirmedUnit === null) {
+            throw $this->validationException([
+                'payload.unit' => [$this->message('estimate_generation.quantity_confirmation_unit_required')],
+            ]);
+        }
         $flags = $this->uniqueStrings(array_filter(
             is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : [],
-            static fn (mixed $flag): bool => (string) $flag !== 'quantity_review_required'
+            static fn (mixed $flag): bool => ! in_array((string) $flag, ['quantity_review_required', 'unit_requires_confirmation'], true)
         ));
 
         $workItem['item_type'] = 'priced_work';
         $workItem['quantity'] = round($quantity, 4);
-        $workItem['unit'] = $unit ?? (string) ($workItem['unit'] ?? '');
+        $workItem['unit'] = $confirmedUnit;
         $workItem['quantity_basis'] = $quantityBasis ?? (string) ($workItem['quantity_basis'] ?? '');
         $workItem['normative_rate_code'] = null;
         $workItem['materials'] = [];

@@ -58,6 +58,7 @@ final class ProjectDocumentNormativeReferenceExtractor
                 }
                 $seen[$key] = true;
                 $reference['metadata']['source_observation_id'] = hash('sha256', $key);
+                $reference['metadata']['quantity_key'] = 'document_source:'.$reference['metadata']['source_observation_id'];
                 $reference['source_refs'][0]['line_number'] = $lineIndex + 1;
                 if (is_string($document['source_version'] ?? null)) {
                     $reference['source_refs'][0]['source_version'] = $document['source_version'];
@@ -141,7 +142,7 @@ final class ProjectDocumentNormativeReferenceExtractor
             'normative_search_text' => $name,
             'normative_rate_code' => $normativeRateCode,
             'work_category' => $category,
-            'unit' => (string) $row['unit'],
+            'unit' => $row['unit'],
             'quantity' => $row['quantity'],
             'quantity_formula' => 'project_document_norm:'.$code,
             'quantity_basis' => (string) $row['quantity_basis'],

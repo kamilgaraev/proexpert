@@ -469,9 +469,11 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
         }
         $payload = $this->itemPayload($package, $workItem, $index);
         if ((string) ($workItem['item_type'] ?? 'priced_work') === 'priced_work') {
+            $unknownCost = array_key_exists('total_cost', $workItem) && $workItem['total_cost'] === null;
             $payload = array_replace($payload, [
-                'price_snapshot' => null, 'price_source' => null, 'unit_price' => '0.000000',
-                'direct_cost' => '0.00', 'overhead_cost' => '0.00', 'profit_cost' => '0.00', 'total_cost' => '0.00',
+                'price_snapshot' => null, 'price_source' => null, 'unit_price' => $unknownCost ? null : '0.000000',
+                'direct_cost' => $unknownCost ? null : '0.00', 'overhead_cost' => $unknownCost ? null : '0.00',
+                'profit_cost' => $unknownCost ? null : '0.00', 'total_cost' => $unknownCost ? null : '0.00',
             ]);
         }
         if ($pricing !== null) {

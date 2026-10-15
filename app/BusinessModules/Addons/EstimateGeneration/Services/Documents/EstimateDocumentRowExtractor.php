@@ -107,7 +107,7 @@ final class EstimateDocumentRowExtractor
     }
 
     /**
-     * @return array{value: float|null, unit: string, basis: string, source: string}
+     * @return array{value: float|null, unit: string|null, basis: string, source: string}
      */
     private function quantityFromLine(string $line): array
     {
@@ -126,7 +126,7 @@ final class EstimateDocumentRowExtractor
 
         return [
             'value' => null,
-            'unit' => isset($unit[1]) ? $this->normalizeUnit($unit[1]) : 'компл',
+            'unit' => isset($unit[1]) ? $this->normalizeUnit($unit[1]) : null,
             'basis' => 'В проектной документации найдена ссылка на норму без надежного количества.',
             'source' => 'review',
         ];

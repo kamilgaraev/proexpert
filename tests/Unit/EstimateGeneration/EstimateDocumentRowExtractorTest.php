@@ -44,7 +44,8 @@ final class EstimateDocumentRowExtractorTest extends TestCase
     public function test_normative_code_never_supplies_a_missing_document_quantity(): void
     {
         foreach ([
-            'ФЕР08-02-001-01 Монтаж окон' => 'компл',
+            'ФЕР08-02-001-01 Монтаж окон' => null,
+            'ФЕР08-02-001-01 Монтаж оборудования компл' => 'компл',
             'ФЕР08-02-001-01 м2' => 'м2',
             'ФЕР 08-02-001-10 Прокладка труб м' => 'м',
             'ФСБЦ 01.1.01.01-0001 м3' => 'м3',
