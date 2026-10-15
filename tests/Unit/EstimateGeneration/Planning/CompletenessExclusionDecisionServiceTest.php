@@ -28,12 +28,18 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use InvalidArgumentException;
-use PHPUnit\Framework\TestCase;
+use Tests\Support\DatabaseLessTestCase;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
-final class CompletenessExclusionDecisionServiceTest extends TestCase
+final class CompletenessExclusionDecisionServiceTest extends DatabaseLessTestCase
 {
     private const SOURCE = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config(['estimate-generation.universal_enabled' => false]);
+    }
 
     public function test_canonical_exclusion_remains_current_after_decision_and_real_reanalysis(): void
     {

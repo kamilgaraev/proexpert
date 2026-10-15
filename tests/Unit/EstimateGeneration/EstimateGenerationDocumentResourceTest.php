@@ -11,6 +11,21 @@ use Tests\Support\DatabaseLessTestCase;
 
 class EstimateGenerationDocumentResourceTest extends DatabaseLessTestCase
 {
+    public function test_detail_original_version_uses_checksum_and_never_processing_control(): void
+    {
+        foreach ([str_repeat('a', 64), null] as $checksum) {
+            $document = new EstimateGenerationDocument;
+            $document->forceFill(['id' => 15, 'filename' => 'plan.pdf', 'mime_type' => 'application/pdf',
+                'status' => 'ready', 'processing_stage' => 'completed', 'progress_percent' => 100,
+                'page_count' => 1, 'processed_page_count' => 1, 'quality_flags' => [], 'facts_summary' => [], 'meta' => [],
+                'checksum_sha256' => $checksum, 'processing_control_source_version' => 'sha256:'.str_repeat('b', 64)]);
+            $payload = (new \App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource($document))
+                ->toArray(Request::create('/'));
+            self::assertSame($checksum === null ? null : 'sha256:'.$checksum, $payload['document_source_version']);
+            self::assertNotSame($payload['processing_control']['source_version'], $payload['document_source_version']);
+        }
+    }
+
     public function test_document_resource_exposes_understanding_summary_counts(): void
     {
         $document = new EstimateGenerationDocument;

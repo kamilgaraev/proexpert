@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\User;
@@ -91,7 +92,12 @@ final readonly class GetEvidenceSources
             $page = (int) $match[1];
         }
         $page = is_int($page) && $page > 0 && ($pageCount < 1 || $page <= $pageCount) ? $page : null;
-        $native = $locator['native_reference'] ?? $locator['handle'] ?? $locator['element_key'] ?? null;
+        $factSource = FactSourceLocator::fromLocator($locator);
+        $native = match ($factSource?->value['kind'] ?? null) {
+            'native' => $factSource->value['value'],
+            'polygon' => null,
+            default => $locator['native_reference'] ?? $locator['handle'] ?? $locator['element_key'] ?? null,
+        };
         $native = is_string($native) && trim($native) !== '' && strlen($native) <= 500 ? $native : null;
         $sheet = $locator['sheet'] ?? null;
         if ($sheet === null && $native !== null && preg_match('/\Axlsx:sheet:(.+)![A-Z]+[1-9]\d*\z/', $native, $match) === 1) {
@@ -101,8 +107,9 @@ final readonly class GetEvidenceSources
         if ($page === null && $native === null && $sheet === null) {
             return null;
         }
-        $region = $locator['region'] ?? null;
-        if ($region === null && is_array($locator['bbox'] ?? null) && array_is_list($locator['bbox']) && count($locator['bbox']) === 4
+        $sourceRegion = $factSource?->region();
+        $region = $factSource !== null ? $sourceRegion : ($locator['region'] ?? null);
+        if ($factSource === null && $region === null && is_array($locator['bbox'] ?? null) && array_is_list($locator['bbox']) && count($locator['bbox']) === 4
             && count(array_filter($locator['bbox'], static fn ($value): bool => (is_int($value) || is_float($value)) && is_finite((float) $value))) === 4) {
             $box = $locator['bbox'];
             $region = ['x' => $box[0], 'y' => $box[1], 'width' => $box[2] - $box[0], 'height' => $box[3] - $box[1]];
@@ -112,6 +119,7 @@ final readonly class GetEvidenceSources
             && $region['width'] > 0 && $region['height'] > 0 ? $region : null;
 
         return ['artifact_id' => $documentId, 'source_version' => $version, 'representation_kind' => $sheet !== null ? 'sheet' : ($native !== null ? 'native' : 'page'),
-            'page' => $page, 'sheet' => $sheet, 'region' => $region, 'native_reference' => $native];
+            'page' => $page, 'sheet' => $sheet, 'region' => $region, 'native_reference' => $native,
+            'coordinate_space' => $sourceRegion !== null ? 'normalized_source_v1' : null];
     }
 }

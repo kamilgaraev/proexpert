@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactConfidence;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use Closure;
 
@@ -259,6 +260,11 @@ final class CanonicalDocumentFactPresenter
         $entityKey = is_string($canonical['entity_key'] ?? null) ? $canonical['entity_key'] : '';
         $value = is_array($canonical['value'] ?? null) ? $canonical['value'] : [];
         $data = $value['data'] ?? null;
+        if (in_array($factType, ['room_floor', 'room_zone'], true)) {
+            $location = RoomLocationObservation::value($factType, $entityKey, $value, $canonical['unit'] ?? null);
+
+            return $location === null ? null : $this->translate('estimate_generation.canonical_result.'.$factType).' — '.$location;
+        }
         if ($factType === 'room_number') {
             $number = ($canonical['unit'] ?? null) === null ? RoomNumberObservation::label($entityKey, $value, null) : null;
 

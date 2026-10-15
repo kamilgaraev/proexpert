@@ -6,11 +6,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 
 final class PhysicalMeasurementPublicationPolicy
 {
     public static function requiresNumericProof(ObservationClaim $claim): bool
     {
+        if ((new RoomLocationObservation)->label($claim) !== null) {
+            return false;
+        }
         $numeric = $claim->value['data'] ?? null;
         if ((! is_string($numeric) && ! is_int($numeric) && ! is_float($numeric)) || ! is_numeric($numeric)) {
             return false;

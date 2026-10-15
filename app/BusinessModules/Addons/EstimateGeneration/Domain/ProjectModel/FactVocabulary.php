@@ -135,6 +135,8 @@ final class FactVocabulary
     private const ALIASES = [
         'room_name' => ['room_name', 'название помещения', 'наименование помещения'],
         'room_number' => ['room_number', 'номер помещения', 'номер комнаты'],
+        'room_floor' => ['room_floor', 'этаж помещения'],
+        'room_zone' => ['room_zone', 'зона помещения'],
         'area' => ['area', 'room_area', 'floor_area', 'opening_area', 'площадь', 'площадь пола', 'площадь помещения', 'площадь проёма', 'площадь проема'],
         'length' => ['length', 'room_length', 'wall_length', 'длина', 'длина стены'],
         'width' => ['width', 'room_width', 'opening_width', 'ширина', 'ширина проёма', 'ширина проема'],

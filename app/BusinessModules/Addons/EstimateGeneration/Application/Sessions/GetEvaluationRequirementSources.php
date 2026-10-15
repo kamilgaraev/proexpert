@@ -99,11 +99,14 @@ final readonly class GetEvaluationRequirementSources
                         || ($documentId !== null && $documentId !== $sourceId)) {
                         continue 2;
                     }
+                    $displayLocator = $proof->sourceDisplayLocator();
+                    if ($proof->page === null && $displayLocator['native_reference'] === null) {
+                        continue;
+                    }
                     $documentId = $sourceId;
                     $documentName = (string) $document->filename;
                     $locators[] = ['source_type' => 'document', 'source_version' => $fact->sourceVersion,
-                        'document_id' => $sourceId, 'page' => $proof->page, 'region' => $proof->region,
-                        'native_reference' => $proof->nativeReference];
+                        'document_id' => $sourceId, 'page' => $proof->page, ...$displayLocator];
                 }
                 if ($documentName === null) {
                     continue;

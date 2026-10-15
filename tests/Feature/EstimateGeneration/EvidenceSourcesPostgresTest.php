@@ -57,6 +57,7 @@ final class EvidenceSourcesPostgresTest extends EstimateGenerationCanonicalPostg
         self::assertSame('available', $result['sources'][0]['status']);
         self::assertSame((int) $document->id, $result['sources'][0]['target']['artifact_id']);
         self::assertSame(2, $result['sources'][0]['target']['page']);
+        self::assertNull($result['sources'][0]['target']['coordinate_space']); // Legacy bbox has no declared unit contract.
         self::assertEqualsWithDelta(['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4], $result['sources'][0]['target']['region'], 0.000001);
         self::assertSame('unavailable', $result['sources'][1]['status']);
         self::assertSame('0', $result['cost_units']);

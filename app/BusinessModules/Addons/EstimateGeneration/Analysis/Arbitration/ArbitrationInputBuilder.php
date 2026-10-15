@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use Closure;
@@ -174,11 +175,36 @@ final class ArbitrationInputBuilder
                     $claim['evidenceRef'] = str_replace('observer_', '', $role).':'.$claim['evidenceRef'];
                 }
                 try {
+                    $claimEvidence = $evidence;
+                    $reference = $claim['sourcePolygonOrNativeRef'] ?? null;
+                    if (is_array($reference)) {
+                        // The public Vision contract accepts numeric strings; domain provenance stores numbers.
+                        $reference = array_values(array_map(static fn (mixed $point): mixed => is_array($point)
+                            && array_keys($point) === [0, 1] && is_numeric($point[0]) && is_numeric($point[1])
+                                ? [is_string($point[0]) ? (float) $point[0] : $point[0], is_string($point[1]) ? (float) $point[1] : $point[1]] : $point, $reference));
+                        if (! FactSourceLocator::valid(['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => $reference])) {
+                            throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                        }
+                        $space = $claimEvidence[$claim['evidenceRef'] ?? '']['coordinate_space'] ?? null;
+                        if (! in_array($space, ['normalized_source_v1', 'normalized_derivative_v1'], true)) {
+                            throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                        }
+                        $claim['sourcePolygonOrNativeRef'] = $space === 'normalized_source_v1' ? $reference : array_map(
+                            static fn (array $point): array => $source->sourceTransform->toSource($point), $reference);
+                        if (! FactSourceLocator::valid(['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => $claim['sourcePolygonOrNativeRef']])) {
+                            throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                        }
+                        if (isset($claimEvidence[$claim['evidenceRef'] ?? ''])) {
+                            $claimEvidence[$claim['evidenceRef']]['coordinate_space'] = 'normalized_source_v1';
+                        }
+                    } elseif (is_string($reference) && ! in_array($reference, $source->nativeReferences, true)) {
+                        throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
+                    }
                     $claims[] = ObservationClaim::fromObserverPayload(
                         $role,
                         (int) $index,
                         $claim,
-                        $evidence,
+                        $claimEvidence,
                         $source->organizationId,
                         $source->projectId,
                         $source->sessionId,

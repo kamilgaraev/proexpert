@@ -199,7 +199,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && $request['response_format'] === ['type' => 'json_object']
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
-                && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
+                && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, room_schedule, explication, sketch, photo, unknown')
                 && str_contains($system, 'preliminary hint')
                 && str_contains($system, 'entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
@@ -260,6 +260,35 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         }
         self::assertCount(3, array_unique($systems));
         self::assertCount(3, array_unique($contracts));
+    }
+
+    #[DataProvider('roomRegisterSheetTypes')]
+    public function test_literal_observer_preserves_explicit_room_register_sheet_types(string $type): void
+    {
+        Http::fake(fn () => Http::response($this->response([
+            'schema_version' => 4, 'sheet_type' => $type,
+            'project_sheet_analysis' => ['contractVersion' => 'sheet-analysis:v3', 'role' => 'explication',
+                'facts' => [$this->semanticFact('room-1', 'room_number', ['type' => 'string', 'data' => '001']),
+                    $this->semanticFact('room-1', 'room_floor', ['type' => 'string', 'data' => '-1']),
+                    $this->semanticFact('room-1', 'room_zone', ['type' => 'string', 'data' => 'A'])]],
+            'analysis_routing' => ['page_kind' => 'explication', 'requested_depth' => 'structured_textual',
+                'information_density' => 'medium', 'readability' => 'high', 'confidence' => 0.96,
+                'ambiguous' => false, 'material_risk' => 'low', 'reasons' => ['Explicit room register.'], 'semantic_regions' => []],
+        ])));
+        $analysis = $this->provider()->analyze((new ObserverInputBuilder)->build(
+            $this->input(claim: 204), ObserverProfile::Literal, static function (): void {},
+        ));
+        self::assertSame($type, $analysis->sheetType);
+        self::assertSame(['room_number', 'room_floor', 'room_zone'], array_column($analysis->projectSheetAnalysis->facts, 'factType'));
+        self::assertSame('-1', $analysis->projectSheetAnalysis->facts[1]['value']['data']);
+        Http::assertSent(static fn ($request): bool => str_contains((string) $request['messages'][0]['content'], 'room_schedule, explication')
+            && str_contains((string) $request['messages'][0]['content'], 'generic schedules'));
+        Http::assertSentCount(1);
+    }
+
+    public static function roomRegisterSheetTypes(): array
+    {
+        return [['room_schedule'], ['explication']];
     }
 
     #[Test]

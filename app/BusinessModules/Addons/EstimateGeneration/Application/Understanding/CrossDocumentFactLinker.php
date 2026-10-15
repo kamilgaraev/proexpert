@@ -12,9 +12,9 @@ use InvalidArgumentException;
 
 final readonly class CrossDocumentFactLinker
 {
-    private const STRATEGY_VERSION = 3;
+    private const STRATEGY_VERSION = 5;
 
-    public const CONTRACT = 'cross-document-sources:v3';
+    public const CONTRACT = 'cross-document-sources:v5';
 
     public const MAX_EVIDENCE_PER_FACT = 20;
 
@@ -53,14 +53,38 @@ final readonly class CrossDocumentFactLinker
 
                 continue;
             }
-            $descriptor = $this->descriptor($entityById[$fact->entityId.'|'.$fact->sourceVersion]);
+            $entity = $entityById[$fact->entityId.'|'.$fact->sourceVersion];
+            $descriptor = $fact->type === 'room_number'
+                ? (new RoomNumberSourceDescriptor)->describe($fact, $entity, $evidenceById, $factList)
+                : $this->descriptor($entity);
             if ($descriptor === null) {
+                if ($fact->type === 'room_number') {
+                    $limitations[] = $this->conflictResolver->insufficientEvidence();
+                }
+
                 continue;
             }
             $groupKey = $descriptor['strategy'].'|'.$descriptor['match_key'].'|'.$fact->type;
             $groups[$groupKey][$descriptor['side']][] = $fact;
         }
         ksort($groups, SORT_STRING);
+
+        // A source classified on both sides cannot prove a cross-document room link.
+        foreach ($groups as $key => $group) {
+            if (! str_starts_with($key, 'room_number|literal:')) {
+                continue;
+            }
+            $artifacts = static fn (array $items): array => array_map(
+                static fn (Fact $fact): string => $evidenceById[$fact->evidenceIds[0]]->sourceArtifactId, $items);
+            $ambiguous = array_intersect($artifacts($group['left'] ?? []), $artifacts($group['right'] ?? []));
+            if ($ambiguous !== []) {
+                $limitations[] = $this->conflictResolver->insufficientEvidence();
+                foreach (['left', 'right'] as $side) {
+                    $groups[$key][$side] = array_values(array_filter($group[$side] ?? [],
+                        static fn (Fact $fact): bool => ! in_array($evidenceById[$fact->evidenceIds[0]]->sourceArtifactId, $ambiguous, true)));
+                }
+            }
+        }
 
         $candidateTotal = 0;
         $potentialLinks = 0;
@@ -425,6 +449,13 @@ final readonly class CrossDocumentFactLinker
     {
         $candidateIds = array_map(static fn (Fact $fact): string => $fact->id.':'.$fact->sourceVersion, $candidates);
         sort($candidateIds, SORT_STRING);
+        $proofs = [];
+        foreach ([$subject, ...$candidates] as $fact) {
+            $ids = $fact->evidenceIds;
+            sort($ids, SORT_STRING);
+            $proofs[$fact->id.'|'.$fact->sourceVersion] = $ids;
+        }
+        ksort($proofs, SORT_STRING);
 
         return hash('sha256', implode('|', [
             $subject->organizationId,
@@ -436,6 +467,7 @@ final readonly class CrossDocumentFactLinker
             $matchKey,
             $subject->id,
             ...$candidateIds,
+            hash('sha256', json_encode($proofs, JSON_THROW_ON_ERROR)),
             'cross-document-link:v'.self::STRATEGY_VERSION,
         ]));
     }

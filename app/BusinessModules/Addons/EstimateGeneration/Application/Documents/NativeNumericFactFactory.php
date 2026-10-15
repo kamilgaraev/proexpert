@@ -7,8 +7,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Brick\Math\BigDecimal;
 use Throwable;
@@ -34,6 +36,7 @@ final class NativeNumericFactFactory
                 'unit', 'ед', 'едизм', 'единицаизмерения' => 'unit',
                 'floor', 'этаж' => 'floor_id',
                 'zone', 'зона' => 'zone_id',
+                'documentrole', 'рольдокумента', 'рольлиста' => 'document_role',
                 default => null,
             };
             if ($field !== null) {
@@ -67,9 +70,23 @@ final class NativeNumericFactFactory
             $parameter = FactVocabulary::parameter(isset($columns['parameter']) ? (string) ($cellsByColumn[$columns['parameter']]['value'] ?? '') : 'quantity');
             $kind = FactVocabulary::entityType($entity);
             $location = [];
+            $locationRequiresConfirmation = false;
             foreach (['floor_id', 'zone_id'] as $field) {
                 if (isset($columns[$field])) {
-                    $location[$field] = mb_substr(trim((string) ($cellsByColumn[$columns[$field]]['value'] ?? '')), 0, 120);
+                    $locationCell = $cellsByColumn[$columns[$field]] ?? [];
+                    $locationValue = $locationCell['raw_value'] ?? $locationCell['value'] ?? null;
+                    $literal = (is_string($locationValue) || is_int($locationValue)
+                        || (is_float($locationValue) && is_finite($locationValue))) ? trim((string) $locationValue) : '';
+                    if ($field === 'zone_id' && ($locationCell['formula'] ?? null) === null
+                        && ($locationValue === null || (is_string($locationValue) && trim($locationValue) === ''))) {
+                        continue;
+                    }
+                    $literal = RoomLocationObservation::identifier($literal);
+                    if (($locationCell['formula'] ?? null) !== null || $literal === null) {
+                        $locationRequiresConfirmation = true;
+                    } else {
+                        $location[$field] = $literal;
+                    }
                 }
             }
             $key = ($kind ?? 'quantity').':native.'.$context->documentId.'.'.$context->index.'.'.substr(hash('sha256', json_encode([$entity !== '' ? $entity : 'row:'.$row, $location], JSON_THROW_ON_ERROR)), 0, 32);
@@ -93,13 +110,23 @@ final class NativeNumericFactFactory
             if ($kind !== null && in_array($kind, FactVocabulary::engineeringTypes(), true)) {
                 $location['source_entity_key'] = $entity;
             }
+            if (isset($columns['document_role'])) {
+                $roleCell = $cellsByColumn[$columns['document_role']] ?? [];
+                $role = ($roleCell['formula'] ?? null) === null
+                    ? SourceDocumentRole::normalize($roleCell['raw_value'] ?? $roleCell['value'] ?? null) : null;
+                if ($role !== null) {
+                    $location['document_role'] = $role;
+                }
+            }
             $records[] = ['entity' => $key, 'parameter' => $parameter, 'value' => $value,
                 'unit' => $document !== null || $roomLiteral !== null ? null : $rawUnit,
                 'literal_type' => $document !== null || $roomLiteral !== null ? 'string'
                     : (in_array($parameter, ['room_name', 'room_number'], true) ? 'invalid_room_identity'
                         : (FactVocabulary::documentDomain($parameter) !== null ? 'invalid_document_context' : 'number')),
                 'reference' => 'xlsx:sheet:'.(string) ($native['sheet'] ?? '').'!'.$cell['address'],
-                'confirmed' => $formula === null, 'reason' => $formula === null ? null : 'native_formula_requires_confirmation', 'location' => $location];
+                'confirmed' => $formula === null && ! $locationRequiresConfirmation,
+                'reason' => $formula !== null ? 'native_formula_requires_confirmation'
+                    : ($locationRequiresConfirmation ? 'native_location_requires_confirmation' : null), 'location' => $location];
         }
 
         return $this->publication($context, $records);

@@ -14,6 +14,59 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class NativeNumericFactFactoryTest extends TestCase
 {
+    public function test_formula_and_oversized_locations_do_not_become_literal_room_scope(): void
+    {
+        foreach ([['1', '=1'], [str_repeat('1', 121), null], [true, null], ['-', null], ['unknown', null], ['не указан', null], ['не указана', null], ['n/a', null]] as [$value, $formula]) {
+            $sheet = $this->roomSheet('001');
+            $sheet['cells'][1]['value'] = 'room_number';
+            $sheet['header_cells'][] = ['address' => 'F1', 'value' => 'zone'];
+            foreach ($sheet['cells'] as &$cell) {
+                if ($cell['address'] === 'E2') {
+                    $cell = [...$cell, 'value' => $value, 'raw_value' => $value, 'formula' => $formula];
+                }
+            }
+            unset($cell);
+            $sheet['cells'][] = ['address' => 'F2', 'value' => $value, 'raw_value' => $value, 'formula' => $formula];
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $sheet);
+            self::assertArrayNotHasKey('floor_id', $publication->claims[0]->locator);
+            self::assertArrayNotHasKey('zone_id', $publication->claims[0]->locator);
+            $decision = array_column($publication->decisions, null, 'claimId')[$publication->claims[0]->id];
+            self::assertSame('candidate', $decision->status);
+            self::assertSame('native_location_requires_confirmation', $decision->reasonCode);
+        }
+    }
+
+    public function test_empty_optional_zone_does_not_block_a_room_with_an_explicit_floor(): void
+    {
+        foreach ([null, '', '   '] as $value) {
+            $sheet = $this->roomSheet('001');
+            $sheet['cells'][1]['value'] = 'room_number';
+            $sheet['header_cells'][] = ['address' => 'F1', 'value' => 'zone'];
+            if ($value !== null) {
+                $sheet['cells'][] = ['address' => 'F2', 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $sheet);
+            self::assertSame('accepted', $publication->decisions[0]->status);
+            self::assertSame('1', $publication->claims[0]->locator['floor_id']);
+            self::assertArrayNotHasKey('zone_id', $publication->claims[0]->locator);
+        }
+    }
+
+    public function test_document_role_is_read_only_from_an_explicit_non_formula_column(): void
+    {
+        foreach ([['explication', null, 'explication'], ['floor_plan', null, 'plan'], ['schedule', null, null],
+            ['explication', '=ROLE()', null]] as [$role, $formula, $expected]) {
+            $sheet = $this->roomSheet('001');
+            $sheet['cells'][1]['value'] = 'room_number';
+            $sheet['header_cells'][] = ['address' => 'F1', 'value' => 'Роль листа'];
+            $sheet['cells'][] = ['address' => 'F2', 'value' => $role, 'raw_value' => $role, 'formula' => $formula];
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $sheet);
+            self::assertSame($expected, $publication->claims[0]->locator['document_role'] ?? null);
+            self::assertSame('001', $publication->claims[0]->value['data']);
+            self::assertSame('accepted', $publication->decisions[0]->status);
+        }
+    }
+
     public function test_native_room_number_preserves_leading_zeros_and_joins_only_its_parser_room_and_floor(): void
     {
         $native = $this->roomSheet('001');
