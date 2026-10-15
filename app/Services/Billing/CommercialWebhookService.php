@@ -99,6 +99,10 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     public function settleBankPayment(CommercialBankInvoice $sourceInvoice): void
     {
         DB::transaction(function () use ($sourceInvoice): void {
+            $sourceOrder = CommercialOrder::query()->whereKey($sourceInvoice->commercial_order_id)
+                ->where('organization_id', $sourceInvoice->organization_id)->firstOrFail();
+            $account = OrganizationCommercialAccount::query()->whereKey($sourceOrder->commercial_account_id)
+                ->where('organization_id', $sourceOrder->organization_id)->lockForUpdate()->firstOrFail();
             $invoice = CommercialBankInvoice::query()->whereKey($sourceInvoice->id)->lockForUpdate()->firstOrFail();
             if ($invoice->activated_at !== null) {
                 return;
@@ -114,8 +118,6 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 || $payment->amount_minor !== $order->amount_minor || $order->currency !== 'RUB') {
                 throw new RuntimeException('Bank payment does not match the funded commercial order.');
             }
-            $account = OrganizationCommercialAccount::query()->whereKey($order->commercial_account_id)
-                ->where('organization_id', $order->organization_id)->lockForUpdate()->firstOrFail();
             $packageRows = OrganizationPackageSubscription::query()->where('organization_id', $order->organization_id)
                 ->lockForUpdate()->get();
             if ($order->kind !== 'ai_credits') {

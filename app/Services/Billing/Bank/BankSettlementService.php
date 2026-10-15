@@ -7,6 +7,7 @@ namespace App\Services\Billing\Bank;
 use App\Models\CommercialBankAllocation;
 use App\Models\CommercialBankInvoice;
 use App\Models\CommercialBankOperation;
+use App\Models\OrganizationCommercialAccount;
 use App\Models\SystemAdmin;
 use App\Services\Billing\CommercialWebhookService;
 use Carbon\CarbonImmutable;
@@ -127,6 +128,9 @@ final class BankSettlementService
     private function allocate(int $operationId, int $invoiceId, ?int $operatorId = null, ?string $reason = null): void
     {
         DB::transaction(function () use ($operationId, $invoiceId, $operatorId, $reason): void {
+            $source = CommercialBankInvoice::query()->with('order')->findOrFail($invoiceId);
+            OrganizationCommercialAccount::query()->whereKey($source->order->commercial_account_id)
+                ->where('organization_id', $source->organization_id)->lockForUpdate()->firstOrFail();
             $operation = CommercialBankOperation::query()->whereKey($operationId)->lockForUpdate()->firstOrFail();
             $invoice = CommercialBankInvoice::query()->whereKey($invoiceId)->lockForUpdate()->firstOrFail();
             if ($operation->direction !== 'credit' || $operation->currency !== $invoice->currency

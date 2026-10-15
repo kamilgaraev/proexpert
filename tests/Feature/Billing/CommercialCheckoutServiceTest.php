@@ -901,6 +901,99 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
+    public function test_bank_funding_holds_the_account_lock_before_updating_the_invoice(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'before-lock-probe', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $invoice = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+        config(['database.connections.bank_lock_probe' => config('database.connections.'.$this->connectionName)]);
+        $probe = DB::connection('bank_lock_probe');
+        $probed = false;
+        DB::listen(function (\Illuminate\Database\Events\QueryExecuted $query) use ($probe, $account, &$probed): void {
+            if ($probed || ! str_starts_with($query->sql, 'update "commercial_bank_invoices"')) {
+                return;
+            }
+            $probed = true;
+            try {
+                $probe->select('select id from organization_commercial_accounts where id = ? for update nowait', [$account->id]);
+                $this->fail('Bank funding did not serialize with balance checkout');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                $this->assertSame('55P03', $exception->errorInfo[0]);
+            }
+        });
+        try {
+            $settlement->ingest($this->bankTransaction($invoice, 'funding-lock-probe', 1000));
+            $this->assertTrue($probed);
+            $this->assertSame(1000, $invoice->refresh()->paid_minor);
+        } finally {
+            DB::purge('bank_lock_probe');
+        }
+    }
+
+    public function test_bank_renewal_batches_rotate_past_prepared_accounts(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($initial, 'before-batches', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $periodEnd = CarbonImmutable::now()->addDays(2);
+        $account->forceFill(['current_period_start_at' => $periodEnd->subDays(30), 'current_period_end_at' => $periodEnd])->save();
+        $rows = $account->packageSubscriptions()->get();
+        for ($index = 0; $index < 2; $index++) {
+            $organization = $this->organization->replicate();
+            $organization->saveQuietly();
+            $replica = $account->replicate()->fill(['organization_id' => $organization->id]);
+            $replica->save();
+            foreach ($rows as $row) {
+                $row->replicate()->fill(['organization_id' => $organization->id, 'commercial_account_id' => $replica->id])->save();
+            }
+        }
+        $service = app(\App\Services\Billing\Bank\BankRenewalService::class);
+        for ($index = 0; $index < 3; $index++) {
+            $result = $service->process(CarbonImmutable::now(), 1);
+            $this->assertSame(1, $result['processed']);
+            $this->assertSame(0, $result['failed']);
+        }
+        $this->assertSame(3, CommercialOrder::query()->where('kind', 'renewal')->distinct()->count('commercial_account_id'));
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('fundedBankRenewalCases')]
+    public function test_bank_manual_invoice_preserves_grace_when_automatic_invoices_are_disabled(bool $partial): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'before-manual-grace', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $account->forceFill(['bank_auto_invoice' => false])->save();
+        $anchor = CarbonImmutable::instance($account->current_period_end_at);
+        $this->travelTo($anchor->subHour());
+        try {
+            $service = app(\App\Services\Billing\Bank\BankRenewalService::class);
+            $service->manual($this->organization, $this->user, '55555555-5555-4555-8555-555555555555');
+            $invoice = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+            if ($partial) {
+                $settlement->ingest($this->bankTransaction($invoice, 'manual-grace-partial', 1000));
+            }
+            $this->travelTo($anchor->addDay());
+            $service->process(CarbonImmutable::now());
+            $this->assertSame('grace', $account->refresh()->status->value);
+            $this->assertFalse($account->bank_auto_invoice);
+            $this->assertSame($anchor->addDays(7)->toJSON(), $account->grace_ends_at->toJSON());
+            $this->travelTo($anchor->addDays(7)->addMinute());
+            $service->process(CarbonImmutable::now());
+            $this->assertSame('suspended', $account->refresh()->status->value);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_bank_statement_polling_activates_without_webhooks_and_replays_safely(): void
     {
         $this->prepareBankBilling();

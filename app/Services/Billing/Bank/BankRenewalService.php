@@ -18,6 +18,7 @@ use App\Services\Billing\CommercialSelfServiceGuard;
 use App\Services\Credits\AssistantRevenueAllocation;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -33,10 +34,18 @@ final class BankRenewalService
         $counts = ['processed' => 0, 'created_cycles' => 0, 'created_attempts' => 0, 'canceled_changes' => 0, 'failed' => 0, 'suspended' => 0];
         $ready = app(TochkaClient::class)->ready();
         $now = CarbonImmutable::instance($at);
-        $accounts = OrganizationCommercialAccount::query()->whereIn('status', ['active', 'grace'])
+        $cursorKey = 'commercial:bank-renewal-account-cursor';
+        $cursor = max(0, (int) Cache::get($cursorKey, 0));
+        $query = OrganizationCommercialAccount::query()->whereIn('status', ['active', 'grace'])
             ->whereNotNull('current_period_end_at')->where('current_period_end_at', '<=', $now->addDays((int) config('bank_billing.renewal_notice_days', 7)))
-            ->orderBy('current_period_end_at')->limit(max(1, min(500, $limit)))->get();
+            ->orderBy('id')->limit(max(1, min(500, $limit)));
+        $accounts = (clone $query)->where('id', '>', $cursor)->get();
+        if ($accounts->isEmpty() && $cursor > 0) {
+            Cache::forever($cursorKey, 0);
+            $accounts = $query->get();
+        }
         foreach ($accounts as $account) {
+            Cache::forever($cursorKey, (int) $account->id);
             try {
                 if ($this->applyFreeChange($account, $now)) {
                     $counts['processed']++;
@@ -181,7 +190,13 @@ final class BankRenewalService
                 return;
             }
             $deadline = CarbonImmutable::instance($account->current_period_end_at)->addDays((int) config('bank_billing.grace_days', 7));
-            $grace = ($account->bank_auto_invoice || $account->status->value === 'grace') && $now->lessThan($deadline);
+            $hasInvoice = CommercialBankInvoice::query()->where('organization_id', $account->organization_id)
+                ->whereNull('activated_at')->whereIn('status', ['awaiting_payment', 'partially_paid', 'paid'])
+                ->where('expires_at', '>=', $now)->whereHas('order', fn ($query) => $query
+                ->where('commercial_account_id', $account->id)->where('kind', 'renewal')
+                ->where('period_start_at', '>=', $account->current_period_end_at)
+                ->where('period_end_at', '>', $account->current_period_end_at))->exists();
+            $grace = ($account->bank_auto_invoice || $hasInvoice || $account->status->value === 'grace') && $now->lessThan($deadline);
             $account->forceFill(['status' => $grace ? 'grace' : 'suspended', 'auto_renew_enabled' => false,
                 'saved_payment_method_active' => false, 'grace_started_at' => $account->current_period_end_at,
                 'grace_ends_at' => $deadline])->save();
