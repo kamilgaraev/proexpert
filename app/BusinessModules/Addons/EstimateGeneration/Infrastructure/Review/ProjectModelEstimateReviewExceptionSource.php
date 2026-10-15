@@ -18,6 +18,7 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
     public function __construct(
         private readonly ProjectModelRepository $models,
         private readonly EstimateGenerationReviewItemService $draftReview,
+        private readonly PersistedTechnologyReviewSelections $selections,
     ) {}
 
     public function current(EstimateGenerationSession $session, int $limit): array
@@ -29,7 +30,7 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
         $items = [];
         $truncated = false;
 
-        $snapshot = $this->models->snapshot($organizationId, $projectId, $sessionId, $limit);
+        $snapshot = $this->models->snapshot($organizationId, $projectId, $sessionId, 10001);
         $evidence = [];
         foreach ($snapshot->evidence as $locator) {
             $evidence[$locator->id] = $locator;
@@ -57,11 +58,25 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
         }
 
         $technology = $this->models->currentTechnologyRecommendations($organizationId, $projectId, $sessionId);
+        $selectionPage = $this->selections->current($session, $snapshot, $limit, $technology['recommendations'] ?? []);
+        $selections = array_column($selectionPage['items'], null, 'decision_key');
+        $truncated = $selectionPage['truncated'];
         foreach ($technology['recommendations'] ?? [] as $recommendation) {
             if (! $recommendation instanceof TechnologyRecommendation) {
                 continue;
             }
-            $items[] = $this->technology($recommendation, $technology, $evidence);
+            $selection = $selections[$recommendation->decisionKey] ?? ['selected_option' => null, 'selection_state' => 'not_selected'];
+            $items[] = $this->technology($recommendation, $evidence, $selection);
+            unset($selections[$recommendation->decisionKey]);
+            if (count($items) >= $limit) {
+                return ['items' => $items, 'truncated' => true];
+            }
+        }
+
+        foreach ($selections as $selection) {
+            $items[] = $selection['recommendation'] instanceof TechnologyRecommendation
+                ? $this->technology($selection['recommendation'], $evidence, $selection)
+                : $this->unverifiedTechnologySelection($selection, $evidence);
             if (count($items) >= $limit) {
                 return ['items' => $items, 'truncated' => true];
             }
@@ -142,11 +157,20 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
         ];
     }
 
-    /** @param array<string, mixed> $projection @param array<string, Evidence> $evidence */
-    private function technology(TechnologyRecommendation $recommendation, array $projection, array $evidence): array
+    /** @param array<string, Evidence> $evidence @param array<string, mixed> $selection */
+    private function technology(TechnologyRecommendation $recommendation, array $evidence, array $selection): array
     {
         $selected = $recommendation->recommendedOption();
-        $options = array_map(static fn ($option): array => $option->toArray(), $recommendation->options);
+        $selectedId = $selection['selected_option'];
+        foreach ($recommendation->options as $option) {
+            if ($option->system->id === $selectedId) {
+                $selected = $option;
+            }
+        }
+        $options = array_map(static fn ($option): array => ['id' => $option->system->id, ...$option->toArray()], $recommendation->options);
+        if ($selectedId !== null) {
+            usort($options, static fn (array $left, array $right): int => (int) ($right['id'] === $selectedId) <=> (int) ($left['id'] === $selectedId));
+        }
         $evidenceIds = [];
         foreach ($recommendation->options as $option) {
             foreach ($option->applicabilityEvidence as $id) {
@@ -171,14 +195,31 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
             'locators' => $this->locators($evidenceIds, $evidence),
             'recommendation' => [
                 'decision_key' => $recommendation->decisionKey, 'question' => $recommendation->question,
-                'rationale' => $selected?->explanation, 'applicability' => $selected === null ? null : [
+                'rationale' => $selection['reason'] ?? $selected?->explanation, 'applicability' => $selected === null ? null : [
                     'status' => $selected->applicabilityStatus, 'reasons' => $selected->applicabilityReasons,
                 ],
                 'evidence' => array_slice($evidenceIds, 0, 16), 'alternatives' => array_slice($options, 0, 8),
                 'work_packages' => array_slice($selected?->system->works ?? [], 0, 32),
-                'response_options' => array_slice($recommendation->responseOptions, 0, 16), 'selected_option' => null,
+                'response_options' => array_slice($recommendation->responseOptions, 0, 16), 'selected_option' => $selectedId,
+                'selection_state' => $selection['selection_state'],
             ],
         ];
+    }
+
+    private function unverifiedTechnologySelection(array $selection, array $evidence): array
+    {
+        $title = trans_message('estimate_evaluation.technology_selection_requires_review');
+
+        return ['id' => $selection['decision_key'], 'type' => 'technology_recommendation',
+            'type_label' => trans_message('estimate_generation.review_types.technology_recommendation'),
+            'title' => $title, 'blocking' => false, 'severity' => 'warning', 'confidence' => '0',
+            'cost_impact' => $this->costImpact(null), 'floor' => null, 'room' => null, 'section' => null,
+            'origin' => 'stage5', 'unresolved_type' => 'technology_choice', 'codes' => ['technology_selection_requires_review'],
+            'provenance' => ['source_version' => null, 'stage' => 'stage5', 'stable_key' => $selection['decision_key']],
+            'locators' => $this->locators($selection['evidence_ids'], $evidence),
+            'recommendation' => ['decision_key' => $selection['decision_key'], 'question' => $title, 'rationale' => null,
+                'applicability' => null, 'evidence' => array_slice($selection['evidence_ids'], 0, 16), 'alternatives' => [],
+                'work_packages' => [], 'response_options' => [], 'selected_option' => null, 'selection_state' => 'requires_review']];
     }
 
     /** @param array<string, mixed> $item */
