@@ -212,6 +212,23 @@ final class PipelineStageFunctionalTest extends TestCase
         self::assertNull($budgeted['stage6_candidate_rows'][1]['total_cost']);
     }
 
+    #[Test]
+    public function non_payable_rows_keep_zero_cost_when_reviewed_or_over_budget(): void
+    {
+        foreach (['operation', 'resource_note', 'review_note'] as $type) {
+            $plan = $this->unknownDocumentPlan();
+            $item = [...$plan['local_estimates'][0]['sections'][0]['work_items'][0], 'item_type' => $type, 'quantity' => null, 'total_cost' => 0];
+            $plan['local_estimates'][0]['sections'][0]['work_items'] = [$item, [...$item, 'key' => $item['key'].'-overflow']];
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->build([
+                ...$plan, 'stage6_limits' => ['max_rows' => 1],
+            ]);
+            self::assertCount(2, $draft['stage6_candidate_rows']);
+            self::assertSame('0', $draft['stage6_candidate_rows'][0]['total_cost'], $type);
+            self::assertSame('draft_row_budget_exceeded', $draft['stage6_candidate_rows'][1]['pricing_blocker']);
+            self::assertSame('0', $draft['stage6_candidate_rows'][1]['total_cost'], $type);
+        }
+    }
+
     private function unknownDocumentPlan(): array
     {
         $section = ['key' => 'walls-section', 'construction_part' => 'walls'];

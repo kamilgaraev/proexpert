@@ -166,7 +166,7 @@ final class BuildMostEstimateDraft
         if ($reviewItems !== []) {
             $workItem['pricing_status'] = 'not_calculated';
             $workItem['pricing_blocker'] = $reviewItems[0]['code'];
-            $workItem['total_cost'] = ($workItem['quantity'] ?? null) === null ? null : '0';
+            $workItem['total_cost'] = $this->unresolvedTotalCost($workItem);
         } else {
             $workItem['pricing_status'] = 'calculated';
             $workItem['pricing_blocker'] = null;
@@ -182,9 +182,15 @@ final class BuildMostEstimateDraft
         unset($workItem['prompt'], $workItem['raw_document'], $workItem['document_content']);
         $workItem['pricing_status'] = 'not_calculated';
         $workItem['pricing_blocker'] = 'draft_row_budget_exceeded';
-        $workItem['total_cost'] = ($workItem['quantity'] ?? null) === null ? null : '0';
+        $workItem['total_cost'] = $this->unresolvedTotalCost($workItem);
 
         return $workItem;
+    }
+
+    private function unresolvedTotalCost(array $workItem): ?string
+    {
+        return in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['priced_work', 'quantity_review'], true)
+            && ($workItem['quantity'] ?? null) === null ? null : '0';
     }
 
     /** @param mixed $quantity @param array<string, mixed> $workItem @param array<string, mixed> $draft */
