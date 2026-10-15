@@ -8,20 +8,51 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Models\Module;
 use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class PaymentCalendarControllerWorkflowTest extends TestCase
 {
+    use EnablesImmutableAuditWriter;
     use RefreshDatabase;
+
+    public function test_calendar_serializes_empty_undated_currency_totals_as_object(): void
+    {
+        $this->travelTo('2026-05-01 09:00:00');
+
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context, [
+            'document_number' => 'CAL-DATED-ONLY',
+            'direction' => InvoiceDirection::OUTGOING,
+            'due_date' => '2026-05-20',
+            'status' => PaymentDocumentStatus::SUBMITTED,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/documents/calendar?start=2026-05-01&end=2026-05-31');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.items.0.document_id', $document->id);
+        $response->assertJsonPath('data.undated.items_count', 0);
+        $response->assertJsonPath('data.undated.items', []);
+        $content = $response->getContent();
+        $this->assertIsString($content);
+        $payload = json_decode($content, false, 512, JSON_THROW_ON_ERROR);
+        $this->assertInstanceOf(\stdClass::class, $payload->data->undated->totals_by_currency);
+        $this->assertSame([], get_object_vars($payload->data->undated->totals_by_currency));
+    }
 
     public function test_calendar_lists_current_organization_events_and_reschedules_document(): void
     {
         $this->travelTo('2026-05-01 09:00:00');
+        $this->enableImmutableAuditWriter();
 
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
@@ -78,7 +109,7 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
                 'reason' => 'Перенос по согласованному графику оплат',
             ]);
 
-        $rescheduleResponse->assertOk();
+        $this->assertSame(200, $rescheduleResponse->getStatusCode(), (string) $rescheduleResponse->getContent());
         $rescheduleResponse->assertJsonPath('data.id', $dueDocument->id);
         $rescheduleResponse->assertJsonPath('data.scheduled_at', '2026-05-20');
 
@@ -96,6 +127,7 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
 
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
 
         $this->createDocument($context, [
             'document_number' => 'CAL-GAP-IN-001',
@@ -118,15 +150,15 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
                 . '&currency=RUB&opening_balance=1000&cash_gap_scenario=base'
             );
 
-        $response->assertOk();
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
         $response->assertJsonPath('data.cash_gap.available', true);
         $response->assertJsonPath('data.cash_gap.currency', 'RUB');
         $response->assertJsonPath('data.cash_gap.opening_balance', 1000);
         $response->assertJsonPath('data.cash_gap.scenario', 'base');
         $response->assertJsonPath('data.cash_gap.forecast.cash_gap.has_gap', true);
         $response->assertJsonPath('data.cash_gap.forecast.cash_gap.first_gap_date', '2026-05-12');
-        $response->assertJsonPath('data.cash_gap.forecast.cash_gap.max_gap_amount', 150);
-        $response->assertJsonPath('data.cash_gap.forecast.closing_balance', -150);
+        $response->assertJsonPath('data.cash_gap.forecast.cash_gap.max_gap_amount', '150.00');
+        $response->assertJsonPath('data.cash_gap.forecast.closing_balance', '-150.00');
     }
 
     public function test_calendar_rejects_too_large_period(): void
@@ -180,6 +212,7 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/payments/documents/{$foreignDocument->id}/reschedule", [
                 'date' => '2026-05-20',
+                'reason' => 'Проверка недоступности платежа другой организации',
             ]);
 
         $response->assertNotFound();
@@ -210,6 +243,29 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
         }
 
         return PaymentDocument::query()->create($attributes);
+    }
+
+    private function activateBudgetingModule(int $organizationId): void
+    {
+        $manifest = json_decode((string) file_get_contents(config_path('ModuleList/features/budgeting.json')), true, 512, JSON_THROW_ON_ERROR);
+        $module = Module::query()->firstOrCreate(['slug' => $manifest['slug']], [
+            'name' => $manifest['name'],
+            'version' => $manifest['version'],
+            'type' => $manifest['type'],
+            'billing_model' => $manifest['billing_model'],
+            'category' => $manifest['category'],
+            'permissions' => $manifest['permissions'],
+            'is_active' => true,
+            'is_system_module' => true,
+        ]);
+        $module->forceFill(['is_system_module' => true])->save();
+        OrganizationModuleActivation::query()->create([
+            'organization_id' => $organizationId,
+            'module_id' => $module->id,
+            'status' => 'active',
+            'activated_at' => now(),
+        ]);
+        app(ModulePermissionChecker::class)->clearModuleCache($organizationId, 'budgeting');
     }
 
     private function activatePaymentsModule(int $organizationId): void

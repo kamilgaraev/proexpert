@@ -69,6 +69,9 @@ final class PaymentCalendarContractService
     private function presentUndated(array $items, PaymentCalendarSourceFilters $filters): array
     {
         $summary = $this->sourceService->summarizeUndated($items, $filters);
+        if ($summary['totals_by_currency'] === []) {
+            $summary['totals_by_currency'] = new \stdClass();
+        }
         $summary['items'] = array_map(function (UndatedPaymentCalendarItem $item): array {
             $documentId = $item->drillDown['payment_document_id'] ?? null;
             return array_merge($item->toArray(), [
