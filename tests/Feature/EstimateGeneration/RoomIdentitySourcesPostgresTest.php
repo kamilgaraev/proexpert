@@ -41,6 +41,67 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_changed_vision_polygons_and_observation_order_do_not_duplicate_current_rooms(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $writer = app(ProjectModelEvidenceWriter::class);
+        $batches = [];
+        foreach (['floor_plan', 'explication'] as $index => $role) {
+            $version = 'sha256:'.str_repeat((string) ($index + 1), 64);
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+                'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'room-reprocessed.pdf', 'mime_type' => 'application/pdf',
+                'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat((string) ($index + 1), 64)]);
+            $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id, $version, $role);
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            $writer->writeArbitration($claims, $decisions, (int) $document->id, 1);
+            $batches[] = [$document, $claims];
+        }
+        $before = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $firstRun = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($before['source_entities'], $before['snapshot']->facts, $before['snapshot']->evidence);
+        self::assertCount(1, $firstRun->links);
+        $originalNumbers = array_values(array_filter($before['snapshot']->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+        $originalIds = array_column($originalNumbers, 'entityId');
+        sort($originalIds);
+        $polygon = [[0.11, 0.1], [0.41, 0.1], [0.41, 0.2], [0.11, 0.2]];
+        foreach ($batches as [$document, $claims]) {
+            foreach ([false, true] as $reorder) {
+                $changed = [];
+                foreach ($reorder ? array_reverse($claims) : $claims as $index => $claim) {
+                    $locator = $claim->locator;
+                    $locator['fact_source']['value'] = $polygon;
+                    $changed[] = new ObservationClaim($reorder ? 'literal:'.($index + 11) : $claim->id,
+                        $claim->observerRole, $claim->entityKey, $claim->factType, $claim->value, $claim->unit,
+                        $claim->evidenceRef, $claim->explicitEvidence,
+                        ...[...$scope, $claim->sourceVersion, $locator, $claim->confidence]);
+                }
+                $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                    [$claim->id], [$claim->evidenceRef], 'explicit', null), $changed);
+                $writer->writeArbitration($changed, $decisions, (int) $document->id, 1);
+                $writer->writeArbitration($changed, $decisions, (int) $document->id, 1);
+            }
+        }
+        $after = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $numbers = array_values(array_filter($after['snapshot']->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+        self::assertCount(2, $numbers);
+        $currentIds = array_column($numbers, 'entityId');
+        sort($currentIds);
+        self::assertSame($originalIds, $currentIds);
+        self::assertSame($before['token'], $after['token']);
+        foreach ($before['snapshot']->facts as $fact) {
+            self::assertContainsEquals($fact, $after['snapshot']->facts);
+        }
+        $secondRun = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($after['source_entities'], $after['snapshot']->facts, $after['snapshot']->evidence);
+        self::assertSame($firstRun->links, $secondRun->links);
+        $storedSources = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->get()
+            ->map(static fn ($row): mixed => json_decode($row->locator, true, flags: JSON_THROW_ON_ERROR)['fact_source']['value'] ?? null)->all();
+        self::assertContainsEquals($polygon, $storedSources);
+        self::assertContainsEquals([[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]], $storedSources);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_vision_floor_sources_survive_postgres_hydration_replay_and_forward_migration(): void
     {
         [$actor, $session] = $this->fixture();

@@ -169,8 +169,13 @@ final readonly class ProjectModelEvidenceWriter
                     $entityIdentity .= '|room-location:'.$claim->factType.'|document:'.$documentId.'|page:'.$pageNumber;
                 }
                 if ($locationClaims !== []) {
-                    $entityIdentity .= '|room-location-proof:v2:'.hash('sha256', json_encode(array_map(
-                        static fn (ObservationClaim $source): array => [$source->id, $source->factType, $source->value, $source->locator['fact_source'] ?? null], $locationClaims), JSON_THROW_ON_ERROR));
+                    // Observation order and source polygons identify evidence, not another room.
+                    $locationLiterals = [];
+                    foreach ($locationClaims as $locationClaim) {
+                        $locationLiterals[$locationClaim->factType] = (new RoomLocationObservation)->label($locationClaim);
+                    }
+                    ksort($locationLiterals, SORT_STRING);
+                    $entityIdentity .= '|room-location:v3:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($locationLiterals));
                 }
                 $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
                 if ($nativeNamedRoom) {
@@ -282,6 +287,12 @@ final readonly class ProjectModelEvidenceWriter
                 }
                 if ($locationClaims !== []) {
                     $factIdentity .= '|'.$entityIdentity;
+                }
+                if ($roomNumberFact || $roomLocationFact) {
+                    // Keep each exact proof in immutable history without duplicating current entities.
+                    $literalProofIds = $evidenceIds;
+                    sort($literalProofIds, SORT_STRING);
+                    $factIdentity .= '|literal-source:v1:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($literalProofIds));
                 }
                 $factId = 'fact:'.hash('sha256', implode('|', [
                     ($projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity)
