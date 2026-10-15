@@ -35,6 +35,7 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\WorkflowStateTestDocumentAuthorizer;
 
 final class LegalWorkflowPostgresConcurrencyTest extends TestCase
 {
@@ -606,7 +607,7 @@ SQL);
     private function workflowService(ConnectionInterface $connection): LegalDocumentWorkflowService
     {
         return new LegalDocumentWorkflowService(
-            $this->templateService($connection), new LegalWorkflowAuthorization,
+            $this->templateService($connection), new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver(roleLookup: static fn (): bool => true),
             new LegalWorkflowAssignmentValidator(static fn (): bool => true), new PostgresWorkflowAudit,
             new ImmutableAuditIntegrityService, $connection,
@@ -675,6 +676,8 @@ SQL);
                 ?Organization $organization = null,
                 bool $respectRequestedVisibility = false,
                 bool $privacyMode = false,
+                ?\Closure $onObjectPrepared = null,
+                ?string $preparedFilename = null,
             ): string|false {
                 return 'org-1/legal/race.pdf';
             }
@@ -734,6 +737,8 @@ SQL);
                 ?Organization $organization = null,
                 bool $respectRequestedVisibility = false,
                 bool $privacyMode = false,
+                ?\Closure $onObjectPrepared = null,
+                ?string $preparedFilename = null,
             ): string|false {
                 if ($this->worker === 0) {
                     $this->connection->table('race_barriers')->insert([

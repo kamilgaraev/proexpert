@@ -917,6 +917,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
                 : (bool) $authorizationResolver($user, $permission, $context),
         );
         $authorization->method('getUserRoleSlugs')->willReturn($roles);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $projectAccess = $this->createMock(UserProjectAccessService::class);
         $projectAccess->method('queryAccessibleProjects')->willReturn(Project::query());
 

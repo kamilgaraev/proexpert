@@ -16,6 +16,7 @@ use App\Services\LegalArchive\Workflow\LegalWorkflowAuthorization;
 use App\Services\LegalArchive\Workflow\LegalWorkflowTemplateAvailability;
 use Illuminate\Support\Collection;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\WorkflowStateTestDocumentAuthorizer;
 
 // Regression: ISSUE-030 — отправка документа без маршрута выглядела доступной.
 // Found by /qa on 2026-08-29
@@ -28,7 +29,7 @@ final class LegalWorkflowRouteAvailabilityRegressionTest extends TestCase
         $actor = new RouteAvailabilityTestUser;
         $actor->forceFill(['id' => 8, 'current_organization_id' => 15]);
         $resolver = new LegalWorkflowActionResolver(
-            new LegalWorkflowAuthorization,
+            new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver,
             readiness: new LegalDocumentWorkflowReadinessGuard(
                 new LegalDocumentProfileRegistry(
@@ -51,7 +52,7 @@ final class LegalWorkflowRouteAvailabilityRegressionTest extends TestCase
         $actor = new RouteAvailabilityTestUser;
         $actor->forceFill(['id' => 8, 'current_organization_id' => 15]);
         $resolver = new LegalWorkflowActionResolver(
-            new LegalWorkflowAuthorization,
+            new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver,
             readiness: new LegalDocumentWorkflowReadinessGuard(
                 new LegalDocumentProfileRegistry(

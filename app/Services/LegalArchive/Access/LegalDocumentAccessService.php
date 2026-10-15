@@ -24,9 +24,10 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Throwable;
 
-final class LegalDocumentAccessService implements LegalDocumentAuthorizer
+final class LegalDocumentAccessService implements LegalDocumentAuthorizer, LegalDocumentInternalAccessFilter
 {
     public function __construct(
         private readonly AuthorizationService $authorization,
@@ -89,7 +90,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             || ! $this->belongsToOrganization($user, $organizationId)
             || ($document->primary_project_id !== null
                 && ! $this->canAccessProject($user, (int) $document->primary_project_id, $organizationId))
-            || ! $this->authorization->can($user, $permission, [
+            || ! $this->authorization->forCurrentChecks(true)->can($user, $permission, [
                 'organization_id' => $organizationId,
                 ...($document->primary_project_id === null ? [] : ['project_id' => (int) $document->primary_project_id]),
             ])
@@ -106,13 +107,52 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         LegalDocumentAbility $ability,
     ): bool {
         $ownerOrganizationId = (int) $document->organization_id;
+        $grants = $this->matchingGrantsQuery($user, $ownerOrganizationId, [(int) $document->getKey()])
+            ->get(['abilities']);
+
+        return $grants->contains(static fn (LegalDocumentAccessGrant $grant): bool => $grant->allows($ability));
+    }
+
+    public function filterInternalDocuments(User $user, Collection $documents): Collection
+    {
+        $organizationId = (int) $user->current_organization_id;
+        $documents = $documents->filter(static fn (LegalArchiveDocument $document): bool => (int) $document->getKey() > 0 && (int) $document->organization_id === $organizationId);
+        if ($organizationId < 1 || $documents->isEmpty() || ! $this->belongsToOrganization($user, $organizationId)) {
+            return collect();
+        }
+
+        $projectIds = $documents->pluck('primary_project_id')->filter()->unique()->values();
+        if ($projectIds->isNotEmpty()) {
+            if ($this->projectAccessResolver !== null) {
+                $accessibleProjectIds = $projectIds->filter(fn ($projectId): bool => $this->canAccessProject($user, (int) $projectId, $organizationId));
+            } else {
+                $service = $this->projectAccess ?? Container::getInstance()->make(UserProjectAccessService::class);
+                $accessibleProjectIds = $service->queryAccessibleProjects($user, $organizationId)
+                    ->whereKey($projectIds->all())->pluck('projects.id');
+            }
+            $documents = $documents->filter(static fn (LegalArchiveDocument $document): bool => $document->primary_project_id === null || $accessibleProjectIds->contains((int) $document->primary_project_id));
+        }
+        $restrictedIds = $documents->filter(fn (LegalArchiveDocument $document): bool => $this->requiresExplicitInternalGrant($document))->pluck('id')->all();
+        if ($restrictedIds === []) {
+            return $documents;
+        }
+        $grantedIds = $this->matchingGrantsQuery($user, $organizationId, $restrictedIds)
+            ->whereJsonContains('abilities', LegalDocumentAbility::VIEW->value)
+            ->pluck('document_id');
+
+        return $documents->filter(fn (LegalArchiveDocument $document): bool => ! $this->requiresExplicitInternalGrant($document) || $grantedIds->contains((int) $document->id));
+    }
+
+    private function matchingGrantsQuery(User $user, int $ownerOrganizationId, array $documentIds): Builder
+    {
         $actorOrganizationId = (int) $user->current_organization_id;
         $roles = $actorOrganizationId === $ownerOrganizationId
-            ? $this->authorization->getUserRoleSlugs($user, ['organization_id' => $ownerOrganizationId])
+            ? $this->authorization->forCurrentChecks(true)->getUserRoleSlugs($user, ['organization_id' => $ownerOrganizationId])
             : [];
-        $grants = LegalDocumentAccessGrant::query()
+
+        return LegalDocumentAccessGrant::query()
             ->where('organization_id', $ownerOrganizationId)
-            ->where('document_id', (int) $document->getKey())
+            ->whereIn('document_id', $documentIds)
             ->where('subject_organization_id', $actorOrganizationId)
             ->whereNull('revoked_at')
             ->where(static function ($query): void {
@@ -143,10 +183,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                                 ->where('subject_user_id', (int) $user->id);
                         });
                 });
-            })
-            ->get(['abilities']);
-
-        return $grants->contains(static fn (LegalDocumentAccessGrant $grant): bool => $grant->allows($ability));
+            });
     }
 
     public function scopeAccessibleQuery(Builder $query, User $user, int $organizationId, string $ability = 'view'): Builder
@@ -171,7 +208,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 ->select('projects.id')
             : null;
         $roleSlugs = $canAccessInternal
-            ? $this->authorization->getUserRoleSlugs($user, ['organization_id' => $organizationId])
+            ? $this->authorization->forCurrentChecks(true)->getUserRoleSlugs($user, ['organization_id' => $organizationId])
             : [];
 
         return $query->where(function (Builder $accessible) use (

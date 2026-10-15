@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\LegalArchive;
 
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
@@ -34,12 +35,20 @@ use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\WorkflowStateTestDocumentAuthorizer;
 
 final class LegalDocumentWorkflowTest extends TestCase
 {
     private Capsule $database;
+
+    private Container $previousContainer;
+
+    private ?Container $previousFacade;
+
+    private AssistantIndexingState $indexingState;
 
     private RecordingWorkflowAudit $audit;
 
@@ -50,10 +59,20 @@ final class LegalDocumentWorkflowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->database = new Capsule;
+        $this->previousContainer = Container::getInstance();
+        $this->previousFacade = Facade::getFacadeApplication();
+        $container = new Container;
+        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+        $this->database = new Capsule($container);
         $this->database->addConnection(\Tests\Support\IsolatedPostgresTestDatabase::configuration());
         $this->database->setAsGlobal();
-        $this->database->setEventDispatcher(new Dispatcher(new Container));
+        $container->instance('db', $this->database->getDatabaseManager());
+        $this->indexingState = new AssistantIndexingState;
+        $this->indexingState->beginMigration();
+        $container->instance(AssistantIndexingState::class, $this->indexingState);
+        $this->database->setEventDispatcher(new Dispatcher($container));
         $this->database->bootEloquent();
         Model::clearBootedModels();
         $this->createSchema();
@@ -61,7 +80,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $this->audit = new RecordingWorkflowAudit;
         $integrity = new ImmutableAuditIntegrityService;
         $this->templates = new LegalWorkflowTemplateService($integrity, $this->database->getConnection());
-        $authorization = new LegalWorkflowAuthorization;
+        $authorization = new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer);
         $actors = new LegalWorkflowActorResolver(
             roleLookup: static fn (User $actor, string $role): bool => in_array($role, $actor->workflowRoles, true),
         );
@@ -74,6 +93,17 @@ final class LegalDocumentWorkflowTest extends TestCase
             $integrity,
             $this->database->getConnection(),
         );
+    }
+
+    protected function tearDown(): void
+    {
+        $this->indexingState->endMigration();
+        $this->database->getConnection()->disconnect();
+        Model::clearBootedModels();
+        Container::setInstance($this->previousContainer);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($this->previousFacade);
+        parent::tearDown();
     }
 
     public function test_submit_locks_exact_ready_version_uses_snapshot_and_activates_first_parallel_group(): void
@@ -373,7 +403,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         [$document, $version] = $this->dossier();
         $actor = $this->actor(8, ['legal_reviewer']);
         $this->createTemplate($actor);
-        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization, new LegalWorkflowActorResolver(
+        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer), new LegalWorkflowActorResolver(
             roleLookup: static fn (User $user, string $role): bool => in_array($role, $user->workflowRoles, true),
         ));
 
@@ -403,7 +433,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         [$document] = $this->dossier();
         $actor = $this->actor(8, ['legal_reviewer']);
         $resolver = new LegalWorkflowActionResolver(
-            new LegalWorkflowAuthorization,
+            new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver(
                 roleLookup: static fn (User $user, string $role): bool => in_array($role, $user->workflowRoles, true),
             ),
@@ -458,7 +488,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $this->database->getConnection()->disableQueryLog();
 
         self::assertCount(101, $summaries);
-        self::assertSame(7, $actor->permissionChecks);
+        self::assertSame(0, $actor->permissionChecks);
         self::assertSame(0, $queryCount);
         self::assertSame('not_available', $summaries[1]->status);
         self::assertSame(['workflow_permission_denied'], $summaries[1]->problemFlags);
@@ -523,7 +553,7 @@ final class LegalDocumentWorkflowTest extends TestCase
 
         $this->database->getConnection()->flushQueryLog();
         $this->database->getConnection()->enableQueryLog();
-        $permissions = (new LegalWorkflowAuthorization)->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
+        $permissions = (new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer))->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
         $assignments = (new LegalWorkflowActorResolver)->forMany($actor, $documents);
         $queryCount = count($this->database->getConnection()->getQueryLog());
         $this->database->getConnection()->disableQueryLog();
@@ -604,7 +634,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $connection = $this->database->getConnection();
         $connection->flushQueryLog();
         $connection->enableQueryLog();
-        $permissions = (new LegalWorkflowAuthorization)->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
+        $permissions = (new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer))->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
         $queries = $connection->getQueryLog();
         $connection->disableQueryLog();
 
@@ -629,7 +659,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $this->database->getConnection()->table('legal_workflow_steps')->where('id', $steps[0]->id)->update([
             'due_at' => now()->subMinute(),
         ]);
-        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization, new LegalWorkflowActorResolver(
+        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer), new LegalWorkflowActorResolver(
             roleLookup: static fn (User $user, string $role): bool => in_array($role, $user->workflowRoles, true),
         ));
 
@@ -884,7 +914,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         } catch (DomainException $exception) {
             self::assertSame('legal_workflow_new_version_required', $exception->getMessage());
         }
-        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization, new LegalWorkflowActorResolver(
+        $resolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer), new LegalWorkflowActorResolver(
             roleLookup: static fn (): bool => true,
         ));
         self::assertFalse($resolver->for($actor, $document->refresh())->action('submit')->enabled);
@@ -910,7 +940,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $this->createTemplate($actor);
         $service = new LegalDocumentWorkflowService(
             $this->templates,
-            new LegalWorkflowAuthorization,
+            new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver(
                 roleLookup: static fn (): bool => true,
             ),
@@ -1122,7 +1152,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertFalse($resolver->canAct($actor, $step, $document));
         self::assertSame(0, AuthorizationContext::query()->count());
 
-        $actionResolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization, $resolver);
+        $actionResolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer), $resolver);
         $actionResolver->for($actor, $document->refresh());
         self::assertSame(0, AuthorizationContext::query()->count());
 
@@ -1162,7 +1192,7 @@ final class LegalDocumentWorkflowTest extends TestCase
             'updated_at' => now(),
         ]);
         $resolver = new LegalWorkflowActionResolver(
-            new LegalWorkflowAuthorization,
+            new LegalWorkflowAuthorization(new WorkflowStateTestDocumentAuthorizer),
             new LegalWorkflowActorResolver(
                 roleLookup: static fn (User $candidate, string $role): bool => in_array($role, $candidate->workflowRoles, true),
             ),
