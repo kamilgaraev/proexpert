@@ -48,11 +48,9 @@ final class BankInvoiceService
 
     public function create(CommercialOrder $order, CommercialPayment $payment, ?User $actor = null): CommercialBankInvoice
     {
-        $this->assertReady();
         $organization = $actor === null
             ? Organization::query()->findOrFail($order->organization_id)
             : $this->access->organization($actor, (int) $order->organization_id, true);
-        $this->assertBuyer($organization);
         if ($payment->provider !== 'tochka' || (int) $payment->commercial_order_id !== (int) $order->id
             || $order->currency !== 'RUB' || $payment->amount_minor !== $order->amount_minor) {
             throw new InvalidArgumentException('bank_invoice_order_mismatch');
@@ -64,6 +62,8 @@ final class BankInvoiceService
             if ($existing !== null) {
                 return $existing;
             }
+            $this->assertReady();
+            $this->assertBuyer($organization);
             $number = 'MOST-'.str_pad((string) $order->id, 10, '0', STR_PAD_LEFT);
             $names = collect(app(PackageCatalogService::class)->allPackages())
                 ->whereIn('slug', $order->selected_package_slugs ?? [])->pluck('name')->filter()->all();
@@ -123,6 +123,15 @@ final class BankInvoiceService
                     $invoice->payment->forceFill(['provider_status' => 'canceled', 'terminal_at' => now()])->save();
                 }, 3);
             });
+    }
+
+    public function assertNoFundedRenewal(\App\Models\OrganizationCommercialAccount $account): void
+    {
+        if (CommercialBankInvoice::query()->where('organization_id', $account->organization_id)
+            ->whereHas('order', fn ($query) => $query->where('commercial_account_id', $account->id)->where('kind', 'renewal'))
+            ->whereNull('activated_at')->where('paid_minor', '>', 0)->exists()) {
+            throw new \App\Exceptions\Billing\CommercialCheckoutConflictException('A renewal invoice is already funded.');
+        }
     }
 
     public function invalidateRenewalInvoices(\App\Models\OrganizationCommercialAccount $account, User $actor): void

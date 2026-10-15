@@ -118,6 +118,26 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ->where('organization_id', $order->organization_id)->lockForUpdate()->firstOrFail();
             $packageRows = OrganizationPackageSubscription::query()->where('organization_id', $order->organization_id)
                 ->lockForUpdate()->get();
+            if ($order->kind !== 'ai_credits') {
+                $current = app(\App\Services\Billing\Bank\BankRenewalService::class)->currentPackageSlugs($account);
+                $expected = $order->current_package_slugs;
+                sort($expected);
+                if ($current !== $expected) {
+                    $invoice->forceFill(['status' => 'review_required'])->save();
+                    $invoice->operations()->where('direction', 'credit')->update(['review_reason' => 'commercial_composition_changed']);
+
+                    return;
+                }
+                if ($order->kind !== 'renewal') {
+                    try {
+                        app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertNoFundedRenewal($account);
+                    } catch (\App\Exceptions\Billing\CommercialCheckoutConflictException) {
+                        $invoice->operations()->where('direction', 'credit')->update(['review_reason' => 'funded_renewal_conflict']);
+
+                        return;
+                    }
+                }
+            }
             if ($order->kind !== 'ai_credits'
                 && ($order->current_package_slugs === [] || ($order->kind === 'renewal' && $order->period_end_at->isPast()))) {
                 $start = \Carbon\CarbonImmutable::instance(now());
@@ -133,6 +153,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ->where('commercial_order_id', $order->id)->where('status', 'scheduled')
                 ->update(['status' => 'applied', 'applied_at' => now()]);
             $invoice->forceFill(['activated_at' => now()])->save();
+            $invoice->operations()->where('review_reason', 'funded_renewal_conflict')->update(['review_reason' => null]);
             $snapshot = $invoice->snapshot;
             $snapshot['period_start_at'] = $order->period_start_at?->toIso8601String();
             $snapshot['period_end_at'] = $order->period_end_at?->toIso8601String();

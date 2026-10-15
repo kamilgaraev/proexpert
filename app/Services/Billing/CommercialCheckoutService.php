@@ -51,9 +51,6 @@ class CommercialCheckoutService
 
             $this->selfServiceGuard->assertCanMutate($account);
             $useBalance = (bool) $input['use_balance'];
-            if (! $useBalance) {
-                $this->providerPolicy->assertCanCharge((int) $organization->getKey());
-            }
 
             if ($account?->status->value === 'grace') {
                 throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
@@ -71,13 +68,21 @@ class CommercialCheckoutService
                 return [$existing, $existing->latestPayment, false];
             }
 
+            if ($account !== null && $this->providerPolicy->checkoutProvider() === 'tochka') {
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertNoFundedRenewal($account);
+            }
+            if ($this->providerPolicy->checkoutProvider() === 'tochka' && CommercialOrder::query()
+                ->where('organization_id', $organization->id)->where('status', 'pending_payment')
+                ->where('kind', '!=', 'ai_credits')->exists()) {
+                throw new CommercialCheckoutConflictException('A commercial order is awaiting payment.');
+            }
+            if (! $useBalance) {
+                $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            }
+
             if (! $useBalance && $this->providerPolicy->checkoutProvider() === 'tochka') {
                 app(\App\Services\Billing\Bank\BankBillingAccess::class)->organization($user, (int) $organization->id, true);
                 app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertBuyer($organization);
-                if (CommercialOrder::query()->where('organization_id', $organization->id)
-                    ->where('status', 'pending_payment')->where('kind', '!=', 'ai_credits')->exists()) {
-                    throw new CommercialCheckoutConflictException('A commercial order is awaiting payment.');
-                }
             }
 
             if ((bool) $input['full_suite'] && $input['target_package_slugs'] !== []) {

@@ -768,6 +768,117 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame('awaiting_payment', $reissued->status);
     }
 
+    public function test_bank_existing_invoice_replays_when_the_bank_or_buyer_configuration_changes(): void
+    {
+        $this->prepareBankBilling();
+        $first = $this->checkout(['machinery']);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(false);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $this->organization->forceFill(['tax_number' => null])->save();
+        $again = $this->checkout(['machinery']);
+        $this->assertSame($first['bank_invoice']['id'], $again['bank_invoice']['id']);
+        $this->assertSame('7707083893', $again['bank_invoice']['buyer']['inn']);
+        $this->assertFalse($again['_created']);
+        $this->assertDatabaseCount('commercial_bank_invoices', 1);
+    }
+
+    public function test_bank_manual_renewal_preserves_the_existing_response_contract_and_created_flag(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'manual-contract-source', $invoice->amount_minor));
+        $service = app(\App\Services\Billing\CommercialManualPaymentService::class);
+        $first = $service->create($this->organization, $this->user, '44444444-4444-4444-8444-444444444444');
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(false);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $again = $service->create($this->organization, $this->user, '44444444-4444-4444-8444-444444444444');
+        $this->assertTrue($first['_created']);
+        $this->assertFalse($again['_created']);
+        $this->assertSame($first['order_id'], $again['order_id']);
+        foreach (['selected_package_slugs', 'target_package_slugs', 'current_package_slugs', 'paid_package_slugs',
+            'selected_resource_addons', 'paid_composition_items', 'period_start_at', 'period_end_at', 'grace_deadline_at'] as $field) {
+            $this->assertArrayHasKey($field, $first);
+        }
+        $this->assertNotEmpty($first['paid_composition_items']);
+        $this->assertNotNull($first['grace_deadline_at']);
+        $this->assertNull($first['confirmation_url']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('fundedBankRenewalCases')]
+    public function test_bank_funded_future_renewal_blocks_external_and_balance_contour_changes(bool $full): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'before-prepaid-change', $invoice->amount_minor));
+        $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create(OrganizationCommercialAccount::query()->sole());
+        $settlement->ingest($this->bankTransaction($renewal, 'prepaid-change', $full ? $renewal->amount_minor : 1000));
+        foreach ([false, true] as $balance) {
+            try {
+                $this->checkoutPayload(['target_package_slugs' => ['machinery', 'finance-contracts'],
+                    'current_package_slugs' => ['working-entry', 'machinery'], 'use_balance' => $balance,
+                    'client_idempotency_key' => $balance ? '77777777-7777-4777-8777-777777777777' : '66666666-6666-4666-8666-666666666666']);
+                $this->fail('Funded renewal allowed a composition change');
+            } catch (CommercialCheckoutConflictException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        $this->assertDatabaseCount('commercial_orders', 2);
+        $this->assertNull($renewal->refresh()->activated_at);
+    }
+
+    public static function fundedBankRenewalCases(): array
+    {
+        return ['partial' => [false], 'full' => [true]];
+    }
+
+    public function test_bank_paid_purchase_waits_for_the_conflicting_future_prepayment_to_be_resolved(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'initial-conflict', $initial->amount_minor));
+        $this->checkoutPayload(['target_package_slugs' => ['machinery', 'finance-contracts'],
+            'current_package_slugs' => ['working-entry', 'machinery'], 'client_idempotency_key' => '33333333-3333-4333-8333-333333333333']);
+        $purchase = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+        $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create(OrganizationCommercialAccount::query()->sole());
+        $settlement->ingest($this->bankTransaction($renewal, 'funded-conflict', $renewal->amount_minor));
+        $settlement->ingest($this->bankTransaction($purchase, 'purchase-conflict', $purchase->amount_minor));
+        $this->assertNull($purchase->refresh()->activated_at);
+        $this->assertSame('paid', $purchase->status);
+        $this->assertSame('funded_renewal_conflict', $purchase->operations()->sole()->review_reason);
+        $this->assertFalse($purchase->documents()->where('kind', 'closing')->exists());
+        $this->assertDatabaseMissing('organization_package_subscriptions', ['package_slug' => 'finance-contracts', 'status' => 'active']);
+    }
+
+    public function test_bank_changed_composition_is_quarantined_before_renewal_activation(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'initial-snapshot', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+        $settlement->ingest($this->bankTransaction($renewal, 'future-snapshot', $renewal->amount_minor));
+        OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->update(['package_slug' => 'finance-contracts']);
+        $this->travelTo($renewal->order->period_start_at);
+        try {
+            $settlement->activate((int) $renewal->id);
+            $this->assertSame('review_required', $renewal->refresh()->status);
+            $this->assertNull($renewal->activated_at);
+            $this->assertSame('commercial_composition_changed', $renewal->operations()->sole()->review_reason);
+            $this->assertFalse($renewal->documents()->where('kind', 'closing')->exists());
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_bank_grace_renewal_preserves_the_original_billing_anchor(): void
     {
         $this->prepareBankBilling();

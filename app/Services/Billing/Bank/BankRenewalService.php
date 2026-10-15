@@ -74,17 +74,13 @@ final class BankRenewalService
         }
         $invoice = $this->create($account, $key);
 
-        return ['order_id' => $invoice->order->public_id, 'status' => $invoice->order->status->value,
-            'amount' => BankMoney::decimal($invoice->amount_minor), 'amount_minor' => $invoice->amount_minor,
-            'currency' => 'RUB', 'confirmation_url' => null, 'payment_status' => $invoice->payment->provider_status,
-            'payment_source' => 'tochka', 'test_mode' => false,
-            'bank_invoice' => $this->invoices->payload($invoice), '_created' => false];
+        return app(\App\Services\Billing\CommercialManualPaymentService::class)
+            ->paymentResponse($invoice->order, $invoice->payment, $invoice->wasRecentlyCreated, $invoice->expires_at)
+            + ['payment_source' => 'tochka', 'bank_invoice' => $this->invoices->payload($invoice)];
     }
 
     public function create(OrganizationCommercialAccount $source, ?string $manualKey = null): CommercialBankInvoice
     {
-        $this->invoices->assertReady();
-
         return DB::transaction(function () use ($source, $manualKey): CommercialBankInvoice {
             $account = OrganizationCommercialAccount::query()->whereKey($source->id)->lockForUpdate()->firstOrFail();
             app(CommercialSelfServiceGuard::class)->assertCanMutate($account);
@@ -103,11 +99,8 @@ final class BankRenewalService
             if ($existing !== null) {
                 return CommercialBankInvoice::query()->where('commercial_order_id', $existing->id)->firstOrFail();
             }
-            $current = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)
-                ->where('organization_id', $account->organization_id)->whereIn('access_source', ['paid_package', 'full_suite'])
-                ->whereIn('status', ['active', 'grace', 'expired', 'scheduled_for_removal'])
-                ->where('current_period_end_at', '>=', $account->current_period_end_at)
-                ->orderBy('package_slug')->pluck('package_slug')->unique()->values()->all();
+            $this->invoices->assertReady();
+            $current = $this->currentPackageSlugs($account);
             $slugs = $change?->target_package_slugs ?? $current;
             if ($slugs === [] || $account->responsible_user_id === null) {
                 throw new InvalidArgumentException(trans_message('bank_billing.renewal_unavailable'));
@@ -139,6 +132,19 @@ final class BankRenewalService
 
             return $this->invoices->create($order, $payment);
         }, 3);
+    }
+
+    public function currentPackageSlugs(OrganizationCommercialAccount $account): array
+    {
+        if ($account->current_period_end_at === null) {
+            return [];
+        }
+
+        return OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)
+            ->where('organization_id', $account->organization_id)->whereIn('access_source', ['paid_package', 'full_suite'])
+            ->whereIn('status', ['active', 'grace', 'expired', 'scheduled_for_removal'])
+            ->where('current_period_end_at', '>=', $account->current_period_end_at)
+            ->orderBy('package_slug')->pluck('package_slug')->unique()->values()->all();
     }
 
     private function applyFreeChange(OrganizationCommercialAccount $source, CarbonImmutable $now): bool

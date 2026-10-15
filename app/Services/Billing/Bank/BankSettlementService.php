@@ -181,11 +181,6 @@ final class BankSettlementService
             return;
         }
         app(CommercialWebhookService::class)->settleBankPayment($invoice);
-        $invoice->refresh()->load('order');
-        $snapshot = $invoice->snapshot;
-        $snapshot['period_start_at'] = $invoice->order->period_start_at?->toIso8601String();
-        $snapshot['period_end_at'] = $invoice->order->period_end_at?->toIso8601String();
-        app(BankDocumentService::class)->prepare($invoice, 'closing', snapshot: $snapshot);
     }
 
     private function digits(mixed $value, int $maximum): ?string
