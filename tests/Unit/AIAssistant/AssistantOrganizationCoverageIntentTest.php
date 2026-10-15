@@ -45,6 +45,7 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
             ['Какова максимальная сумма одной выдачи подотчётных средств?', 'get_organization_advance_settings'],
             ['Какова максимальная сумма для одной выдачи подотчётных средств?', 'get_organization_advance_settings'],
             ['Сколько дней даётся для сдачи авансового отчёта?', 'get_organization_advance_settings'],
+            ['Какое количество дней составляет срок сдачи авансового отчёта?', 'get_organization_advance_settings'],
             ['Расскажи о настройках уведомлений администратора о просроченном авансовом отчёте', 'get_organization_advance_settings'],
             ['Посмотри по всей нашей организации: сколько у нас активных проектов и сколько архивных? Назови активные проекты и их плановые даты окончания.', 'get_organization_project_roster'],
             ['Какие поставщики есть в справочнике нашей организации? Сколько всего и как быстро найти нужного по названию?', 'get_organization_supplier_roster'],
