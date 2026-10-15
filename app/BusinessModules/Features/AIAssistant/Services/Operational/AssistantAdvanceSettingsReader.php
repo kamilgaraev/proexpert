@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\DTOs\AdvanceAccountSettingDTO;
 use App\Models\AdvanceAccountSetting;
 use App\Models\User;
@@ -23,6 +24,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
     {
         $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
         return self::hasIntent($query)
+            && ! AssistantMutationIntent::containsRequest($query)
             && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|сотрудник|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
 
