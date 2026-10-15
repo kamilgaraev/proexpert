@@ -92,7 +92,9 @@ final class BankRenewalService
                 ->where('organization_id', $account->organization_id)->where('status', 'scheduled')
                 ->where('apply_at', '<=', $account->current_period_end_at)->lockForUpdate()->first();
             $open = CommercialBankInvoice::query()->whereHas('order', fn ($query) => $query->where('commercial_account_id', $account->id)
-                ->where('kind', '!=', 'ai_credits'))->whereIn('status', ['awaiting_payment', 'partially_paid'])->latest('id')->first();
+                ->where('kind', 'renewal')->where('period_start_at', '>=', $account->current_period_end_at)
+                ->where('period_end_at', '>', $account->current_period_end_at))
+                ->whereNull('activated_at')->whereIn('status', ['awaiting_payment', 'partially_paid', 'paid'])->latest('id')->first();
             if ($open !== null) {
                 return $open;
             }
@@ -112,7 +114,8 @@ final class BankRenewalService
             }
             $full = ($change?->offer_type ?? $account->offer_type)->value === 'full_suite';
             $now = CarbonImmutable::instance(now());
-            $start = CarbonImmutable::instance($account->current_period_end_at)->max($now);
+            $anchor = CarbonImmutable::instance($account->current_period_end_at);
+            $start = $now->lessThan($anchor->addDays((int) config('bank_billing.grace_days', 7))) ? $anchor : $anchor->max($now);
             $end = $start->addDays(30);
             $quote = $this->calculator->preview($slugs, $current, $full, $now, $account->current_period_start_at, $account->current_period_end_at);
             $order = new CommercialOrder([
@@ -129,7 +132,7 @@ final class BankRenewalService
                 ->snapshot($quote, $now, $account->current_period_start_at, $account->current_period_end_at,
                     $quote['monthly_total_minor'], true, $start, $end)]);
             $order->save();
-            $payment = $order->payments()->create(['provider' => 'tochka', 'role' => 'renewal', 'attempt_number' => 1,
+            $payment = $order->payments()->create(['provider' => 'tochka', 'role' => 'initial', 'attempt_number' => 1,
                 'provider_status' => 'created', 'amount_minor' => $order->amount_minor, 'currency' => 'RUB',
                 'provider_idempotency_key' => (string) Str::uuid(), 'payment_method_saved' => false]);
             $change?->forceFill(['commercial_order_id' => $order->id])->save();
@@ -187,7 +190,7 @@ final class BankRenewalService
 
     private function remind(CommercialBankInvoice $invoice, OrganizationCommercialAccount $account, CarbonImmutable $now): void
     {
-        if ($invoice->paid_at !== null) {
+        if ($invoice->paid_at !== null || ! in_array($invoice->status, ['awaiting_payment', 'partially_paid'], true)) {
             return;
         }
         $day = $now->setTimezone('Europe/Moscow')->toDateString();

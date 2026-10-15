@@ -723,11 +723,16 @@ class CommercialCheckoutServiceTest extends TestCase
         try {
             $account->forceFill(['auto_renew_enabled' => true, 'saved_payment_method_active' => true, 'saved_payment_method_id' => 'old-card'])->save();
             $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+            $this->assertSame('renewal', $renewal->order->kind);
+            $this->assertSame('initial', $renewal->payment->role);
+            $this->assertNull($renewal->payment->commercial_renewal_cycle_id);
+            $this->assertSame(app(\App\Services\Legal\LegalDocumentService::class)->hash('offer'), $renewal->snapshot['legal_sha256']);
             $again = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
             $this->assertSame($renewal->id, $again->id);
             $settlement->ingest($this->bankTransaction($renewal, 'renewal', $renewal->amount_minor));
             $this->assertSame('paid', $renewal->refresh()->status);
             $this->assertNull($renewal->activated_at);
+            $this->assertSame($renewal->id, app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account, '99999999-9999-4999-8999-999999999999')->id);
             $this->travelTo($renewal->order->period_start_at);
             $settlement->activate((int) $renewal->id);
             $account->refresh();
@@ -736,6 +741,50 @@ class CommercialCheckoutServiceTest extends TestCase
             $this->assertFalse($account->auto_renew_enabled);
             $this->assertFalse($account->saved_payment_method_active);
             $this->assertCount(0, $this->gateway->payments);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_bank_renewal_ignores_unpaid_purchase_and_can_reissue_a_canceled_invoice(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $first = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($first, 'purchase-before-renewal', $first->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->checkoutPayload(['target_package_slugs' => ['machinery', 'finance-contracts'], 'current_package_slugs' => ['working-entry', 'machinery'],
+            'client_idempotency_key' => '33333333-3333-4333-8333-333333333333']);
+        $purchase = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+        $renewals = app(\App\Services\Billing\Bank\BankRenewalService::class);
+        $renewal = $renewals->create($account, '44444444-4444-4444-8444-444444444444');
+        $this->assertNotSame($purchase->id, $renewal->id);
+        $this->assertSame('renewal', $renewal->order->kind);
+        $this->assertEqualsCanonicalizing(['working-entry', 'machinery'], $renewal->order->selected_package_slugs);
+        app(\App\Services\Billing\Bank\BankBillingService::class)->cancel($this->user, (int) $this->organization->id, $renewal->public_id);
+        $reissued = $renewals->create($account, '55555555-5555-4555-8555-555555555555');
+        $this->assertNotSame($renewal->id, $reissued->id);
+        $this->assertSame('canceled', $renewal->refresh()->status);
+        $this->assertSame('awaiting_payment', $reissued->status);
+    }
+
+    public function test_bank_grace_renewal_preserves_the_original_billing_anchor(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $first = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($first, 'before-grace', $first->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $anchor = CarbonImmutable::instance($account->current_period_end_at);
+        $this->travelTo($anchor->addDays(2));
+        try {
+            $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+            $this->assertSame($anchor->toJSON(), $renewal->order->period_start_at->toJSON());
+            $this->assertSame($anchor->addDays(30)->toJSON(), $renewal->order->period_end_at->toJSON());
+            $settlement->ingest($this->bankTransaction($renewal, 'in-grace', $renewal->amount_minor));
+            $this->assertNotNull($renewal->refresh()->activated_at);
+            $this->assertSame($anchor->addDays(30)->toJSON(), $account->refresh()->current_period_end_at->toJSON());
         } finally {
             $this->travelBack();
         }
@@ -1022,6 +1071,7 @@ class CommercialCheckoutServiceTest extends TestCase
         Schema::table('commercial_orders', fn (Blueprint $table) => $table->string('server_idempotency_key', 100)->nullable());
         Schema::table('commercial_orders', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
         Schema::table('organization_commercial_accounts', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
+        DB::statement("ALTER TABLE commercial_payments ADD CONSTRAINT commercial_payment_role_cycle_check CHECK ((role = 'initial' AND commercial_renewal_cycle_id IS NULL) OR (role = 'renewal' AND commercial_renewal_cycle_id IS NOT NULL))");
         (require database_path('migrations/2026_07_14_000004_create_commercial_contour_changes_table.php'))->up();
         Schema::create('commercial_billing_notification_keys', function (Blueprint $table): void {
             $table->string('idempotency_key')->primary();

@@ -88,7 +88,7 @@ final class BankInvoiceService
                 'period_end_at' => $order->period_end_at?->toIso8601String(),
                 'purpose' => trans_message('bank_billing.payment_purpose', ['number' => $number]),
                 'legal_version' => config('legal.version'),
-                'legal_sha256' => hash('sha256', json_encode(app(LegalDocumentService::class)->snapshot('offer'), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)),
+                'legal_sha256' => app(LegalDocumentService::class)->hash('offer'),
                 'tax' => 'without_vat',
             ];
             $expires = now()->addDays((int) config('bank_billing.invoice_days', 7))->endOfDay();
