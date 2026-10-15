@@ -19,7 +19,7 @@ final class PipelineBaseInputVersion
         array $documents,
         ?string $projectModelSnapshotToken = null,
     ): string {
-        unset($input['generation_attempt_id'], $input['generation_requested'], $input['generation_credit_operation_id'],
+        unset($input['feedback_receipts'], $input['generation_attempt_id'], $input['generation_requested'], $input['generation_credit_operation_id'],
             $input['credit_operation_receipts'], $input['credit_runtime'], $input['internal_cost_guard'],
             $input['evaluation_recalculation_receipts'], $input['regional_price_selection_receipts'], $input['evaluation_scenario_receipts']);
 

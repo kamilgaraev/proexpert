@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewQueueQuery;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -171,13 +173,38 @@ final class FeedbackDecisionReceiptsPostgresTest extends EstimateGenerationCanon
         self::assertSame(1, EstimateGenerationFeedback::query()->where('session_id', $session->id)->count());
     }
 
+    public function test_two_different_feedback_receipts_preserve_actual_package_input_version(): void
+    {
+        [$rights, $session, $input] = $this->fixture(false, 3);
+        $sourceVersion = app(SessionBaseInputVersionResolver::class)->resolve($session);
+        $draft = $session->draft_payload;
+        $draft['source_input_version'] = $sourceVersion;
+        $draft = app(UniversalReviewSummaryProjector::class)->project($draft);
+        $session->forceFill(['draft_payload' => $draft])->save();
+        app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $draft);
+        $this->record($rights->member, $session, $input);
+        $session->refresh();
+        $afterFirst = app(SessionBaseInputVersionResolver::class)->resolve($session);
+        $second = [...$input, 'request_id' => (string) Str::uuid(), 'state_version' => $session->state_version, 'work_item_key' => 'work-3'];
+        $this->record($rights->member, $session, $second);
+        $session->refresh();
+        $package = $session->packages()->where('key', 'local-1')->firstOrFail();
+        self::assertNotContains('stale_input_version', $package->quality_summary['critical_flags'] ?? []);
+        self::assertSame($sourceVersion, $afterFirst);
+        self::assertSame($sourceVersion, app(SessionBaseInputVersionResolver::class)->resolve($session));
+        self::assertSame($sourceVersion, $package->input_version);
+        self::assertSame(2, EstimateGenerationFeedback::query()->where('session_id', $session->id)->count());
+        self::assertCount(2, $session->input_payload['feedback_receipts']);
+        self::assertSame(['work-1'], array_column($session->draft_payload['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+    }
+
     private function record(User $actor, EstimateGenerationSession $session, array $input): int
     {
         return app(RecordEstimateGenerationFeedback::class)->handle((int) $session->id, (int) $session->organization_id,
             (int) $session->project_id, $actor, $input['state_version'], $input);
     }
 
-    private function fixture(bool $verified = false): array
+    private function fixture(bool $verified = false, int $workCount = 2): array
     {
         config(['cache.default' => 'array']);
         Http::fake([]);
@@ -201,6 +228,9 @@ final class FeedbackDecisionReceiptsPostgresTest extends EstimateGenerationCanon
                 'work_items' => [['key' => 'work-1', ...$work], ['key' => 'work-2', ...$work]],
             ]],
         ]], 'problem_flags' => []];
+        if ($workCount === 3) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'][] = ['key' => 'work-3', ...$work];
+        }
         $draft = app(UniversalReviewSummaryProjector::class)->project($draft);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $rights->organization->id,
             'project_id' => $project->id, 'user_id' => $rights->member->id, 'status' => 'estimate_review_required',

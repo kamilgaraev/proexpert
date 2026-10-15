@@ -18,6 +18,18 @@ use PHPUnit\Framework\TestCase;
 
 final class PipelineBaseInputVersionTest extends TestCase
 {
+    public function test_feedback_receipts_do_not_invalidate_semantic_input_but_real_answers_do(): void
+    {
+        $input = ['description' => 'Дом', 'region_id' => 1];
+        $version = PipelineBaseInputVersion::fromProjection($input, []);
+        $input['feedback_receipts'] = ['request-1' => ['actor_id' => 7, 'feedback_id' => 1, 'fingerprint' => str_repeat('a', 64)]];
+        self::assertSame($version, PipelineBaseInputVersion::fromProjection($input, []));
+        $input['feedback_receipts']['request-2'] = ['actor_id' => 7, 'feedback_id' => 2, 'fingerprint' => str_repeat('b', 64)];
+        self::assertSame($version, PipelineBaseInputVersion::fromProjection($input, []));
+        $input['region_id'] = 2;
+        self::assertNotSame($version, PipelineBaseInputVersion::fromProjection($input, []));
+    }
+
     public function test_document_floor_identity_contract_has_its_own_cache_generation(): void
     {
         self::assertSame(8, PipelineBaseInputVersion::SCHEMA_VERSION);
