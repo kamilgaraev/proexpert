@@ -62,6 +62,17 @@ final readonly class FactSourceLocator
             return null;
         }
         $points = $this->value['value'];
+        if (count($points) < 3) {
+            return null;
+        }
+        $area = 0.0;
+        foreach ($points as $index => [$x, $y]) {
+            [$nextX, $nextY] = $points[($index + 1) % count($points)];
+            $area += $x * $nextY - $nextX * $y;
+        }
+        if (abs($area) <= 1.0e-12) {
+            return null;
+        }
         $left = min(array_column($points, 0));
         $top = min(array_column($points, 1));
         $width = max(array_column($points, 0)) - $left;

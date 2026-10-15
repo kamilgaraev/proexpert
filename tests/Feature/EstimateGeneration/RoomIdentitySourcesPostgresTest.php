@@ -41,6 +41,31 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_diagonal_source_survives_vision_and_postgres_without_a_fabricated_area(): void
+    {
+        [$actor, $session, $document] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id,
+            $document->source_version, 'floor_plan', variant: 'diagonal');
+        self::assertCount(3, $claims);
+        $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+            [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+        app(ProjectModelEvidenceWriter::class)->writeArbitration($claims, $decisions, (int) $document->id, 1);
+        $snapshot = app(ProjectModelRepository::class)->snapshot(...$scope);
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $number = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'))[0];
+        $proof = $proofs[$number->evidenceIds[0]];
+        self::assertSame([[0.1, 0.1], [0.9, 0.9]], $proof->factSource->value['value']);
+        self::assertNull($proof->region);
+        self::assertNull($proof->nativeReference);
+        $source = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvidenceSources::class)
+            ->handle($actor, $scope[1], $scope[2], [$number->evidenceIds[0]])['sources'][0];
+        self::assertSame('available', $source['status']);
+        self::assertSame('page', $source['target']['representation_kind']);
+        self::assertNull($source['target']['region']);
+        self::assertNull($source['target']['coordinate_space']);
+    }
+
     public function test_public_numeric_strings_and_unicode_native_sources_are_preserved_through_sql(): void
     {
         [$actor, $session] = $this->fixture();
@@ -70,6 +95,8 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             $source = $proofs[$number->evidenceIds[1]]->factSource;
             self::assertNotNull($source);
             self::assertSame($source->value['kind'] === 'native' ? 'pdf:'.str_repeat('я', 150) : [[0.1, 0.5], [0.9, 0.5]], $source->value['value']);
+            self::assertSame($source->value['kind'] === 'native' ? $source->value['value'] : null, $proofs[$number->evidenceIds[1]]->nativeReference);
+            self::assertNull($proofs[$number->evidenceIds[1]]->region);
         }
         $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
         self::assertCount(1, $run->links);

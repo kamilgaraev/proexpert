@@ -36,7 +36,8 @@ final class RoomLocationVisionPublicationTest extends TestCase
 
     public function test_public_vision_contract_accepts_horizontal_and_vertical_sources_without_inventing_area(): void
     {
-        foreach (['horizontal' => [[0.1, 0.5], [0.9, 0.5]], 'vertical' => [[0.5, 0.1], [0.5, 0.9]]] as $variant => $points) {
+        foreach (['horizontal' => [[0.1, 0.5], [0.9, 0.5]], 'vertical' => [[0.5, 0.1], [0.5, 0.9]],
+            'diagonal' => [[0.1, 0.1], [0.9, 0.9]]] as $variant => $points) {
             $claims = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', variant: $variant);
             self::assertCount(3, $claims, $variant);
             foreach ($claims as $claim) {

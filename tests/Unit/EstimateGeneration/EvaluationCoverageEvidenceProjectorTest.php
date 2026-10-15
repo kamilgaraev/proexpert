@@ -18,7 +18,7 @@ final class EvaluationCoverageEvidenceProjectorTest extends TestCase
         $version = 'sha256:'.str_repeat('a', 64);
         $entity = new Entity('wall:1', 1, 2, 3, $version, 'wall', 'wall:1');
         $source = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator([
-            'kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => [[0.1, 0.2], [0.4, 0.6]]]);
+            'kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => [[0.1, 0.2], [0.4, 0.2], [0.4, 0.6], [0.1, 0.6]]]);
         $proof = new Evidence('proof:1', 1, 2, 3, $version, 'document:42', 'document', 7,
             ['x' => 10, 'y' => 20, 'width' => 30, 'height' => 40], 'element:legacy', factSource: $source);
         $fact = new Fact('fact:1', 1, 2, 3, $version, $entity->id, 'material', 'concrete', null, 0, 'document', 'confirmed', [$proof->id]);

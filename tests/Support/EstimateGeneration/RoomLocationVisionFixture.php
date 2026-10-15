@@ -45,6 +45,7 @@ final class RoomLocationVisionFixture
                 'sourcePolygonOrNativeRef' => match ($variant) {
                     'horizontal' => [[0.1, 0.5], [0.9, 0.5]],
                     'vertical' => [[0.5, 0.1], [0.5, 0.9]],
+                    'diagonal' => [[0.1, 0.1], [0.9, 0.9]],
                     'numeric_string' => [['0.1', '0.5'], ['0.9', '0.5']],
                     'native', 'native_unicode' => $nativeReference,
                     default => $type === 'room_floor' && $variant === 'implicit' ? null : [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]],
