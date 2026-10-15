@@ -20,28 +20,38 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
+use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
+use App\Services\Contract\ContractAccessService;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 
 final class PaymentCalendarSourceService
 {
+    private const MAX_PAYMENT_SOURCE_DEPTH = 32;
+
     public function collect(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today = null,
         ?\Closure $scopeDocument = null,
         ?\Closure $scopeProjects = null,
     ): array {
-        $items = $this->collectPaymentTransactionItems($filters, $scopeDocument, $scopeProjects);
-
-        [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($filters, $today, $scopeDocument);
-
-        $items = array_merge(
-            $items,
+        $cashFlowFilters = new PaymentCalendarSourceFilters(
+            organizationId: $filters->organizationId,
+            periodStart: CarbonImmutable::parse($filters->periodStart)->startOfMonth(),
+            periodEnd: CarbonImmutable::parse($filters->periodEnd)->endOfMonth(),
+        );
+        [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($cashFlowFilters, $today, $scopeDocument);
+        $cashFlowItems = $this->normalizeItems(array_merge(
+            $this->collectPaymentTransactionItems($cashFlowFilters, $scopeDocument, $scopeProjects),
             $scheduleItems,
-            $this->collectPaymentDocumentItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
+            $this->collectPaymentDocumentItems($cashFlowFilters, $today, $scheduledDocumentIds, $scopeDocument),
+        ), $cashFlowFilters);
+        $items = array_merge(
+            $cashFlowItems,
             $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument, $scopeProjects),
-            $this->collectBudgetPlanItems($filters, $scopeProjects),
+            $this->collectBudgetPlanItems($filters, $scopeProjects, $scopeDocument, $cashFlowItems),
         );
 
         return $this->normalizeItems($items, $filters);
@@ -496,18 +506,17 @@ final class PaymentCalendarSourceService
         ?DateTimeInterface $today,
         ?\Closure $scopeDocument,
     ): array {
-        $schedules = PaymentSchedule::query()
-            ->with('paymentDocument')
-            ->where('status', 'pending')
-            ->where('due_date', '<=', $filters->periodEnd)
+        $scheduleQuery = PaymentSchedule::query()
             ->whereHas('paymentDocument', function (Builder $query) use ($filters, $scopeDocument): void {
                 $query->where('organization_id', $filters->organizationId);
                 $scopeDocument?->__invoke($query);
-            })
-            ->get();
+            });
+        $schedules = (clone $scheduleQuery)->with('paymentDocument')->where('status', 'pending')
+            ->where('due_date', '<=', $filters->periodEnd)->get();
+        $scheduledDocumentIds = (clone $scheduleQuery)->whereIn('status', ['pending', 'paid'])
+            ->whereNotNull('due_date')->where('amount', '>', 0)->distinct()->pluck('payment_document_id')->all();
 
         $items = [];
-        $scheduledDocumentIds = [];
 
         foreach ($schedules as $schedule) {
             $item = $this->fromPaymentSchedule($schedule, $today);
@@ -518,12 +527,9 @@ final class PaymentCalendarSourceService
 
             $items[] = $item;
 
-            if ($schedule->payment_document_id !== null) {
-                $scheduledDocumentIds[] = (int) $schedule->payment_document_id;
-            }
         }
 
-        return [$items, array_values(array_unique($scheduledDocumentIds))];
+        return [$items, $scheduledDocumentIds];
     }
 
     private function collectPaymentDocumentItems(
@@ -614,7 +620,8 @@ final class PaymentCalendarSourceService
         return $items;
     }
 
-    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeProjects): array
+    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeProjects,
+        ?\Closure $scopeDocument, array $cashFlowItems): array
     {
         $amounts = BudgetAmount::query()
             ->with(['line.version', 'line.article'])
@@ -647,16 +654,154 @@ final class PaymentCalendarSourceService
             ->get();
 
         $items = [];
+        $contractIds = [];
 
         foreach ($amounts as $amount) {
             $item = $this->fromBudgetAmount($amount);
 
             if ($item instanceof PaymentCalendarItem) {
                 $items[] = $item;
+                $contractIds[$item->sourceId] = $this->nullableInt($amount->line?->contract_id);
             }
         }
 
+        return $this->netBudgetPlanItems($items, $contractIds, $filters, $scopeDocument, $cashFlowItems);
+    }
+
+    private function netBudgetPlanItems(array $items, array $planContractIds, PaymentCalendarSourceFilters $filters,
+        ?\Closure $scopeDocument, array $cashFlowItems): array
+    {
+        $candidates = [];
+        foreach ($items as $index => $item) {
+            if ($item->direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
+                $key = $this->budgetPlanMatchKey($item, $planContractIds[$item->sourceId] ?? null);
+                $candidates[$key][] = $index;
+            }
+        }
+        if ($candidates === []) {
+            return $items;
+        }
+
+        $start = CarbonImmutable::parse($filters->periodStart)->startOfMonth()->toDateString();
+        $end = CarbonImmutable::parse($filters->periodEnd)->endOfMonth()->toDateString();
+        $cashFlowItems = array_values(array_filter($cashFlowItems, static fn (PaymentCalendarItem $item): bool =>
+            $item->direction === PaymentCalendarItem::DIRECTION_OUTFLOW && $item->date >= $start && $item->date <= $end));
+        $documentIds = array_values(array_unique(array_filter(array_map(static fn (PaymentCalendarItem $item) =>
+            $item->sourceType === 'payment_document' ? $item->sourceId : ($item->drillDown['payment_document_id'] ?? null), $cashFlowItems))));
+        $documents = PaymentDocument::query()->where('organization_id', $filters->organizationId)->whereKey($documentIds)
+            ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
+            ->get()->keyBy('id');
+        $transactionIds = collect($cashFlowItems)->where('sourceType', 'payment_transaction')->pluck('sourceId')->all();
+        $transactions = $transactionIds === [] ? collect() : PaymentTransaction::query()->where('organization_id', $filters->organizationId)
+            ->whereKey($transactionIds)->get(['id', 'payee_contractor_id'])->keyBy('id');
+        $documentContractIds = $this->calendarDocumentContractIds($documents, $filters->organizationId, $scopeDocument);
+        $consumed = [];
+        foreach ($cashFlowItems as $item) {
+            $documentId = $item->sourceType === 'payment_document' ? $item->sourceId : ($item->drillDown['payment_document_id'] ?? null);
+            $document = $documents->get($documentId);
+            if ($documentId !== null && $document === null) continue;
+            $counterpartyId = $document?->payee_contractor_id ?? $document?->contractor_id;
+            if ($item->sourceType === 'payment_transaction') {
+                $counterpartyId = $transactions->get($item->sourceId)?->payee_contractor_id ?? $counterpartyId;
+            }
+            $dimensions = [
+                $item->projectId,
+                $this->nullableInt($counterpartyId),
+                $item->budgetArticleId,
+                $item->responsibilityCenterId,
+                $documentContractIds[$documentId] ?? null,
+            ];
+            $matches = [[]];
+            foreach ($dimensions as $dimension) {
+                $expanded = [];
+                foreach ($matches as $match) {
+                    $expanded[] = [...$match, (string) $dimension];
+                    if ($dimension !== null) $expanded[] = [...$match, ''];
+                }
+                $matches = $expanded;
+            }
+            $indices = [];
+            foreach ($matches as $match) {
+                $key = implode('|', [$filters->organizationId, substr($item->date, 0, 7), $item->currency, ...$match]);
+                foreach ($candidates[$key] ?? [] as $index) $indices[$index] = true;
+            }
+            if (count($indices) !== 1) continue;
+            $index = array_key_first($indices);
+            $consumed[$index] = PortfolioDecimal::add($consumed[$index] ?? '0.00', $item->remainingAmount);
+        }
+        foreach ($consumed as $index => $amount) {
+            $items[$index] = $items[$index]->withRemainingAmount($this->positive(
+                PortfolioDecimal::subtract($items[$index]->remainingAmount, $amount),
+            ));
+        }
+
         return $items;
+    }
+
+    private function budgetPlanMatchKey(PaymentCalendarItem $item, ?int $contractId): string
+    {
+        return implode('|', [$item->organizationId, substr($item->date, 0, 7), $item->currency,
+            (string) $item->projectId, (string) $item->counterpartyId, (string) $item->budgetArticleId,
+            (string) $item->responsibilityCenterId, (string) $contractId]);
+    }
+
+    private function calendarDocumentContractIds(iterable $documents, int $organizationId, ?\Closure $scopeDocument): array
+    {
+        $documents = collect($documents)->keyBy('id');
+        $requestedIds = array_fill_keys($documents->keys()->all(), true);
+        $queriedIds = $requestedIds;
+        $frontier = $documents;
+        for ($depth = 0; $depth < self::MAX_PAYMENT_SOURCE_DEPTH; $depth++) {
+            $sourceIds = $frontier->where('source_type', PaymentDocument::class)->pluck('source_id')->filter()->unique()
+                ->reject(static fn ($id): bool => isset($queriedIds[$id]))->all();
+            if ($sourceIds === []) break;
+            $queriedIds += array_fill_keys($sourceIds, true);
+            $frontier = PaymentDocument::query()->where('organization_id', $organizationId)->whereKey($sourceIds)
+                ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))->get()->keyBy('id');
+            if ($frontier->isEmpty()) break;
+            $documents = $documents->union($frontier);
+        }
+        $access = app(ContractAccessService::class);
+        $actIds = $documents->where('invoiceable_type', ContractPerformanceAct::class)->pluck('invoiceable_id')->filter()->all();
+        $acts = $actIds === [] ? collect() : ContractPerformanceAct::query()->whereKey($actIds)
+            ->whereHas('contract', fn (Builder $query) => $access->applyAccessibleScope($query, $organizationId))
+            ->pluck('contract_id', 'id');
+        $ids = $documents->where('invoiceable_type', Contract::class)->pluck('invoiceable_id')
+            ->merge($documents->where('source_type', Contract::class)->pluck('source_id'))->merge($acts->values())->filter()->unique()->all();
+        if ($ids === []) return [];
+        $contracts = $access->applyAccessibleScope(Contract::query()->whereKey($ids), $organizationId)
+            ->with('projects:id')->get(['id', 'project_id', 'is_multi_project'])->keyBy('id');
+        $result = [];
+        foreach ($documents as $document) {
+            $id = match ($document->invoiceable_type) {
+                Contract::class => $document->invoiceable_id,
+                ContractPerformanceAct::class => $acts[$document->invoiceable_id] ?? null,
+                default => $document->source_type === Contract::class ? $document->source_id : null,
+            };
+            $contract = $id === null ? null : $contracts->get($id);
+            $projectMatches = $contract !== null && ($contract->is_multi_project
+                ? $document->project_id !== null && $contract->projects->contains('id', (int) $document->project_id)
+                : $this->nullableInt($contract->project_id) === $this->nullableInt($document->project_id));
+            if ($projectMatches) {
+                $result[$document->id] = (int) $contract->id;
+            }
+        }
+
+        for ($depth = 0; $depth < self::MAX_PAYMENT_SOURCE_DEPTH; $depth++) {
+            $changed = false;
+            foreach ($documents as $document) {
+                if (isset($result[$document->id]) || $document->source_type !== PaymentDocument::class
+                    || in_array($document->invoiceable_type, [Contract::class, ContractPerformanceAct::class], true)) continue;
+                $source = $documents->get($document->source_id);
+                if ($source === null || ! isset($result[$source->id])
+                    || $this->nullableInt($source->project_id) !== $this->nullableInt($document->project_id)) continue;
+                $result[$document->id] = $result[$source->id];
+                $changed = true;
+            }
+            if (! $changed) break;
+        }
+
+        return array_intersect_key($result, $requestedIds);
     }
 
     private function activeDocumentStatuses(): array

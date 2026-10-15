@@ -548,7 +548,7 @@ final class PaymentCalendarContractService
             PaymentCalendarItem::BUCKET_APPROVED => 'Утверждено',
             PaymentCalendarItem::BUCKET_RESERVED => 'Резерв бюджета',
             PaymentCalendarItem::BUCKET_OVERDUE => 'Просрочено',
-            PaymentCalendarItem::BUCKET_BUDGET_PLAN => 'План БДДС',
+            PaymentCalendarItem::BUCKET_BUDGET_PLAN => trans_message('payments.calendar.plan_residual'),
             PaymentCalendarItem::BUCKET_MANUAL => 'Ручная корректировка',
             default => 'Плановый платеж',
         };
@@ -561,7 +561,7 @@ final class PaymentCalendarContractService
             'payment_schedule' => 'График платежей',
             'payment_transaction' => 'Фактический платеж',
             'budget_limit_reservation' => 'Резерв бюджета',
-            'budget_amount' => 'План БДДС',
+            'budget_amount' => trans_message('payments.calendar.plan_residual'),
             default => 'Источник платежа',
         };
     }

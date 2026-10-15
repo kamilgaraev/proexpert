@@ -59,6 +59,31 @@ final readonly class PaymentCalendarItem
 
     public string $probability;
 
+    public function withRemainingAmount(string $remainingAmount): self
+    {
+        return new self(
+            organizationId: $this->organizationId,
+            date: $this->date,
+            originalDate: $this->originalDate,
+            direction: $this->direction,
+            bucket: $this->bucket,
+            amount: $this->amount,
+            remainingAmount: $remainingAmount,
+            currency: $this->currency,
+            probability: $this->probability,
+            status: $this->status,
+            sourceType: $this->sourceType,
+            sourceId: $this->sourceId,
+            cashFlowKey: $this->cashFlowKey,
+            projectId: $this->projectId,
+            counterpartyId: $this->counterpartyId,
+            budgetArticleId: $this->budgetArticleId,
+            responsibilityCenterId: $this->responsibilityCenterId,
+            editable: $this->editable,
+            drillDown: $this->drillDown,
+        );
+    }
+
     public function toCashGapForecastItem(): CashGapForecastItem
     {
         $description = $this->drillDown['label'] ?? null;
