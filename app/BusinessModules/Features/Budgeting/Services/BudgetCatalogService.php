@@ -13,6 +13,7 @@ use App\Models\OneCBase;
 use App\Models\OneCIntegrationProfile;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 
 final class BudgetCatalogService
@@ -123,6 +124,7 @@ final class BudgetCatalogService
 
     public function updatePeriod(User $user, string $uuid, array $input): BudgetPeriod
     {
+        $input = Arr::only($input, ['code', 'name', 'period_type', 'starts_at', 'ends_at', 'status']);
         $period = $this->findPeriod($user, $uuid);
         $this->periodClosureService->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_PERIOD_SETTINGS);
         $this->assertUniqueCode(BudgetPeriod::query(), (int) $period->organization_id, (string) $input['code'], (int) $period->id);
@@ -151,6 +153,7 @@ final class BudgetCatalogService
 
     public function updateScenario(User $user, string $uuid, array $input): BudgetScenario
     {
+        $input = Arr::only($input, ['code', 'name', 'scenario_type', 'is_default', 'is_active']);
         $scenario = $this->findScenario($user, $uuid);
         $this->assertUniqueCode(BudgetScenario::query(), (int) $scenario->organization_id, (string) $input['code'], (int) $scenario->id);
 
@@ -180,6 +183,10 @@ final class BudgetCatalogService
 
     public function updateResponsibilityCenter(User $user, string $uuid, array $input): ResponsibilityCenter
     {
+        $input = Arr::only($input, [
+            'parent_id', 'center_type', 'code', 'name', 'owner_user_id', 'approver_user_id',
+            'linked_entity_type', 'linked_entity_id', 'active_from', 'active_to', 'is_active',
+        ]);
         $center = $this->findResponsibilityCenter($user, $uuid);
         $this->assertUniqueCode(ResponsibilityCenter::query(), (int) $center->organization_id, (string) $input['code'], (int) $center->id);
         $input['parent_id'] = $this->nullableCenterId((int) $center->organization_id, $input['parent_id'] ?? null, (int) $center->id);
@@ -204,6 +211,10 @@ final class BudgetCatalogService
 
     public function updateArticle(User $user, string $uuid, array $input): BudgetArticle
     {
+        $input = Arr::only($input, [
+            'parent_id', 'code', 'name', 'budget_kind', 'flow_direction', 'management_cost_class',
+            'is_leaf', 'is_active', 'cost_category_id',
+        ]);
         $article = $this->findArticle($user, $uuid);
         $this->assertUniqueCode(BudgetArticle::query(), (int) $article->organization_id, (string) $input['code'], (int) $article->id);
         $input['parent_id'] = $this->nullableArticleId((int) $article->organization_id, $input['parent_id'] ?? null, (int) $article->id);
