@@ -71,7 +71,7 @@ class SubItemGroupingService
             return true;
         }
 
-        $position = trim((string) ($row['position_number'] ?? ''));
+        $position = trim((string) ($row['position_number'] ?? $row['section_number'] ?? ''));
         if ($position !== '' && preg_match(self::MAIN_POSITION_PATTERN, $position) && !preg_match('/^\d+\.\d+$/', $position)) {
             return false;
         }

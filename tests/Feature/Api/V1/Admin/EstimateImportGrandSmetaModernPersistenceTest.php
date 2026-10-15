@@ -43,6 +43,15 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         self::assertTrue($preview->validationSummary['is_valid']);
         self::assertEquals(500, $preview->totals['total_amount']);
         $staging = app(StagingAreaService::class)->buildPreview($session->id, $context->organization->id, $context->access());
+        $stagedItems = collect($staging['rows'])->flatMap(static fn (array $row): array => [$row, ...($row['sub_items'] ?? [])])->keyBy('row_number');
+        foreach ($preview->items as $sourceRow) {
+            $stagedRow = $stagedItems->get($sourceRow['row_number']);
+            self::assertIsArray($stagedRow);
+            self::assertSame($sourceRow['is_sub_item'], $stagedRow['is_sub_item']);
+            foreach (['quantity', 'unit_price', 'current_total_amount', 'overhead_amount', 'profit_amount', 'raw_data'] as $field) {
+                self::assertSame($sourceRow[$field], $stagedRow[$field]);
+            }
+        }
         $stagedWork = collect($staging['rows'])->firstWhere('item_name', 'Работа');
         self::assertFalse($stagedWork['has_math_mismatch']);
         self::assertSame(440.0, $stagedWork['math_expected_amount']);
