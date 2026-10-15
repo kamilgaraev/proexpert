@@ -107,6 +107,12 @@ final class AssistantRequestLifecycleTest extends TestCase
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id(); $table->foreignId('commercial_order_id'); $table->bigInteger('refunded_amount_minor')->default(0);
         });
+        Schema::dropIfExists('organization_package_subscriptions');
+        Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id'); $table->foreignId('commercial_account_id');
+            $table->string('package_slug'); $table->string('status'); $table->string('access_source');
+            $table->foreignId('source_order_id')->nullable(); $table->timestampTz('current_period_end_at'); $table->timestamps();
+        });
         Schema::create('ai_conversations', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id')->constrained(); $table->foreignId('user_id')->constrained(); $table->string('title')->nullable(); $table->jsonb('context')->nullable(); $table->timestamp('last_activity_at')->nullable(); $table->unsignedInteger('context_version')->default(1); $table->timestamps();
         });
@@ -163,9 +169,11 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->travelTo($start);
         $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
             'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
-        \App\Models\CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $this->organization->id,
+        $order = \App\Models\CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $this->organization->id,
             'commercial_account_id' => $account->id, 'user_id' => $this->actor->id, 'kind' => 'purchase', 'status' => 'paid',
             'billing_period' => '12_months', 'amount_minor' => 43092000, 'period_start_at' => $start, 'period_end_at' => $end]);
+        DB::table('organization_package_subscriptions')->insert(['organization_id' => $this->organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'working-entry', 'status' => 'active', 'access_source' => 'paid_package', 'source_order_id' => $order->id, 'current_period_end_at' => $end]);
         $this->app->make(OrganizationEntitlementService::class)->shouldReceive('hasModuleAccess')
             ->with($this->organization->id, 'ai-assistant')->andReturn(true);
         app(\App\Services\Credits\AICreditCommercialService::class)->reconcileCurrentPaidPeriod($this->organization);

@@ -295,6 +295,7 @@ final class CommercialRefundServiceTest extends TestCase
         }
         Schema::dropIfExists('organization_commercial_accounts');
         Schema::create('organization_commercial_accounts', function (Blueprint $t): void {
+            $t->string('offer_type')->default('packages');
             $t->id();
             $t->foreignId('organization_id');
             $t->string('status');
@@ -408,6 +409,8 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $t): void {
+            $t->string('access_source')->default('paid_package');
+            $t->decimal('price_paid', 12, 2)->default(0);
             $t->string('package_slug')->nullable();
             $t->timestamp('current_period_start_at')->nullable();
             $t->id();

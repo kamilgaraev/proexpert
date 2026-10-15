@@ -41,7 +41,11 @@ final class CommercialPaidPeriodService
                 'start_at' => $account->current_period_start_at?->toJSON(),
                 'end_at' => $account->current_period_end_at?->toJSON(),
                 'billing_period' => $account->billing_period ?? '30_days',
+                'offer_type' => $account->offer_type->value,
                 'package_order_ids' => $packages->pluck('source_order_id', 'package_slug')->all(),
+                'package_states' => $packages->mapWithKeys(fn ($row) => [$row->package_slug => $row->only([
+                    'access_source', 'price_paid', 'status', 'cancel_at', 'canceled_at',
+                ])])->all(),
             ];
             $start = $account->current_period_end_at !== null && $account->current_period_end_at->greaterThan($now)
                 ? CarbonImmutable::instance($account->current_period_end_at)
@@ -68,13 +72,16 @@ final class CommercialPaidPeriodService
 
         $end = CarbonImmutable::parse($snapshot['end_at']);
         foreach ($packages as $row) {
+            $state = $snapshot['package_states'][$row->package_slug] ?? [];
             $row->forceFill([
-                'status' => $end->isFuture() ? 'active' : 'expired',
+                'status' => $end->isFuture() ? ($state['status'] ?? 'active') : 'expired',
+                'access_source' => $state['access_source'] ?? $row->access_source,
+                'price_paid' => $state['price_paid'] ?? $row->price_paid,
                 'current_period_start_at' => $snapshot['start_at'],
                 'current_period_end_at' => $end,
                 'source_order_id' => $snapshot['package_order_ids'][$row->package_slug] ?? null,
-                'cancel_at' => null,
-                'canceled_at' => $end->isFuture() ? null : now(),
+                'cancel_at' => $end->isFuture() ? ($state['cancel_at'] ?? null) : null,
+                'canceled_at' => $end->isFuture() ? ($state['canceled_at'] ?? null) : now(),
             ])->save();
         }
         if ($packages->count() === count($order->selected_package_slugs)
@@ -82,6 +89,7 @@ final class CommercialPaidPeriodService
             $account->forceFill([
                 'status' => $end->isFuture() ? 'active' : 'suspended',
                 'billing_period' => $snapshot['billing_period'],
+                'offer_type' => $snapshot['offer_type'] ?? $account->offer_type,
                 'current_period_start_at' => $snapshot['start_at'],
                 'current_period_end_at' => $end,
                 'billing_anchor_at' => $end,

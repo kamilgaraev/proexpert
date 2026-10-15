@@ -12,7 +12,9 @@ use App\Models\Credits\AICreditReservation;
 use App\Models\Credits\AICreditWallet;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Modules\PackageCatalogService;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -68,14 +70,48 @@ final class AICreditCommercialService
                 || $account->current_period_end_at === null || $account->current_period_end_at <= now()) {
                 return;
             }
-            $order = CommercialOrder::query()->where('organization_id', $organization->id)->where('commercial_account_id', $account->id)
-                ->where('status', 'paid')->where('kind', '<>', 'ai_credits')
-                ->where('period_start_at', '<=', now())->where('period_end_at', '>', now())
-                ->orderByDesc('period_start_at')->orderBy('id')->first();
+            $order = $this->currentPaidAiOrder($account);
             if ($order !== null) {
                 $this->settlePaidOrder($order);
             }
         }, 3);
+    }
+
+    private function currentPaidAiOrder(OrganizationCommercialAccount $account): ?CommercialOrder
+    {
+        $catalog = app(PackageCatalogService::class);
+        $aiPackages = array_filter(array_column($catalog->allPackages(), 'slug'), fn (string $slug): bool =>
+            array_intersect(['ai-assistant', 'ai-estimates'], $catalog->tierModules($slug, 'standard')) !== []);
+        $subscriptions = OrganizationPackageSubscription::query()->where('organization_id', $account->organization_id)
+            ->where('commercial_account_id', $account->id)->whereIn('package_slug', $aiPackages)
+            ->whereIn('access_source', ['paid_package', 'full_suite'])->whereIn('status', ['active', 'scheduled_for_removal'])
+            ->where('current_period_end_at', '>', now())->orderByDesc('current_period_end_at')->orderBy('id')->get();
+        $orders = [];
+        foreach ($subscriptions as $subscription) {
+            $sourceId = (int) $subscription->source_order_id;
+            $visited = [];
+            while ($sourceId > 0 && ! isset($visited[$sourceId])) {
+                $visited[$sourceId] = true;
+                if (! array_key_exists($sourceId, $orders)) {
+                    $orders[$sourceId] = CommercialOrder::query()->whereKey($sourceId)->where('organization_id', $account->organization_id)
+                        ->where('commercial_account_id', $account->id)->where('status', 'paid')->where('kind', '<>', 'ai_credits')->first();
+                }
+                $order = $orders[$sourceId];
+                if ($order === null || $order->period_start_at === null || $order->period_end_at === null) {
+                    break;
+                }
+                if ($order->period_start_at <= now() && $order->period_end_at > now()) {
+                    return $order;
+                }
+                if (! $order->renew_subscription || $order->period_start_at <= now()) {
+                    break;
+                }
+                // A prepaid next period points back to the still-paid source for this same AI package.
+                $sourceId = (int) ($order->paid_period_snapshot['package_order_ids'][$subscription->package_slug] ?? 0);
+            }
+        }
+
+        return null;
     }
 
     private function subscriptionWindow(CommercialOrder $order): ?array

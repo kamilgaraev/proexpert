@@ -157,6 +157,38 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertTrue($oldEnd->equalTo(OrganizationPackageSubscription::query()->sole()->current_period_end_at));
     }
 
+    public function test_refund_of_full_suite_prepaid_renewal_restores_original_offer_and_package_sources(): void
+    {
+        $now = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($now);
+        $oldEnd = $now->addDays(30);
+        $slugs = array_column(app(\App\Services\Modules\PackageCatalogService::class)->allPackages(), 'slug');
+        $this->account->forceFill(['status' => 'active', 'offer_type' => 'packages', 'billing_period' => '30_days', 'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd])->save();
+        foreach ($slugs as $slug) {
+            OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
+                'package_slug' => $slug, 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => '1000.00',
+                'current_period_start_at' => $now, 'current_period_end_at' => $oldEnd]);
+        }
+        OrganizationPackageSubscription::query()->where('package_slug', $slugs[0])->update(['status' => 'scheduled_for_removal', 'cancel_at' => $oldEnd]);
+        $this->order->forceFill(['offer_type' => 'full_suite', 'billing_period' => '12_months', 'renew_subscription' => true,
+            'current_package_slugs' => $slugs, 'selected_package_slugs' => $slugs, 'period_start_at' => $oldEnd, 'period_end_at' => $oldEnd->addMonthsNoOverflow(12)])->save();
+        $this->gateway->payment = $this->paymentResult();
+        $service = app(CommercialWebhookService::class);
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('full_suite', $this->account->fresh()->offer_type->value);
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('access_source', 'full_suite')->count());
+        $this->gateway->refund = $this->refundResult('full-suite-renewal-refund', 790000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 790000);
+        $this->assertSame('full_refund', $service->process($this->notification('refund.succeeded', 'full-suite-renewal-refund', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('packages', $this->account->fresh()->offer_type->value);
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('access_source', 'paid_package')->count());
+        $this->assertSame(7, OrganizationPackageSubscription::query()->where('price_paid', '1000.00')->count());
+        $restored = OrganizationPackageSubscription::query()->where('package_slug', $slugs[0])->sole();
+        $this->assertSame('scheduled_for_removal', $restored->status->value);
+        $this->assertTrue($oldEnd->equalTo($restored->cancel_at));
+        $this->assertTrue($oldEnd->equalTo($this->account->fresh()->current_period_end_at));
+    }
+
     public function test_verified_credit_payment_grants_pack_once_without_changing_subscription(): void
     {
         $this->order->forceFill([
