@@ -182,15 +182,23 @@ class BrigadeWorkflowService
     public function cancelInvitation(User $actor, int $organizationId, int $invitationId): BrigadeInvitation
     {
         if ((int) $actor->current_organization_id !== $organizationId
-            || !$actor->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()
-            || !app(\App\Domain\Authorization\Services\AuthorizationService::class)
-                ->canCurrent($actor, 'brigades.invitations.cancel', ['organization_id' => $organizationId])) {
+            || !$actor->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()) {
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('brigades.forbidden'));
         }
 
-        return DB::transaction(function () use ($organizationId, $invitationId): BrigadeInvitation {
+        return DB::transaction(function () use ($actor, $organizationId, $invitationId): BrigadeInvitation {
             $invitation = BrigadeInvitation::query()->where('contractor_organization_id', $organizationId)
                 ->whereKey($invitationId)->lockForUpdate()->firstOrFail();
+            $authorization = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $canCancel = $authorization->canCurrent($actor, 'brigades.invitations.cancel', ['organization_id' => $organizationId]);
+            if (!$canCancel && $invitation->project_id !== null) {
+                $canCancel = $authorization->canCurrent($actor, 'brigades.invitations.cancel', [
+                    'organization_id' => $organizationId, 'project_id' => $invitation->project_id, 'strict_project_scope' => true,
+                ]);
+            }
+            if (!$canCancel) {
+                throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('brigades.forbidden'));
+            }
             $this->assertPendingInvitation($invitation);
             $invitation->update(['status' => BrigadeStatuses::INVITATION_CANCELLED]);
 
