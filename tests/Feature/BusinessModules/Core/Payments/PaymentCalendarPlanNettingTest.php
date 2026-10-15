@@ -283,6 +283,80 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         }
     }
 
+    public static function actualPaymentMonths(): array
+    {
+        return [
+            'paid installment in November' => ['scheduled-late', '100000.00', '0.00'],
+            'partly paid installment in November' => ['scheduled-partial', '40000.00', '60000.00'],
+            'paid invoice in November' => ['plain-late', '100000.00', '0.00'],
+            'partly paid invoice in November' => ['plain-partial', '40000.00', '60000.00'],
+            'installment paid before due month' => ['scheduled-early', '0.00', '100000.00'],
+            'invoice paid before due month' => ['plain-early', '0.00', '100000.00'],
+            'value date takes precedence' => ['value-date', '100000.00', '0.00'],
+            'transaction date without value date' => ['transaction-date', '100000.00', '0.00'],
+            'inaccessible paid installment' => ['scheduled-scope', '100000.00', '100000.00'],
+            'inaccessible project transaction' => ['scheduled-project-scope', '100000.00', '100000.00'],
+        ];
+    }
+
+    #[DataProvider('actualPaymentMonths')]
+    public function test_paid_amount_replaces_plan_on_the_actual_cash_flow_date(string $case, string $octoberPlan, string $novemberPlan): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project] = $this->fixture();
+        $november = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-11-01',
+            'plan_amount' => '100000.00', 'forecast_amount' => '100000.00', 'currency' => 'RUB']);
+        $partial = str_ends_with($case, 'partial');
+        $early = str_ends_with($case, 'early');
+        $paid = $partial ? '40000.00' : '100000.00';
+        $document->update(['due_date' => $early ? '2026-11-20' : '2026-10-20',
+            'status' => $partial ? PaymentDocumentStatus::PARTIALLY_PAID : PaymentDocumentStatus::PAID,
+            'paid_amount' => $paid, 'remaining_amount' => $partial ? '60000.00' : '0.00']);
+        $transaction = PaymentTransaction::query()->create([
+            'organization_id' => $context->organization->id, 'payment_document_id' => $document->id,
+            'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $document->payee_organization_id, 'payee_contractor_id' => $document->payee_contractor_id,
+            'amount' => $paid, 'currency' => 'RUB', 'payment_method' => 'bank_transfer',
+            'transaction_date' => $early || $case === 'value-date' ? '2026-10-25' : '2026-11-05',
+            'value_date' => $case === 'transaction-date' ? null : ($early ? '2026-10-25' : '2026-11-05'),
+            'status' => 'completed', 'created_by_user_id' => $context->user->id,
+        ]);
+        if (! str_starts_with($case, 'plain')) {
+            PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => 1,
+                'due_date' => $document->due_date, 'amount' => '100000.00', 'paid_amount' => $paid,
+                'status' => $partial ? 'pending' : 'paid', 'payment_transaction_id' => $transaction->id]);
+        }
+        $scope = $case === 'scheduled-scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        $projectScope = $case === 'scheduled-project-scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        foreach (['10' => $octoberPlan, '11' => $novemberPlan] as $month => $expectedPlan) {
+            $date = new CarbonImmutable('2026-'.$month.'-01');
+            $items = collect(app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+                organizationId: (int) $context->organization->id, periodStart: $date, periodEnd: $date->endOfMonth(),
+                projectId: (int) $project->id, currency: 'RUB',
+            ), new CarbonImmutable('2026-10-15'), $scope, $projectScope));
+            $plan = $items->first(fn ($item) => $item->sourceType === 'budget_amount');
+            if ($projectScope === null) {
+                $this->assertNotNull($plan);
+                $this->assertSame($expectedPlan, $plan->remainingAmount);
+            } else {
+                $this->assertNull($plan);
+            }
+            $actual = $items->first(fn ($item) => $item->sourceType === 'payment_transaction');
+            if ($scope === null && $projectScope === null && (string) $month === ($early ? '10' : '11')) {
+                $this->assertNotNull($actual);
+                $this->assertSame($early ? '2026-10-25' : '2026-11-05', $actual->date);
+                $this->assertSame($paid, $actual->remainingAmount);
+                $this->assertSame($document->id, $actual->drillDown['payment_document_id']);
+            } else {
+                $this->assertNull($actual);
+            }
+        }
+        foreach ([$amount, $november] as $stored) {
+            $this->assertSame('100000.00', $stored->fresh()->plan_amount);
+            $this->assertSame('100000.00', $stored->fresh()->forecast_amount);
+        }
+    }
+
     public static function paymentSourceChains(): array
     {
         return [
