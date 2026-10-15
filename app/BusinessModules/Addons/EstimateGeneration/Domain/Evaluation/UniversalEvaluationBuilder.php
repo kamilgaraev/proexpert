@@ -29,6 +29,7 @@ final readonly class UniversalEvaluationBuilder
         $entityIds = array_column($snapshot->entities, null, 'id');
         $factsById = array_column($snapshot->facts, null, 'id');
         $proofsById = array_column($snapshot->evidence, null, 'id');
+        $workContexts = new EvaluationWorkContextProjector($snapshot);
         $entityScope = [];
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
             $sectionKey = EvaluationSectionMap::forPackage((string) $estimate['key']);
@@ -57,6 +58,13 @@ final readonly class UniversalEvaluationBuilder
                         'source_refs' => $item['source_refs'] ?? [],
                         'price_snapshot' => $this->price($item, $draft), 'technology' => $item['specialization_scenario'] ?? null,
                         'dependencies' => $item['metadata']['dependencies'] ?? [], 'warnings' => $item['validation_flags'] ?? []];
+                    if ($entityId === null && ! isset($item['metadata']['scope_entity_id']) && ! isset($item['metadata']['entity_id'])
+                        && ! isset($quantity['formula_inputs']['entity_id'])) {
+                        $context = $workContexts->project($item, $estimate['key'], $section['key'] ?? null, $sectionKey);
+                        if ($context !== null) {
+                            $position['proposed_entity_context'] = $context;
+                        }
+                    }
                     $positions[] = $position;
                     foreach ($quantity['assumptions'] ?? [] as $assumption) {
                         $assumptions[] = ['position_key' => $item['key'], 'basis' => $assumption];
