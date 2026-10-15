@@ -33,19 +33,20 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             && preg_match('/что\s+(?:делать|будет|произойд[её]т)|каков[а-яё]*\s+последств|что\s+если/iu', $query) !== 1
             && preg_match('/^\s*(?:пожалуйста[,\s]+|а\s+)?(?:каки[её]|какой|какая|какое|каков[а-яё]*|сколько|за\s+сколько|(?:уведомля[а-яё]*|напомина[а-яё]*|обязательно|требуется|нужен|нужно|надо|будет|будут)\s+ли|что|покажи(?:те)?|назови(?:те)?|расскажи(?:те)?|перечисли(?:те)?|подскажи(?:те)?|посмотри(?:те)?|проверь(?:те)?)(?!\pL)/iu', $query) === 1
             && ! AssistantMutationIntent::containsRequest($query)
+            && ! AssistantMutationIntent::containsFollowUpCommand($query)
             && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|сотрудник|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
 
     private static function asksAboutReportApproval(string $query): bool
     {
         if (preg_match('/авансов[а-яё]*\s+отч[её]т/iu', $query) === 1
-            && preg_match('/согласов/iu', $query) === 1
+            && preg_match('/согласов|одобр|утвержд|отклон/iu', $query) === 1
             && preg_match('/обязательн|нужно|надо|порядок|процесс|этап|проверк/iu', $query) === 1) {
             return true;
         }
         foreach (preg_split('/[.!?;]|\s+(?:и|или)\s+/iu', $query) ?: [] as $part) {
             if (preg_match('/авансов[а-яё]*\s+отч[её]т/iu', $part) === 1
-                && preg_match('/согласов/iu', $part) === 1) {
+                && preg_match('/согласов|одобр|утвержд|отклон/iu', $part) === 1) {
                 return true;
             }
         }

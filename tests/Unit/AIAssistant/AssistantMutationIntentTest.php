@@ -9,6 +9,14 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantMutationIntentTest extends TestCase
 {
+    public function test_follow_up_command_is_not_silently_lost_when_its_attribute_is_unknown(): void
+    {
+        $query = 'Покажи активные договоры нашего объекта; поставь им особый режим';
+        self::assertFalse(AssistantMutationIntent::containsRequest($query));
+        self::assertTrue(AssistantMutationIntent::containsFollowUpCommand($query));
+        self::assertFalse(AssistantMutationIntent::containsFollowUpCommand('Покажи активные договоры и даты окончания'));
+    }
+
     public function test_make_summary_is_read_only_without_hiding_a_second_mutation(): void
     {
         foreach (['Сделай сводку по проектам', 'Пожалуйста, сделайте краткую сводку по проектам',
@@ -35,7 +43,8 @@ final class AssistantMutationIntentTest extends TestCase
             'Покажи активные договоры нашего объекта и продли их сроки окончания',
             'Покажи договор и продли его срок окончания',
             'Покажи лимит подотчётных средств и увеличь его до 10000',
-            'Покажи лимит подотчётных средств и уменьши его на 1000'] as $query) {
+            'Покажи лимит подотчётных средств и уменьши его на 1000',
+            'Покажи активные договоры нашего объекта и поменяй в них подрядчика'] as $query) {
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
     }
