@@ -28,6 +28,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         return self::hasIntent($query)
             && ! self::hasUnsupportedSubjectScope($query)
             && ! AssistantTemporalIntent::hasNonCurrentScope($query)
+            && preg_match('/суточн|дневн[а-яё]*|ежедневн|ежемесячн|ежегодн|еженедельн|недельн[а-яё]*|месячн[а-яё]*|годов[а-яё]*|квартальн[а-яё]*|лимит[^.!?;]*(?:в|за)\s+(?:день|сутки|месяц|неделю|год|квартал)(?!\pL)/iu', $query) !== 1
             && ($hasProjectRequirement || preg_match('/максимальн[а-яё]*\s+сумм[а-яё]*\s+(?:для\s+)?(?:одн[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*|настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
             && ! self::asksAboutUnsupportedNotificationEvent($query)

@@ -75,8 +75,12 @@ final class AssistantMutationIntent
         $parts = preg_split('/([.!?;,:\r\n]|\s+[-—–]\s+|\s+(?:и|затем|потом)\s+)/u', mb_strtolower($message), -1, PREG_SPLIT_DELIM_CAPTURE) ?: [];
         for ($index = 2; $index < count($parts); $index += 2) {
             $part = $parts[$index];
+            $previousIndex = $index - 2;
+            while ($previousIndex > 0 && trim($parts[$previousIndex]) === '') {
+                $previousIndex -= 2;
+            }
             if (preg_match('/^\s*(?:и|затем|потом)\s*$/u', $parts[$index - 1]) !== 1
-                && preg_match('/инструкц|пример|цитат|(?:что\s+)?(?:означает|значит)\s+команд|^\s*вопрос\s*$/u', $parts[$index - 2]) === 1) {
+                && preg_match('/инструкц|пример|цитат|(?:что\s+)?(?:означает|значит)\s+команд|^\s*вопрос\s*$/u', $parts[$previousIndex]) === 1) {
                 continue;
             }
             if (preg_match('/^(?:пожалуйста )?\pL+(?:ть|ти)(?!\pL)/u', self::normalize($part)) === 1) {

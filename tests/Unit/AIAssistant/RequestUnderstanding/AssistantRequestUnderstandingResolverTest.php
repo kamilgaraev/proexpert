@@ -47,6 +47,8 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         foreach (['Покажи инструкцию: установить лимит подотчётных средств',
             'Покажи инструкцию: поставь лимит подотчётных средств',
             'Что означает команда: поставь лимит 10000?',
+            "Покажи инструкцию:\nпоставь лимит подотчётных средств",
+            "Пример:\nотключи уведомления администратора",
             'Вопрос: установить лимит можно только администратору?'] as $query) {
             self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy, $query);
         }
