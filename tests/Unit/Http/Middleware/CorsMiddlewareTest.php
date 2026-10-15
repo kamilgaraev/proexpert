@@ -219,6 +219,63 @@ class CorsMiddlewareTest extends DatabaseLessTestCase
         self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
     }
 
+    public function test_legal_manifest_allows_site_and_lk_without_credentials(): void
+    {
+        $this->configureOrigins();
+
+        foreach (['https://www.example.test', 'https://lk.example.test'] as $origin) {
+            $request = Request::create('/api/public/legal', 'GET', server: ['HTTP_ORIGIN' => $origin]);
+            $response = $this->middleware()->handle($request, static fn (): Response => response('ok'));
+
+            self::assertSame(Response::HTTP_OK, $response->getStatusCode());
+            self::assertSame($origin, $response->headers->get('Access-Control-Allow-Origin'));
+            self::assertNull($response->headers->get('Access-Control-Allow-Credentials'));
+        }
+    }
+
+    public function test_legal_manifest_preflight_allows_lk_without_credentials(): void
+    {
+        $this->configureOrigins();
+        $request = Request::create('/api/public/legal', 'OPTIONS', server: [
+            'HTTP_ORIGIN' => 'https://lk.example.test',
+            'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'GET',
+            'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'Accept',
+        ]);
+        $response = $this->middleware()->handle($request, static function (): never {
+            throw new \LogicException('The handler must not run during preflight.');
+        });
+
+        self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode());
+        self::assertSame('https://lk.example.test', $response->headers->get('Access-Control-Allow-Origin'));
+        self::assertNull($response->headers->get('Access-Control-Allow-Credentials'));
+    }
+
+    public function test_legal_manifest_exception_is_limited_to_read_only_lk_requests(): void
+    {
+        $this->configureOrigins();
+
+        foreach ([
+            ['https://evil.example.test', '/api/public/legal', 'GET'],
+            ['https://admin.example.test', '/api/public/legal', 'GET'],
+            ['https://customer.example.test', '/api/public/legal', 'GET'],
+            ['https://lk.example.test', '/api/public/contact', 'GET'],
+            ['https://lk.example.test', '/api/public/legal/analytics-consent', 'POST'],
+            ['https://lk.example.test', '/api/public/legal', 'POST'],
+            ['https://lk.example.test', '/api/public/legal', 'OPTIONS'],
+        ] as [$origin, $path, $method]) {
+            $request = Request::create($path, $method, server: [
+                'HTTP_ORIGIN' => $origin,
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'POST',
+            ]);
+            $response = $this->middleware()->handle($request, static function (): never {
+                throw new \LogicException('The forbidden handler must not run.');
+            });
+
+            self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
+            self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+        }
+    }
+
     public function test_supplier_public_routes_allow_lk_without_credentials(): void
     {
         $this->configureOrigins();
