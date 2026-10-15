@@ -238,7 +238,7 @@ class HoldingSite extends Model
     {
         $updatedAt = $this->updated_at?->timestamp ?? now()->timestamp;
 
-        return hash('sha256', $this->id . $updatedAt . config('app.key'));
+        return hash_hmac('sha256', 'holding-site-preview:v2|'.$this->id.'|'.$updatedAt, (string) config('app.key'));
     }
 
     private function userIsOwnerByOrganization(User $user): bool

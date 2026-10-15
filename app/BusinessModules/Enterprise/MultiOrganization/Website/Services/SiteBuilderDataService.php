@@ -130,10 +130,11 @@ class SiteBuilderDataService
 
     public function buildPublishedPayload(HoldingSite $site, string $path = '/', ?string $requestedLocale = null): array
     {
+        if (!$site->isPublished() || !$site->organizationGroup()->where('status', 'active')->exists()) {
+            return [];
+        }
         $this->ensurePublicAssetAccess($site);
-        $snapshot = $site->hasPublishedSnapshot()
-            ? $this->normalizePublishedSnapshot($site, $site->getPublishedPayload())
-            : $this->buildSiteSnapshot($site, 'published', true);
+        $snapshot = $this->upgradeLegacyPublishedSnapshot($site);
 
         return $this->resolveRuntimePayload($site, $snapshot, $path, $requestedLocale, false);
     }
@@ -182,21 +183,19 @@ class SiteBuilderDataService
 
     public function upgradeLegacyPublishedSnapshot(HoldingSite $site): array
     {
-        $snapshot = $site->getPublishedPayload();
+        $snapshot = $this->normalizePublishedSnapshot($site, $site->getPublishedPayload());
 
         if (!$this->publishedSnapshotNeedsUpgrade($site)) {
-            return $this->normalizePublishedSnapshot($site, $snapshot);
+            return $snapshot;
         }
 
         $legacyBlocks = $this->normalizeLegacyPublishedBlocks($snapshot['blocks'] ?? []);
         $upgradedSnapshot = [
-            'site' => is_array($snapshot['site'] ?? null) ? $snapshot['site'] : $this->serializeSite($site),
+            'site' => $snapshot['site'],
             'pages' => [
-                $this->buildLegacyHomePageSnapshot($site, $legacyBlocks),
+                $this->buildLegacyHomePageSnapshot($snapshot['site'], $legacyBlocks),
             ],
-            'organization' => is_array($snapshot['organization'] ?? null)
-                ? $snapshot['organization']
-                : $this->buildOrganizationPayload($site),
+            'organization' => $snapshot['organization'],
             'blog' => is_array($snapshot['blog'] ?? null) ? $snapshot['blog'] : ['articles' => []],
             'runtime' => array_merge(
                 [
@@ -475,10 +474,8 @@ class SiteBuilderDataService
     private function normalizePublishedSnapshot(HoldingSite $site, array $snapshot): array
     {
         $normalized = $snapshot;
-        $normalized['site'] = is_array($snapshot['site'] ?? null) ? $snapshot['site'] : $this->serializeSite($site);
-        $normalized['organization'] = is_array($snapshot['organization'] ?? null)
-            ? $snapshot['organization']
-            : $this->buildOrganizationPayload($site);
+        $normalized['site'] = $this->normalizePublishedSite($site, $snapshot['site'] ?? null);
+        $normalized['organization'] = HoldingPublicDataService::organization($snapshot['organization'] ?? null);
         $normalized['pages'] = is_array($snapshot['pages'] ?? null) ? $snapshot['pages'] : [];
         $normalized['navigation'] = is_array($snapshot['navigation'] ?? null)
             ? $snapshot['navigation']
@@ -493,6 +490,47 @@ class SiteBuilderDataService
             is_array($snapshot['runtime'] ?? null) ? $snapshot['runtime'] : [],
             ['mode' => 'published']
         );
+
+        return $normalized;
+    }
+
+    private function normalizePublishedSite(HoldingSite $site, mixed $value): array
+    {
+        $defaults = [
+            'id' => $site->id,
+            'organization_group_id' => $site->organization_group_id,
+            'domain' => '',
+            'default_locale' => 'ru',
+            'enabled_locales' => ['ru'],
+            'title' => 'Сайт холдинга',
+            'description' => '',
+            'logo_url' => null,
+            'favicon_url' => null,
+            'theme_config' => [],
+            'seo_meta' => [],
+            'analytics_config' => [],
+            'status' => 'published',
+            'is_active' => true,
+            'is_published' => true,
+            'published_at' => null,
+            'url' => '',
+            'lead_endpoint' => '/api/site-leads',
+            'created_at' => '',
+            'updated_at' => '',
+        ];
+        $saved = is_array($value) ? $value : [];
+        $normalized = array_replace($defaults, array_intersect_key($saved, $defaults));
+        $normalized['theme_config'] = $this->normalizeThemeConfig(is_array($saved['theme_config'] ?? null) ? $saved['theme_config'] : []);
+        $normalized['seo_meta'] = array_replace([
+            'title' => $normalized['title'],
+            'description' => $normalized['description'],
+            'keywords' => '',
+            'og_title' => $normalized['title'],
+            'og_description' => $normalized['description'],
+            'og_image' => $normalized['logo_url'],
+            'canonical' => $normalized['url'],
+            'noindex' => false,
+        ], is_array($saved['seo_meta'] ?? null) ? $saved['seo_meta'] : []);
 
         return $normalized;
     }
@@ -536,10 +574,10 @@ class SiteBuilderDataService
             ->all();
     }
 
-    private function buildLegacyHomePageSnapshot(HoldingSite $site, array $blocks): array
+    private function buildLegacyHomePageSnapshot(array $site, array $blocks): array
     {
-        $title = $site->title ?: $site->organizationGroup->name;
-        $description = $site->description ?: ($site->organizationGroup->description ?? '');
+        $title = $site['title'];
+        $description = $site['description'];
 
         return [
             'id' => 'legacy-home',
@@ -548,7 +586,7 @@ class SiteBuilderDataService
             'navigation_label' => $title,
             'title' => $title,
             'description' => $description,
-            'seo_meta' => $this->normalizeSeoMeta($site->seo_meta ?? [], $site),
+            'seo_meta' => $site['seo_meta'],
             'layout_config' => [
                 'variant' => 'legacy',
             ],

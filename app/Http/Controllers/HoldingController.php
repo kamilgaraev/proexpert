@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\SiteBuilderDataService;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\HoldingPublicDataService;
 use App\Http\Responses\LandingResponse;
 use App\Models\OrganizationGroup;
 use App\Services\Landing\MultiOrganizationService;
@@ -20,7 +21,8 @@ class HoldingController extends Controller
 {
     public function __construct(
         protected MultiOrganizationService $multiOrgService,
-        protected SiteBuilderDataService $builderDataService
+        protected SiteBuilderDataService $builderDataService,
+        private readonly HoldingPublicDataService $publicDataService
     ) {
     }
 
@@ -47,6 +49,10 @@ class HoldingController extends Controller
             return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site));
         }
 
+        if (!$site->isPublished()) {
+            return LandingResponse::error(trans_message('holding_site_builder.public.not_published'), 404);
+        }
+
         $payload = $this->builderDataService->buildPublishedPayload($site);
 
         if (empty($payload['blocks'])) {
@@ -60,19 +66,16 @@ class HoldingController extends Controller
     {
         $holding = $request->attributes->get('holding');
 
-        if (!$holding) {
+        $data = $holding instanceof OrganizationGroup ? $this->publicDataService->forGroup($holding) : null;
+
+        if ($data === null) {
             return LandingResponse::error(
                 trans_message('landing.holding_api.not_found'),
                 Response::HTTP_NOT_FOUND
             );
         }
 
-        $data = [
-            'holding' => $holding,
-            'parent_organization' => $holding->parentOrganization,
-            'stats' => $this->getHoldingStats($holding),
-            'view' => 'holding.dashboard',
-        ];
+        $data['view'] = 'holding.dashboard';
 
         return LandingResponse::success($data);
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Services\HoldingPublicDataService;
 use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use App\Models\OrganizationGroup;
@@ -20,7 +21,8 @@ use function trans_message;
 class HoldingApiController extends Controller
 {
     public function __construct(
-        protected MultiOrganizationService $multiOrganizationService
+        protected MultiOrganizationService $multiOrganizationService,
+        private readonly HoldingPublicDataService $publicDataService
     ) {
     }
 
@@ -28,28 +30,16 @@ class HoldingApiController extends Controller
     {
         try {
             $group = $this->findHolding($slug);
+            $data = $group ? $this->publicDataService->forGroup($group) : null;
 
-            if (! $group) {
+            if ($data === null) {
                 return LandingResponse::error(
                     trans_message('landing.holding_api.not_found'),
                     Response::HTTP_NOT_FOUND
                 );
             }
 
-            $parentOrg = $group->parentOrganization;
-
-            if (! $parentOrg) {
-                return LandingResponse::error(
-                    trans_message('landing.holding_api.parent_not_found'),
-                    Response::HTTP_NOT_FOUND
-                );
-            }
-
-            return LandingResponse::success([
-                'holding' => $this->formatHolding($group),
-                'parent_organization' => $this->formatOrganization($parentOrg),
-                'stats' => $this->buildHoldingStats($parentOrg),
-            ]);
+            return LandingResponse::success($data);
         } catch (Throwable $exception) {
             $this->logFailure('holding_api.public_data_failed', $exception, [
                 'slug' => $slug,

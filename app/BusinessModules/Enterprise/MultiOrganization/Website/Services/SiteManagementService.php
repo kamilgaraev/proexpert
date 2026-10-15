@@ -156,9 +156,7 @@ class SiteManagementService
             return null;
         }
 
-        $this->upgradePublishedSnapshotIfNeeded($site);
-
-        return $site->fresh(['organizationGroup.parentOrganization', 'pages.sections.assets']);
+        return $site;
     }
 
     public function getHoldingLanding(OrganizationGroup $organizationGroup): ?HoldingSite

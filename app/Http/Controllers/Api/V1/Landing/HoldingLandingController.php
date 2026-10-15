@@ -165,6 +165,10 @@ class HoldingLandingController extends Controller
                 return LandingResponse::success($this->builderDataService->buildLiveDraftPayload($site, $path, is_string($requestedLocale) ? $requestedLocale : null));
             }
 
+            if (!$site->isPublished()) {
+                return LandingResponse::error(trans_message('holding_site_builder.public.not_published'), 404);
+            }
+
             $payload = $this->builderDataService->buildPublishedPayload($site, $path, is_string($requestedLocale) ? $requestedLocale : null);
 
             if (empty($payload['page']) && empty($payload['blocks']) && empty($payload['blog']['current_article'])) {
