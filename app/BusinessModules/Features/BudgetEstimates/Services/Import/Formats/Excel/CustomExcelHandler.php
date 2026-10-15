@@ -355,6 +355,9 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 mathPriceDerivedFromTotal: $costs['current_price_derived_from_total'] ?? false,
             );
             $dto->warnings = (new FormulaAwarenessService)->validate($dto->toArray());
+            if ($costs['source_math_mismatch'] ?? false) {
+                $dto->warnings[] = trans_message('estimate.import_math_source_mismatch');
+            }
             $dto->hasMathMismatch = $dto->warnings !== [];
             yield $dto;
         }

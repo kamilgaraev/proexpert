@@ -109,6 +109,23 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertStringContainsString('200,00', $items[0]->warnings[0]);
     }
 
+    public function test_local_index_keeps_an_independent_check_without_summary_controls(): void
+    {
+        foreach ([[100, 220, false], [100, 300, true], [120, 260, true], [120, 220, true]] as [$baseTotal, $currentTotal, $mismatch]) {
+            $items = $this->rows([
+                1 => ['1', 'RATE-1', 'Работа', null, null, 1, 100, null, $baseTotal],
+                2 => [null, 'Накладные расходы', null, null, null, null, 10],
+                3 => [null, 'Итого c накладными и см. прибылью', null, null, null, null, $baseTotal + 10],
+                4 => [null, 'Всего с учетом "СМР=2"', null, null, null, null, $currentTotal],
+            ]);
+            self::assertSame($mismatch, $items[0]->hasMathMismatch);
+            $rows = [$items[0]->toArray()];
+            (new FormulaAwarenessService)->annotate($rows);
+            self::assertSame($mismatch, $rows[0]['has_math_mismatch']);
+            self::assertSame((float) $currentTotal, $items[0]->currentTotalAmount);
+        }
+    }
+
     public function test_general_footer_does_not_replace_the_last_position_total(): void
     {
         $items = $this->rows([
