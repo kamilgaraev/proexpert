@@ -44,6 +44,7 @@ final class QualityDefectService
         private readonly QualityDefectNumberGenerator $numberGenerator,
         private readonly FileService $fileService,
         private readonly QualityDefectFlowOwnerEventSink $flowRecorder,
+        private readonly QualityDefectPhotoReferencePolicy $photoReferences,
     ) {}
 
     public function paginate(int $organizationId, int $perPage = 15, array $filters = []): LengthAwarePaginator
@@ -460,11 +461,17 @@ final class QualityDefectService
                 throw new DomainException(trans_message('quality_control.validation.photo_type_required'));
             }
 
+            $path = $this->photoReferences->storagePath($url, $defect);
+            $externalUrl = $this->photoReferences->externalUrl($url);
+            if ((int) $defect->organization_id !== $organizationId || ($path === null && $externalUrl === null)) {
+                throw new DomainException(trans_message('quality_control.validation.photo_reference_invalid'));
+            }
+
             $attributes = [
                 'organization_id' => $organizationId,
                 'uploaded_by' => $userId,
                 'type' => $type,
-                'url' => $url,
+                'url' => $path ?? $externalUrl,
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,
             ];

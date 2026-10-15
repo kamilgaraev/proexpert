@@ -9,6 +9,8 @@ use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Storage\DTO\CurrentStoredFile;
@@ -37,13 +39,28 @@ class QualityDefectControllerWorkflowTest extends TestCase
         ]);
 
         $foreignDefect = $this->createDefect($foreignContext, $foreignProject);
+        $schedule = ProjectSchedule::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Quality test schedule',
+            'planned_start_date' => '2026-10-01',
+            'planned_end_date' => '2026-10-05',
+        ]);
+        $task = ScheduleTask::query()->create([
+            'schedule_id' => $schedule->id,
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Quality test task',
+            'planned_start_date' => '2026-10-01',
+            'planned_end_date' => '2026-10-05',
+            'planned_duration_days' => 5,
+        ]);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
         $this->mock(FileService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('temporaryUrl')
-                ->atLeast()
-                ->once()
-                ->andReturn('https://storage.example/signed/quality-before-photo.jpg');
+            $mock->shouldNotReceive('temporaryUrl');
+            $mock->shouldNotReceive('url');
         });
 
         $createResponse = $this->withHeaders($context->authHeaders())
@@ -56,11 +73,11 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'assigned_to' => $assignee->id,
                 'due_date' => now()->addDays(3)->toDateString(),
                 'inspection_required' => true,
-                'schedule_task_id' => 125,
+                'schedule_task_id' => $task->id,
                 'photos' => [
                     [
                         'type' => 'before',
-                        'url' => 's3://org-'.$context->organization->id.'/quality/before-1.jpg',
+                        'url' => 'https://images.example/quality/before-1.jpg',
                         'caption' => 'Before repair',
                     ],
                 ],
@@ -284,7 +301,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'photos' => [
                     [
                         'type' => 'after',
-                        'url' => 's3://org-'.$context->organization->id.'/quality/after-1.jpg',
+                        'url' => 'https://images.example/quality/after-1.jpg',
                         'caption' => 'After repair',
                     ],
                 ],
@@ -405,6 +422,42 @@ class QualityDefectControllerWorkflowTest extends TestCase
             ]);
 
         $createResponse->assertStatus(405);
+    }
+
+    public function test_private_photo_references_are_rejected_on_create_and_resolve_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $defect = $this->createDefect($context, $project, ['status' => QualityDefectStatusEnum::IN_PROGRESS]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $files = $this->mock(FileService::class);
+        $files->shouldNotReceive('temporaryUrl');
+        $files->shouldNotReceive('url');
+        $files->shouldNotReceive('putPrivate');
+        $references = [
+            'org-999999/quality-control/defects/1/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg',
+            "org-{$context->organization->id}/quality-control/defects/999999/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
+            "s3://org-{$context->organization->id}/hr/private.pdf",
+            "ORG-{$context->organization->id}/quality-control/defects/{$defect->id}/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
+        ];
+        foreach ($references as $reference) {
+            $photo = ['type' => 'after', 'url' => $reference, 'metadata' => ['storage_identity_verified' => true]];
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/quality-control/defects', [
+                'project_id' => $project->id,
+                'title' => 'Rejected private reference',
+                'severity' => 'major',
+                'inspection_required' => true,
+                'photos' => [$photo],
+            ])->assertStatus(422);
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/quality-control/defects/{$defect->id}/resolve", ['photos' => [$photo]])
+                ->assertStatus(422);
+            self::assertSame(QualityDefectStatusEnum::IN_PROGRESS, $defect->fresh()->status);
+            self::assertSame(0, $defect->photos()->count());
+            self::assertSame(0, $defect->statusHistory()->count());
+            $this->assertDatabaseMissing('quality_defects', ['title' => 'Rejected private reference']);
+        }
     }
 
     private function createDefect(AdminApiTestContext $context, Project $project, array $overrides = []): QualityDefect

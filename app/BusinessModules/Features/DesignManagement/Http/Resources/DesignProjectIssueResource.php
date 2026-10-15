@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto;
+use App\BusinessModules\Features\QualityControl\Services\QualityDefectPhotoReferencePolicy;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Models\Organization;
 use App\Services\Storage\FileService;
 use BackedEnum;
 use Illuminate\Http\Request;
@@ -39,7 +42,7 @@ final class DesignProjectIssueResource extends JsonResource
             'author' => $author ? ['id' => (int) $author->id, 'name' => $author->name] : null,
             'assignee' => $assignee ? ['id' => (int) $assignee->id, 'name' => $assignee->name] : null,
             'history' => $history->filter(static fn ($event): bool => (int) $event->organization_id === (int) $issue->organization_id)->map(fn ($event): array => ['id' => (int) $event->id, 'from_status' => $this->value($event->from_status), 'to_status' => $this->value($event->to_status), 'comment' => $event->comment, 'changed_by' => $event->changed_by, 'author' => $event->relationLoaded('changedBy') && $event->changedBy ? ['id' => (int) $event->changedBy->id, 'name' => $event->changedBy->name] : null, 'changed_at' => $event->changed_at?->toISOString(), 'evidence_refs' => $event->reporting_evidence_refs ?? []])->values()->all(),
-            'photos' => $photos->filter(static fn ($photo): bool => (int) $photo->organization_id === (int) $issue->organization_id && str_starts_with((string) $photo->url, 'org-'.$issue->organization_id.'/'))->map(static fn ($photo): array => ['id' => (int) $photo->id, 'type' => $photo->type, 'caption' => $photo->caption, 'url' => app(FileService::class)->temporaryUrl($photo->url, 60, $organization), 'mime_type' => $photo->mime_type, 'size_bytes' => $photo->size_bytes, 'created_at' => $photo->created_at?->toISOString()])->values()->all(),
+            'photos' => $photos->map(fn (QualityDefectPhoto $photo): ?array => $this->photoPayload($photo, $issue, $organization))->filter()->values()->all(),
             'result' => ['resolved_at' => $issue->resolved_at?->toISOString(), 'verified_at' => $issue->verified_at?->toISOString()],
             'due_date' => $issue->due_date?->format('Y-m-d'),
             'resolved_at' => $issue->resolved_at?->toIso8601String(),
@@ -57,6 +60,29 @@ final class DesignProjectIssueResource extends JsonResource
     private function value(mixed $value): mixed
     {
         return $value instanceof BackedEnum ? $value->value : $value;
+    }
+
+    private function photoPayload(QualityDefectPhoto $photo, QualityDefect $issue, ?Organization $organization): ?array
+    {
+        $references = app(QualityDefectPhotoReferencePolicy::class);
+        if (! $references->belongsToDefect($photo, $issue)) {
+            return null;
+        }
+        $path = $references->storagePath((string) $photo->url, $issue);
+        $externalUrl = $references->externalUrl((string) $photo->url);
+        if ($path === null && $externalUrl === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $photo->id,
+            'type' => $photo->type,
+            'caption' => $photo->caption,
+            'url' => $path !== null ? app(FileService::class)->temporaryUrl($path, 60, $organization) : $externalUrl,
+            'mime_type' => $photo->mime_type,
+            'size_bytes' => $photo->size_bytes,
+            'created_at' => $photo->created_at?->toISOString(),
+        ];
     }
 
     private function availableActions(QualityDefect $issue, ?User $actor): array
