@@ -106,6 +106,7 @@ final class ContractSourceIntegrationTest extends TestCase
         Facade::setFacadeApplication($this->container);
         Model::clearBootedModels();
         $schema = $this->database->schema();
+        \Tests\Support\ContractDossierHistoryTestSchema::create($schema);
         $schema->create('organizations', static function (Blueprint $table): void {
             $table->id();
             $table->string('name');
@@ -231,6 +232,10 @@ final class ContractSourceIntegrationTest extends TestCase
             }
         };
         $request->attributes->set('current_organization_id', 7);
+        $this->container->instance('request', $request);
+        $auth = Mockery::mock(\Illuminate\Contracts\Auth\Factory::class);
+        $auth->shouldReceive('user')->andReturn($actor);
+        $this->container->instance(\Illuminate\Contracts\Auth\Factory::class, $auth);
         $controller = new ContractController(
             Mockery::mock(ContractService::class),
             Mockery::mock(OfficialFormsExportService::class),
@@ -246,7 +251,7 @@ final class ContractSourceIntegrationTest extends TestCase
         $first = $controller->store($request);
         $second = $controller->store($request);
 
-        self::assertSame(201, $first->getStatusCode());
+        self::assertSame(201, $first->getStatusCode(), $first->getContent());
         self::assertSame(200, $second->getStatusCode());
         self::assertSame(1, $this->database->table('contracts')->count());
         self::assertSame(200, (int) $this->database->table('contracts')->value('legal_archive_document_id'));
@@ -398,6 +403,7 @@ final class ContractSourceIntegrationTest extends TestCase
             $this->withoutConstructor(CommercialProposalExportService::class),
             $this->service(203, 'commercial_proposal', 'proposal-4'),
             $authorization,
+            new \App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess($authorization),
         );
         $input = $this->input('commercial_proposal', 'proposal-4', 1);
 

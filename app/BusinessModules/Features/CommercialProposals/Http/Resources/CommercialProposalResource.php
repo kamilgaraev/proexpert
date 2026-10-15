@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\CommercialProposals\Http\Resources;
 
 use App\BusinessModules\Features\CommercialProposals\Enums\CommercialProposalStatus;
+use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -58,7 +60,7 @@ final class CommercialProposalResource extends JsonResource
                 'presale_estimate_id' => $this->presale_estimate_id,
                 'project_id' => $this->project_id,
                 'contract_id' => $this->contract_id,
-                'crm_deal' => $this->relationLoaded('crmDeal') && $this->crmDeal !== null ? [
+                'crm_deal' => $this->resource->relationLoaded('crmDeal') && $this->crmDeal !== null ? [
                     'id' => $this->crmDeal->id,
                     'title' => $this->crmDeal->title,
                     'number' => $this->crmDeal->id,
@@ -161,15 +163,9 @@ final class CommercialProposalResource extends JsonResource
     private function canViewAmounts(Request $request): bool
     {
         $user = $request->user();
-
-        if ($user === null) {
-            return false;
-        }
-
         $organizationId = (int) $request->attributes->get('current_organization_id');
 
-        return $organizationId > 0 && $user->can('commercial_proposals.amounts.view', [
-            'organization_id' => $organizationId,
-        ]);
+        return $user instanceof User && $organizationId === (int) $this->organization_id
+            && app(CommercialProposalAmountAccess::class)->canView($organizationId, $user);
     }
 }

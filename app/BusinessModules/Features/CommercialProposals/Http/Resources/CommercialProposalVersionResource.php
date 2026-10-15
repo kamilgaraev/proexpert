@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\CommercialProposals\Http\Resources;
 
 use App\BusinessModules\Features\CommercialProposals\Enums\CommercialProposalStatus;
+use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -93,15 +95,9 @@ final class CommercialProposalVersionResource extends JsonResource
     private function canViewAmounts(Request $request): bool
     {
         $user = $request->user();
-
-        if ($user === null) {
-            return false;
-        }
-
         $organizationId = (int) $request->attributes->get('current_organization_id');
 
-        return $organizationId > 0 && $user->can('commercial_proposals.amounts.view', [
-            'organization_id' => $organizationId,
-        ]);
+        return $user instanceof User && $organizationId === (int) $this->organization_id
+            && app(CommercialProposalAmountAccess::class)->canView($organizationId, $user);
     }
 }

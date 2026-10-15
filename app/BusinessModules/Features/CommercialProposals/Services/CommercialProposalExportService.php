@@ -19,8 +19,10 @@ use function trans_message;
 
 final class CommercialProposalExportService
 {
-    public function __construct(private readonly FileService $fileService)
-    {
+    public function __construct(
+        private readonly FileService $fileService,
+        private readonly CommercialProposalAmountAccess $amountAccess,
+    ) {
     }
 
     /**
@@ -28,6 +30,7 @@ final class CommercialProposalExportService
      */
     public function preview(CommercialProposal $proposal, ?string $versionId, bool $canViewAmounts): array
     {
+        $canViewAmounts = $canViewAmounts && $this->amountAccess->canView((int) $proposal->organization_id);
         $version = $this->resolveVersion($proposal, $versionId);
 
         return [
@@ -41,6 +44,7 @@ final class CommercialProposalExportService
 
     public function export(CommercialProposal $proposal, array $input, bool $canViewAmounts, ?int $actorId): CommercialProposalExport
     {
+        $canViewAmounts = $canViewAmounts && $this->amountAccess->canView((int) $proposal->organization_id);
         $version = $this->resolveVersion($proposal, $input['version_id'] ?? null);
         $format = (string) ($input['format'] ?? 'pdf');
         $options = $input['options'] ?? [];
@@ -52,15 +56,17 @@ final class CommercialProposalExportService
             'options' => $options,
         ], JSON_THROW_ON_ERROR));
 
-        [$export, $shouldGenerate] = DB::transaction(function () use ($proposal, $version, $format, $options, $templateHash, $contentHash, $actorId): array {
+        [$export, $shouldGenerate] = DB::transaction(function () use ($proposal, $version, $format, $options, $templateHash, $contentHash, $actorId, $canViewAmounts): array {
             $existing = CommercialProposalExport::query()
                 ->where('commercial_proposal_version_id', $version->id)
                 ->where('format', $format)
                 ->where('content_hash', $contentHash)
                 ->where('template_version_hash', $templateHash)
-                ->first();
+                ->lockForUpdate()->first();
 
-            if ($existing instanceof CommercialProposalExport && in_array($existing->status, ['processing', 'ready'], true)) {
+            if ($existing instanceof CommercialProposalExport && ($existing->status === 'processing'
+                || ($existing->status === 'ready' && $existing->amounts_visible === $canViewAmounts
+                    && is_string($existing->storage_path) && $existing->storage_path !== ''))) {
                 return [$existing, false];
             }
 
@@ -71,6 +77,7 @@ final class CommercialProposalExportService
                     'options' => $options,
                     'error_message' => null,
                     'storage_path' => null,
+                    'amounts_visible' => null,
                     'generated_at' => null,
                 ])
                 : CommercialProposalExport::query()->make([
@@ -122,6 +129,7 @@ final class CommercialProposalExportService
             $export->forceFill([
                 'status' => 'ready',
                 'storage_path' => $path,
+                'amounts_visible' => $canViewAmounts,
                 'generated_at' => now(),
             ])->save();
 

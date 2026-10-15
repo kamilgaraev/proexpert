@@ -42,6 +42,7 @@ final class CommercialProposalService
         private readonly CommercialProposalExportService $exportService,
         private readonly ContractDossierCreationService $contractDossiers,
         private readonly AuthorizationService $authorization,
+        private readonly CommercialProposalAmountAccess $amountAccess,
     ) {
     }
 
@@ -1256,6 +1257,11 @@ final class CommercialProposalService
 
     private function appendExportUrl(CommercialProposalExport $export, CommercialProposal $proposal): void
     {
+        $export->setAttribute('download_url', null);
+        if (! $this->amountAccess->canDownload($export)) {
+            return;
+        }
+
         $export->setAttribute(
             'download_url',
             $this->fileService->temporaryUrl($export->storage_path, 60, $proposal->organization)

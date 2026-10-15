@@ -20,6 +20,8 @@ use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialPr
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalTemplateResource;
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalVersionResource;
 use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalService;
+use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess;
+use App\Models\User;
 use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
@@ -399,13 +401,8 @@ final class CommercialProposalController extends Controller
     {
         $user = $request->user();
 
-        if ($user === null) {
-            return false;
-        }
-
-        return $user->can('commercial_proposals.amounts.view', [
-            'organization_id' => $this->organizationId($request),
-        ]);
+        return $user instanceof User
+            && app(CommercialProposalAmountAccess::class)->canView($this->organizationId($request), $user);
     }
 
     private function perPage(Request $request): int

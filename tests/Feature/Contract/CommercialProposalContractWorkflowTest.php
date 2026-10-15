@@ -59,9 +59,24 @@ final class CommercialProposalContractWorkflowTest extends TestCase
         $this->database->setEventDispatcher(new Dispatcher($this->container));
         $this->database->bootEloquent();
         $this->container->instance('db', $this->database->getDatabaseManager());
+        Facade::clearResolvedInstance('db');
         Container::setInstance($this->container);
         Facade::setFacadeApplication($this->container);
         Model::clearBootedModels();
+
+        \Tests\Support\ContractDossierHistoryTestSchema::create($this->database->schema());
+        foreach (['organizations', 'projects'] as $tableName) {
+            $this->database->schema()->create($tableName, static function (Blueprint $table): void {
+                $table->id();
+                $table->string('name');
+                $table->softDeletes();
+            });
+        }
+        $this->database->schema()->create('contract_parties', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+            $table->string('side');
+        });
 
         $this->database->schema()->create('contracts', static function (Blueprint $table): void {
             $table->id();
@@ -208,12 +223,14 @@ final class CommercialProposalContractWorkflowTest extends TestCase
     private function service(AuthorizationService $authorization, ContractDossierCreationService $dossiers): CommercialProposalService
     {
         $files = Mockery::mock(FileService::class);
+        $amountAccess = new \App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess($authorization);
 
         return new CommercialProposalService(
             $files,
-            new CommercialProposalExportService($files),
+            new CommercialProposalExportService($files, $amountAccess),
             $dossiers,
             $authorization,
+            $amountAccess,
         );
     }
 
