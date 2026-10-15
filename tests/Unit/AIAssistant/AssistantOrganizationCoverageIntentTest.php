@@ -15,6 +15,9 @@ final class AssistantOrganizationCoverageIntentTest extends TestCase
     public function test_organization_and_personal_queries_bind_current_scope_and_expose_tools(): void
     {
         foreach ([
+            ['Какой порог двойного согласования подотчётных средств?', 'get_organization_advance_settings'],
+            ['Какой порог уведомления о крупной операции подотчётных средств?', 'get_organization_advance_settings'],
+            ['Какие согласования подотчётных средств действуют?', 'get_organization_advance_settings'],
             ['Какие настройки подотчётных средств сейчас действуют у нашей организации? Назови лимит одной выдачи, срок сдачи авансового отчёта и правила согласования и уведомлений. Ничего не меняй.', 'get_organization_advance_settings'],
             ['Посмотри по всей нашей организации: сколько у нас активных проектов и сколько архивных? Назови активные проекты и их плановые даты окончания.', 'get_organization_project_roster'],
             ['Какие поставщики есть в справочнике нашей организации? Сколько всего и как быстро найти нужного по названию?', 'get_organization_supplier_roster'],

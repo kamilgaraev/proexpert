@@ -13,6 +13,14 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_make_project_summary_remains_read_only(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Сделай сводку по проектам');
+
+        self::assertSame('summarize', $result->primaryIntent);
+        self::assertSame('read_only', $result->actionPolicy);
+    }
+
     public function test_mutation_commands_share_classification_with_project_read_guards(): void
     {
         foreach ([

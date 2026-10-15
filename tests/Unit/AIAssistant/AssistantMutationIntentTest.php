@@ -9,6 +9,19 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantMutationIntentTest extends TestCase
 {
+    public function test_make_summary_is_read_only_without_hiding_a_second_mutation(): void
+    {
+        foreach (['Сделай сводку по проектам', 'Пожалуйста, сделайте краткую сводку по проектам',
+            'Нужно сделать сводку по проектам', 'Сделай обзор по проектам'] as $query) {
+            self::assertNull(AssistantMutationIntent::type($query), $query);
+            self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
+        }
+        foreach (['Сделай сводку по проектам и поставь лимит 10000',
+            'Сделай сводку и сделай лимит подотчётных средств 10000'] as $query) {
+            self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
+        }
+    }
+
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
     {
         foreach (['Увеличь', 'Увеличьте', 'Уменьши', 'Уменьшите', 'Настрой', 'Настройте', 'Установи', 'Установите',

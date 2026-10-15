@@ -21,7 +21,7 @@ final class AssistantMutationIntent
 
     public static function type(string $message): ?string
     {
-        $normalized = self::normalize($message);
+        $normalized = self::normalizeMutationCommands($message);
         foreach (self::COMMANDS as $type => $commands) {
             foreach ($commands as $command) {
                 if (preg_match('/^(?:пожалуйста |прошу )?'.preg_quote($command, '/').'(?: |$)/u', $normalized) === 1) {
@@ -42,7 +42,7 @@ final class AssistantMutationIntent
             'назначьте', 'назначить', 'перенесите', 'перенести', 'переносим', 'сдвинь', 'сдвиньте', 'сдвинуть',
             'удалить', 'утвердите', 'утвердить', 'согласуйте', 'согласовать', 'одобрите', 'одобрить',
             'подтверди', 'подтвердите', 'подтвердить', 'отправь', 'отправьте', 'отправить', 'уведомите', 'уведомить', 'оплати', 'оплатите', 'оплатить']);
-        $normalized = self::normalize($message);
+        $normalized = self::normalizeMutationCommands($message);
         foreach ($commands as $command) {
             $prefix = str_ends_with($command, 'ть') || str_ends_with($command, 'ти')
                 ? '(?:^(?:(?:пожалуйста|прошу|хочу|надо|нужно|давай) )?| (?:и|затем|потом) (?:(?:пожалуйста|прошу) )?)'
@@ -53,6 +53,13 @@ final class AssistantMutationIntent
         }
 
         return false;
+    }
+
+    private static function normalizeMutationCommands(string $message): string
+    {
+        $normalized = self::normalize($message);
+
+        return preg_replace('/(?<![\pL\pN])(?:сделай|сделайте|сделать)\s+(?:(?:кратк|подробн|общ)[а-я]*\s+)?(?:сводк|обзор)[а-я]*(?![\pL\pN])/u', 'сводка', $normalized) ?? $normalized;
     }
 
     private static function normalize(string $message): string
