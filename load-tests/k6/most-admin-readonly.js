@@ -6,7 +6,7 @@ import { Trend } from 'k6/metrics';
 const BASE_URL = (__ENV.BASE_URL || '').replace(/\/+$/, '');
 const PROFILE = (__ENV.PROFILE || 'smoke').toLowerCase();
 const LOGIN_PATH = __ENV.LOGIN_PATH || '/api/v1/admin/auth/login';
-const PASSWORD = __ENV.LOAD_TEST_PASSWORD || 'LoadTest123!';
+const PASSWORD = __ENV.LOAD_TEST_PASSWORD || '';
 const ACCOUNT_LABELS = splitList(__ENV.ACCOUNT_LABELS || 'owner');
 const REQUEST_TIMEOUT = __ENV.REQUEST_TIMEOUT || '30s';
 const FAIL_RATE = __ENV.FAIL_RATE || '0.02';
@@ -24,6 +24,10 @@ const ENDPOINT_TRENDS = buildEndpointTrends();
 
 if (!BASE_URL) {
   throw new Error('BASE_URL is required, for example: https://example.com');
+}
+
+if (PASSWORD.length < 16) {
+  throw new Error('LOAD_TEST_PASSWORD must contain at least 16 characters and match the seeder environment.');
 }
 
 export const options = {

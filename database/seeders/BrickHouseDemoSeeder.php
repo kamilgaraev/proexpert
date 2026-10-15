@@ -25,7 +25,6 @@ use RuntimeException;
 
 class BrickHouseDemoSeeder extends Seeder
 {
-    private const PASSWORD = 'MostDemo123!';
 
     private Carbon $now;
 
@@ -341,13 +340,11 @@ class BrickHouseDemoSeeder extends Seeder
                     [
                         'Контур' => 'Генподряд',
                         'Email' => $general['email'],
-                        'Пароль' => self::PASSWORD,
                         'Организация' => $general['organization_name'],
                     ],
                     [
                         'Контур' => 'Подряд',
                         'Email' => $contractor['email'],
-                        'Пароль' => self::PASSWORD,
                         'Организация' => $contractor['organization_name'],
                     ],
                 ],
@@ -357,7 +354,7 @@ class BrickHouseDemoSeeder extends Seeder
 
         $this->command?->newLine();
         $this->command?->info('Демо кирпичного дома создано или обновлено.');
-        $this->command?->table(['Контур', 'Email', 'Пароль', 'Организация'], $result['accounts']);
+        $this->command?->table(['Контур', 'Email', 'Организация'], $result['accounts']);
         $this->command?->newLine();
         $this->command?->info(sprintf('ID проекта: %d', $result['project_id']));
         $this->command?->table(
@@ -517,7 +514,7 @@ class BrickHouseDemoSeeder extends Seeder
             'name' => $account['name'],
             'email' => $account['email'],
             'email_verified_at' => $this->now,
-            'password' => Hash::make(self::PASSWORD),
+            'password' => Hash::make(bin2hex(random_bytes(32))),
             'phone' => $account['user_phone'],
             'position' => $account['position'],
             'avatar_path' => null,
@@ -675,7 +672,7 @@ class BrickHouseDemoSeeder extends Seeder
             'name' => $member['name'],
             'email' => $member['email'],
             'email_verified_at' => $this->now,
-            'password' => Hash::make(self::PASSWORD),
+            'password' => Hash::make(bin2hex(random_bytes(32))),
             'phone' => $member['phone'],
             'position' => $member['position'],
             'avatar_path' => null,

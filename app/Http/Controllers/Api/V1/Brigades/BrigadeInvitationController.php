@@ -27,9 +27,7 @@ class BrigadeInvitationController extends Controller
 
     public function accept(int $invitationId): JsonResponse
     {
-        $brigade = $this->workflowService->getOwnedBrigade(auth()->user());
-        $invitation = $brigade->invitations()->with(['project', 'contractorOrganization'])->whereKey($invitationId)->firstOrFail();
-        $invitation->update(['status' => BrigadeStatuses::INVITATION_ACCEPTED]);
+        $invitation = $this->workflowService->respondToInvitation(auth()->user(), $invitationId, BrigadeStatuses::INVITATION_ACCEPTED);
         $assignment = $this->workflowService->createAssignmentFromInvitation($invitation);
 
         return AdminResponse::success([
@@ -40,9 +38,7 @@ class BrigadeInvitationController extends Controller
 
     public function decline(int $invitationId): JsonResponse
     {
-        $brigade = $this->workflowService->getOwnedBrigade(auth()->user());
-        $invitation = $brigade->invitations()->whereKey($invitationId)->firstOrFail();
-        $invitation->update(['status' => BrigadeStatuses::INVITATION_DECLINED]);
+        $invitation = $this->workflowService->respondToInvitation(auth()->user(), $invitationId, BrigadeStatuses::INVITATION_DECLINED);
 
         return AdminResponse::success(new BrigadeInvitationResource($invitation), trans_message('brigades.invitation_declined'));
     }

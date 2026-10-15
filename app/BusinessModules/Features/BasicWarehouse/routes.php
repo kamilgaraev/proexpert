@@ -60,10 +60,10 @@ Route::middleware(AdminRouteStack::middleware())
 
             // Управление складами
             Route::get('/', [WarehouseController::class, 'index']);
-            Route::post('/', [WarehouseController::class, 'store']);
+            Route::post('/', [WarehouseController::class, 'store'])->middleware('authorize:warehouse.manage_stock');
             Route::get('/{id}', [WarehouseController::class, 'show'])->whereNumber('id');
-            Route::put('/{id}', [WarehouseController::class, 'update'])->whereNumber('id');
-            Route::delete('/{id}', [WarehouseController::class, 'destroy'])->whereNumber('id');
+            Route::put('/{id}', [WarehouseController::class, 'update'])->whereNumber('id')->middleware('authorize:warehouse.manage_stock');
+            Route::delete('/{id}', [WarehouseController::class, 'destroy'])->whereNumber('id')->middleware('authorize:warehouse.manage_stock');
 
             // Остатки и движения
             Route::get('/{id}/dashboard', [WarehouseController::class, 'dashboard'])
@@ -132,8 +132,10 @@ Route::middleware(AdminRouteStack::middleware())
                 ->middleware('authorize:warehouse.manage_stock')
                 ->name('operations.place');
             Route::post('/operations/reserve', [WarehouseOperationsController::class, 'reserve'])
+                ->middleware('authorize:warehouse.manage_stock')
                 ->name('operations.reserve');
             Route::post('/operations/unreserve', [WarehouseOperationsController::class, 'unreserve'])
+                ->middleware('authorize:warehouse.manage_stock')
                 ->name('operations.unreserve');
             Route::post('/operations/transfer-to-contractor', [WarehouseOperationsController::class, 'transferToContractor'])
                 ->name('operations.transfer-to-contractor');
@@ -275,10 +277,12 @@ Route::middleware(AdminRouteStack::middleware())
 
             // Резервирование
             Route::post('/reservations', [AdvancedWarehouseController::class, 'reserve'])
+                ->middleware('authorize:warehouse.advanced.reservations')
                 ->name('reservations.create');
             Route::get('/reservations', [AdvancedWarehouseController::class, 'reservations'])
                 ->name('reservations.index');
             Route::delete('/reservations/{reservationId}', [AdvancedWarehouseController::class, 'unreserve'])
+                ->middleware('authorize:warehouse.advanced.reservations')
                 ->name('reservations.unreserve');
             Route::get('/reservations/{reservationId}/export-m8', [WarehouseOperationsController::class, 'exportM8'])
                 ->whereNumber('reservationId')

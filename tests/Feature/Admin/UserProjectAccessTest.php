@@ -9,13 +9,8 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
-use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
-use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Http\Middleware\JwtMiddleware;
-use App\Http\Middleware\SetOrganizationContext;
-use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -78,8 +73,7 @@ class UserProjectAccessTest extends TestCase
     {
         [$organization, $admin, $member, $projectA] = $this->createAdminMemberAndProjects();
 
-        $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
+        $this->actingAs($admin, 'api_admin')
             ->putJson("/api/v1/admin/users/{$member->id}/project-access", [
                 'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
                 'project_ids' => [$projectA->id],
@@ -112,8 +106,7 @@ class UserProjectAccessTest extends TestCase
             'is_archived' => false,
         ]);
 
-        $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
+        $this->actingAs($admin, 'api_admin')
             ->putJson("/api/v1/admin/users/{$member->id}/project-access", [
                 'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
                 'project_ids' => [$foreignProject->id],
@@ -126,8 +119,7 @@ class UserProjectAccessTest extends TestCase
         [$organization, $admin] = $this->createAdminMemberAndProjects();
         $email = 'ordinary-' . Str::uuid() . '@example.test';
 
-        $response = $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
+        $response = $this->actingAs($admin, 'api_admin')
             ->postJson('/api/v1/admin/users', [
                 'name' => 'Новый сотрудник',
                 'email' => $email,
@@ -201,16 +193,15 @@ class UserProjectAccessTest extends TestCase
             AuthorizationContext::getOrganizationContext($organization->id)
         );
 
-        return [$organization, $admin, $member, $projectA, $projectB];
-    }
+        $sessionUuid = (string) Str::uuid();
+        \App\Models\UserAuthSession::query()->create([
+            'user_id' => $admin->id, 'organization_id' => $organization->id, 'session_uuid' => $sessionUuid,
+            'device_fingerprint' => hash('sha256', $sessionUuid), 'device_name' => 'Project access test',
+            'status' => \App\Enums\AuthSessionStatus::Active, 'first_seen_at' => now(), 'last_seen_at' => now(),
+        ]);
+        $tokens = app(\App\Services\Auth\WebAuthTokenService::class)->issue($admin, 'admin', $sessionUuid, $organization->id, false);
+        $this->withHeaders(['Authorization' => 'Bearer '.$tokens->accessToken, 'Origin' => 'https://admin.1мост.рф', 'Accept' => 'application/json']);
 
-    private function adminAccessMiddleware(): array
-    {
-        return [
-            Authenticate::class,
-            JwtMiddleware::class,
-            AuthorizeMiddleware::class,
-            InterfaceMiddleware::class,
-        ];
+        return [$organization, $admin, $member, $projectA, $projectB];
     }
 }

@@ -52,29 +52,7 @@ abstract class CustomerController extends Controller
             return false;
         }
 
-        if ($user === null) {
-            return true;
-        }
-
-        $scopedProjectIds = $user->assignedProjects()
-            ->where(function ($builder) use ($organizationId): void {
-                $builder
-                    ->where('projects.organization_id', $organizationId)
-                    ->orWhereExists(function ($subQuery) use ($organizationId): void {
-                        $subQuery
-                            ->selectRaw('1')
-                            ->from('project_organization')
-                            ->whereColumn('project_organization.project_id', 'projects.id')
-                            ->where('project_organization.organization_id', $organizationId)
-                            ->where('project_organization.is_active', true);
-                    });
-            })
-            ->pluck('projects.id');
-
-        if ($scopedProjectIds->isEmpty()) {
-            return true;
-        }
-
-        return $scopedProjectIds->contains($project->id);
+        return $user !== null && app(\App\Services\Project\UserProjectAccessService::class)
+            ->canAccessProject($user, $project, $organizationId);
     }
 }

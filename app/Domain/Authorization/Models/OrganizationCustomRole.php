@@ -71,7 +71,7 @@ class OrganizationCustomRole extends Model
      */
     public function assignments(): HasMany
     {
-        return $this->hasMany(UserRoleAssignment::class, 'role_slug', 'slug')
+        return $this->hasMany(UserRoleAssignment::class, 'custom_role_id')
             ->where('role_type', UserRoleAssignment::TYPE_CUSTOM);
     }
 
@@ -121,6 +121,9 @@ class OrganizationCustomRole extends Model
     public static function generateSlug(string $name, int $organizationId): string
     {
         $baseSlug = Str::slug($name, '_');
+        if (app(\App\Domain\Authorization\Services\RoleScanner::class)->getRole($baseSlug) !== null) {
+            $baseSlug = 'custom_'.$baseSlug;
+        }
         $slug = $baseSlug;
         $counter = 1;
 

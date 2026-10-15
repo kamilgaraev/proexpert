@@ -6,8 +6,6 @@ namespace App\BusinessModules\Features\DesignManagement\Services;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignFileFormatEnum;
 use Illuminate\Http\UploadedFile;
-use PhpOffice\PhpSpreadsheet\IOFactory;
-use Smalot\PdfParser\Parser;
 use ZipArchive;
 
 final class DesignDocumentMetadataExtractor
@@ -61,15 +59,10 @@ final class DesignDocumentMetadataExtractor
 
     private function withPdfMetadata(string $path, array $metadata): array
     {
-        if (!class_exists(Parser::class)) {
-            return $metadata;
-        }
-
         try {
-            $parser = new Parser();
-            $document = $parser->parseFile($path);
-            $metadata['page_count'] = count($document->getPages());
-            $metadata['details']['pdf_metadata'] = $document->getDetails();
+            $result = app(\App\Services\Documents\BoundedPdfParser::class)->inspectFile($path, false);
+            $metadata['page_count'] = $result['page_count'];
+            $metadata['details']['pdf_metadata'] = $result['details'];
         } catch (\Throwable) {
             $metadata['details']['pdf_parse_failed'] = true;
         }
@@ -79,15 +72,10 @@ final class DesignDocumentMetadataExtractor
 
     private function withSpreadsheetMetadata(string $path, array $metadata): array
     {
-        if (!class_exists(IOFactory::class)) {
-            return $metadata;
-        }
-
         try {
-            $spreadsheet = IOFactory::load($path);
-            $metadata['sheet_count'] = $spreadsheet->getSheetCount();
-            $metadata['details']['worksheet_titles'] = $spreadsheet->getSheetNames();
-            $spreadsheet->disconnectWorksheets();
+            $titles = app(BoundedSpreadsheetMetadata::class)->inspect($path, $metadata['file_format']);
+            $metadata['sheet_count'] = count($titles);
+            $metadata['details']['worksheet_titles'] = $titles;
         } catch (\Throwable) {
             $metadata['details']['spreadsheet_parse_failed'] = true;
         }

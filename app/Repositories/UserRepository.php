@@ -13,6 +13,7 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
 use Illuminate\Support\Str;
+use Illuminate\Database\Eloquent\Builder;
 
 class UserRepository extends BaseRepository implements UserRepositoryInterface
 {
@@ -367,7 +368,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                 elseif (strtolower($isActiveFilter) === 'false') $isActiveFilter = false;
             }
             if (is_bool($isActiveFilter)) { 
-                 $query->where('is_active', $isActiveFilter);
+                 $this->applyOrganizationActivityFilter($query, $organizationId, $isActiveFilter);
             }
         }
         
@@ -385,6 +386,20 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         return $this->model->query()->whereHas('organizations', static function ($query) use ($organizationId): void {
             $query->where('organization_user.organization_id', $organizationId);
+        });
+    }
+
+    private function applyOrganizationActivityFilter(Builder $query, int $organizationId, bool $active): void
+    {
+        $query->where(static function (Builder $activity) use ($organizationId, $active): void {
+            $membership = static fn (Builder $organization) => $organization
+                ->where('organization_user.organization_id', $organizationId)
+                ->where('organization_user.is_active', $active);
+            if ($active) {
+                $activity->where('users.is_active', true)->whereHas('organizations', $membership);
+            } else {
+                $activity->where('users.is_active', false)->orWhereHas('organizations', $membership);
+            }
         });
     }
 
@@ -429,7 +444,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             }
 
             if (is_bool($isActiveFilter)) {
-                $query->where('is_active', $isActiveFilter);
+                $this->applyOrganizationActivityFilter($query, $organizationId, $isActiveFilter);
             }
         }
 
@@ -479,6 +494,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     $q->where('context_id', $context->id)
                         ->where('is_active', true);
                 },
+                'organizations' => fn ($q) => $q->where('organizations.id', $organizationId),
             ]);
 
         if (!empty($filters['name'])) {
@@ -500,7 +516,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             }
 
             if (is_bool($isActiveFilter)) {
-                $query->where('is_active', $isActiveFilter);
+                $this->applyOrganizationActivityFilter($query, $organizationId, $isActiveFilter);
             }
         }
 

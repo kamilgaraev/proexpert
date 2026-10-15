@@ -36,13 +36,15 @@ class ProjectServiceSortValidationTest extends TestCase
             'sort_direction' => 'up',
         ]);
         $request->attributes->set('current_organization_id', 25);
+        $actor = new \App\Models\User(['current_organization_id' => 25]);
+        $request->setUserResolver(fn () => $actor);
 
         $paginator = new LengthAwarePaginator([], 0, 20);
         $projectRepository = Mockery::mock(ProjectRepositoryInterface::class);
         $projectRepository
             ->shouldReceive('getProjectsForOrganizationPaginated')
             ->once()
-            ->with(25, 20, [], 'created_at', 'desc')
+            ->with(25, 20, [], 'created_at', 'desc', $actor)
             ->andReturn($paginator);
 
         $service = new ProjectService(

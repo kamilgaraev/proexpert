@@ -53,9 +53,7 @@ class ContractAllocationController extends Controller
             ->where('organization_id', $organizationId)
             ->firstOrFail();
 
-        $allocations = $contract->activeAllocations()
-            ->with('project')
-            ->get()
+        $allocations = $this->allocationService->readableAllocations($contract)
             ->map(function ($allocation) {
                 return [
                     'id' => $allocation->id,
@@ -90,7 +88,7 @@ class ContractAllocationController extends Controller
 
         $validated = $request->validate([
             'allocations' => ['required', 'array'],
-            'allocations.*.project_id' => ['required', 'integer', 'exists:projects,id'],
+            'allocations.*.project_id' => ['required', 'integer', 'distinct', 'exists:projects,id'],
             'allocations.*.allocation_type' => ['required', 'string', Rule::in(['fixed', 'percentage', 'auto', 'custom'])],
             'allocations.*.allocated_amount' => ['nullable', 'numeric', 'min:0'],
             'allocations.*.allocated_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],

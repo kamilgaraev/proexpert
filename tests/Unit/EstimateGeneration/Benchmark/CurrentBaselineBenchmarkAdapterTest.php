@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionC
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfParserRuntime;
+use App\Services\Documents\BoundedPdfParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -24,7 +24,7 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         parent::setUp();
         $container = new Container;
         $container->instance('config', new Repository([
-            'estimate-generation' => ['ocr' => ['pdf_text_layer_min_chars' => 1, 'pdf_parser_memory_limit' => '128M']],
+            'estimate-generation' => ['ocr' => ['pdf_text_layer_min_chars' => 1]],
         ]));
         $container->bind('db', static fn (): never => throw new \LogicException('Database access forbidden.'));
         Container::setInstance($container);
@@ -46,7 +46,7 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $case = BenchmarkManifest::fromFile($root.'/manifest.json', $root)->case('dev-vector-pdf-001');
         $adapter = new CurrentBaselineBenchmarkAdapter(
             new LocalBenchmarkObjectReader($root),
-            new PdfTextLayerExtractor(new PdfParserRuntime),
+            new PdfTextLayerExtractor(new BoundedPdfParser),
             new DrawingGeometryAnalyzer,
         );
 
@@ -64,7 +64,7 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $case = BenchmarkManifest::fromFile($root.'/manifest.json', $root)->case('reg-dxf-001');
         $adapter = new CurrentBaselineBenchmarkAdapter(
             new LocalBenchmarkObjectReader($root),
-            new PdfTextLayerExtractor(new PdfParserRuntime),
+            new PdfTextLayerExtractor(new BoundedPdfParser),
             new DrawingGeometryAnalyzer,
         );
 

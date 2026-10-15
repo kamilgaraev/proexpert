@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Services\User;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Exceptions\BusinessLogicException;
@@ -58,6 +61,53 @@ final class AdminUserRolePolicy
         }
     }
 
+    public function assertCanManageUser(User $actor, User $target, int $organizationId, bool $changesGlobalIdentity = false): void
+    {
+        if ((int) $actor->id === (int) $target->id || $actor->isSystemAdmin()) {
+            return;
+        }
+
+        $systemAssignment = $target->roleAssignments()->active()
+            ->where('role_type', UserRoleAssignment::TYPE_SYSTEM)
+            ->whereHas('context', static fn ($query) => $query->where('type', AuthorizationContext::TYPE_SYSTEM))
+            ->exists();
+        $sharedIdentity = $changesGlobalIdentity && $target->organizations()
+            ->where('organizations.id', '<>', $organizationId)->wherePivot('is_active', true)->exists();
+
+        if ($systemAssignment || $sharedIdentity) {
+            throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
+        }
+
+        $assignableRoles = $this->assignableRoleSlugsFor($actor, $organizationId);
+        $assignments = $target->roleAssignments()->active()->with('customRole')
+            ->whereHas('context', static function ($query) use ($organizationId): void {
+                $query->where(static fn ($organization) => $organization
+                    ->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $organizationId))
+                    ->orWhere(static fn ($project) => $project->where('type', AuthorizationContext::TYPE_PROJECT)
+                        ->whereHas('parentContext', static fn ($parent) => $parent
+                            ->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $organizationId)));
+            })->get();
+        $authorization = $this->authorizationService->forCurrentChecks(true);
+        $resolver = app(PermissionResolver::class)->forCurrentChecks();
+
+        foreach ($assignments as $assignment) {
+            if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM
+                && ! in_array($assignment->role_slug, $assignableRoles, true)) {
+                throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
+            }
+
+            if ($assignment->role_type !== UserRoleAssignment::TYPE_CUSTOM || ! $assignment->customRole) {
+                continue;
+            }
+
+            foreach ($resolver->getCustomRolePermissions($assignment->role_slug, $organizationId) as $permission) {
+                if (! $authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
+                    throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
+                }
+            }
+        }
+    }
+
     /**
      * @param  array<int, string>  $roleSlugs
      * @return array<int, string>
@@ -88,9 +138,9 @@ final class AdminUserRolePolicy
     private function managerRoleSlugs(User $actor, int $organizationId): array
     {
         $authorization = $this->authorizationService->forCurrentChecks(true);
-        $roleSlugs = $authorization->getUserRoleSlugs($actor, [
-            'organization_id' => $organizationId,
-        ]);
+        $context = AuthorizationContext::findOrganizationContext($organizationId);
+        $roleSlugs = $context ? $authorization->getUserRoles($actor, $context)
+            ->where('role_type', UserRoleAssignment::TYPE_SYSTEM)->pluck('role_slug')->all() : [];
 
         if ($authorization->canCurrent($actor, 'users.roles', ['organization_id' => $organizationId])) {
             $roleSlugs[] = 'organization_admin';

@@ -13,7 +13,13 @@ class UpdateCustomRoleRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true; // Авторизация происходит в middleware
+        app(CustomRoleService::class)->assertRoleAccess(
+            $this->route('role'),
+            $this->user(),
+            (int) $this->attributes->get('current_organization_id')
+        );
+
+        return true;
     }
 
     /**
@@ -97,7 +103,7 @@ class UpdateCustomRoleRequest extends FormRequest
             $availableSystemPermissions = array_keys($roleService->getAvailableSystemPermissions($role->organization_id));
             
             foreach ($systemPermissions as $permission) {
-                if ($permission !== '*' && !in_array($permission, $availableSystemPermissions)) {
+                if (!in_array($permission, $availableSystemPermissions, true)) {
                     $validator->errors()->add('system_permissions', "Недопустимое системное право: $permission");
                 }
             }
@@ -140,13 +146,6 @@ class UpdateCustomRoleRequest extends FormRequest
             }
         }
         
-        // Если меняем права, предупреждаем об активных пользователях
-        if (($this->has('system_permissions') || $this->has('module_permissions')) && 
-            $role->assignments()->active()->exists()) {
-            
-            // Это предупреждение, не ошибка валидации
-            // Можно добавить в мета-информацию ответа
-        }
     }
 
     /**

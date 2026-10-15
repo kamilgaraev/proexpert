@@ -612,6 +612,11 @@ class UserService
             throw new BusinessLogicException(trans_message('user.organization_context_missing'), 422);
         }
 
+        $identityFields = array_intersect_key($data, array_flip($organizationUser->getFillable()));
+        $changesIdentity = $request->hasFile('avatar') || collect($identityFields)
+            ->contains(static fn ($value, $key): bool => $organizationUser->getAttribute($key) !== $value);
+        $this->adminUserRolePolicy->assertCanManageUser($actor, $organizationUser, $organizationId, $changesIdentity);
+
         return DB::transaction(function () use (
             $actor,
             $data,
@@ -659,7 +664,10 @@ class UserService
             throw new BusinessLogicException('Вы не можете заблокировать самого себя.', 403);
         }
 
-        return $this->userRepository->update($userId, ['is_active' => false]);
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        $this->adminUserRolePolicy->assertCanManageUser($request->user(), $organizationUser, $organizationId);
+
+        return $organizationUser->organizations()->updateExistingPivot($organizationId, ['is_active' => false]) > 0;
     }
 
     public function unblockOrganizationUser(int $userId, Request $request): bool
@@ -671,7 +679,10 @@ class UserService
             throw new BusinessLogicException('Пользователь не найден в этой организации.', 404);
         }
 
-        return $this->userRepository->update($userId, ['is_active' => true]);
+        $organizationId = (int) $request->attributes->get('current_organization_id');
+        $this->adminUserRolePolicy->assertCanManageUser($request->user(), $organizationUser, $organizationId);
+
+        return $organizationUser->organizations()->updateExistingPivot($organizationId, ['is_active' => true]) > 0;
     }
 
      /**

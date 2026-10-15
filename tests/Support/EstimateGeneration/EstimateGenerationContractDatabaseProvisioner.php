@@ -80,6 +80,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_09_12_200001_create_authorization_contexts_table.php',
         'database/migrations/2025_09_12_200002_create_user_role_assignments_table.php',
         'database/migrations/2025_09_12_200003_create_organization_custom_roles_table.php',
+        'database/migrations/2026_10_14_010000_bind_custom_role_assignments.php',
         'database/migrations/2025_09_12_200004_create_role_conditions_table.php',
         'database/migrations/2025_09_16_000000_add_extra_fields_to_projects_table.php',
         'database/migrations/2025_10_10_120230_add_coordinates_to_projects_table.php',

@@ -182,6 +182,8 @@ class AuthorizationService
     public function hasRole(User $user, string $roleSlug, ?int $contextId = null): bool
     {
         $query = $user->roleAssignments()->active()->where('role_slug', $roleSlug);
+        $query->where('role_type', $this->roleScanner->getRole($roleSlug) !== null
+            ? UserRoleAssignment::TYPE_SYSTEM : UserRoleAssignment::TYPE_CUSTOM);
         
         if ($contextId) {
             $query->where('context_id', $contextId);
@@ -195,7 +197,7 @@ class AuthorizationService
      */
     public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection
     {
-        $cacheKey = "user_roles_{$user->id}_" . ($context ? $context->id : 'global');
+        $cacheKey = "user_roles_v2_{$user->id}_" . ($context ? $context->id : 'global');
         
         return $this->rememberArray($cacheKey, 300, function () use ($user, $context) {
             $query = $user->roleAssignments()
@@ -296,7 +298,7 @@ class AuthorizationService
         
         foreach ($roles as $assignment) {
             $orgId = $this->permissionResolver->extractOrganizationId($assignment);
-            $rolePermissions = $this->getRolePermissions($assignment->role_slug, $assignment->role_type, $orgId);
+            $rolePermissions = $this->getRolePermissions($assignment->role_slug, $assignment->role_type, $orgId, $assignment->custom_role_id);
             $permissions = array_merge($permissions, $rolePermissions);
         }
         
@@ -465,7 +467,8 @@ class AuthorizationService
         
         foreach ($managerRoles as $managerAssignment) {
             foreach ($targetRoles as $targetAssignment) {
-                if ($this->roleScanner->canManageRole($managerAssignment->role_slug, $targetAssignment->role_slug)) {
+                if ($managerAssignment->role_type === UserRoleAssignment::TYPE_SYSTEM
+                    && $this->roleScanner->canManageRole($managerAssignment->role_slug, $targetAssignment->role_slug)) {
                     return true;
                 }
             }
@@ -483,7 +486,7 @@ class AuthorizationService
         
         foreach ($roles as $assignment) {
             $orgId = $this->permissionResolver->extractOrganizationId($assignment);
-            $interfaceAccess = $this->getRoleInterfaceAccess($assignment->role_slug, $assignment->role_type, $orgId);
+            $interfaceAccess = $this->getRoleInterfaceAccess($assignment->role_slug, $assignment->role_type, $orgId, $assignment->custom_role_id);
             if (in_array($interface, $interfaceAccess)) {
                 return true;
             }
@@ -653,46 +656,38 @@ class AuthorizationService
     /**
      * Получить все права роли
      */
-    protected function getRolePermissions(string $roleSlug, string $roleType, ?int $organizationId = null): array
+    protected function getRolePermissions(string $roleSlug, string $roleType, ?int $organizationId = null, ?int $customRoleId = null): array
     {
-        // 1. Пытаемся получить системные права из файлов (если тип system или если не уверены)
-        $permissions = [];
-        if ($roleType === UserRoleAssignment::TYPE_SYSTEM || empty($roleType)) {
-            $permissions = $this->roleScanner->getSystemPermissions($roleSlug);
+        if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
+            return $this->roleScanner->getSystemPermissions($roleSlug);
         }
 
-        // 2. Если системных прав нет, ищем в кастомных ролях в БД
-        if (empty($permissions)) {
-            return $this->permissionResolver->getCustomRolePermissions($roleSlug, $organizationId);
+        if ($roleType !== UserRoleAssignment::TYPE_CUSTOM || $organizationId === null || $customRoleId === null
+            || !OrganizationCustomRole::query()->whereKey($customRoleId)->where('slug', $roleSlug)
+                ->where('organization_id', $organizationId)->where('is_active', true)->exists()) {
+            return [];
         }
 
-        return $permissions;
+        return $this->permissionResolver->getCustomRolePermissions($roleSlug, $organizationId);
     }
 
     /**
      * Получить доступ к интерфейсам для роли
      */
-    protected function getRoleInterfaceAccess(string $roleSlug, string $roleType, ?int $organizationId = null): array
+    protected function getRoleInterfaceAccess(string $roleSlug, string $roleType, ?int $organizationId = null, ?int $customRoleId = null): array
     {
-        // 1. Пытаемся получить доступ из системных файлов
-        $access = [];
-        if ($roleType === UserRoleAssignment::TYPE_SYSTEM || empty($roleType)) {
-            $access = $this->roleScanner->getInterfaceAccess($roleSlug);
+        if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
+            return $this->roleScanner->getInterfaceAccess($roleSlug);
+        }
+        if ($roleType !== UserRoleAssignment::TYPE_CUSTOM || $organizationId === null || $organizationId <= 0 || $customRoleId === null) {
+            return [];
         }
 
-        // 2. Если в файлах ничего не найдено, ищем в кастомных ролях (БД)
-        if (empty($access)) {
-            $query = OrganizationCustomRole::where('slug', $roleSlug);
-            
-            if ($organizationId) {
-                $query->where('organization_id', $organizationId);
-            }
-            
-            $role = $query->first();
-            return $role ? ($role->interface_access ?? []) : [];
-        }
+        $role = OrganizationCustomRole::query()->whereKey($customRoleId)->where('slug', $roleSlug)
+            ->where('organization_id', $organizationId)->where('is_active', true)->first();
 
-        return $access;
+        return $role && ! in_array('*', $role->system_permissions ?? [], true)
+            ? ($role->interface_access ?? []) : [];
     }
 
     /**

@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
-use Smalot\PdfParser\Parser;
+use App\Services\Documents\BoundedPdfParser;
 use Throwable;
 
 class OcrPreflightService
@@ -17,7 +17,7 @@ class OcrPreflightService
 
     private const CAD_EXTENSIONS = ['dwg', 'dxf'];
 
-    public function __construct(private readonly PdfParserRuntime $pdfParserRuntime) {}
+    public function __construct(private readonly BoundedPdfParser $pdfParser) {}
 
     public function validateForRecognition(EstimateGenerationDocument $document): void
     {
@@ -102,9 +102,7 @@ class OcrPreflightService
     private function detectPdfPageCount(string $content): ?int
     {
         try {
-            $pageCount = $this->pdfParserRuntime->withRaisedMemoryLimit(
-                static fn (): int => count((new Parser())->parseContent($content)->getPages())
-            );
+            $pageCount = $this->pdfParser->inspectContent($content, false)['page_count'];
 
             if ($pageCount > 0) {
                 return $pageCount;
@@ -112,13 +110,17 @@ class OcrPreflightService
         } catch (Throwable) {
         }
 
-        $matches = [];
-        $count = preg_match_all('/\/Type\s*\/Page\b/', $content, $matches);
-
-        if ($count === false || $count === 0) {
-            return null;
+        $count = 0;
+        $offset = 0;
+        $maxPages = max(1, (int) config('estimate-generation.ocr.max_pdf_pages', 200));
+        while (preg_match('/\/Type\s*\/Page\b/', $content, $match, PREG_OFFSET_CAPTURE, $offset) === 1) {
+            $count++;
+            if ($count > $maxPages) {
+                return $count;
+            }
+            $offset = $match[0][1] + strlen($match[0][0]);
         }
 
-        return $count;
+        return $count === 0 ? null : $count;
     }
 }

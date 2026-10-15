@@ -125,7 +125,7 @@ final class MobileReadCatalogService
     /** @param array<string, mixed> $filters */
     public function reportFilesQuery(User $user, int $organizationId, array $filters = []): Builder
     {
-        $query = ReportFile::query()->where(function (Builder $scope) use ($organizationId, $user): void {
+        $query = ReportFile::query()->where('user_id', $user->id)->where(function (Builder $scope) use ($organizationId, $user): void {
             $scope->where('organization_id', $organizationId)
                 ->orWhere(fn (Builder $global) => $global->whereNull('organization_id')->where('user_id', $user->id));
         });
@@ -153,8 +153,12 @@ final class MobileReadCatalogService
     }
 
     /** @return array<string, mixed> */
-    public function reportFilePayload(ReportFile $file, int $organizationId): array
+    public function reportFilePayload(ReportFile $file, int $organizationId, User $actor): array
     {
+        if ((int) $file->user_id !== (int) $actor->id
+            || ($file->organization_id !== null && (int) $file->organization_id !== $organizationId)) {
+            throw new ModelNotFoundException();
+        }
         $payload = $file->toArray();
         $payload['path'] = OrganizationStoragePath::displayPath($file->organization_id ?? $organizationId, (string) $file->path);
         $payload['download_url'] = null;
@@ -164,7 +168,7 @@ final class MobileReadCatalogService
                 $disk = $this->files->disk($organization);
                 $assistantReports = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
                 if ($assistantReports->isAssistantReportPath((string) $file->path)) {
-                    $payload['download_url'] = $assistantReports->urlForPath((string) $file->path, request()->user());
+                    $payload['download_url'] = $assistantReports->urlForPath((string) $file->path, $actor);
                 } elseif ($disk->exists((string) $file->path)) {
                     $payload['download_url'] = $disk->temporaryUrl((string) $file->path, now()->addHours(1));
                 }

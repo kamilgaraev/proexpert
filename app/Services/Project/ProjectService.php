@@ -145,6 +145,10 @@ class ProjectService
     public function getProjectsForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
     {
         $organizationId = $this->getCurrentOrgId($request);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new BusinessLogicException(trans_message('auth.not_authenticated'), 401);
+        }
         
         // Собираем фильтры из запроса
         $filters = [
@@ -175,7 +179,8 @@ class ProjectService
             $perPage,
             $filters,
             $sortBy,
-            $sortDirection
+            $sortDirection,
+            $actor
         );
     }
 
@@ -242,23 +247,22 @@ class ProjectService
     public function findProjectByIdForCurrentOrg(int $id, Request $request): ?Project
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $project = Project::query()
-            ->useWritePdo()
-            ->find($id);
-
-        if (!$project) {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
             return null;
         }
 
-        $belongsToOrg = $project->organization_id === $organizationId
-            || ProjectOrganization::query()
-                ->useWritePdo()
-                ->where('project_id', $project->id)
-                ->where('organization_id', $organizationId)
-                ->where('is_active', true)
-                ->exists();
+        return app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId, true)
+            ->useWritePdo()->find($id);
+    }
 
-        return $belongsToOrg ? $project : null;
+    private function assertProjectAnalyticsAccess(Request $request): void
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User || ! app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->canCurrent($actor, 'admin.projects.analytics', ['organization_id' => $this->getCurrentOrgId($request)])) {
+            throw new BusinessLogicException(trans_message('project.not_found_or_access_denied'), 403);
+        }
     }
 
     /**
@@ -459,7 +463,13 @@ class ProjectService
     public function getActiveProjectsForCurrentOrg(Request $request): Collection
     {
         $organizationId = $this->getCurrentOrgId($request);
-        return $this->projectRepository->getActiveProjects($organizationId);
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new BusinessLogicException(trans_message('project.user_not_authenticated'), 401);
+        }
+
+        return app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)
+            ->where('projects.status', 'active')->orderBy('projects.name')->get();
     }
 
     /**
@@ -471,9 +481,9 @@ class ProjectService
         if (!$user) {
              throw new BusinessLogicException(trans_message('project.user_not_authenticated'), 401);
         }
-        $userId = $user->id;
         $organizationId = $this->getCurrentOrgId($request);
-        return $this->projectRepository->getProjectsForUser($userId, $organizationId);
+
+        return app(UserProjectAccessService::class)->queryAccessibleProjects($user, $organizationId, true)->get();
     }
 
     /**
@@ -490,12 +500,14 @@ class ProjectService
         return $project->load(['materials', 'workTypes', 'users']); 
     }
     
-    public function getProjectStatistics(int $id): array
+    public function getProjectStatistics(int $id, Request $request): array
     {
-        $project = $this->projectRepository->find($id);
+        $project = $this->findProjectByIdForCurrentOrg($id, $request);
         if (!$project) {
             throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
+
+        $this->assertProjectAnalyticsAccess($request);
 
         try {
             // ===== ИСТОЧНИК ИСТИНЫ: СКЛАД (warehouse_balances + warehouse_movements) =====
@@ -624,9 +636,9 @@ class ProjectService
         }
     }
 
-    public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'allocated_quantity', string $sortDirection = 'desc'): array
+    public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'allocated_quantity', string $sortDirection = 'desc', ?Request $request = null): array
     {
-        $project = $this->projectRepository->find($id);
+        $project = $request ? $this->findProjectByIdForCurrentOrg($id, $request) : null;
         if (!$project) {
             throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
@@ -767,9 +779,9 @@ class ProjectService
         }
     }
 
-    public function getProjectWorkTypes(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
+    public function getProjectWorkTypes(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc', ?Request $request = null): array
     {
-        $project = $this->projectRepository->find($id);
+        $project = $request ? $this->findProjectByIdForCurrentOrg($id, $request) : null;
         if (!$project) {
             throw new BusinessLogicException(trans_message('project.not_found'), 404);
         }
@@ -973,8 +985,8 @@ class ProjectService
         }
 
         try {
-            $statistics = $this->getProjectStatistics($projectId);
-            $workTypes = collect($this->getProjectWorkTypes($projectId, 8, null, 'total_cost', 'desc')['data'] ?? [])
+            $statistics = $this->getProjectStatistics($projectId, $request);
+            $workTypes = collect($this->getProjectWorkTypes($projectId, 8, null, 'total_cost', 'desc', $request)['data'] ?? [])
                 ->map(fn (mixed $item): array => $this->normalizeProjectDashboardWorkStage($item))
                 ->values()
                 ->all();
@@ -1723,6 +1735,8 @@ class ProjectService
         if (!$project) {
             throw new BusinessLogicException(trans_message('project.not_found_or_not_in_organization'), 404);
         }
+
+        $this->assertProjectAnalyticsAccess($request);
 
         // Загружаем организации и контракты с актами/платежами
         $project->load([

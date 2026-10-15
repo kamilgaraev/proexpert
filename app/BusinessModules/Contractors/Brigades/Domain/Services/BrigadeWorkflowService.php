@@ -142,6 +142,9 @@ class BrigadeWorkflowService
 
     public function createAssignmentFromInvitation(BrigadeInvitation $invitation): BrigadeProjectAssignment
     {
+        if ($invitation->status !== BrigadeStatuses::INVITATION_ACCEPTED) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['invitation' => trans_message('brigades.invitation_invalid_status')]);
+        }
         return BrigadeProjectAssignment::firstOrCreate(
             [
                 'brigade_id' => $invitation->brigade_id,
@@ -156,6 +159,59 @@ class BrigadeWorkflowService
                 'notes' => $invitation->message,
             ]
         );
+    }
+
+    public function respondToInvitation(User $actor, int $invitationId, string $status): BrigadeInvitation
+    {
+        return DB::transaction(function () use ($actor, $invitationId, $status): BrigadeInvitation {
+            $brigade = $this->getOwnedBrigade($actor);
+            $invitation = $brigade->invitations()->whereKey($invitationId)->lockForUpdate()->firstOrFail();
+            $this->assertPendingInvitation($invitation);
+            if (!in_array($status, [BrigadeStatuses::INVITATION_ACCEPTED, BrigadeStatuses::INVITATION_DECLINED], true)) {
+                throw new \InvalidArgumentException('invitation_status_invalid');
+            }
+            $invitation->update(['status' => $status]);
+            if ($status === BrigadeStatuses::INVITATION_ACCEPTED) {
+                $this->createAssignmentFromInvitation($invitation);
+            }
+
+            return $invitation->load(['project', 'contractorOrganization']);
+        });
+    }
+
+    public function cancelInvitation(User $actor, int $organizationId, int $invitationId): BrigadeInvitation
+    {
+        if ((int) $actor->current_organization_id !== $organizationId
+            || !$actor->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('brigades.forbidden'));
+        }
+
+        return DB::transaction(function () use ($actor, $organizationId, $invitationId): BrigadeInvitation {
+            $invitation = BrigadeInvitation::query()->where('contractor_organization_id', $organizationId)
+                ->whereKey($invitationId)->lockForUpdate()->firstOrFail();
+            $authorization = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $canCancel = $authorization->canCurrent($actor, 'brigades.invitations.cancel', ['organization_id' => $organizationId]);
+            if (!$canCancel && $invitation->project_id !== null) {
+                $canCancel = $authorization->canCurrent($actor, 'brigades.invitations.cancel', [
+                    'organization_id' => $organizationId, 'project_id' => $invitation->project_id, 'strict_project_scope' => true,
+                ]);
+            }
+            if (!$canCancel) {
+                throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('brigades.forbidden'));
+            }
+            $this->assertPendingInvitation($invitation);
+            $invitation->update(['status' => BrigadeStatuses::INVITATION_CANCELLED]);
+
+            return $invitation->load(['project', 'contractorOrganization']);
+        });
+    }
+
+    private function assertPendingInvitation(BrigadeInvitation $invitation): void
+    {
+        if ($invitation->status !== BrigadeStatuses::INVITATION_PENDING
+            || ($invitation->expires_at !== null && $invitation->expires_at->isPast())) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['invitation' => trans_message('brigades.invitation_invalid_status')]);
+        }
     }
 
     public function createAssignmentFromResponse(BrigadeResponse $response): BrigadeProjectAssignment
