@@ -83,7 +83,7 @@ final class EstimateGenerationReviewController extends Controller
     {
         try {
             $this->guard($request, $project, $session);
-            $session = $this->selectCandidate->handle((int) $session->getKey(), (int) $request->user()->current_organization_id, (int) $project->getKey(), (int) $request->validated('state_version'), (string) $request->validated('work_item_key'), (int) $request->validated('norm_id'), $request->validated('selection_source') === 'catalog_search');
+            $session = $this->selectCandidate->handle((int) $session->getKey(), (int) $request->user()->current_organization_id, (int) $project->getKey(), $request->user(), (int) $request->validated('state_version'), (string) $request->validated('work_item_key'), (int) $request->validated('norm_id'), $request->validated('selection_source') === 'catalog_search');
             if ($request->validated('response_scope') === 'review_queue') {
                 $session = $session->fresh() ?? $session;
 
@@ -95,6 +95,10 @@ final class EstimateGenerationReviewController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Normative candidate selection failed', ['failure_code' => 'normative_selection_failed', 'session_id' => $session->id]);
 
