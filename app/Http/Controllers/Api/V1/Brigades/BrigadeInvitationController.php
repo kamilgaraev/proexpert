@@ -28,7 +28,7 @@ class BrigadeInvitationController extends Controller
     public function accept(int $invitationId): JsonResponse
     {
         $invitation = $this->workflowService->respondToInvitation(auth()->user(), $invitationId, BrigadeStatuses::INVITATION_ACCEPTED);
-        $assignment = $this->workflowService->createAssignmentFromInvitation($invitation);
+        $assignment = $this->workflowService->createAssignmentFromInvitation($invitation, auth()->user());
 
         return AdminResponse::success([
             'invitation' => new BrigadeInvitationResource($invitation),

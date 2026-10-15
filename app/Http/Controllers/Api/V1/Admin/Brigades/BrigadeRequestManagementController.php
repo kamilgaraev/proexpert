@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin\Brigades;
 
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeRequest;
-use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeResponse;
 use App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeWorkflowService;
-use App\BusinessModules\Contractors\Brigades\Support\BrigadeStatuses;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Brigades\StoreBrigadeRequestRequest;
 use App\Http\Resources\Brigades\BrigadeProjectAssignmentResource;
@@ -16,7 +14,6 @@ use App\Http\Resources\Brigades\BrigadeResponseResource;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class BrigadeRequestManagementController extends Controller
 {
@@ -41,12 +38,7 @@ class BrigadeRequestManagementController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
 
-        $model = BrigadeRequest::create([
-            ...$request->validated(),
-            'contractor_organization_id' => $organizationId,
-            'status' => BrigadeStatuses::REQUEST_OPEN,
-            'published_at' => now(),
-        ]);
+        $model = $this->workflowService->createRequest($request->user(), (int) $organizationId, $request->validated());
 
         return AdminResponse::success(
             new BrigadeRequestResource($model->load(['project', 'contractorOrganization'])),
@@ -58,11 +50,7 @@ class BrigadeRequestManagementController extends Controller
     public function close(Request $request, int $requestId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
-        $model = BrigadeRequest::query()
-            ->where('contractor_organization_id', $organizationId)
-            ->findOrFail($requestId);
-
-        $model->update(['status' => BrigadeStatuses::REQUEST_CLOSED]);
+        $model = $this->workflowService->closeRequest($request->user(), (int) $organizationId, $requestId);
 
         return AdminResponse::success(
             new BrigadeRequestResource($model->load(['project', 'contractorOrganization'])),
@@ -74,44 +62,11 @@ class BrigadeRequestManagementController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
 
-        return DB::transaction(function () use ($organizationId, $requestId, $responseId): JsonResponse {
-            $response = BrigadeResponse::query()
-                ->where('request_id', $requestId)
-                ->whereKey($responseId)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $approval = $this->workflowService->approveResponse($request->user(), (int) $organizationId, $requestId, $responseId);
 
-            $brigadeRequest = BrigadeRequest::query()
-                ->whereKey($requestId)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            if ($brigadeRequest->contractor_organization_id !== (int) $organizationId) {
-                return AdminResponse::error(trans_message('brigades.forbidden'), 403);
-            }
-
-            if ($brigadeRequest->status !== BrigadeStatuses::REQUEST_OPEN) {
-                return AdminResponse::error(trans_message('brigades.request_invalid_status'), 409);
-            }
-
-            if ($response->status !== BrigadeStatuses::RESPONSE_PENDING) {
-                return AdminResponse::error(trans_message('brigades.response_invalid_status'), 409);
-            }
-
-            $response->setRelation('request', $brigadeRequest);
-            $response->update(['status' => BrigadeStatuses::RESPONSE_APPROVED]);
-            $brigadeRequest->update(['status' => BrigadeStatuses::REQUEST_IN_REVIEW]);
-            $assignment = $this->workflowService->createAssignmentFromResponse($response);
-            $updatedResponse = BrigadeResponse::query()
-                ->with(['request.project', 'request.contractorOrganization', 'brigade.specializations'])
-                ->findOrFail($response->id);
-
-            return AdminResponse::success([
-                'response' => new BrigadeResponseResource($updatedResponse),
-                'assignment' => new BrigadeProjectAssignmentResource(
-                    $assignment->load(['project', 'contractorOrganization', 'brigade.specializations'])
-                ),
-            ], trans_message('brigades.response_approved'));
-        });
+        return AdminResponse::success([
+            'response' => new BrigadeResponseResource($approval->response),
+            'assignment' => new BrigadeProjectAssignmentResource($approval->assignment),
+        ], trans_message('brigades.response_approved'));
     }
 }
