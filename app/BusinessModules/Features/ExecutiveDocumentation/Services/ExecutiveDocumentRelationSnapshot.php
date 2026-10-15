@@ -12,6 +12,7 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumen
 use App\Models\ConstructionJournalEntry;
 use App\Models\Material;
 use App\Models\Supplier;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 final class ExecutiveDocumentRelationSnapshot
@@ -20,9 +21,29 @@ final class ExecutiveDocumentRelationSnapshot
 
     public function forDocument(ExecutiveDocument $document): array
     {
-        $relations = $document->relations()->get([
+        $relations = $document->relations()->orderBy('id')->get([
             'id', 'organization_id', 'relation_type', 'target_type', 'target_id', 'label', 'metadata',
         ]);
+
+        return $this->freeze($document, $relations);
+    }
+
+    public function forInput(ExecutiveDocument $document, array $relations): array
+    {
+        $pending = collect($relations)->map(static fn (array $relation): ExecutiveDocumentRelation => new ExecutiveDocumentRelation([
+            'organization_id' => $document->organization_id,
+            'relation_type' => $relation['relation_type'],
+            'target_type' => $relation['target_type'],
+            'target_id' => $relation['target_id'],
+            'label' => $relation['label'] ?? null,
+            'metadata' => $relation['metadata'] ?? null,
+        ]));
+
+        return $this->freeze($document, $pending);
+    }
+
+    private function freeze(ExecutiveDocument $document, Collection $relations): array
+    {
         if ($relations->isEmpty()) {
             return [];
         }
