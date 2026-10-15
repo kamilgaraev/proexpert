@@ -324,8 +324,10 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
-                if ($order->kind !== 'ai_credits' && (int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)
-                    && ! ((int) $order->quote_version === 3 && ($order->billing_period ?? '30_days') === '30_days')) {
+                if ($order->kind !== 'ai_credits'
+                    && (((int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)
+                        && ! ((int) $order->quote_version === 3 && ($order->billing_period ?? '30_days') === '30_days'))
+                        || $this->hasNewerNonCardOrder($order))) {
                     $payment->forceFill([
                         'provider_status' => 'succeeded',
                         'confirmation_url' => null,
@@ -782,6 +784,14 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     ): bool {
         return $authoritative->id === $payment->provider_payment_id
             && $this->matchesOrderIdentity($authoritative, $payment, $order);
+    }
+
+    private function hasNewerNonCardOrder(CommercialOrder $order): bool
+    {
+        return CommercialOrder::query()->where('organization_id', $order->organization_id)
+            ->where('commercial_account_id', $order->commercial_account_id)->where('id', '>', $order->id)
+            ->where('kind', '!=', 'ai_credits')->whereIn('status', ['pending_payment', 'paid'])
+            ->whereHas('payments', fn ($query) => $query->whereIn('provider', ['tochka', 'balance']))->exists();
     }
 
     private function matchesOrderIdentity(

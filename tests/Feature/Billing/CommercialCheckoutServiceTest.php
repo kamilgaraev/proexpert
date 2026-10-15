@@ -813,6 +813,111 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertDatabaseCount('ai_credit_lots', 0);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('legacyYooKassaPaymentStates')]
+    public function test_bank_checkout_renewal_ignores_legacy_yookassa_orders(string $status): void
+    {
+        $legacy = $this->prepareLegacyYooKassaPurchase($status);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $anchor = $account->current_period_end_at->toJSON();
+        $request = ['target_package_slugs' => ['machinery'], 'current_package_slugs' => ['working-entry', 'machinery'],
+            'renew_subscription' => true, 'client_idempotency_key' => fake()->uuid()];
+
+        $result = $this->checkoutPayload($request);
+        $again = $this->checkoutPayload($request);
+
+        $this->assertSame('tochka', $result['payment_source']);
+        $this->assertSame($result['bank_invoice']['id'], $again['bank_invoice']['id']);
+        $this->assertSame($anchor, CommercialOrder::query()->where('public_id', $result['order_id'])->sole()->period_start_at->toJSON());
+        $this->assertSame($anchor, $account->refresh()->current_period_end_at->toJSON());
+        $this->assertSame('pending_payment', $legacy->refresh()->status->value);
+        $this->assertSame($status, $legacy->latestPayment->provider_status);
+        $this->assertCount(1, $this->gateway->payments);
+        $this->assertDatabaseCount('commercial_bank_invoices', 2);
+
+        try {
+            $this->checkoutPayload(array_replace($request, ['client_idempotency_key' => fake()->uuid()]));
+            $this->fail('A second pending bank checkout must still be rejected');
+        } catch (CommercialCheckoutConflictException) {
+            $this->assertDatabaseCount('commercial_bank_invoices', 2);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('legacyYooKassaPaymentStates')]
+    public function test_bank_manual_renewal_ignores_legacy_yookassa_purchases(string $status): void
+    {
+        $legacy = $this->prepareLegacyYooKassaPurchase($status);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $anchor = $account->current_period_end_at->toJSON();
+        $service = app(\App\Services\Billing\CommercialManualPaymentService::class);
+        $key = fake()->uuid();
+
+        $result = $service->create($this->organization, $this->user, $key);
+        $again = $service->create($this->organization, $this->user, $key);
+
+        $this->assertSame('tochka', $result['payment_source']);
+        $this->assertSame('renewal', CommercialOrder::query()->where('public_id', $result['order_id'])->sole()->kind);
+        $this->assertSame($result['bank_invoice']['id'], $again['bank_invoice']['id']);
+        $this->assertSame($anchor, $result['period_start_at']);
+        $this->assertSame('pending_payment', $legacy->refresh()->status->value);
+        $this->assertSame($status, $legacy->latestPayment->provider_status);
+        $this->assertCount(1, $this->gateway->payments);
+        $this->assertDatabaseCount('commercial_bank_invoices', 2);
+    }
+
+    public static function legacyYooKassaPaymentStates(): array
+    {
+        return ['pending' => ['pending'], 'canceled' => ['canceled']];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('replacementBankInvoiceStates')]
+    public function test_late_yookassa_payment_after_bank_checkout_does_not_activate_twice(string $bankStatus): void
+    {
+        $legacy = $this->prepareLegacyYooKassaPurchase('pending');
+        $payment = $legacy->latestPayment;
+        $account = OrganizationCommercialAccount::query()->sole();
+        if ($bankStatus === 'balance') {
+            OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 10000000, 'currency' => 'RUB']);
+        }
+        $result = $this->checkoutPayload(['target_package_slugs' => ['machinery'],
+            'current_package_slugs' => ['working-entry', 'machinery'], 'renew_subscription' => true,
+            'use_balance' => $bankStatus === 'balance']);
+        $invoice = $bankStatus === 'balance' ? null
+            : \App\Models\CommercialBankInvoice::query()->where('public_id', $result['bank_invoice']['id'])->sole();
+        if ($bankStatus === 'canceled') {
+            app(\App\Services\Billing\Bank\BankBillingService::class)->cancel($this->user, (int) $this->organization->id, $invoice->public_id);
+        } elseif ($bankStatus === 'paid') {
+            app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'replacement-paid', $invoice->amount_minor));
+        }
+        $anchor = $account->refresh()->current_period_end_at->toJSON();
+        $this->gateway->authoritativePayment = new PaymentGatewayResult(
+            id: $payment->provider_payment_id, status: 'succeeded', confirmationUrl: null,
+            paymentMethodId: null, paymentMethodSaved: false,
+            safeResponse: ['id' => $payment->provider_payment_id, 'status' => 'succeeded'],
+            paid: true, test: true, amountMinor: $payment->amount_minor, currency: $payment->currency,
+            metadata: ['order_id' => $legacy->public_id, 'organization_id' => $this->organization->id],
+        );
+        $notification = new YooKassaWebhookNotification('payment.succeeded', $payment->provider_payment_id, 'succeeded',
+            ['type' => 'notification', 'event' => 'payment.succeeded', 'object' => ['id' => $payment->provider_payment_id, 'status' => 'succeeded']]);
+        $service = app(CommercialWebhookService::class);
+
+        $outcome = $service->process($notification, '185.71.76.1');
+
+        $this->assertSame($bankStatus === 'canceled' ? 'processed' : 'manual_review', $outcome);
+        $this->assertSame('duplicate', $service->process($notification, '185.71.76.1'));
+        $this->assertSame('succeeded', $payment->refresh()->provider_status);
+        $this->assertSame($bankStatus !== 'canceled', $payment->reconciliation_required);
+        $this->assertSame($anchor, $account->refresh()->current_period_end_at->toJSON());
+        $this->assertSame($bankStatus === 'canceled' ? 'paid' : 'pending_payment', $legacy->refresh()->status->value);
+        $this->assertDatabaseHas('commercial_webhook_events', ['processing_result' => $outcome]);
+        $this->assertSame($bankStatus === 'canceled', OrganizationPackageSubscription::query()
+            ->where('package_slug', 'finance-contracts')->where('status', 'active')->exists());
+    }
+
+    public static function replacementBankInvoiceStates(): array
+    {
+        return ['pending' => ['awaiting_payment'], 'paid' => ['paid'], 'balance' => ['balance'], 'canceled' => ['canceled']];
+    }
+
     public function test_bank_renewal_prepayment_waits_for_the_period_and_never_restores_card_charging(): void
     {
         $this->prepareBankBilling();
@@ -1659,6 +1764,27 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame('canceled', $invoice->order->status->value);
         $this->assertNull($invoice->activated_at);
         $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    private function prepareLegacyYooKassaPurchase(string $status): CommercialOrder
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($initial, 'before-legacy-purchase', $initial->amount_minor));
+        config(['bank_billing.default_provider' => 'yookassa', 'services.yookassa.payments_enabled' => true]);
+        try {
+            $result = $this->checkoutPayload(['target_package_slugs' => ['machinery', 'finance-contracts'],
+                'current_package_slugs' => ['working-entry', 'machinery']]);
+        } finally {
+            config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false]);
+        }
+        $legacy = CommercialOrder::query()->where('public_id', $result['order_id'])->sole();
+        if ($status === 'canceled') {
+            $legacy->latestPayment->forceFill(['provider_status' => 'canceled', 'terminal_at' => now()])->save();
+        }
+
+        return $legacy;
     }
 
     private function prepareBankBilling(): void

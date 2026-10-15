@@ -75,7 +75,8 @@ class CommercialCheckoutService
             }
             if ($this->providerPolicy->checkoutProvider() === 'tochka' && CommercialOrder::query()
                 ->where('organization_id', $organization->id)->where('status', 'pending_payment')
-                ->where('kind', '!=', 'ai_credits')->exists()) {
+                ->where('kind', '!=', 'ai_credits')
+                ->whereHas('payments', fn ($query) => $query->where('provider', 'tochka'))->exists()) {
                 throw new CommercialCheckoutConflictException('A commercial order is awaiting payment.');
             }
             if (! $useBalance) {
