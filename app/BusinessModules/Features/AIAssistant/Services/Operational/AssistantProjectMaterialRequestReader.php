@@ -25,7 +25,9 @@ final readonly class AssistantProjectMaterialRequestReader extends AssistantProj
 
     private static function withoutTypeExclusions(string $query): string
     {
-        return preg_replace('/(?:заявк[а-яё]*\s+на\s+)?техник[уи]\s+(?:сюда\s+)?не\s+(?:включай|учитывай)(?:те)?(?!\pL)/iu', '', $query) ?? $query;
+        $subject = '(?:заявк[а-яё]*\s+на\s+)?техник[уи]';
+        $verb = '(?:включ(?:ай(?:те)?|ать)|учитыва(?:й(?:те)?|ть))';
+        return preg_replace('/'.$subject.'\s+(?:сюда\s+)?не\s+'.$verb.'(?!\pL)|не\s+'.$verb.'\s+(?:сюда\s+)?'.$subject.'(?!\pL)/iu', '', $query) ?? $query;
     }
 
     protected function requestTypes(): ?array { return ['material_request', 'material']; }

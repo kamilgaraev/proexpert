@@ -63,6 +63,7 @@ class AssistantPeriodResolverTest extends TestCase
             self::assertSame('2026-10-15', $period?->dateTo);
         }
         self::assertNull($resolver->resolve('За декабрь по сегодняшний день'));
+        self::assertNull($resolver->resolve('За октябрь 2025 года по сегодняшний день'));
     }
 
     public function test_array_with_date_boundaries_returns_period(): void

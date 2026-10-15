@@ -203,6 +203,12 @@ final class AssistantRequiredProjectReadTest extends TestCase
             AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_material_request_queue', $query));
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_site_request_queue', $query));
+        foreach (['Какие заявки на материалы нашего объекта просрочены, заявки на технику не включать.',
+            'Какие заявки на материалы нашего объекта просрочены? Не учитывать технику.',
+            'Какие заявки на материалы нашего объекта просрочены? Технику не учитывать.',
+            'Какие заявки на материалы нашего объекта просрочены? Не включайте заявки на технику.'] as $excluded) {
+            self::assertSame('get_project_material_request_queue', AssistantRequiredProjectRead::fromPlan($this->plan($excluded))['name'] ?? null);
+        }
         foreach (['Создай заявку на материалы нашего объекта.', 'Какие заявки на материалы нашего объекта просрочены и сколько стоит техника?',
             'Какие заявки на материалы нашего объекта без ответственного и какие счета оплатить?',
             'Какие заявки на материалы и запросы информации нашего объекта просрочены или без ответственного?',

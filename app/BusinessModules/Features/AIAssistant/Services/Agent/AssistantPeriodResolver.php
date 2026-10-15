@@ -349,7 +349,8 @@ final class AssistantPeriodResolver
                 return null;
             }
             if ($throughToday) {
-                return $date->greaterThan($now) ? null : $this->period($date->startOfMonth(), $now, self::MONTH_LABELS[$month].' '.$year, $sourceText);
+                return $date->greaterThan($now) || $date->diffInDays($now) > 366 ? null
+                    : $this->period($date->startOfMonth(), $now, self::MONTH_LABELS[$month].' '.$year, $sourceText);
             }
 
             return $this->period($date->startOfMonth(), $date->endOfMonth(), self::MONTH_LABELS[$month].' '.$year, $sourceText);
