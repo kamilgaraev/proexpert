@@ -26,9 +26,13 @@ use Illuminate\Database\Eloquent\Builder;
 
 final class PaymentCalendarSourceService
 {
-    public function collect(PaymentCalendarSourceFilters $filters, ?DateTimeInterface $today = null, ?\Closure $scopeDocument = null): array
-    {
-        $items = $this->collectPaymentTransactionItems($filters, $scopeDocument);
+    public function collect(
+        PaymentCalendarSourceFilters $filters,
+        ?DateTimeInterface $today = null,
+        ?\Closure $scopeDocument = null,
+        ?\Closure $scopeProjects = null,
+    ): array {
+        $items = $this->collectPaymentTransactionItems($filters, $scopeDocument, $scopeProjects);
 
         [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($filters, $today, $scopeDocument);
 
@@ -36,8 +40,8 @@ final class PaymentCalendarSourceService
             $items,
             $scheduleItems,
             $this->collectPaymentDocumentItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
-            $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
-            $this->collectBudgetPlanItems($filters),
+            $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument, $scopeProjects),
+            $this->collectBudgetPlanItems($filters, $scopeProjects),
         );
 
         return $this->normalizeItems($items, $filters);
@@ -451,12 +455,13 @@ final class PaymentCalendarSourceService
         );
     }
 
-    private function collectPaymentTransactionItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeDocument): array
+    private function collectPaymentTransactionItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeDocument, ?\Closure $scopeProjects): array
     {
         $transactions = PaymentTransaction::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
             ->where('status', PaymentTransactionStatus::COMPLETED->value)
+            ->when($scopeProjects !== null, fn (Builder $query) => $scopeProjects($query))
             ->when($scopeDocument !== null, function (Builder $query) use ($scopeDocument): void {
                 $query->where(function (Builder $scope) use ($scopeDocument): void {
                     $scope->whereNull('payment_document_id')->orWhereHas('paymentDocument', $scopeDocument);
@@ -574,11 +579,13 @@ final class PaymentCalendarSourceService
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
         ?\Closure $scopeDocument,
+        ?\Closure $scopeProjects,
     ): array {
         $reservations = BudgetLimitReservation::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
             ->where('status', BudgetLimitReservation::STATUS_RESERVED)
+            ->when($scopeProjects !== null, fn (Builder $query) => $scopeProjects($query))
             ->when($scopeDocument !== null, function (Builder $query) use ($scopeDocument): void {
                 $query->where(function (Builder $scope) use ($scopeDocument): void {
                     $scope->whereNull('payment_document_id')->orWhereHas('paymentDocument', $scopeDocument);
@@ -607,13 +614,14 @@ final class PaymentCalendarSourceService
         return $items;
     }
 
-    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters): array
+    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeProjects): array
     {
         $amounts = BudgetAmount::query()
             ->with(['line.version', 'line.article'])
             ->whereBetween('month', [$filters->periodStartMonth(), $filters->periodEndMonth()])
-            ->whereHas('line', function (Builder $query) use ($filters): void {
+            ->whereHas('line', function (Builder $query) use ($filters, $scopeProjects): void {
                 $query
+                    ->when($scopeProjects !== null, fn (Builder $scope) => $scopeProjects($scope))
                     ->when($filters->projectId !== null, function (Builder $scope) use ($filters): void {
                         $scope->where('project_id', $filters->projectId);
                     })
