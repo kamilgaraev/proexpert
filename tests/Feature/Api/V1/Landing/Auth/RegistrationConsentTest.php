@@ -32,7 +32,7 @@ final class RegistrationConsentTest extends TestCase
             ->assertJsonValidationErrors('terms_accepted');
     }
 
-    public function test_registration_with_empty_requisites_records_versioned_evidence_atomically(): void
+    public function test_registration_records_registered_provider_evidence_atomically(): void
     {
         Notification::fake();
         config([
@@ -62,7 +62,10 @@ final class RegistrationConsentTest extends TestCase
         $this->assertDatabaseCount('legal_acceptance_events', 3);
         $this->assertDatabaseCount('user_consents', 0);
         $snapshot = $this->app['db']->table('legal_acceptance_events')->where('document_key', 'offer')->value('snapshot');
-        self::assertSame('', json_decode($snapshot, true, 512, JSON_THROW_ON_ERROR)['provider']['name']);
+        $provider = json_decode($snapshot, true, 512, JSON_THROW_ON_ERROR)['provider'];
+        self::assertSame('Индивидуальный предприниматель Гараев Камиль Фиркатович', $provider['name']);
+        self::assertSame('166014506751', $provider['inn']);
+        self::assertSame('326169000250677', $provider['registration_number']);
     }
 
     public function test_consent_persistence_failure_rolls_back_user_organization_and_attempt(): void

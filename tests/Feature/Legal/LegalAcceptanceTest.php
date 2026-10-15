@@ -27,12 +27,20 @@ final class LegalAcceptanceTest extends TestCase
         (require database_path('migrations/2026_10_06_190000_create_legal_acceptance_events_table.php'))->up();
     }
 
-    public function test_empty_requisites_do_not_block_forms_or_documents(): void
+    public function test_registered_provider_is_published_without_changing_form_validation(): void
     {
         $this->getJson('/api/public/legal')->assertOk()
-            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-10.json')))
+            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-15.json')))
             ->assertJsonPath('data.privacy_ready', true)->assertJsonPath('data.commercial_ready', true)
-            ->assertJsonPath('data.analytics_ready', true)->assertJsonPath('data.provider.name', '');
+            ->assertJsonPath('data.analytics_ready', true)
+            ->assertJsonPath('data.version', '2026-10-15.1')
+            ->assertJsonPath('data.provider.name', 'Индивидуальный предприниматель Гараев Камиль Фиркатович')
+            ->assertJsonPath('data.provider.inn', '166014506751')
+            ->assertJsonPath('data.provider.registration_number', '326169000250677')
+            ->assertJsonPath('data.provider.address', '420021, Республика Татарстан, г. Казань, ул. Космонавтов, д. 42А')
+            ->assertJsonPath('data.provider.email', 'info@1мост.рф')
+            ->assertJsonPath('data.provider.bank_name', 'ООО «Банк Точка»')
+            ->assertJsonPath('data.provider.bank_details', '');
         $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0'), 'Idempotency-Key' => 'empty-requisites-test'])
             ->postJson('/api/v1/landing/auth/register', [])->assertUnprocessable();
         $this->withHeaders(['Origin' => (string) config('web_auth.origins.public.0')])
@@ -47,7 +55,7 @@ final class LegalAcceptanceTest extends TestCase
         $service = app(LegalDocumentService::class);
         config(['legal.reviewed' => false, 'legal.commercial_enabled' => false, 'legal.analytics_reviewed' => false, 'legal.subprocessors' => []]);
         $service->assertAccepted(LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']), ['offer', 'processing', 'privacy']);
-        self::assertSame('', $service->snapshot('offer')['provider']['name']);
+        self::assertSame('Индивидуальный предприниматель Гараев Камиль Фиркатович', $service->snapshot('offer')['provider']['name']);
         self::assertTrue($service->manifest()['commercial_ready']);
     }
 
@@ -114,13 +122,16 @@ final class LegalAcceptanceTest extends TestCase
         self::assertSame(1, LegalAcceptanceEvent::query()->where('action', 'revoked')->count());
     }
 
-    public function test_analytics_can_be_enabled_with_empty_requisites_after_explicit_consent(): void
+    public function test_analytics_consent_retains_registered_provider_details(): void
     {
         $this->postJson('/api/public/legal/analytics-consent', [
             ...LegalAcceptanceFixture::payload(['cookies']), 'analytics' => true,
             'visitor_id' => (string) Str::uuid(), 'event_id' => (string) Str::uuid(),
         ])->assertCreated();
         $this->assertDatabaseCount('legal_acceptance_events', 1);
-        self::assertSame('', LegalAcceptanceEvent::query()->firstOrFail()->snapshot['provider']['name']);
+        $provider = LegalAcceptanceEvent::query()->firstOrFail()->snapshot['provider'];
+        self::assertSame('Индивидуальный предприниматель Гараев Камиль Фиркатович', $provider['name']);
+        self::assertSame('166014506751', $provider['inn']);
+        self::assertSame('326169000250677', $provider['registration_number']);
     }
 }
