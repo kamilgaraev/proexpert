@@ -17,6 +17,7 @@ use App\Services\Auth\WebAuthTokenService;
 use App\Services\User\UserService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
@@ -254,6 +255,58 @@ final class LegacyAdminPanelSecurityRegressionTest extends TestCase
         }
         self::assertNotContains('budget-estimates.estimates.view', $permissions);
         self::assertNotContains('contract-management.agreements.view', $permissions);
+    }
+
+    #[DataProvider('implicitAdminRoleStates')]
+    public function test_lk_only_manager_cannot_delegate_implicit_admin_interface_permissions(bool $legacy): void
+    {
+        $context = $this->actor();
+        $authorizationContext = AuthorizationContext::getOrganizationContext($context->organization->id);
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->update(['is_active' => false]);
+        $actorRole = $this->customRole($context, 'lk-manager', [
+            'organization.manage', 'users.manage_admin', 'organization.view',
+        ]);
+        $actorRole->update(['interface_access' => ['lk']]);
+        UserRoleAssignment::assignRole($context->user, $actorRole->slug, $authorizationContext, UserRoleAssignment::TYPE_CUSTOM);
+        $basicRole = $this->customRole($context, 'lk-member', ['organization.view']);
+        $basicRole->update(['interface_access' => ['lk']]);
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        UserRoleAssignment::assignRole($member, $basicRole->slug, $authorizationContext, UserRoleAssignment::TYPE_CUSTOM);
+        $adminRole = $this->customRole($context, 'implicit-admin', ['organization.view']);
+        $adminRole->update(['interface_access' => ['admin']]);
+        if ($legacy) {
+            DB::table($adminRole->getTable())->where('id', $adminRole->id)
+                ->update(['system_permissions' => json_encode(['organization.view'], JSON_THROW_ON_ERROR)]);
+            self::assertNotContains('admin.access', $adminRole->fresh()->system_permissions);
+        } else {
+            self::assertContains('admin.access', $adminRole->fresh()->system_permissions);
+        }
+        Cache::flush();
+
+        self::assertFalse(app(AuthorizationService::class)->forCurrentChecks(true)->canCurrent(
+            $context->user, 'admin.access', ['organization_id' => $context->organization->id],
+        ));
+        $this->deny(fn () => app(UserService::class)->createAdminPanelUser([
+            'name' => 'Implicit admin', 'email' => 'implicit-admin@example.com', 'password' => 'Password123!',
+        ], $adminRole->slug, $this->request($context)), 422);
+        $this->deny(fn () => app(UserService::class)->syncAdminPanelUserRoles(
+            $member, $context->organization->id, [$adminRole->slug], $context->user,
+        ), 422);
+
+        $this->assertDatabaseMissing('users', ['email' => 'implicit-admin@example.com']);
+        $this->assertAssignment($member, $context, $basicRole->slug, true);
+        $this->assertDatabaseMissing('user_role_assignments', ['user_id' => $member->id, 'role_slug' => $adminRole->slug]);
+
+        $allowed = app(UserService::class)->createAdminPanelUser([
+            'name' => 'LK member', 'email' => 'allowed-lk@example.com', 'password' => 'Password123!',
+        ], $basicRole->slug, $this->request($context));
+        $this->assertAssignment($allowed, $context, $basicRole->slug, true);
+    }
+
+    public static function implicitAdminRoleStates(): array
+    {
+        return ['current' => [false], 'legacy' => [true]];
     }
 
     private function actor(): AdminApiTestContext

@@ -436,7 +436,10 @@ class PermissionResolver
             return [];
         }
 
-        $allPermissions = $customRole->system_permissions ?? [];
+        $allPermissions = RolePermissionNormalizer::normalizeSystemPermissions(
+            $customRole->system_permissions ?? [],
+            $customRole->interface_access ?? []
+        );
 
         // Преобразуем модульные права в полные права
         $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($customRole->module_permissions ?? []);
