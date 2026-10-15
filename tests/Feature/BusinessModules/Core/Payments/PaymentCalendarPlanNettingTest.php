@@ -283,6 +283,64 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         }
     }
 
+    public static function paymentSourceChains(): array
+    {
+        return [
+            'request with contract' => ['contract', '0.00', '100000.00'],
+            'request with act' => ['act', '0.00', '100000.00'],
+            'two source documents' => ['nested', '0.00', '100000.00'],
+            'source in another organization' => ['organization', '100000.00', '200000.00'],
+            'source in another project of the same contract' => ['project', '100000.00', '200000.00'],
+            'inaccessible source document' => ['scope', '100000.00', '200000.00'],
+            'missing source document' => ['missing', '100000.00', '200000.00'],
+            'cyclic source documents' => ['cycle', '100000.00', '200000.00'],
+        ];
+    }
+
+    #[DataProvider('paymentSourceChains')]
+    public function test_order_resolves_a_contract_only_through_accessible_source_documents(string $case, string $expectedPlan, string $expectedTotal): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'amount' => $amount, 'project' => $project, 'contract' => $contract] = $this->fixture();
+        $source = $document->replicate(['uuid', 'document_number']);
+        $source->forceFill(['document_type' => PaymentDocumentType::PAYMENT_REQUEST, 'document_number' => 'SOURCE-'.uniqid(),
+            'document_date' => '2026-09-01', 'due_date' => '2026-11-20']);
+        if ($case !== 'act') $source->forceFill(['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'source_type' => Contract::class, 'source_id' => $contract->id]);
+        if ($case === 'organization') $source->organization_id = Organization::factory()->verified()->create()->id;
+        if ($case === 'project') {
+            $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $contract->update(['is_multi_project' => true, 'project_id' => null]);
+            $contract->projects()->attach([$project->id, $otherProject->id]);
+            $source->project_id = $otherProject->id;
+        }
+        $source->save();
+        if ($case === 'nested') {
+            $parent = $source;
+            $source = $parent->replicate(['uuid', 'document_number']);
+            $source->forceFill(['document_number' => 'MIDDLE-'.uniqid(), 'invoiceable_type' => null, 'invoiceable_id' => null,
+                'source_type' => PaymentDocument::class, 'source_id' => $parent->id])->save();
+        }
+        $document->update(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => null,
+            'invoiceable_type' => null, 'invoiceable_id' => null, 'source_type' => PaymentDocument::class,
+            'source_id' => $case === 'missing' ? $source->id + 1000000 : $source->id]);
+        if ($case === 'cycle') $source->update(['invoiceable_type' => null, 'invoiceable_id' => null,
+            'source_type' => PaymentDocument::class, 'source_id' => $document->id]);
+        $scope = $case === 'scope' ? static fn ($query) => $query->where('payment_documents.id', '!=', $source->id) : null;
+        $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+            organizationId: (int) $context->organization->id, periodStart: '2026-10-01', periodEnd: '2026-10-31',
+            projectId: (int) $project->id, currency: 'RUB',
+        ), new CarbonImmutable('2026-10-15'), $scope);
+        $plan = collect($items)->first(fn ($item) => $item->sourceType === 'budget_amount');
+        $this->assertNotNull($plan);
+        $this->assertSame($expectedPlan, $plan->remainingAmount);
+        $total = '0.00';
+        foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
+        $this->assertSame($expectedTotal, $total);
+        $this->assertSame('100000.00', $amount->fresh()->plan_amount);
+        $this->assertSame(1, collect($items)->where('sourceType', 'payment_document')->count());
+    }
+
     private function contract(AdminApiTestContext $context, Project $project, Contractor $contractor): Contract
     {
         return Contract::query()->create(['organization_id' => $context->organization->id, 'project_id' => $project->id,

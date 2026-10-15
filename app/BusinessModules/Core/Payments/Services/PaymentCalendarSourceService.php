@@ -29,6 +29,8 @@ use Illuminate\Database\Eloquent\Builder;
 
 final class PaymentCalendarSourceService
 {
+    private const MAX_PAYMENT_SOURCE_DEPTH = 32;
+
     public function collect(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today = null,
@@ -691,7 +693,7 @@ final class PaymentCalendarSourceService
         $schedules = PaymentSchedule::query()->whereIn('payment_document_id', $documents->modelKeys())
             ->whereIn('status', ['pending', 'paid'])->whereNotNull('due_date')->where('amount', '>', 0)
             ->get()->groupBy('payment_document_id');
-        $documentContractIds = $this->calendarDocumentContractIds($documents, $filters->organizationId);
+        $documentContractIds = $this->calendarDocumentContractIds($documents, $filters->organizationId, $scopeDocument);
         $consumed = [];
         foreach ($documents as $document) {
             if ($this->paymentDocumentDirection($document) !== PaymentCalendarItem::DIRECTION_OUTFLOW) {
@@ -748,9 +750,22 @@ final class PaymentCalendarSourceService
             (string) $item->responsibilityCenterId, (string) $contractId]);
     }
 
-    private function calendarDocumentContractIds(iterable $documents, int $organizationId): array
+    private function calendarDocumentContractIds(iterable $documents, int $organizationId, ?\Closure $scopeDocument): array
     {
-        $documents = collect($documents);
+        $documents = collect($documents)->keyBy('id');
+        $requestedIds = array_fill_keys($documents->keys()->all(), true);
+        $queriedIds = $requestedIds;
+        $frontier = $documents;
+        for ($depth = 0; $depth < self::MAX_PAYMENT_SOURCE_DEPTH; $depth++) {
+            $sourceIds = $frontier->where('source_type', PaymentDocument::class)->pluck('source_id')->filter()->unique()
+                ->reject(static fn ($id): bool => isset($queriedIds[$id]))->all();
+            if ($sourceIds === []) break;
+            $queriedIds += array_fill_keys($sourceIds, true);
+            $frontier = PaymentDocument::query()->where('organization_id', $organizationId)->whereKey($sourceIds)
+                ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))->get()->keyBy('id');
+            if ($frontier->isEmpty()) break;
+            $documents = $documents->union($frontier);
+        }
         $access = app(ContractAccessService::class);
         $actIds = $documents->where('invoiceable_type', ContractPerformanceAct::class)->pluck('invoiceable_id')->filter()->all();
         $acts = $actIds === [] ? collect() : ContractPerformanceAct::query()->whereKey($actIds)
@@ -777,7 +792,21 @@ final class PaymentCalendarSourceService
             }
         }
 
-        return $result;
+        for ($depth = 0; $depth < self::MAX_PAYMENT_SOURCE_DEPTH; $depth++) {
+            $changed = false;
+            foreach ($documents as $document) {
+                if (isset($result[$document->id]) || $document->source_type !== PaymentDocument::class
+                    || in_array($document->invoiceable_type, [Contract::class, ContractPerformanceAct::class], true)) continue;
+                $source = $documents->get($document->source_id);
+                if ($source === null || ! isset($result[$source->id])
+                    || $this->nullableInt($source->project_id) !== $this->nullableInt($document->project_id)) continue;
+                $result[$document->id] = $result[$source->id];
+                $changed = true;
+            }
+            if (! $changed) break;
+        }
+
+        return array_intersect_key($result, $requestedIds);
     }
 
     private function activeDocumentStatuses(): array
