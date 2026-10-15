@@ -893,6 +893,86 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public static function routeAvailability(): array
+    {
+        return [
+            'missing role' => ['missing-role', false],
+            'role without project access' => ['role-denied', false],
+            'permission without candidates' => ['permission-empty', false],
+            'permission without project access' => ['permission-denied', false],
+            'permission with reject only' => ['reject-only', false],
+            'unsupported permission' => ['unsupported', false],
+            'empty step' => ['empty-step', false],
+            'default route without candidates' => ['default-empty', false],
+            'role selects available participant' => ['role-available', true],
+            'permission from project role' => ['permission-project', true],
+            'explicit participant with role' => ['explicit-role', true],
+            'ordinary permission route' => ['permission-project', true, false],
+            'ordinary role route' => ['role-available', true, false],
+            'ordinary empty step' => ['empty-step', false, false],
+            'ordinary default without candidates' => ['default-empty', false, false],
+        ];
+    }
+
+    #[DataProvider('routeAvailability')]
+    public function test_route_creation_requires_a_reachable_approver(string $case, bool $allowed, bool $actInvoice = true): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id])->save();
+        if (! $actInvoice) $document->forceFill(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => null])->save();
+        $this->assignPaymentPermissions($context, ['payments.invoice.view', 'payments.invoice.issue']);
+        $step = ['level' => 1, 'order' => 1, 'permission' => 'payments.transaction.approve'];
+        $expectedApprover = null;
+        if (in_array($case, ['role-denied', 'permission-denied', 'role-available'], true)) {
+            $this->createOrganizationApprover($context, 'assigned_projects');
+        }
+        if ($case === 'missing-role' || $case === 'role-denied' || $case === 'role-available') {
+            $step = ['level' => 1, 'order' => 1, 'role' => $case === 'missing-role' ? 'accountant' : 'web_admin'];
+        }
+        if ($case === 'role-available' || $case === 'explicit-role') {
+            $expectedApprover = $this->createOrganizationApprover($context);
+        } elseif ($case === 'permission-project' || $case === 'reject-only') {
+            $expectedApprover = $this->createOrganizationApprover($context);
+            $this->assignPaymentPermissions(new AdminApiTestContext($context->organization, $expectedApprover, ''),
+                [$case === 'permission-project' ? 'payments.transaction.approve' : 'payments.transaction.reject'], (int) $project->id);
+        }
+        if ($case === 'explicit-role') {
+            $step = ['level' => 1, 'order' => 1, 'role' => 'accountant', 'approver_user_id' => $expectedApprover->id];
+        } elseif ($case === 'unsupported') {
+            $step['permission'] = 'payments.invoice.view';
+        } elseif ($case === 'empty-step') {
+            $step = ['level' => 1, 'order' => 1];
+        }
+        if ($case !== 'default-empty') {
+            PaymentApprovalRule::query()->create(['organization_id' => $context->organization->id,
+                'name' => 'Проверка доступного маршрута', 'conditions' => [], 'is_active' => true, 'approval_chain' => [$step]]);
+        }
+        if ($allowed) {
+            $this->assertInstanceOf(User::class, $expectedApprover);
+            app(PaymentDocumentService::class)->submit($document, $context->user);
+            $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->fresh()->status);
+            $approval = $document->approvals()->sole();
+            if ($case !== 'permission-project') $this->assertSame($expectedApprover->id, $approval->approver_user_id);
+            $this->assertTrue(app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document->fresh(), $expectedApprover));
+        } else {
+            try {
+                app(PaymentDocumentService::class)->submit($document, $context->user);
+                $this->fail('A financial route without an eligible approver was created.');
+            } catch (\DomainException $exception) {
+                $this->assertSame(trans_message('payments.validation.approver_unavailable'), $exception->getMessage());
+            }
+            $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->fresh()->status);
+            $this->assertSame(0, $document->approvals()->count());
+            Notification::assertNothingSent();
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     private function createOrganizationApprover(AdminApiTestContext $context, string $projectAccessMode = 'all_projects'): User
     {
         $user = User::factory()->create(['current_organization_id' => $context->organization->id]);

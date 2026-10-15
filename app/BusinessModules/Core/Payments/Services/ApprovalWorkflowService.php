@@ -96,8 +96,9 @@ class ApprovalWorkflowService
 
         // Создаем записи утверждений
         $approvals = $this->createApprovals($document, $rule);
-        if ($document->requiresActInvoiceFinancialApproval() && $approvals->isEmpty()) {
-            throw new \DomainException(trans_message('payments.validation.act_invoice_approval_route_missing'));
+        if ($approvals->isEmpty()) {
+            throw new \DomainException(trans_message($document->requiresActInvoiceFinancialApproval()
+                ? 'payments.validation.act_invoice_approval_route_missing' : 'payments.validation.approver_unavailable'));
         }
 
         // Меняем статус документа на "ожидает утверждения"
@@ -200,14 +201,24 @@ class ApprovalWorkflowService
     {
         $chain = $rule->getApprovalChain();
         $approvals = collect();
+        $eligibleApprovers = null;
 
         foreach ($chain as $item) {
             $permission = $item['approval_permission'] ?? $item['permission'] ?? null;
             $role = $permission ? null : ($item['role'] ?? null);
             $approverUserId = $item['approver_user_id'] ?? null;
 
-            if (! $permission && $role) {
-                $approverUserId = $this->findApproverByRole($document->organization_id, $role)?->id;
+            if ($approverUserId === null && ! $permission && $role) {
+                $eligibleApprovers ??= app(PaymentNotificationRecipients::class)->usersWithAnyPermission(
+                    (int) $document->organization_id, [self::PAYMENT_APPROVAL_PERMISSION], $document);
+                $approverUserId = $this->findApproverByRole((int) $document->organization_id, $role, $eligibleApprovers)?->id;
+            }
+            if ($approverUserId === null) {
+                $eligibleApprovers ??= app(PaymentNotificationRecipients::class)->usersWithAnyPermission(
+                    (int) $document->organization_id, [self::PAYMENT_APPROVAL_PERMISSION], $document);
+                if ($permission !== self::PAYMENT_APPROVAL_PERMISSION || $eligibleApprovers->isEmpty()) {
+                    throw new \DomainException(trans_message('payments.validation.approver_unavailable'));
+                }
             }
 
             if ($approverUserId !== null) {
@@ -247,15 +258,11 @@ class ApprovalWorkflowService
     /**
      * Найти утверждающего по роли
      */
-    private function findApproverByRole(int $organizationId, string $role): ?User
+    private function findApproverByRole(int $organizationId, string $role, Collection $eligibleApprovers): ?User
     {
-        // Ищем пользователя с данной ролью в организации через новую систему авторизации
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
 
-        return User::whereHas('roleAssignments', function ($query) use ($context, $role) {
-            $query->where('context_id', $context->id)
-                ->where('role_slug', $role);
-        })->first();
+        return $eligibleApprovers->sortBy('id')->first(fn (User $user): bool => $user->hasRole($role, $context->id));
     }
 
     private function approvalQueryForUser(PaymentDocument $document, int $userId, ?User $user, string $decisionPermission = self::PAYMENT_APPROVAL_PERMISSION)
