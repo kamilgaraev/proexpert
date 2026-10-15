@@ -18,6 +18,7 @@ use App\Models\WorkType;
 use App\Modules\Core\AccessController;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
@@ -382,6 +383,59 @@ final class EstimateTemplateSecurityTest extends TestCase
         $list = $this->getJson('/api/v1/admin/estimate-templates', $actor->authHeaders())->assertOk();
         self::assertFalse(str_contains($list->getContent(), '198.51.100.37'));
         self::assertSame(['id', 'name'], array_keys($list->json('data.0.created_by')));
+    }
+
+    #[DataProvider('cacheMutations')]
+    public function test_template_cache_is_invalidated_after_the_outer_transaction_commits(string $operation): void
+    {
+        $actor = $this->context();
+        $template = $this->template($actor);
+        $service = app(EstimateTemplateService::class);
+        $key = 'estimate_templates:org:'.$actor->organization->id.':public:1';
+        self::assertTrue($service->getTemplates($actor->organization->id)->contains('id', $template->id));
+
+        DB::transaction(function () use ($service, $operation, $template, $actor, $key): void {
+            $operation === 'delete'
+                ? $service->delete($template, $actor->user)
+                : $service->shareWithHolding($template, $actor->user);
+            self::assertTrue(Cache::has($key));
+        });
+
+        self::assertFalse(Cache::has($key));
+        $templates = $service->getTemplates($actor->organization->id);
+        if ($operation === 'delete') {
+            self::assertFalse($templates->contains('id', $template->id));
+        } else {
+            self::assertTrue($templates->firstWhere('id', $template->id)->is_public);
+        }
+    }
+
+    public static function cacheMutations(): array
+    {
+        return [['delete'], ['share']];
+    }
+
+    public function test_rolling_back_a_template_change_keeps_the_previous_cache(): void
+    {
+        $actor = $this->context();
+        $template = $this->template($actor);
+        $service = app(EstimateTemplateService::class);
+        $key = 'estimate_templates:org:'.$actor->organization->id.':public:1';
+        $service->getTemplates($actor->organization->id);
+
+        try {
+            DB::transaction(function () use ($service, $template, $actor): void {
+                $service->shareWithHolding($template, $actor->user);
+                throw new \RuntimeException('intentional_template_rollback');
+            });
+            self::fail('Expected the transaction to roll back.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('intentional_template_rollback', $exception->getMessage());
+        }
+
+        self::assertFalse($template->fresh()->is_public);
+        self::assertTrue(Cache::has($key));
+        self::assertFalse($service->getTemplates($actor->organization->id)->firstWhere('id', $template->id)->is_public);
     }
 
     private function contextWithPermissions(array $permissions): AdminApiTestContext
