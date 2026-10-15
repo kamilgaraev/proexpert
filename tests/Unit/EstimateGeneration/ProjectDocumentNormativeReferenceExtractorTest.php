@@ -9,6 +9,28 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectDocumentNormativeReferenceExtractorTest extends TestCase
 {
+    public function test_reference_limit_accepts_exact_count_and_preserves_mixed_line_endings(): void
+    {
+        $line = 'ФЕР 08-02-001-01 Кладка стен 10 м2';
+        $document = ['id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'text' => "\r\n".$line."\r\r\n".$line."\n"];
+        $references = $this->extractor()->extract(['source_documents' => [$document, $document]], $this->localEstimate(), $this->section(), 2);
+        self::assertCount(2, $references);
+        self::assertSame([2, 4], array_map(static fn (array $row): int => $row['source_refs'][0]['line_number'], $references));
+        self::assertNotSame($references[0]['metadata']['source_observation_id'], $references[1]['metadata']['source_observation_id']);
+    }
+
+    public function test_reference_limit_rejects_overflow_without_truncating(): void
+    {
+        $document = ['id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'text' => str_repeat("ФЕР 08-02-001-01 Кладка стен 10 м2\n", 3)];
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('estimate_work_items_exceed_approved_plan');
+        $this->extractor()->extract(['source_documents' => [$document]], $this->localEstimate(), $this->section(), 2);
+    }
+
     public function test_identical_norm_rows_preserve_distinct_document_and_text_line_origins(): void
     {
         $line = 'ФЕР 08-02-001-01 Кладка стен 10 м2';

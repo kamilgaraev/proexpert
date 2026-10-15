@@ -28,12 +28,12 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
-    public function build(array $localEstimate, array $section, array $analysis): array
+    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null): array
     {
         $quantityModel = $this->documentQuantityModel($analysis);
         $items = [];
 
-        foreach ($this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section) as $referenceIndex => $reference) {
+        foreach ($this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit) as $referenceIndex => $reference) {
             $items[] = $this->workItemFromProjectReference($reference, $localEstimate, $section, $referenceIndex);
         }
 

@@ -17,6 +17,17 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
 {
+    public function test_compilation_rejects_work_items_over_the_frozen_ceiling(): void
+    {
+        $analysis = $this->analysis();
+        $analysis['source_documents'] = [['id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'text' => 'ФЕР 06-01-001-01 Укладка бетона 10 м3']];
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('estimate_work_items_exceed_approved_plan');
+        $this->compiler()->compile($analysis, deferNormativePin: true, workItemLimit: 0);
+    }
+
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
     {
         $analysis = $this->analysis();

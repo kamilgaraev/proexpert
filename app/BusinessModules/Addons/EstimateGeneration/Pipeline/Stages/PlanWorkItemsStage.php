@@ -98,7 +98,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 'source_version' => $stage6Context['source_version'] ?? null,
             ],
         ];
-        $payload = $this->compiler->compile($analysis, null, true);
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
+        $payload = $this->compiler->compile($analysis, null, true, $workLimit);
         $this->logProgress($context, 'baseline_compiled');
         $this->renewAfterProgress($heartbeat);
         $stageFiveItems = $this->technologyWorkItems->planPackages(
@@ -119,6 +120,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $this->logProgress($context, 'deterministic_candidates_planned');
         $this->renewAfterProgress($heartbeat);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -141,8 +143,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $this->logProgress($context, 'quantity_evidence_materialized');
         $this->renewAfterProgress($heartbeat);
-        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
-        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         $candidates = $this->compositionProjector->candidates($payload['local_estimates']);
         $composerInput = $this->composerInputs->capture(
             $context->organizationId,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
@@ -29,7 +30,7 @@ final readonly class WorkPlanCompiler
     /** @param array<string, mixed> $analysis
      * @return array<string, mixed>
      */
-    public function compile(array $analysis, ?WorkPlannerResponseData $source = null, bool $deferNormativePin = false): array
+    public function compile(array $analysis, ?WorkPlannerResponseData $source = null, bool $deferNormativePin = false, ?int $workItemLimit = null): array
     {
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
@@ -40,15 +41,35 @@ final readonly class WorkPlanCompiler
             ) || in_array((string) $package['key'], $selected, true))), $plan->assumptions);
         }
         $localEstimates = $this->decomposition->decomposePackagePlan($analysis, $plan);
+        $seenObservations = [];
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $intents = $source?->intentsFor((string) $section['key'], (string) $localEstimate['scope_type']);
-                $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = $intents === null
-                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis)
+                $items = $intents === null
+                    ? $this->workItemPlanner->build($localEstimate, $section, $analysis, $workItemLimit)
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
+                $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
+                    $items,
+                    static function (array $item) use (&$seenObservations): bool {
+                        if (($item['metadata']['generation_source'] ?? null) !== 'project_document_normative_reference') {
+                            return true;
+                        }
+                        $observation = $item['metadata']['source_observation_id'] ?? null;
+                        if (! is_string($observation) || $observation === '') {
+                            return true;
+                        }
+                        if (isset($seenObservations[$observation])) {
+                            return false;
+                        }
+                        $seenObservations[$observation] = true;
+
+                        return true;
+                    },
+                ));
             }
         }
         $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
+        FrozenWorkItemLimit::assertDraft(['local_estimates' => $localEstimates], $workItemLimit);
         $objectType = is_string($profile->toArray()['object_type'] ?? null)
             ? $profile->toArray()['object_type']
             : null;

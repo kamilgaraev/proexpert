@@ -6,9 +6,12 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\EstimateDocumentRowExtractor;
+use InvalidArgumentException;
 
 final class ProjectDocumentNormativeReferenceExtractor
 {
+    public const MAX_REFERENCES = 10_000;
+
     public function __construct(
         private readonly EstimateDocumentRowExtractor $rowExtractor = new EstimateDocumentRowExtractor,
     ) {}
@@ -19,7 +22,7 @@ final class ProjectDocumentNormativeReferenceExtractor
      * @param  array<string, mixed>  $section
      * @return array<int, array<string, mixed>>
      */
-    public function extract(array $analysis, array $localEstimate, array $section): array
+    public function extract(array $analysis, array $localEstimate, array $section, ?int $referenceLimit = null): array
     {
         $references = [];
         $seen = [];
@@ -50,7 +53,11 @@ final class ProjectDocumentNormativeReferenceExtractor
                     continue;
                 }
 
+                if (count($references) >= min($referenceLimit ?? self::MAX_REFERENCES, self::MAX_REFERENCES)) {
+                    throw new InvalidArgumentException('estimate_work_items_exceed_approved_plan');
+                }
                 $seen[$key] = true;
+                $reference['metadata']['source_observation_id'] = hash('sha256', $key);
                 $reference['source_refs'][0]['line_number'] = $lineIndex + 1;
                 if (is_string($document['source_version'] ?? null)) {
                     $reference['source_refs'][0]['source_version'] = $document['source_version'];
@@ -63,14 +70,23 @@ final class ProjectDocumentNormativeReferenceExtractor
     }
 
     /**
-     * @return array<int, string>
+     * @return \Generator<int, string>
      */
-    private function lines(string $text): array
+    private function lines(string $text): \Generator
     {
-        return array_filter(
-            array_map(static fn (string $line): string => trim($line), preg_split('/\r\n|\r|\n/u', $text) ?: []),
-            static fn (string $line): bool => $line !== ''
-        );
+        $offset = 0;
+        $index = 0;
+        $length = strlen($text);
+        while ($offset < $length) {
+            $size = strcspn($text, "\r\n", $offset);
+            $line = trim(substr($text, $offset, $size));
+            if ($line !== '') {
+                yield $index => $line;
+            }
+            $offset += $size;
+            $offset += substr($text, $offset, 2) === "\r\n" ? 2 : 1;
+            $index++;
+        }
     }
 
     /**

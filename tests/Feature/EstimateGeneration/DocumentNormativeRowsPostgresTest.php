@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\Models\Organization;
@@ -20,6 +21,37 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void
+    {
+        [$context, $session] = $this->fixture();
+        $session->input_payload = [...$session->input_payload, 'object_type' => 'house',
+            'description' => 'Строительство жилого дома', 'generation_mode' => 'ai_assisted'];
+        $session->save();
+        $text = "ФЕР 08-02-001-01 Прокладка электрического кабеля 10 м\n\nФЕР 08-02-001-01 Прокладка электрического кабеля 20 м";
+        $first = $this->document($session, $text);
+        $second = $this->document($session, $text."\n");
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $payload = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
+        self::assertContains('electrical', array_column($payload['local_estimates'], 'key'));
+        self::assertContains('lighting', array_column($payload['local_estimates'], 'key'));
+        $references = [];
+        foreach ($payload['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    if (($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+                        $references[] = $item;
+                    }
+                }
+            }
+        }
+        self::assertCount(4, $references);
+        self::assertSame(['10', '20', '10', '20'], array_column($references, 'quantity'));
+        self::assertSame([$first->id, $first->id, $second->id, $second->id], array_map(static fn (array $item): int => $item['source_refs'][0]['document_id'], $references));
+        self::assertSame([1, 3, 1, 3], array_map(static fn (array $item): int => $item['source_refs'][0]['line_number'], $references));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_real_gateway_parser_and_planner_preserve_both_document_rows_and_versions(): void
     {
         [$context, $session] = $this->fixture();
