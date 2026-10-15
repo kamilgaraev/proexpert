@@ -109,7 +109,15 @@ class ConstructionJournalPayloadService
         if ($includeEntries) {
             $entries = $journal->relationLoaded('entries') ? $journal->entries : collect();
             $payload['entries'] = $entries
-                ->map(fn (ConstructionJournalEntry $entry): array => $this->mapEntry($entry, $user, false))
+                ->map(function (ConstructionJournalEntry $entry) use ($journal, $user): array {
+                    $entry->loadMissing(self::ENTRY_RELATIONS);
+
+                    if ((int) $entry->journal_id !== (int) $journal->id || ! $entry->journal?->is($journal)) {
+                        return $this->mapEntry($entry, $user, false);
+                    }
+
+                    return $this->mapReadableEntry($entry, $user, false, true);
+                })
                 ->values()
                 ->all();
         }
@@ -122,6 +130,11 @@ class ConstructionJournalPayloadService
         $entry->loadMissing(self::ENTRY_RELATIONS);
         app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->assertReadable($user, $entry->journal);
 
+        return $this->mapReadableEntry($entry, $user, $includeJournal, $applyVisibility);
+    }
+
+    private function mapReadableEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal, bool $applyVisibility): array
+    {
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
 
         $payload = [
