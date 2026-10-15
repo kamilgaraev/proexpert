@@ -29,6 +29,13 @@ final class AssistantEntitySchemaMetadata
         return $columns;
     }
 
+    public function prefetchForEntity(string $type, string $table, ?callable $checkpoint = null): void
+    {
+        if (! isset($this->columns[$table])) {
+            $this->prefetchForEntities([$type], $checkpoint);
+        }
+    }
+
     public function prefetchForEntities(array $types, ?callable $checkpoint = null): void
     {
         $definitions = AssistantEntityAccessCatalog::entityDefinitions();
@@ -109,7 +116,7 @@ final class AssistantEntitySchemaMetadata
         foreach ($pairTables as $key => $_tables) {
             [$schema, $relation] = explode("\0", $key, 2);
             $values[] = '(?, ?)';
-            $bindings[] = $schema;
+            $bindings[] = $schema === '' ? null : $schema;
             $bindings[] = $relation;
         }
 
@@ -118,11 +125,12 @@ final class AssistantEntitySchemaMetadata
             if ($checkpoint !== null) {
                 $checkpoint();
             }
-            $sql = 'select n.nspname as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position '
+            $sql = 'select target.schema_name::text as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position '
                 .'from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_type t on t.oid = a.atttypid '
-                .'join pg_namespace n on n.oid = c.relnamespace where a.attnum > 0 '
-                .'and exists (select 1 from (values '.implode(',', $values).') as target(schema_name, relation_name) '
-                .'where target.schema_name::text = n.nspname::text and target.relation_name::text = c.relname::text) '
+                .'join pg_namespace n on n.oid = c.relnamespace '
+                .'join (values '.implode(',', $values).') as target(schema_name, relation_name) '
+                .'on COALESCE(target.schema_name::text, current_schema()) = n.nspname::text '
+                .'and target.relation_name::text = c.relname::text where a.attnum > 0 '
                 .'order by n.nspname, c.relname, a.attnum';
 
             foreach ($connection->selectFromWriteConnection($sql, $bindings) as $row) {
@@ -150,7 +158,7 @@ final class AssistantEntitySchemaMetadata
 
     private function schemaMetadataTableReference(PostgresBuilder $schemaBuilder, \Illuminate\Database\Connection $connection, string $table): array
     {
-        [$schema, $relation] = $schemaBuilder->parseSchemaAndTable($table, true);
+        [$schema, $relation] = $schemaBuilder->parseSchemaAndTable($table);
 
         return [$schema, $connection->getTablePrefix().$relation];
     }

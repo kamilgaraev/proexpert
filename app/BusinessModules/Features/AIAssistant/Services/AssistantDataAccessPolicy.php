@@ -1246,6 +1246,7 @@ final class AssistantDataAccessPolicy
         }
         $model = new $definition[1];
         $table = $model->getTable();
+        $this->schemaMetadata->prefetchForEntity($type, $table, $this->currentCheckpoint);
         $columns = $this->schemaColumns($table);
         if ($columns === []) { return null; }
         if ($type === 'project') {

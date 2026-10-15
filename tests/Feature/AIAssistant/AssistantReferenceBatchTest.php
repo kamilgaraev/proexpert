@@ -365,6 +365,85 @@ final class AssistantReferenceBatchTest extends TestCase
         }, fresh: true);
     }
 
+    public function test_first_entity_query_batches_its_schema_and_parent_metadata(): void
+    {
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $query = $this->policy->entityQuery($this->actor, $this->organization->id, 'estimate_item');
+            self::assertNotNull($query);
+            $schemaReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'pg_attribute'));
+            self::assertCount(1, $schemaReads);
+            DB::flushQueryLog();
+            $again = $this->policy->entityQuery($this->actor, $this->organization->id, 'estimate_item');
+            self::assertNotNull($again);
+            self::assertSame($query->toSql(), $again->toSql());
+            self::assertSame($query->getBindings(), $again->getBindings());
+            $schemaReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'pg_attribute'));
+            self::assertCount(0, $schemaReads);
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
+    public function test_denied_entity_domain_does_not_prefetch_schema_metadata(): void
+    {
+        $this->deniedModules = ['budget-estimates'];
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            self::assertNull($this->policy->entityQuery($this->actor, $this->organization->id, 'estimate_item'));
+            $schemaReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'pg_attribute'));
+            self::assertCount(0, $schemaReads);
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
+    public function test_entity_schema_prefetch_matches_laravel_for_the_session_search_path(): void
+    {
+        $originalPath = DB::selectOne('SHOW search_path')->search_path;
+        DB::statement('CREATE SCHEMA assistant_reference_schema_test');
+        try {
+            \Illuminate\Support\Facades\Schema::create('assistant_reference_schema_test.projects', static function (\Illuminate\Database\Schema\Blueprint $blueprint): void {
+                $blueprint->id();
+                $blueprint->string('runtime_schema_marker');
+            });
+            DB::statement('SET LOCAL search_path TO assistant_reference_schema_test, public');
+            $expected = \Illuminate\Support\Facades\Schema::getColumnListing('projects');
+            $public = \Illuminate\Support\Facades\Schema::getColumnListing('public.projects');
+            self::assertContains('runtime_schema_marker', $expected);
+            self::assertNotContains('runtime_schema_marker', $public);
+            $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $metadata->prefetchForEntity('project', 'projects');
+                self::assertSame($expected, $metadata->columns('projects'));
+                self::assertCount(1, DB::getQueryLog());
+                DB::flushQueryLog();
+                $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+                $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
+                $metadata->prefetch([
+                    'project' => $definitions['project'],
+                    'qualified_project' => ['project', AssistantReferencePublicProjectSchemaModel::class, 'projects'],
+                ], cacheMissing: false);
+                self::assertSame($expected, $metadata->columns('projects'));
+                self::assertSame($public, $metadata->columns('public.projects'));
+                self::assertCount(1, DB::getQueryLog());
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+        } finally {
+            DB::select('SELECT set_config(?, ?, true)', ['search_path', $originalPath]);
+            \Illuminate\Support\Facades\Schema::dropIfExists('assistant_reference_schema_test.projects');
+            DB::statement('DROP SCHEMA assistant_reference_schema_test');
+        }
+    }
+
     public function test_reference_schema_prefetch_covers_payment_and_parent_tables_in_one_read(): void
     {
         $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
@@ -589,4 +668,9 @@ final class AssistantReferenceBatchTest extends TestCase
 final class AssistantReferenceLateSchemaModel extends \Illuminate\Database\Eloquent\Model
 {
     protected $table = 'assistant_reference_schema_late_test';
+}
+
+final class AssistantReferencePublicProjectSchemaModel extends \Illuminate\Database\Eloquent\Model
+{
+    protected $table = 'public.projects';
 }

@@ -55,10 +55,10 @@ final class AssistantIndexStatusBudgetTest extends TestCase
 
         foreach ([
             ['reports.monthly', ['reports', 'monthly'], ['reports', 'tenant_monthly']],
-            ['projects', ['tenant_schema', 'projects'], ['tenant_schema', 'tenant_projects']],
+            ['projects', [null, 'projects'], [null, 'tenant_projects']],
         ] as [$table, $resolved, $expected]) {
             $schemaBuilder = Mockery::mock(PostgresBuilder::class);
-            $schemaBuilder->shouldReceive('parseSchemaAndTable')->once()->with($table, true)->andReturn($resolved);
+            $schemaBuilder->shouldReceive('parseSchemaAndTable')->once()->with($table)->andReturn($resolved);
             $connection = Mockery::mock(Connection::class);
             $connection->shouldReceive('getTablePrefix')->once()->andReturn('tenant_');
 
