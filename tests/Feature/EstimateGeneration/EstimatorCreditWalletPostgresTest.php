@@ -12,17 +12,141 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorCreditAttemptAdmission;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\Models\CommercialOrder;
 use App\Models\Organization;
+use App\Models\OrganizationCommercialAccount;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Credits\AICreditCommercialService;
 use App\Services\Credits\AICreditService;
 use App\Services\Credits\EstimatorCreditRequest;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[DataProvider('paidBillingTerms')]
+    public function test_estimator_quotes_reconcile_monthly_paid_term_grants_and_reserve_the_shared_wallet(int $months): void
+    {
+        $start = CarbonImmutable::parse('2026-10-31 09:00:00', 'UTC');
+        $this->travelTo($start);
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $account = OrganizationCommercialAccount::query()->create(['organization_id' => $organization->id, 'status' => 'active',
+            'quote_version' => 1, 'billing_period' => $months.'_months', 'current_period_start_at' => $start,
+            'current_period_end_at' => $start->addMonthsNoOverflow($months)]);
+        $order = $this->paidTermOrder($organization, $actor, $account, $start, $start->addMonthsNoOverflow($months), $months.'_months');
+        $this->paidTermSubscription($organization, $account, $order);
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $credits = app(AICreditService::class);
+
+        for ($month = 0; $month < 3; $month++) {
+            $this->travelTo($start->addMonthsNoOverflow($month));
+            $requestId = (string) Str::uuid();
+            $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation');
+            self::assertSame($quote, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation'));
+            self::assertSame(500000, $quote['available_units_minor']);
+            self::assertSame(500000, $credits->balance($organization)['included_minor']);
+            self::assertSame($month + 1, DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->where('type', 'grant')->count());
+            $lot = \App\Models\Credits\AICreditLot::query()->where('organization_id', $organization->id)->latest('id')->firstOrFail();
+            self::assertSame($order->id, $lot->commercial_order_id);
+            self::assertTrue($start->addMonthsNoOverflow($month + 1)->equalTo($lot->expires_at));
+        }
+
+        $credits->grant($organization, 1000000, 'purchase', null, 'test:paid-term-shared-reserve');
+        $requestId = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation');
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        self::assertSame($requestId, DB::transaction(fn () => $operations->begin($actor, $session, 0, $requestId, $quote['quote_id'], 'generation')));
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $requestId)->sole();
+        $reservation = \App\Models\Credits\AICreditReservation::query()->findOrFail($operation->reservation_id);
+        self::assertGreaterThan(0, $reservation->reserved_minor);
+        self::assertSame($quote['max_units_minor'], $reservation->reserved_minor);
+        self::assertSame(1500000 - $reservation->reserved_minor, $credits->balance($organization)['available_minor']);
+        self::assertSame(1, DB::table('ai_credit_wallets')->where('organization_id', $organization->id)->count());
+        $credits->cancel($reservation);
+        self::assertSame(1500000, $credits->balance($organization)['available_minor']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope->sessionId)->count());
+        $this->travelBack();
+    }
+
+    public static function paidBillingTerms(): array
+    {
+        return ['six months' => [6], 'twelve months' => [12]];
+    }
+
+    public function test_estimator_quotes_follow_prepaid_renewal_and_apply_refunds_to_each_month_once(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start->addDay());
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $oldEnd = $start->addDays(30);
+        $account = OrganizationCommercialAccount::query()->create(['organization_id' => $organization->id, 'status' => 'active',
+            'quote_version' => 1, 'billing_period' => '6_months', 'current_period_start_at' => $oldEnd,
+            'current_period_end_at' => $oldEnd->addMonthsNoOverflow(6)]);
+        $old = $this->paidTermOrder($organization, $actor, $account, $start, $oldEnd, '30_days');
+        $next = $this->paidTermOrder($organization, $actor, $account, $oldEnd, $oldEnd->addMonthsNoOverflow(6), '6_months');
+        $next->forceFill(['renew_subscription' => true, 'paid_period_snapshot' => ['package_order_ids' => ['working-entry' => $old->id]]])->save();
+        $this->paidTermSubscription($organization, $account, $next);
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $credits = app(AICreditService::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), 'generation');
+        self::assertSame(500000, $quote['available_units_minor']);
+        self::assertSame($old->id, \App\Models\Credits\AICreditLot::query()->where('organization_id', $organization->id)->sole()->commercial_order_id);
+
+        $this->travelTo($oldEnd);
+        $requestId = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation');
+        self::assertSame($quote, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation'));
+        self::assertSame(500000, $quote['available_units_minor']);
+        self::assertSame($next->id, \App\Models\Credits\AICreditLot::query()->where('organization_id', $organization->id)->latest('id')->firstOrFail()->commercial_order_id);
+        $refunded = intdiv((int) $next->amount_minor, 2);
+        DB::table('commercial_payments')->insert(['commercial_order_id' => $next->id, 'amount_minor' => $next->amount_minor,
+            'currency' => 'RUB', 'provider_idempotency_key' => (string) Str::uuid(), 'refunded_amount_minor' => $refunded]);
+        app(AICreditCommercialService::class)->refund($next, $refunded);
+        $replayed = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation');
+        self::assertSame($quote['quote_id'], $replayed['quote_id']);
+        self::assertSame($quote['max_units_minor'], $replayed['max_units_minor']);
+        self::assertSame(250000, $replayed['available_units_minor']);
+
+        $this->travelTo($oldEnd->addMonthsNoOverflow(1));
+        $requestId = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation');
+        self::assertSame($quote, $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $requestId, 'generation'));
+        app(AICreditCommercialService::class)->refund($next, $refunded);
+        self::assertSame(250000, $quote['available_units_minor']);
+        self::assertSame(250000, $credits->balance($organization)['included_minor']);
+        self::assertSame(3, DB::table('ai_credit_ledger_entries')->where('organization_id', $organization->id)->where('type', 'grant')->count());
+        self::assertSame(250000, (int) \App\Models\Credits\AICreditLot::query()->where('organization_id', $organization->id)
+            ->where('commercial_order_id', $next->id)->latest('id')->firstOrFail()->remaining_minor);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope->sessionId)->count());
+        $this->travelBack();
+    }
+
+    private function paidTermOrder(Organization $organization, User $actor, OrganizationCommercialAccount $account, CarbonImmutable $start, CarbonImmutable $end, string $term): CommercialOrder
+    {
+        return CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $organization->id,
+            'user_id' => $actor->id, 'commercial_account_id' => $account->id, 'kind' => 'purchase', 'status' => 'paid',
+            'offer_type' => 'packages', 'quote_version' => 1, 'selected_package_slugs' => ['working-entry'], 'current_package_slugs' => [],
+            'amount_minor' => 40000000, 'amount' => '400000.00', 'currency' => 'RUB', 'client_idempotency_key' => (string) Str::uuid(),
+            'billing_period' => $term, 'period_start_at' => $start, 'period_end_at' => $end]);
+    }
+
+    private function paidTermSubscription(Organization $organization, OrganizationCommercialAccount $account, CommercialOrder $order): void
+    {
+        DB::table('organization_package_subscriptions')->insert(['organization_id' => $organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'working-entry', 'status' => 'active', 'access_source' => 'paid_package', 'source_order_id' => $order->id,
+            'current_period_start_at' => $order->period_start_at, 'current_period_end_at' => $order->period_end_at]);
+    }
+
     public function test_an_unsuccessful_generation_result_rolls_back_the_reserve_receipt_and_jobs(): void
     {
         [$organization, $actor, $scope] = $this->fixture();
@@ -270,7 +394,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $permissions->allows('canCurrent')->andReturn(true);
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
-        \Illuminate\Support\Facades\Queue::fake();
+        $queue = \Illuminate\Support\Facades\Queue::fake();
         $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession::class)->handle([
             'organization_id' => $organization->id, 'project_id' => $scope->projectId,
             'input_payload' => ['description' => $infoOnly ? 'Нужно уточнить состав выбранных работ для объекта.'
@@ -307,7 +431,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $operationId, 'generation');
         app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration::class)
             ->handle($session, 0, 'ai_assisted', $actor, creditApproval: ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]);
-        $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+        $job = $queue->pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
         foreach (\App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::cases() as $stage) {
             $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
         }
