@@ -21,6 +21,8 @@ final readonly class ProjectPortfolioDashboardFilters
         public ?string $currency = null,
         public int $limit = 25,
         public int $topN = 25,
+        public ?string $budgetVersionUuid = null,
+        public ?string $scenarioUuid = null,
     ) {
     }
 
@@ -56,6 +58,8 @@ final readonly class ProjectPortfolioDashboardFilters
             'organization_id' => $this->organizationId,
             'period_start' => $this->periodStart,
             'period_end' => $this->periodEnd,
+            'budget_version_uuid' => $this->budgetVersionUuid,
+            'scenario_uuid' => $this->scenarioUuid,
             'responsibility_center_id' => $this->responsibilityCenterUuid ?? $this->responsibilityCenterId,
             'currency' => $this->currency,
             'group_by' => [
@@ -109,6 +113,8 @@ final readonly class ProjectPortfolioDashboardFilters
             'currency' => $this->currency,
             'limit' => $this->limit,
             'top_n' => $this->topN,
+            'budget_version_uuid' => $this->budgetVersionUuid,
+            'scenario_uuid' => $this->scenarioUuid,
         ];
     }
 

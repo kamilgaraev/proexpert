@@ -18,6 +18,7 @@ use InvalidArgumentException;
 use Throwable;
 
 use function array_key_exists;
+use function array_map;
 use function count;
 use function is_numeric;
 use function is_object;
@@ -63,12 +64,14 @@ final class EpmDataMartHealthController extends BudgetingAdminController
                 'organization_id' => $organizationId,
                 'current_organization_id' => $organizationId,
             ]);
-            $runs = [];
-
-            foreach ($this->requestedReportScopes($input['report_scope'] ?? null) as $reportScope) {
-                $scope = EpmDataMartScope::fromInput($reportScope, $input);
-                $runs[] = $this->runPayload($this->coordinator->queue($scope, $request->user()?->id));
-            }
+            $scopes = array_map(
+                static fn (string $reportScope): EpmDataMartScope => EpmDataMartScope::fromInput($reportScope, $input),
+                $this->requestedReportScopes($input['report_scope'] ?? null),
+            );
+            $runs = array_map(
+                fn (EpmDataMartRecalculationRun $run): array => $this->runPayload($run),
+                $this->coordinator->queueMany($scopes, $request->user()?->id),
+            );
 
             return AdminResponse::success(
                 [

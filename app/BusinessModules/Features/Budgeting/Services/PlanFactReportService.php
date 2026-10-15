@@ -46,6 +46,11 @@ final class PlanFactReportService implements PlanFactSourceSnapshotReport
         private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {}
 
+    public function validateBudgetSelection(array $input): void
+    {
+        $this->resolveContext($input);
+    }
+
     public function report(array $input): array
     {
         return $this->reportWithProjectScope($input, null);
