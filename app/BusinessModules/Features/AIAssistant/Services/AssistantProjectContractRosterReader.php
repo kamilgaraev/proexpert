@@ -18,7 +18,8 @@ final readonly class AssistantProjectContractRosterReader
     public static function matches(string $query): bool
     {
         $query = preg_replace('/(?<!\pL)документ[а-яё]*\s+без\s+(?:указанн[а-яё]*\s+)?дат[а-яё]*\s+окончания(?!\pL)/iu', 'договоры без даты окончания', $query) ?? $query;
-        return preg_match('/(?:действующ|активн|просроч)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*(?:действу(?:ют|ет)|активн|просроч|срок|дат[а-яё]*\s+окончан)/iu', $query) === 1
+        return preg_match('/(?:действующ|активн|просроч)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*(?:действу(?:ют|ет)|активн|просроч|срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1
+            && preg_match('/написан|содержани|текст|услови|пункт/iu', $query) !== 1
             && preg_match('/заверш[её]н|расторгнут|приостановл|чернов|архив|закрыт/iu', $query) !== 1
             && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
@@ -57,6 +58,7 @@ final readonly class AssistantProjectContractRosterReader
             $asOf = today()->toDateString(); $endingBy = today()->addDays(7)->toDateString(); $complete = count($rows) <= 10000;
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => $asOf, 'complete' => $complete,
                 'total' => count($rows) <= 10000 ? count($rows) : null, 'items' => array_slice($rows, 0, 20),
+                'undated_items' => array_slice(array_values(array_filter($rows, static fn (array $row): bool => $row['end_date'] === null)), 0, 20),
                 'ending_by_date' => $endingBy,
                 'overdue_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf)) : null,
                 'ending_soon_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) >= $asOf && substr($row['end_date'], 0, 10) <= $endingBy)) : null,
@@ -86,10 +88,12 @@ final readonly class AssistantProjectContractRosterReader
     {
         $lines = [trans_message('ai_assistant_contract_roster.scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']])];
         if (! $data['complete']) { return $lines[0]."\n".trans_message('ai_assistant_contract_roster.limit'); }
-        $lines[] = trans_message('ai_assistant_contract_roster.count', ['total' => $data['total'], 'shown' => count($data['items'])]);
+        $datedItems = array_values(array_filter($data['items'], static fn (array $item): bool => $item['end_date'] !== null));
+        $lines[] = trans_message('ai_assistant_contract_roster.count', ['total' => $data['total'], 'shown' => count($datedItems) + count($data['undated_items'])]);
         $lines[] = trans_message('ai_assistant_contract_roster.deadlines', ['overdue' => $data['overdue_count'], 'soon' => $data['ending_soon_count'],
             'date' => $data['ending_by_date'], 'undated' => $data['missing_end_date_count']]);
-        foreach ($data['items'] as $item) {
+        foreach (array_merge($datedItems, $data['undated_items']) as $index => $item) {
+            if ($index === count($datedItems)) { $lines[] = trans_message('ai_assistant_contract_roster.undated_group', ['shown' => count($data['undated_items']), 'total' => $data['missing_end_date_count']]); }
             $name = $item['self_execution'] ? trans_message('ai_assistant_contract_roster.self_execution')
                 : ($item['counterparty'] === null ? trans_message('ai_assistant_contract_roster.counterparty_unknown') : self::text($item['counterparty']));
             $end = $item['end_date'] === null ? trans_message('ai_assistant_contract_roster.no_date') : substr($item['end_date'], 0, 10);

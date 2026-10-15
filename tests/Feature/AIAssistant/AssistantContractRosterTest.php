@@ -62,5 +62,13 @@ final class AssistantContractRosterTest extends TestCase
         $deadlines = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame(25, $deadlines['data']['total']); self::assertSame(22, $deadlines['data']['overdue_count']);
         self::assertSame(2, $deadlines['data']['ending_soon_count']); self::assertSame(0, $deadlines['data']['missing_end_date_count']);
+        Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'UNDATED-AFTER-25', 'end_date' => null] + $base));
+        $undated = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(26, $undated['data']['total']);
+        self::assertCount(20, $undated['data']['items']);
+        self::assertCount(1, $undated['data']['undated_items']);
+        self::assertSame('UNDATED-AFTER-25', $undated['data']['undated_items'][0]['number']);
+        self::assertStringContainsString('Договоры без даты окончания: показано 1 из 1.', $undated['server_formatted_answer']);
+        self::assertStringContainsString('UNDATED-AFTER-25', $undated['server_formatted_answer']);
     }
 }

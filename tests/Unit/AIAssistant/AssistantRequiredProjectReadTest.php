@@ -96,6 +96,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         foreach (['Какие действующие договоры нашего проекта и сколько затрат за сентябрь?',
             'Какие действующие договоры нашего проекта и какая по ним выручка?',
             'Какие завершённые договоры нашего объекта имеют срок окончания в прошлом?',
+            'Что написано в договоре нашего объекта о сроках?', 'Какие условия договора нашего объекта о сроках окончания?',
             'Какие просроченные договоры нашего объекта и сколько по ним оплатить?'] as $mixed) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
