@@ -11,6 +11,13 @@ final class EpmDataMartRecalculationRequest extends BudgetingFormRequest
 {
     public function rules(): array
     {
+        $includesPortfolio = in_array($this->input('report_scope'), [
+            null,
+            '',
+            'all',
+            EpmDataMartScope::PROJECT_PORTFOLIO_DASHBOARD,
+        ], true);
+
         return [
             'organization_id' => ['sometimes', 'nullable', 'integer'],
             'current_organization_id' => ['sometimes', 'nullable', 'integer'],
@@ -27,8 +34,12 @@ final class EpmDataMartRecalculationRequest extends BudgetingFormRequest
             'budget_article_id' => ['sometimes', 'nullable', 'string', 'max:64'],
             'counterparty_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'currency' => ['sometimes', 'nullable', 'string', 'size:3'],
-            'budget_version_uuid' => ['sometimes', 'nullable', 'string', 'max:64'],
-            'scenario_uuid' => ['sometimes', 'nullable', 'string', 'max:64'],
+            'budget_version_uuid' => $includesPortfolio
+                ? ['nullable', 'required_with:scenario_uuid', 'uuid']
+                : ['sometimes', 'nullable', 'string', 'max:64'],
+            'scenario_uuid' => $includesPortfolio
+                ? ['nullable', 'required_with:budget_version_uuid', 'uuid']
+                : ['sometimes', 'nullable', 'string', 'max:64'],
             'item_limit' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:50'],
         ];
     }

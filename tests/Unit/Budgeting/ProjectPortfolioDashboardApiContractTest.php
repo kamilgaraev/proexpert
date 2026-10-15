@@ -7,6 +7,7 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\Http\Requests\ProjectPortfolioDashboardRequest;
+use App\BusinessModules\Features\Budgeting\Http\Requests\EpmDataMartRecalculationRequest;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
 use Illuminate\Config\Repository;
@@ -166,6 +167,56 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
             } catch (\InvalidArgumentException $exception) {
                 $this->assertSame('Выберите версию бюджета и её сценарий вместе.', $exception->getMessage());
             }
+        }
+    }
+
+    public function test_recalculation_validates_portfolio_budget_pairs_before_queueing(): void
+    {
+        $factory = new Factory(Facade::getFacadeApplication()->make('translator'));
+        $base = ['period_start' => '2026-06-01', 'period_end' => '2026-06-30'];
+        $pair = [
+            'budget_version_uuid' => '11111111-1111-4111-8111-111111111111',
+            'scenario_uuid' => '22222222-2222-4222-8222-222222222222',
+        ];
+
+        foreach ([[], ['report_scope' => null], ['report_scope' => ''], ['report_scope' => 'all'], ['report_scope' => 'project_portfolio_dashboard']] as $scope) {
+            foreach ([[], $pair] as $selection) {
+                $request = new EpmDataMartRecalculationRequest();
+                $request->replace([...$base, ...$scope, ...$selection]);
+                $this->assertFalse($factory->make($request->all(), $request->rules(), $request->messages())->fails());
+            }
+            foreach ($pair as $field => $uuid) {
+                $request = new EpmDataMartRecalculationRequest();
+                $request->replace([...$base, ...$scope, $field => $uuid]);
+                $this->assertTrue($factory->make($request->all(), $request->rules(), $request->messages())->fails());
+            }
+        }
+
+        foreach (['plan_fact', 'project_margin', 'wip_forecast', 'cfo_command_center'] as $scope) {
+            foreach ($pair as $field => $uuid) {
+                $request = new EpmDataMartRecalculationRequest();
+                $request->replace([...$base, 'report_scope' => $scope, $field => $uuid]);
+                $this->assertFalse($factory->make($request->all(), $request->rules(), $request->messages())->fails());
+            }
+        }
+    }
+
+    public function test_invalid_budget_uuid_has_a_readable_russian_validation_message(): void
+    {
+        $factory = new Factory(Facade::getFacadeApplication()->make('translator'));
+        $input = [
+            'period_start' => '2026-06-01',
+            'period_end' => '2026-06-30',
+            'budget_version_uuid' => 'invalid',
+            'scenario_uuid' => 'invalid',
+        ];
+        foreach ([new ProjectPortfolioDashboardRequest(), new EpmDataMartRecalculationRequest()] as $request) {
+            $request->replace($input);
+            $validator = $factory->make($input, $request->rules(), $request->messages());
+
+            $this->assertTrue($validator->fails());
+            $this->assertSame('Выберите корректное значение поля «версия бюджета».', $validator->errors()->first('budget_version_uuid'));
+            $this->assertSame('Выберите корректное значение поля «сценарий бюджета».', $validator->errors()->first('scenario_uuid'));
         }
     }
 
