@@ -92,9 +92,11 @@ final class PaymentDocumentProjectScopeSecurityTest extends TestCase
         }
         self::assertSame($before, $hidden->fresh()->getAttributes());
         self::assertSame(0, $hidden->transactions()->count());
-        foreach ([[$visible->id, $hidden->id], [$visible->id, $hidden->id, 'bad'], [$visible->id, 2147483647]] as $ids) {
-            $this->postJson('/api/v1/admin/payments/documents/bulk', ['ids' => $ids, 'action' => 'cancel'], $headers)->assertNotFound();
-            self::assertSame(PaymentDocumentStatus::APPROVED, $visible->fresh()->status);
+        foreach (['cancel', 'pay'] as $action) {
+            foreach ([[$visible->id, $hidden->id], [$visible->id, $hidden->id, 'bad'], [$visible->id, 2147483647]] as $ids) {
+                $this->postJson('/api/v1/admin/payments/documents/bulk', ['ids' => $ids, 'action' => $action], $headers)->assertNotFound();
+                self::assertSame(PaymentDocumentStatus::APPROVED, $visible->fresh()->status);
+            }
         }
     }
 
@@ -284,6 +286,29 @@ final class PaymentDocumentProjectScopeSecurityTest extends TestCase
         $this->document($foreign);
         self::assertSame(3, $access->query($fixture->organization->id, $actor, 'payments.invoice.view')->count());
         self::assertSame(0, $access->query($fixture->foreignOrganization->id, $actor, 'payments.invoice.view')->count());
+    }
+
+    public function test_bulk_payment_rechecks_project_access_after_document_locks_before_any_payment(): void
+    {
+        [$fixture, $actor, $allowed, $restricted, $visible] = $this->context(['payments.invoice.edit', 'payments.transaction.register']);
+        $second = $this->document($allowed);
+        $before = [$visible->fresh()->getAttributes(), $second->fresh()->getAttributes()];
+        $revoked = false;
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use ($allowed, $actor, &$revoked): void {
+            if ($revoked || ! str_contains(strtolower($query->sql), 'for update')
+                || ! str_contains($query->sql, '"payment_documents"')) {
+                return;
+            }
+            $revoked = true;
+            $allowed->users()->updateExistingPivot($actor->id, ['is_active' => false]);
+        });
+        $this->postJson('/api/v1/admin/payments/documents/bulk', [
+            'ids' => [$visible->id, $second->id], 'action' => 'pay',
+        ], $this->headers($actor))->assertNotFound();
+        self::assertTrue($revoked);
+        self::assertSame($before, [$visible->fresh()->getAttributes(), $second->fresh()->getAttributes()]);
+        self::assertSame(0, $visible->transactions()->count());
+        self::assertSame(0, $second->transactions()->count());
     }
 
     public function test_contract_availability_does_not_reveal_unassigned_or_unfiltered_multi_project_amounts(): void

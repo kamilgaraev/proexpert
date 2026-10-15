@@ -24,6 +24,7 @@ final class PaymentDocumentWorkflowService
         private readonly PaymentPurposeGenerator $purposeGenerator,
         private readonly PaymentDocumentAccessService $access,
         private readonly PaymentDocumentReferenceAccessService $references,
+        private readonly ContractPaymentLockService $contractLocks,
     ) {}
 
     /**
@@ -127,9 +128,10 @@ final class PaymentDocumentWorkflowService
         $data['created_by_user_id'] = $userId;
         $actor = $this->access->actor($userId, $actor);
         $document = $this->access->find((int) $actor->current_organization_id, $actor, $document->id, 'payments.transaction.register');
+        $expectedContracts = [(int) $document->id => $this->contractLocks->contractIdForPaymentDocument($document)];
 
         return $this->documents->registerPayment($document, $data['amount'], $data,
-            fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $actor, 'payments.transaction.register'));
+            fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $actor, 'payments.transaction.register'), $expectedContracts);
     }
 
     public function cancel(PaymentDocument $document, string $reason, ?User $user): PaymentDocument
@@ -165,11 +167,21 @@ final class PaymentDocumentWorkflowService
         ];
 
         DB::transaction(function () use ($organizationId, $ids, $action, $user, $permission, $payload, &$results): void {
+            $expectedContracts = null;
+            if ($action === 'pay') {
+                $preflight = $this->access->bulk($organizationId, $user, $ids, $permission);
+                $expectedContracts = $this->contractLocks->lockForPaymentDocuments($preflight);
+            }
             $documents = $this->access->bulk($organizationId, $user, $ids, $permission, true);
+            if ($expectedContracts !== null) {
+                foreach ($documents as $document) {
+                    $this->contractLocks->assertContractUnchanged($document, $expectedContracts);
+                }
+            }
 
             foreach ($documents as $document) {
                 try {
-                    $this->applyBulkAction($document, $action, $user, $payload);
+                    $this->applyBulkAction($document, $action, $user, $payload, $expectedContracts);
                     $results['success']++;
                 } catch (\DomainException $e) {
                     $results['failed']++;
@@ -209,7 +221,7 @@ final class PaymentDocumentWorkflowService
     /**
      * @param  array<string, mixed>  $payload
      */
-    private function applyBulkAction(PaymentDocument $document, string $action, User $user, array $payload): void
+    private function applyBulkAction(PaymentDocument $document, string $action, User $user, array $payload, ?array $expectedContracts): void
     {
         match ($action) {
             'submit' => $this->documents->submit(
@@ -237,7 +249,7 @@ final class PaymentDocumentWorkflowService
                 'notes' => trans_message('payments.documents.bulk_payment_note'),
                 'created_by_user_id' => $user->id,
                 'budget_override_reason' => $this->nullableString($payload['budget_override_reason'] ?? null),
-            ], fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $user, 'payments.transaction.register')),
+            ], fn (PaymentDocument $locked) => $this->access->assertDocument($locked, $user, 'payments.transaction.register'), $expectedContracts),
             default => null,
         };
     }
