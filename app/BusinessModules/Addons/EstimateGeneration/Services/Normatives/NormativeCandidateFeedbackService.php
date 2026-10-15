@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemDuplicateSignature;
+use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemPhysicalIdentity;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -756,6 +757,7 @@ final class NormativeCandidateFeedbackService
             array_splice($workItems, $workIndex, 1);
             $keptKey = $this->firstRemainingDuplicateKey($workItems, $signature);
         } else {
+            $this->assertPhysicalDuplicateIdentity($workItems, $matchingIndexes);
             $targetKey = $action === 'merge_with_existing'
                 ? ($targetWorkItemKey ?? $keptKey)
                 : $keptKey;
@@ -838,6 +840,18 @@ final class NormativeCandidateFeedbackService
         }
 
         return $draft;
+    }
+
+    /** A matching name/quantity/norm is only a review candidate, never proof that another row can be removed. */
+    private function assertPhysicalDuplicateIdentity(array $workItems, array $indexes): void
+    {
+        if (count($indexes) > WorkItemPhysicalIdentity::MAX_GROUP_ITEMS) {
+            throw $this->validationException(['work_item_key' => [$this->message('estimate_generation.duplicate_group_limit')]]);
+        }
+        $items = array_map(static fn (int $index): array => $workItems[$index], $indexes);
+        if (! WorkItemPhysicalIdentity::canResolveGroup($items)) {
+            throw $this->validationException(['work_item_key' => [$this->message('estimate_generation.duplicate_identity_unverified')]]);
+        }
     }
 
     /**

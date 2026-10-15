@@ -429,6 +429,44 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertStringNotContainsString('->get()', $source);
     }
 
+    public function test_duplicate_preview_includes_all_signature_peers_outside_the_current_page(): void
+    {
+        $base = ['validation_flags' => ['requires_duplicate_review'], 'pricing_status' => 'calculated', 'total_cost' => 1000,
+            'normative_match' => ['norm_id' => 101, 'status' => 'matched', 'decision' => ['status' => 'accepted']],
+            'metadata' => ['scope_entity_id' => 'entity:101', 'composition_work_key' => 'finish.wall']];
+        $works = [$this->workItem(['key' => 'work-1', ...$base]), $this->workItem(['key' => 'work-2', ...$base]),
+            $this->workItem(['key' => 'unrelated', ...$base, 'name' => 'Different work'])];
+        $result = $this->service()->forSession(new EstimateGenerationSession(['draft_payload' => $this->draft($works)]), ['per_page' => 1]);
+        self::assertCount(1, $result['items']);
+        // Sorting may select the unrelated singleton first; search isolates the matching group without changing membership.
+        $result = $this->service()->forSession(new EstimateGenerationSession(['draft_payload' => $this->draft($works)]), ['per_page' => 1, 'search' => 'work-1']);
+        $group = $result['items'][0]['duplicate_group'];
+        self::assertSame(['work-1', 'work-2'], array_column($group['items'], 'key'));
+        self::assertSame(2, $group['count']);
+        self::assertTrue($group['complete']);
+        self::assertTrue($group['can_resolve']);
+        $works[1]['metadata']['scope_entity_id'] = 'entity:102';
+        $result = $this->service()->forSession(new EstimateGenerationSession(['draft_payload' => $this->draft($works)]), ['search' => 'work-1']);
+        self::assertFalse($result['items'][0]['duplicate_group']['can_resolve']);
+    }
+
+    public function test_large_duplicate_groups_are_bounded_and_group_deletion_is_unavailable(): void
+    {
+        $works = [];
+        for ($i = 1; $i <= 101; $i++) {
+            $works[] = $this->workItem(['key' => 'work-'.$i, 'validation_flags' => ['requires_duplicate_review'],
+                'pricing_status' => 'calculated', 'total_cost' => 1000,
+                'normative_match' => ['norm_id' => 101, 'status' => 'matched', 'decision' => ['status' => 'accepted']],
+                'metadata' => ['scope_entity_id' => 'entity:101', 'composition_work_key' => 'finish.wall']]);
+        }
+        $result = $this->service()->forSession(new EstimateGenerationSession(['draft_payload' => $this->draft($works)]), ['per_page' => 1]);
+        $group = $result['items'][0]['duplicate_group'];
+        self::assertSame(101, $group['count']);
+        self::assertCount(100, $group['items']);
+        self::assertFalse($group['complete']);
+        self::assertFalse($group['can_resolve']);
+    }
+
     private function service(): EstimateGenerationReviewItemService
     {
         return new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter);
