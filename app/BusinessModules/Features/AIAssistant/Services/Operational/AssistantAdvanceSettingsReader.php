@@ -76,15 +76,23 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
     private static function asksAboutUnsupportedNotificationEvent(string $query): bool
     {
         if (preg_match('/уведомл|уведомля/iu', $query) !== 1
-            || preg_match('/(?<!\pL)об?\s+([^.!?;]+)/iu', $query, $event) !== 1) {
+            || preg_match_all('/(?<!\pL)(?:о|об|обо)\s+([^.!?;]+)/iu', $query, $events) < 1) {
             return false;
         }
-        if (preg_match('/просроч[а-яё]*\s+авансов[а-яё]*\s+отч[её]т|крупн[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц|крупн[а-яё]*\s+операц/iu', $event[1]) === 1) {
-            return false;
+        foreach ($events[1] as $event) {
+            foreach (preg_split('/,|\s+(?:и|или)\s+/iu', $event) ?: [] as $part) {
+                $part = preg_replace('/^\s*(?:о|об|обо)\s+/iu', '', trim($part)) ?? $part;
+                if (preg_match('/^(?:просроч[а-яё]*\s+авансов[а-яё]*\s+отч[её]т[а-яё]*|крупн[а-яё]*\s+(?:подотч[её]тн[а-яё]*\s+)?операц[а-яё]*)(?:\s+подотч[её]тн[а-яё]*\s+средств)?$/iu', $part) === 1) {
+                    continue;
+                }
+                if (preg_match('/администратор/iu', $query) === 1
+                    || preg_match('/^(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц[а-яё]*$/iu', $part) !== 1) {
+                    return true;
+                }
+            }
         }
 
-        return preg_match('/администратор/iu', $query) === 1
-            || preg_match('/(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц/iu', $event[1]) !== 1;
+        return false;
     }
 
     protected function collect(User $actor, int $organizationId): array

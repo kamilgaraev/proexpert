@@ -55,7 +55,7 @@ final class AssistantMutationIntent
         if (preg_match('/(?<![\pL\pN])(?:'.self::ATTRIBUTE_UPDATE.'|'.self::TOGGLE_UPDATE.')/u', $normalized) === 1) {
             return true;
         }
-        if (preg_match('/(?<!\pL)(?:лимит|срок|порог|статус|сумм|дат|настройк|доступ|ставк|цен|бюджет|количеств|договор|подрядчик|контрагент)[а-я]*(?!\pL)[\s\S]*(?<!\pL)(?:'.self::UPDATE_COMMANDS.')\s+(?:его|ее|их|это)(?!\pL)/u', $normalized) === 1) {
+        if (preg_match('/(?<!\pL)(?:уведомл|напомин|обязательн|требован|лимит|срок|порог|статус|сумм|дат|настройк|доступ|ставк|цен|бюджет|количеств|договор|подрядчик|контрагент)[а-я]*(?!\pL)[\s\S]*(?<!\pL)(?:'.self::UPDATE_COMMANDS.'|'.self::TOGGLE_COMMANDS.')\s+(?:его|ее|их|это)(?!\pL)/u', $normalized) === 1) {
             return true;
         }
         foreach ($commands as $command) {
@@ -79,7 +79,7 @@ final class AssistantMutationIntent
                 return $type;
             }
             if (self::containsRequest($message)
-                && preg_match('/^(?:пожалуйста |прошу )?(?:'.self::UPDATE_COMMANDS.')\s+(?:его|ее|их|это)(?!\pL)/u', self::normalize($part)) === 1) {
+                && preg_match('/^(?:пожалуйста |прошу )?(?:'.self::UPDATE_COMMANDS.'|'.self::TOGGLE_COMMANDS.')\s+(?:его|ее|их|это)(?!\pL)/u', self::normalize($part)) === 1) {
                 return 'update';
             }
         }

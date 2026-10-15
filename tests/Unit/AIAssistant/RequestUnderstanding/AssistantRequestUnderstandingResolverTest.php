@@ -56,6 +56,12 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             self::assertSame('requires_confirmation', $result->actionPolicy, $query);
             self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query.'. Ничего не меняй.')->actionPolicy);
         }
+        foreach (['Покажи уведомления администратора о просроченном авансовом отчёте и отключи их',
+            'Покажи уведомления администратора о просроченном авансовом отчёте и включи их',
+            'Покажи обязательное указание проекта для подотчётного расхода и отключи это'] as $query) {
+            self::assertSame('update', (new AssistantRequestUnderstandingResolver)->resolve($query)->primaryIntent, $query);
+            self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy, $query);
+        }
     }
 
     public function test_mutation_commands_share_classification_with_project_read_guards(): void
