@@ -100,6 +100,11 @@ final class BudgetImportService
             ->all();
 
         if ($rows === []) {
+            BudgetImportBatch::query()
+                ->whereKey($batch->id)
+                ->where('status', 'previewed')
+                ->update(['status' => 'preview_failed']);
+
             throw new \DomainException(trans_message('budgeting.import.empty_rows'));
         }
 

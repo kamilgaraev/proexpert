@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
 use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -56,8 +57,27 @@ final class BudgetEmptyImportPostgresTest extends TestCase
             'import_batch_id' => $batch->uuid,
             'mode' => 'replace_lines',
         ])->assertStatus(422)->assertJsonPath('message', self::EMPTY_MESSAGE);
-        self::assertSame('previewed', $batch->fresh()->status);
+        self::assertSame('preview_failed', $batch->fresh()->status);
+        self::assertNotContains('pending_imports', array_column(app(BudgetPeriodClosureService::class)->blockers($version->period), 'code'));
         $this->assertPlanPreserved($version, $line);
+    }
+
+    public static function versionStatuses(): array
+    {
+        return [['draft', true], ['on_approval', false], ['approved', false], ['active', false], ['replaced', false], ['archived', false]];
+    }
+
+    #[DataProvider('versionStatuses')]
+    public function test_only_imports_that_can_still_be_committed_block_period_closure(string $status, bool $blocks): void
+    {
+        [$user, $version] = $this->fixture();
+        $version->forceFill(['status' => $status])->save();
+        BudgetImportBatch::create(['organization_id' => $version->organization_id, 'budget_version_id' => $version->id, 'source_format' => 'csv', 'mapping_mode' => 'by_code', 'status' => 'previewed', 'uploaded_by' => $user->id, 'preview_summary' => ['rows_total' => 1, 'rows_invalid' => 0], 'error_summary' => []]);
+
+        $codes = array_column(app(BudgetPeriodClosureService::class)->blockers($version->period), 'code');
+
+        self::assertSame($blocks, in_array('pending_imports', $codes, true));
+        self::assertSame(in_array($status, ['draft', 'on_approval', 'approved'], true), in_array('unfinished_versions', $codes, true));
     }
 
     public function test_a_nonempty_file_with_zero_amounts_can_still_be_imported(): void

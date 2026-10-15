@@ -278,7 +278,9 @@ final class BudgetPeriodClosureService
 
         $pendingImports = BudgetImportBatch::query()
             ->where('status', 'previewed')
-            ->whereHas('version', fn (Builder $query) => $query->where('budget_period_id', $period->id))
+            ->whereHas('version', fn (Builder $query) => $query
+                ->where('budget_period_id', $period->id)
+                ->where('status', BudgetWorkflowService::STATUS_DRAFT))
             ->count();
 
         if ($pendingImports > 0) {
