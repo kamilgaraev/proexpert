@@ -60,6 +60,12 @@ final class PaymentCalendarPlanNettingTest extends TestCase
             'document scope excludes invoice' => ['scope', '100000.00', '100000.00'],
             'foreign organization invoice' => ['organization', '100000.00', '100000.00'],
             'schedule reservation and actual payment' => ['dedup', '0.00', '100000.00'],
+            'multi-project ACT in allowed project' => ['multi-act', '0.00', '100000.00'],
+            'multi-project direct contract' => ['multi-direct', '0.00', '100000.00'],
+            'multi-project contract source' => ['multi-source', '0.00', '100000.00'],
+            'multi-project contract without this project' => ['multi-unlinked', '100000.00', '200000.00'],
+            'single-project contract ignores stale pivot' => ['single-pivot', '100000.00', '200000.00'],
+            'organization ID collides with contractor ID' => ['counterparty-type', '100000.00', '200000.00'],
         ];
     }
 
@@ -73,6 +79,7 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         $start = '2026-10-01';
         $end = '2026-10-31';
         $scope = null;
+        $projectScope = null;
         if ($case === 'smaller' || $case === 'larger') {
             $value = $case === 'smaller' ? '60000.00' : '120000.00';
             $document->update(['amount' => $value, 'remaining_amount' => $value]);
@@ -141,12 +148,33 @@ final class PaymentCalendarPlanNettingTest extends TestCase
             $scope = static fn ($query) => $query->whereKey(-1);
         } elseif ($case === 'organization') {
             $document->update(['organization_id' => Organization::factory()->create()->id]);
+        } elseif (str_starts_with($case, 'multi-') || $case === 'single-pivot') {
+            $contract = $fixture['contract'];
+            $contract->update(['is_multi_project' => $case !== 'single-pivot', 'project_id' => null]);
+            if ($case !== 'multi-unlinked') $contract->projects()->attach($project->id);
+            if ($case === 'multi-direct') {
+                $document->update(['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id]);
+            } elseif ($case === 'multi-source') {
+                $document->update(['invoiceable_type' => null, 'invoiceable_id' => null, 'source_type' => Contract::class, 'source_id' => $contract->id]);
+            }
+            $scope = static fn ($query) => $query->where('project_id', $project->id);
+            $projectScope = static fn ($query) => $query->where('project_id', $project->id);
+        } elseif ($case === 'counterparty-type') {
+            $collisionId = max((int) Organization::query()->max('id'), (int) Contractor::query()->max('id')) + 100;
+            $organization = Organization::factory()->create(['id' => $collisionId]);
+            $otherContractor = new Contractor(['organization_id' => $context->organization->id,
+                'name' => 'Отдельный подрядчик', 'source_organization_id' => $document->payee_organization_id]);
+            $otherContractor->id = $collisionId;
+            $otherContractor->save();
+            $line->update(['counterparty_id' => $otherContractor->id]);
+            $document->update(['payee_contractor_id' => null, 'contractor_id' => null,
+                'counterparty_organization_id' => $organization->id, 'payee_organization_id' => $organization->id]);
         }
 
         $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
             organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end,
             projectId: (int) $project->id, currency: 'RUB',
-        ), new CarbonImmutable('2026-10-15'), $scope);
+        ), new CarbonImmutable('2026-10-15'), $scope, $projectScope);
         $plan = collect($items)->first(fn ($item) => $item->sourceType === 'budget_amount' && (int) $item->sourceId === (int) $amount->id);
         $this->assertNotNull($plan);
         $this->assertSame('100000.00', $plan->amount);
