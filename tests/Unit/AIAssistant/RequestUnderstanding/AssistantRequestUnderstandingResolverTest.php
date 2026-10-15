@@ -13,6 +13,16 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_settings_toggles_require_confirmation(): void
+    {
+        foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
+            $result = (new AssistantRequestUnderstandingResolver)->resolve($query);
+            self::assertSame('update', $result->primaryIntent);
+            self::assertSame('requires_confirmation', $result->actionPolicy);
+        }
+    }
+
     public function test_make_project_summary_remains_read_only(): void
     {
         $result = (new AssistantRequestUnderstandingResolver)->resolve('Сделай сводку по проектам');

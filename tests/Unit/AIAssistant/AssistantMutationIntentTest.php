@@ -27,7 +27,8 @@ final class AssistantMutationIntentTest extends TestCase
             'Поставь фильтр по активным договорам', 'Выставь сортировку по сроку окончания',
             'Задай фильтр по активным договорам', 'Установи фильтр по активным договорам',
             'Настрой сортировку по сроку окончания', 'Сделай общую сумму расходов по проекту',
-            'Сделай сумму расходов по проекту', 'Сделай договоры таблицей', 'Сделай договоры списком'] as $query) {
+            'Сделай сумму расходов по проекту', 'Сделай договоры таблицей', 'Сделай договоры списком',
+            'Сделай даты окончания договоров жирным шрифтом', 'Сделай сроки окончания договоров отдельной колонкой'] as $query) {
             self::assertNull(AssistantMutationIntent::type($query), $query);
             self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
         }
@@ -47,10 +48,16 @@ final class AssistantMutationIntentTest extends TestCase
             'Покажи активные договоры нашего объекта и поменяй в них подрядчика'] as $query) {
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
+        self::assertTrue(AssistantMutationIntent::containsRequest('Сделай даты окончания договоров жирным шрифтом и продли их на день'));
     }
 
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
     {
+        foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
+            self::assertSame('update', AssistantMutationIntent::type($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+        }
         foreach (['Увеличь', 'Увеличьте', 'Уменьши', 'Уменьшите', 'Настрой', 'Настройте', 'Установи', 'Установите',
             'Снизь', 'Снизьте', 'Повысь', 'Повысьте', 'Поменяй', 'Поменяйте', 'Задай', 'Задайте', 'Выставь', 'Выставьте',
             'Сделай', 'Сделайте', 'Поставь', 'Поставьте', 'Подправь', 'Подправьте', 'Скорректируй', 'Скорректируйте',
