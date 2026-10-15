@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Contract;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -25,6 +26,17 @@ use Tests\TestCase;
 
 class SupplementaryAgreementIdempotencyTest extends TestCase
 {
+    private ?AssistantIndexingState $indexingState = null;
+
+    protected function tearDown(): void
+    {
+        try {
+            $this->indexingState?->endMigration();
+        } finally {
+            parent::tearDown();
+        }
+    }
+
     public function refreshDatabase(): void
     {
         Schema::dropIfExists('contract_current_state');
@@ -34,6 +46,8 @@ class SupplementaryAgreementIdempotencyTest extends TestCase
         Schema::dropIfExists('payment_documents');
         Schema::dropIfExists('contract_performance_acts');
         Schema::dropIfExists('supplementary_agreements');
+        Schema::dropIfExists('contract_builder_instances');
+        Schema::dropIfExists('completed_works');
         Schema::dropIfExists('contracts');
 
         Schema::create('contracts', static function (Blueprint $table): void {
@@ -56,6 +70,17 @@ class SupplementaryAgreementIdempotencyTest extends TestCase
             $table->boolean('is_multi_project')->default(false);
             $table->boolean('is_self_execution')->default(false);
             $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('contract_builder_instances', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+        });
+
+        Schema::create('completed_works', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
             $table->softDeletes();
         });
 
@@ -100,6 +125,7 @@ class SupplementaryAgreementIdempotencyTest extends TestCase
 
         Schema::create('payment_transactions', static function (Blueprint $table): void {
             $table->id();
+            $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('payment_document_id');
             $table->decimal('amount', 18, 2);
             $table->string('status');
@@ -110,6 +136,7 @@ class SupplementaryAgreementIdempotencyTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('contract_id');
             $table->decimal('amount', 18, 2);
+            $table->boolean('is_approved')->default(false);
             $table->string('status');
             $table->timestamps();
         });
@@ -156,6 +183,8 @@ class SupplementaryAgreementIdempotencyTest extends TestCase
         });
 
         Contract::flushEventListeners();
+        $this->indexingState = app(AssistantIndexingState::class);
+        $this->indexingState->beginMigration();
         $this->app->instance(LegalDocumentAudit::class, new class implements LegalDocumentAudit
         {
             public function record(

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\Route;
 use Tests\TestCase;
@@ -49,6 +50,17 @@ class AgreementRouteAuthorizationTest extends TestCase
                     && in_array($method, $candidate->methods(), true)
             );
             self::assertNull($route, "{$method} {$uri}");
+        }
+    }
+
+    public function test_all_agreement_controller_routes_require_a_project(): void
+    {
+        $routes = collect(Route::getRoutes()->getRoutes())->filter(
+            static fn (LaravelRoute $route): bool => str_starts_with($route->getActionName(), AgreementController::class.'@')
+        );
+        self::assertCount(6, $routes);
+        foreach ($routes as $route) {
+            self::assertStringStartsWith('api/v1/admin/projects/{project}/agreements', $route->uri());
         }
     }
 }

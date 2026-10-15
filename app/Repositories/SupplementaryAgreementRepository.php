@@ -6,6 +6,7 @@ namespace App\Repositories;
 
 use App\Models\SupplementaryAgreement;
 use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
+use App\Services\Contract\ContractAccessService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -19,7 +20,7 @@ class SupplementaryAgreementRepository extends BaseRepository implements Supplem
         'updated_at',
     ];
 
-    public function __construct()
+    public function __construct(private readonly ContractAccessService $contractAccess)
     {
         parent::__construct(SupplementaryAgreement::class);
     }
@@ -46,37 +47,22 @@ class SupplementaryAgreementRepository extends BaseRepository implements Supplem
     ): LengthAwarePaginator {
         $query = SupplementaryAgreement::query()
             ->whereHas('contract', function (Builder $contractQuery) use ($projectId, $organizationId): void {
-                $contractQuery
-                    ->where(function (Builder $accessQuery) use ($organizationId): void {
-                        $accessQuery
-                            ->where('contracts.organization_id', $organizationId)
-                            ->orWhere(function (Builder $contractorQuery) use ($organizationId): void {
-                                $contractorQuery
-                                    ->where(function (Builder $selfExecutionQuery): void {
-                                        $selfExecutionQuery
-                                            ->where('contracts.is_self_execution', false)
-                                            ->orWhereNull('contracts.is_self_execution');
-                                    })
-                                    ->whereHas('contractor', function (Builder $contractorRelation) use ($organizationId): void {
-                                        $contractorRelation->where('source_organization_id', $organizationId);
-                                    });
-                            });
-                    })
-                    ->where(function (Builder $projectQuery) use ($projectId): void {
-                        $projectQuery
-                            ->where(function (Builder $singleProjectQuery) use ($projectId): void {
-                                $singleProjectQuery
-                                    ->where('contracts.is_multi_project', false)
-                                    ->where('contracts.project_id', $projectId);
-                            })
-                            ->orWhere(function (Builder $multiProjectQuery) use ($projectId): void {
-                                $multiProjectQuery
-                                    ->where('contracts.is_multi_project', true)
-                                    ->whereHas('projects', function (Builder $projectsQuery) use ($projectId): void {
-                                        $projectsQuery->where('projects.id', $projectId);
-                                    });
-                            });
-                    });
+                $this->contractAccess->applyAccessibleScope($contractQuery, $organizationId);
+                $contractQuery->where(function (Builder $projectQuery) use ($projectId): void {
+                    $projectQuery
+                        ->where(function (Builder $singleProjectQuery) use ($projectId): void {
+                            $singleProjectQuery
+                                ->where('contracts.is_multi_project', false)
+                                ->where('contracts.project_id', $projectId);
+                        })
+                        ->orWhere(function (Builder $multiProjectQuery) use ($projectId): void {
+                            $multiProjectQuery
+                                ->where('contracts.is_multi_project', true)
+                                ->whereHas('projects', function (Builder $projectsQuery) use ($projectId): void {
+                                    $projectsQuery->where('projects.id', $projectId);
+                                });
+                        });
+                });
             });
 
         return $this->applyFiltersAndPaginate($query, $perPage, $filters, $sortBy, $sortDirection);

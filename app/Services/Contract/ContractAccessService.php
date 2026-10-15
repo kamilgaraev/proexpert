@@ -99,6 +99,10 @@ class ContractAccessService
                 })
                 ->orWhere(function (Builder $legacy) use ($organizationId): void {
                     $legacy->whereDoesntHave('organizationViews')
+                        ->where(function (Builder $selfExecution): void {
+                            $selfExecution->where('contracts.is_self_execution', false)
+                                ->orWhereNull('contracts.is_self_execution');
+                        })
                         ->whereHas('contractor', function (Builder $contractorQuery) use ($organizationId): void {
                             $contractorQuery->where('source_organization_id', $organizationId);
                         });
