@@ -61,6 +61,8 @@ final class CommercialContourChangeService
                     (bool) $input['full_suite'],
                     currentPeriodStartAt: $account->current_period_start_at,
                     currentPeriodEndAt: $account->current_period_end_at,
+                    billingPeriod: $account->billing_period ?? '30_days',
+                    currentBillingPeriod: $account->billing_period ?? '30_days',
                 );
 
                 if ((bool) $input['full_suite']

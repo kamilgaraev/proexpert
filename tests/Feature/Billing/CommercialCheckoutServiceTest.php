@@ -19,6 +19,7 @@ use App\Models\Organization;
 use App\Models\OrganizationBalance;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationResourceAllocation;
 use App\Models\User;
 use App\Services\Billing\CommercialCheckoutService;
 use App\Services\Billing\CommercialWebhookService;
@@ -588,6 +589,74 @@ class CommercialCheckoutServiceTest extends TestCase
         CarbonImmutable::setTestNow();
     }
 
+    public function test_annual_balance_purchase_and_prepaid_renewal_extend_from_paid_expiry_once(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($at);
+        OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 100000000, 'currency' => 'RUB']);
+        $initial = $this->checkoutPayload(['target_package_slugs' => ['working-entry'], 'use_balance' => true, 'auto_renew_consent' => false]);
+        $this->assertSame('paid', $initial['status']);
+        $oldEnd = $at->addDays(30);
+        $payload = ['target_package_slugs' => ['working-entry'], 'current_package_slugs' => ['working-entry'], 'billing_period' => '12_months', 'renew_subscription' => true, 'use_balance' => true, 'auto_renew_consent' => false, 'client_idempotency_key' => fake()->uuid()];
+        $paid = $this->checkoutPayload($payload);
+        $again = $this->checkoutPayload($payload);
+        $this->assertSame($paid['order_id'], $again['order_id']);
+        $this->assertSame(43092000, $paid['amount_minor']);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertSame('12_months', $account->billing_period);
+        $this->assertTrue($oldEnd->addMonthsNoOverflow(12)->equalTo($account->current_period_end_at));
+        $this->assertTrue(OrganizationPackageSubscription::query()->sole()->isActive());
+        $this->assertSame(52918000, OrganizationBalance::query()->sole()->balance);
+    }
+
+    public function test_resources_bought_after_prepayment_are_quoted_consistently_and_available_immediately(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($at);
+        OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 100000000, 'currency' => 'RUB']);
+        $current = ['target_package_slugs' => ['working-entry'], 'use_balance' => true, 'auto_renew_consent' => false];
+        $this->checkoutPayload($current);
+        $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'billing_period' => '6_months', 'renew_subscription' => true]);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertTrue($account->current_period_start_at->isFuture());
+        $resources = [['slug' => 'extra_users', 'quantity' => 10]];
+        $queries = app(\App\Services\Billing\CommercialBillingQueryService::class);
+        $resourceQuote = $queries->quoteResourceAddons($this->organization, $resources);
+        $combined = $queries->quote($this->organization, ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'resources' => $resources]);
+        $this->assertSame($combined['resource_addons_quote']['amount_minor'], $resourceQuote['amount_minor']);
+        $this->assertGreaterThan(1800000, $resourceQuote['amount_minor']);
+        $paid = $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'resources' => $resources]);
+        $this->assertSame('paid', $paid['status']);
+        $this->assertSame($resourceQuote['amount_minor'], $paid['amount_minor']);
+        $allocation = OrganizationResourceAllocation::query()->active()->sole();
+        $this->assertTrue($at->equalTo($allocation->period_start_at));
+        $this->assertTrue($account->current_period_end_at->equalTo($allocation->period_end_at));
+    }
+
+    public function test_checkout_idempotency_key_cannot_be_reused_for_another_billing_period(): void
+    {
+        $key = fake()->uuid();
+        $this->checkoutPayload(['billing_period' => '6_months', 'client_idempotency_key' => $key]);
+        $this->expectException(CommercialCheckoutConflictException::class);
+        $this->checkoutPayload(['billing_period' => '12_months', 'client_idempotency_key' => $key]);
+    }
+
+    public function test_annual_checkout_does_not_grant_access_until_provider_confirms_payment(): void
+    {
+        $result = $this->checkoutPayload(['billing_period' => '12_months']);
+        $this->assertSame(49464000, $result['amount_minor']);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->assertSame('12_months', CommercialOrder::query()->sole()->billing_period);
+    }
+
+    public function test_pending_annual_order_conflicts_with_a_monthly_default_retry(): void
+    {
+        $key = fake()->uuid();
+        $this->checkoutPayload(['billing_period' => '12_months', 'client_idempotency_key' => $key]);
+        $this->expectException(CommercialCheckoutConflictException::class);
+        $this->checkoutPayload(['client_idempotency_key' => $key]);
+    }
+
     private function checkout(array $targets): array
     {
         return $this->checkoutPayload([
@@ -994,6 +1063,137 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('longBankBillingPeriods')]
+    public function test_bank_long_period_purchase_and_renewal_preserve_amount_dates_and_documents(string $period): void
+    {
+        $this->prepareBankBilling();
+        $term = \App\Enums\Billing\CommercialBillingPeriod::from($period);
+        $this->checkoutPayload(['billing_period' => $period]);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->assertSame($term->amountMinor(4580000), $initial->amount_minor);
+        $this->assertSame($period, $initial->snapshot['billing_period']);
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'long-initial', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertSame($period, $account->billing_period);
+        $this->assertTrue($term->endAt(CarbonImmutable::instance($account->current_period_start_at))->equalTo($account->current_period_end_at));
+        $anchor = CarbonImmutable::instance($account->current_period_end_at);
+        $this->travelTo($anchor->subDay());
+        try {
+            $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+            $this->assertSame($period, $renewal->order->billing_period);
+            $this->assertSame($initial->amount_minor, $renewal->amount_minor);
+            $this->assertTrue($anchor->equalTo($renewal->order->period_start_at));
+            $this->assertTrue($term->endAt($anchor)->equalTo($renewal->order->period_end_at));
+            $settlement->ingest($this->bankTransaction($renewal, 'long-renewal', $renewal->amount_minor));
+            $this->assertNull($renewal->refresh()->activated_at);
+            $this->travelTo($anchor);
+            $settlement->activate((int) $renewal->id);
+            $this->assertNotNull($renewal->refresh()->activated_at);
+            $this->assertSame($period, $account->refresh()->billing_period);
+            $this->assertTrue($term->endAt($anchor)->equalTo($account->current_period_end_at));
+            $closing = $renewal->documents()->where('kind', 'closing')->sole();
+            $this->assertSame($period, $closing->snapshot['billing_period']);
+            $this->assertSame($renewal->order->period_end_at->toIso8601String(), $closing->snapshot['period_end_at']);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public static function longBankBillingPeriods(): array
+    {
+        return ['half_year' => ['6_months'], 'year' => ['12_months']];
+    }
+
+    public function test_bank_paid_extension_uses_the_common_period_snapshot_and_refund_restore(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'before-paid-extension', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $anchor = CarbonImmutable::instance($account->current_period_end_at);
+        $this->checkoutPayload(['billing_period' => '12_months', 'renew_subscription' => true,
+            'current_package_slugs' => ['working-entry', 'machinery']]);
+        $invoice = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+        $settlement->ingest($this->bankTransaction($invoice, 'paid-extension', $invoice->amount_minor));
+        $this->assertNotNull($invoice->refresh()->activated_at);
+        $this->assertSame('12_months', $account->refresh()->billing_period);
+        $this->assertTrue($anchor->addMonthsNoOverflow(12)->equalTo($account->current_period_end_at));
+        $this->assertSame($anchor->toJSON(), $invoice->order->paid_period_snapshot['end_at']);
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, $invoice->amount_minor, 'payment',
+            'Отказ от предоплаченного будущего периода', '66666666-6666-4666-8666-666666666666');
+        $refund = \App\Models\CommercialBankRefund::query()->sole();
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $refunds->decide($operator, (int) $refund->id, true);
+        $outgoing = $this->bankTransaction($invoice, 'paid-extension-return', $invoice->amount_minor);
+        $outgoing['creditDebitIndicator'] = 'Debit';
+        $outgoing['description'] = $refund->reference;
+        $outgoing['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+        $outgoing['CreditorAccount']['identification'] = $refund->operation->payer_account;
+        $settlement->ingest($outgoing);
+        $this->assertSame('30_days', $account->refresh()->billing_period);
+        $this->assertTrue($anchor->equalTo($account->current_period_end_at));
+        $this->assertSame(2, OrganizationPackageSubscription::query()->where('status', 'active')->count());
+    }
+
+    public function test_bank_refunded_prepayment_can_be_completed_and_activated_once(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'before-refunded-prepayment', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $anchor = CarbonImmutable::instance($account->current_period_end_at);
+        $invoice = app(\App\Services\Billing\Bank\BankRenewalService::class)->create($account);
+        $settlement->ingest($this->bankTransaction($invoice, 'prepayment-before-refund', $invoice->amount_minor));
+        $refunds = app(\App\Services\Billing\Bank\BankRefundService::class);
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        $returnPart = function (int $amount, string $id) use ($invoice, $settlement, $refunds, $operator): void {
+            $refunds->request($this->user, (int) $this->organization->id, $invoice->public_id, $amount, 'payment',
+                'Частичный возврат предоплаты по заявлению', fake()->uuid());
+            $refund = \App\Models\CommercialBankRefund::query()->latest('id')->firstOrFail();
+            $refunds->decide($operator, (int) $refund->id, true);
+            $outgoing = $this->bankTransaction($invoice, $id, $amount);
+            $outgoing['creditDebitIndicator'] = 'Debit';
+            $outgoing['description'] = $refund->reference;
+            $outgoing['DebtorAccount']['identification'] = config('bank_billing.seller_account');
+            $outgoing['CreditorAccount']['identification'] = $refund->operation->payer_account;
+            $settlement->ingest($outgoing);
+            $settlement->ingest($outgoing);
+        };
+        $returnPart(1000, 'prepayment-partial-return');
+        $this->assertSame('partially_paid', $invoice->refresh()->status);
+        $this->assertNull($invoice->paid_at);
+        $this->assertSame('pending_payment', $invoice->order->status->value);
+        $this->assertSame(1000, app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['remaining_minor']);
+        $settlement->ingest($this->bankTransaction($invoice, 'prepayment-top-up', 1000));
+        $this->assertSame('paid', $invoice->refresh()->status);
+        $this->assertSame($invoice->amount_minor, $invoice->paid_minor);
+        $this->assertSame(1000, $invoice->refunded_minor);
+        $this->assertSame(0, $invoice->payment->refunded_amount_minor);
+        $this->assertNull($invoice->activated_at);
+        $this->travelTo($anchor);
+        try {
+            $settlement->activate((int) $invoice->id);
+            $settlement->activate((int) $invoice->id);
+            $this->assertNotNull($invoice->refresh()->activated_at);
+            $this->assertSame($anchor->addDays(30)->toJSON(), $account->refresh()->current_period_end_at->toJSON());
+            $this->assertSame(1, $invoice->documents()->where('kind', 'closing')->count());
+            $returnPart(500, 'after-activation-partial-return');
+            $this->assertSame(1500, $invoice->refresh()->refunded_minor);
+            $this->assertSame(500, $invoice->payment->refunded_amount_minor);
+            $this->assertSame('active', $account->refresh()->status->value);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_bank_statement_polling_activates_without_webhooks_and_replays_safely(): void
     {
         $this->prepareBankBilling();
@@ -1273,10 +1473,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->string('address')->nullable();
         });
         Schema::table('commercial_orders', fn (Blueprint $table) => $table->string('server_idempotency_key', 100)->nullable());
-        Schema::table('commercial_orders', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
-        Schema::table('organization_commercial_accounts', fn (Blueprint $table) => $table->unique(['id', 'organization_id']));
         DB::statement("ALTER TABLE commercial_payments ADD CONSTRAINT commercial_payment_role_cycle_check CHECK ((role = 'initial' AND commercial_renewal_cycle_id IS NULL) OR (role = 'renewal' AND commercial_renewal_cycle_id IS NOT NULL))");
-        (require database_path('migrations/2026_07_14_000004_create_commercial_contour_changes_table.php'))->up();
         Schema::create('commercial_billing_notification_keys', function (Blueprint $table): void {
             $table->string('idempotency_key')->primary();
             $table->unsignedBigInteger('organization_id');
@@ -1313,7 +1510,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'target_package_slugs' => ['machinery'],
                 'current_package_slugs' => [],
                 'full_suite' => false,
-                'quote_version' => 3,
+                'quote_version' => 4,
                 'client_idempotency_key' => fake()->uuid(),
                 'auto_renew_consent' => true,
                 'use_balance' => false,
@@ -1363,6 +1560,8 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->softDeletes();
         });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id']);
+            $table->string('billing_period', 20)->default('30_days');
             $table->id();
             $table->foreignId('organization_id')->unique();
             $table->foreignId('responsible_user_id')->nullable();
@@ -1436,6 +1635,10 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createCommercialCheckoutTables(): void
     {
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id']);
+            $table->string('billing_period', 20)->default('30_days');
+            $table->boolean('renew_subscription')->default(false);
+            $table->jsonb('paid_period_snapshot')->nullable();
             $table->id();
             $table->uuid('public_id')->unique();
             $table->jsonb('assistant_revenue_allocation')->nullable();
@@ -1523,6 +1726,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });
+        (require database_path('migrations/2026_07_14_000004_create_commercial_contour_changes_table.php'))->up();
     }
 }
 

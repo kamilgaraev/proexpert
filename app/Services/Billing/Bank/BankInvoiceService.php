@@ -84,6 +84,8 @@ final class BankInvoiceService
                     'address' => $organization->address, 'type' => strlen((string) $organization->tax_number) === 12 ? 'ip' : 'company'],
                 'description' => $description,
                 'amount_minor' => $order->amount_minor,
+                'billing_period' => $order->kind === 'ai_credits' ? null : ($order->billing_period ?? '30_days'),
+                'renew_subscription' => (bool) $order->renew_subscription,
                 'period_start_at' => $order->period_start_at?->toIso8601String(),
                 'period_end_at' => $order->period_end_at?->toIso8601String(),
                 'purpose' => trans_message('bank_billing.payment_purpose', ['number' => $number]),

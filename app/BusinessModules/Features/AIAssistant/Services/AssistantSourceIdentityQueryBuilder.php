@@ -116,7 +116,23 @@ final class AssistantSourceIdentityQueryBuilder
         return $batches;
     }
 
-    public function discoverIdentities(Builder $query, callable $finish, ?array &$sourceCounts = null): array
+    public function boundedIdentityTypes(array $identityCounts, string $sourceType): array
+    {
+        $bounded = [];
+        $rows = 0;
+        foreach ($identityCounts as $entityType => $counts) {
+            $count = $counts[$sourceType] ?? 0;
+            if ($count <= 0 || $count > self::MAX_SOURCE_BATCH_ROWS) { continue; }
+            if ($rows + $count > self::MAX_SOURCE_BATCH_ROWS) { return []; }
+            $bounded[] = (string) $entityType;
+            $rows += $count;
+        }
+        sort($bounded, SORT_STRING);
+
+        return $bounded;
+    }
+
+    public function discoverIdentities(Builder $query, callable $finish, ?array &$sourceCounts = null, ?array &$identityCounts = null): array
     {
         $table = $query->getModel()->getTable();
         $identityQuery = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
@@ -132,6 +148,7 @@ final class AssistantSourceIdentityQueryBuilder
             if ($sourceCounts !== null) {
                 $type = (string) $identity->source_type;
                 $sourceCounts[$type] = ($sourceCounts[$type] ?? 0) + (int) $identity->identity_count;
+                if ($identityCounts !== null) { $identityCounts[(string) $identity->entity_type][$type] = (int) $identity->identity_count; }
             }
         }
 

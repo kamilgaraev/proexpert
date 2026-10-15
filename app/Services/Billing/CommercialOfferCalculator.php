@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Enums\Billing\CommercialBillingPeriod;
 use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Services\Modules\PackageCatalogService;
 use Carbon\CarbonImmutable;
@@ -12,8 +13,6 @@ use InvalidArgumentException;
 
 class CommercialOfferCalculator
 {
-    private const MICROSECONDS_PER_DAY = 86400000000;
-
     public function __construct(
         private readonly PackageCatalogService $packageCatalog,
     ) {}
@@ -25,7 +24,14 @@ class CommercialOfferCalculator
         ?CarbonInterface $calculatedAt = null,
         ?CarbonInterface $currentPeriodStartAt = null,
         ?CarbonInterface $currentPeriodEndAt = null,
+        string $billingPeriod = '30_days',
+        string $currentBillingPeriod = '30_days',
+        bool $renewSubscription = false,
     ): array {
+        $term = CommercialBillingPeriod::tryFrom($billingPeriod)
+            ?? throw new InvalidArgumentException('Unsupported commercial billing period.');
+        $currentTerm = CommercialBillingPeriod::tryFrom($currentBillingPeriod)
+            ?? throw new InvalidArgumentException('Unsupported current commercial billing period.');
         $catalog = $this->catalogPrices();
         $target = $this->normalizeSlugs($targetPackageSlugs, $catalog, true);
         $current = $this->normalizeSlugs($currentPackageSlugs, $catalog, false);
@@ -45,20 +51,32 @@ class CommercialOfferCalculator
             $now,
             $currentPeriodStartAt,
             $currentPeriodEndAt,
+            $currentTerm,
+            $term,
         );
 
-        if (! $hasCurrentPeriod) {
-            $amountDueNow = $monthlyTotal;
+        $periodTotal = $term->amountMinor($monthlyTotal);
+        if ($renewSubscription && (! $hasCurrentPeriod || $target !== $current || $target === [])) {
+            throw new InvalidArgumentException('Renewal requires an active unchanged paid package composition.');
+        }
+        if ($hasCurrentPeriod && $renewSubscription) {
+            $periodStart = $periodEnd;
+            $periodEnd = $term->endAt($periodStart);
+            $amountDueNow = $periodTotal;
+        } elseif (! $hasCurrentPeriod) {
+            $amountDueNow = $periodTotal;
+        } elseif ($term !== $currentTerm) {
+            throw new InvalidArgumentException('Change the billing period when renewing the subscription.');
         } elseif ($fullSuite) {
             $currentTotal = $this->sumPrices($current, $catalog);
             $amountDueNow = $this->prorate(
-                max(0, $monthlyTotal - $currentTotal),
+                $term->amountMinor(max(0, $monthlyTotal - $currentTotal)),
                 $remainingSeconds,
                 $periodSeconds,
             );
         } else {
             $amountDueNow = $this->prorate(
-                $this->sumPrices($added, $catalog),
+                $term->amountMinor($this->sumPrices($added, $catalog)),
                 $remainingSeconds,
                 $periodSeconds,
             );
@@ -69,7 +87,14 @@ class CommercialOfferCalculator
         return [
             'quote_version' => $this->quoteVersion(),
             'currency' => (string) config('commercial_offers.currency', 'RUB'),
-            'billing_period_days' => $this->billingPeriodDays(),
+            'billing_period' => $term->value,
+            'billing_period_days' => (int) $periodStart->diffInDays($periodEnd),
+            'billing_period_months' => $term->months(),
+            'renew_subscription' => $renewSubscription,
+            'period_total_minor' => $periodTotal,
+            'period_total' => $this->money($periodTotal),
+            'period_discount_percent' => $term->discountPercent(),
+            'period_savings_minor' => $monthlyTotal * $term->months() - $periodTotal,
             'offer_type' => $fullSuite ? 'full_suite' : 'packages',
             'target_package_slugs' => $target,
             'current_package_slugs' => $current,
@@ -185,6 +210,8 @@ class CommercialOfferCalculator
         CarbonImmutable $now,
         ?CarbonInterface $currentStart,
         ?CarbonInterface $currentEnd,
+        CommercialBillingPeriod $currentTerm,
+        CommercialBillingPeriod $term,
     ): array {
         if (($currentStart === null) !== ($currentEnd === null)) {
             throw new InvalidArgumentException('Both commercial billing period boundaries are required.');
@@ -198,11 +225,11 @@ class CommercialOfferCalculator
                 throw new InvalidArgumentException('Commercial billing period end must follow its start.');
             }
 
-            if ((int) $start->diffInMicroseconds($end) !== $this->billingPeriodDays() * self::MICROSECONDS_PER_DAY) {
-                throw new InvalidArgumentException('Commercial billing period must be exactly 30 days.');
+            if (! $currentTerm->endAt($start)->equalTo($end)) {
+                throw new InvalidArgumentException('Commercial billing period does not match its duration.');
             }
 
-            if ($now->greaterThanOrEqualTo($start) && $now->lessThan($end)) {
+            if ($now->lessThan($end)) {
                 $periodSeconds = (int) $start->diffInSeconds($end);
                 $remainingSeconds = (int) $now->diffInSeconds($end);
 
@@ -210,19 +237,15 @@ class CommercialOfferCalculator
             }
         }
 
-        $periodSeconds = $this->billingPeriodDays() * 86400;
+        $end = $term->endAt($now);
+        $periodSeconds = (int) $now->diffInSeconds($end);
 
-        return [$now, $now->addDays($this->billingPeriodDays()), $periodSeconds, $periodSeconds, false];
+        return [$now, $end, $periodSeconds, $periodSeconds, false];
     }
 
     private function quoteVersion(): int
     {
         return (int) config('commercial_offers.quote_version', 1);
-    }
-
-    private function billingPeriodDays(): int
-    {
-        return (int) config('commercial_offers.billing_period_days', 30);
     }
 
     private function fullSuitePrice(): int

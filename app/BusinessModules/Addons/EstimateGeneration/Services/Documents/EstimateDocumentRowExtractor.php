@@ -111,7 +111,7 @@ final class EstimateDocumentRowExtractor
      */
     private function quantityFromLine(string $line): array
     {
-        if (preg_match('/(\d+(?:[,.]\d+)?)\s*(100\s*)?(м2|м²|м3|м³|м|шт\.?|т|кг|компл\.?)/ui', $line, $match) === 1) {
+        if (preg_match('/(?<![\p{L}\p{N}])(\d+(?:[,.]\d+)?)\s*(100\s*)?(м2|м²|м3|м³|м|шт\.?|т|кг|компл\.?)(?![\p{L}\p{N}])/ui', $line, $match) === 1) {
             $multiplier = trim((string) ($match[2] ?? '')) === '100' ? 100.0 : 1.0;
 
             return [
@@ -138,7 +138,7 @@ final class EstimateDocumentRowExtractor
         $name = trim(preg_replace('/\s{2,}/u', ' ', $name) ?? $name);
         $name = trim($name, " \t\n\r\0\x0B:-—–.,;");
 
-        return $name !== '' ? mb_substr($name, 0, 180) : 'Работа по норме ' . $code;
+        return $name !== '' ? mb_substr($name, 0, 180) : 'Работа по норме '.$code;
     }
 
     private function normalizeUnit(string $unit): string

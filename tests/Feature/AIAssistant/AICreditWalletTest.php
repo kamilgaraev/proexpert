@@ -49,7 +49,7 @@ final class AICreditWalletTest extends TestCase
         config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
         DB::purge($this->connectionName);
         DB::connection($this->connectionName);
-        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
+        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('organizations', function (Blueprint $table): void {
@@ -79,6 +79,9 @@ final class AICreditWalletTest extends TestCase
             $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->boolean('renew_subscription')->default(false);
+            $table->jsonb('paid_period_snapshot')->nullable();
+            $table->string('billing_period')->default('30_days');
             $table->id();
             $table->uuid('public_id');
             $table->foreignId('organization_id');
@@ -93,7 +96,17 @@ final class AICreditWalletTest extends TestCase
             $table->timestampTz('period_end_at')->nullable();
             $table->timestamps();
         });
+        Schema::create('commercial_payments', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('commercial_order_id'); $table->bigInteger('refunded_amount_minor')->default(0);
+        });
+        Schema::dropIfExists('organization_package_subscriptions');
+        Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id'); $table->foreignId('commercial_account_id');
+            $table->string('package_slug'); $table->string('status'); $table->string('access_source');
+            $table->foreignId('source_order_id')->nullable(); $table->timestampTz('current_period_end_at'); $table->timestamps();
+        });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->string('billing_period')->default('30_days');
             $table->id();
             $table->foreignId('organization_id');
             $table->string('status');
@@ -306,6 +319,137 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(2, AICreditLot::query()->count());
     }
 
+    public function test_assistant_wallet_read_lazily_issues_each_month_of_an_annual_subscription_once(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($start);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        $order = $this->order('purchase', 43092000, [], $start, $end);
+        $order->forceFill(['commercial_account_id' => $account->id, 'billing_period' => '12_months'])->save();
+        $this->paidAiSubscription($account->id, $order);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-assistant')->andReturn(true);
+        $this->app->instance(OrganizationEntitlementService::class, $entitlements);
+        $this->mock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)
+            ->shouldReceive('canUseAssistant')->with($this->user, $this->organization->id)->andReturn(true);
+        $request = \Illuminate\Http\Request::create('/api/v1/landing/ai-assistant/credits');
+        $request->setUserResolver(fn () => $this->user);
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->shouldReceive('canCurrent')->with($this->user, 'billing.manage', ['organization_id' => $this->organization->id])->andReturn(false);
+        $controller = new \App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController($this->credits);
+        $this->assertSame(500000, $controller->balance($request)->getData(true)['data']['included_minor']);
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $controller->balance($request);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+        $this->travelTo($start->addMonthsNoOverflow(2));
+        $controller->balance($request);
+        $controller->balance($request);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(3, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_next_month_grant_uses_the_active_contour_source_even_when_order_ids_do_not_match_activation_order(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        $original = $this->order('purchase', 40000000, [], $start, $end);
+        $upgrade = $this->order('purchase', 10000000, [], $start, $end);
+        $createdLater = $this->order('purchase', 20000000, [], $start, $end);
+        foreach ([$original, $upgrade, $createdLater] as $order) {
+            $order->forceFill(['commercial_account_id' => $account->id, 'billing_period' => '12_months'])->save();
+        }
+        $this->paidAiSubscription($account->id, $upgrade);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame($upgrade->id, AICreditLot::query()->sole()->commercial_order_id);
+        $commercial->refund($upgrade, 5000000);
+        $this->assertSame(250000, $this->credits->balance($this->organization)['included_minor']);
+    }
+
+    public function test_partial_refund_reduces_future_monthly_grants_without_reapplying_old_refunds(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $this->travelTo($start);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $order = $this->order('purchase', 40000000, [], $start, $start->addMonthsNoOverflow(12));
+        $order->forceFill(['billing_period' => '12_months'])->save();
+        $payment = DB::table('commercial_payments')->insertGetId(['commercial_order_id' => $order->id, 'refunded_amount_minor' => 0]);
+        $commercial->settlePaidOrder($order);
+        DB::table('commercial_payments')->where('id', $payment)->update(['refunded_amount_minor' => 20000000]);
+        $commercial->refund($order, 20000000);
+        $this->assertSame(250000, $this->credits->balance($this->organization)['included_minor']);
+
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(250000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+        DB::table('commercial_payments')->where('id', $payment)->update(['refunded_amount_minor' => 30000000]);
+        $commercial->refund($order, 30000000);
+        $commercial->refund($order, 30000000);
+        $this->assertSame(125000, $this->credits->balance($this->organization)['included_minor']);
+
+        $this->travelTo($start->addMonthsNoOverflow(2));
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(125000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(3, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_annual_subscription_issues_one_included_credit_grant_each_month(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $order = $this->order('purchase', 43092000, [], $start, $start->addMonthsNoOverflow(12));
+        $order->forceFill(['billing_period' => '12_months'])->save();
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertTrue($start->addMonth()->equalTo(AICreditLot::query()->sole()->expires_at));
+        $this->travelTo($start->addMonth());
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_prepaid_future_period_keeps_current_month_credit_reconciliation_available(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start->addDay());
+        $oldEnd = $start->addDays(30);
+        $newEnd = $oldEnd->addMonthsNoOverflow(6);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id, 'status' => 'active', 'billing_period' => '6_months', 'current_period_start_at' => $oldEnd, 'current_period_end_at' => $newEnd]);
+        $old = $this->order('purchase', 3990000, [], $start, $oldEnd);
+        $old->forceFill(['commercial_account_id' => $account->id])->save();
+        $next = $this->order('purchase', 22743000, [], $oldEnd, $newEnd);
+        $next->forceFill(['commercial_account_id' => $account->id, 'billing_period' => '6_months', 'renew_subscription' => true,
+            'paid_period_snapshot' => ['package_order_ids' => ['working-entry' => $old->id]]])->save();
+        $this->paidAiSubscription($account->id, $next);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->travelTo($oldEnd);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
     public function test_paid_period_grants_once_and_paid_pack_refund_is_cumulative_and_idempotent(): void
     {
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
@@ -368,6 +512,7 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(0, $this->credits->balance($this->organization)['included_minor']);
         $order = $this->order('purchase', 100000, [], $start, $end);
         $order->forceFill(['commercial_account_id' => $account->id, 'status' => 'pending_payment'])->save();
+        $this->paidAiSubscription($account->id, $order);
         $commercial->reconcileCurrentPaidPeriod($this->organization);
         $this->assertSame(0, $this->credits->balance($this->organization)['included_minor']);
         $order->forceFill(['status' => 'paid'])->save();
@@ -599,6 +744,13 @@ final class AICreditWalletTest extends TestCase
         file_put_contents($approvalPath, json_encode($approval, JSON_THROW_ON_ERROR));
         $this->assertTrue($this->credits->creditPurchasesEnabled());
         $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
+    }
+
+    private function paidAiSubscription(int $accountId, CommercialOrder $order): void
+    {
+        DB::table('organization_package_subscriptions')->insert(['organization_id' => $this->organization->id,
+            'commercial_account_id' => $accountId, 'package_slug' => 'working-entry', 'status' => 'active',
+            'access_source' => 'paid_package', 'source_order_id' => $order->id, 'current_period_end_at' => $order->period_end_at]);
     }
 
     private function request(): array

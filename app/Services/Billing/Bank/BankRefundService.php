@@ -95,6 +95,12 @@ final class BankRefundService
             return;
         }
         $organizationId = DB::transaction(function () use ($operation, $references): ?int {
+            $candidate = CommercialBankRefund::query()->where('reference', $references[0])->with('invoice.order')->first();
+            if ($candidate === null) {
+                return null;
+            }
+            $account = OrganizationCommercialAccount::query()->whereKey($candidate->invoice->order->commercial_account_id)
+                ->where('organization_id', $candidate->invoice->organization_id)->lockForUpdate()->firstOrFail();
             $outgoing = CommercialBankOperation::query()->whereKey($operation->id)->lockForUpdate()->firstOrFail();
             $refund = CommercialBankRefund::query()->where('reference', $references[0])->lockForUpdate()->first();
             if ($refund === null || $refund->status !== 'awaiting_bank') {
@@ -123,8 +129,17 @@ final class BankRefundService
             $invoice->refunded_minor += $refund->amount_minor;
             $invoice->save();
             $order = $invoice->order;
-            $invoice->payment->forceFill(['refunded_amount_minor' => $invoice->refunded_minor])->save();
-            app(AICreditCommercialService::class)->refund($order, $invoice->refunded_minor);
+            $payment = $invoice->payment;
+            $refunded = min($payment->amount_minor, $payment->refunded_amount_minor + $refund->amount_minor);
+            $payment->forceFill(['refunded_amount_minor' => $refunded])->save();
+            if ($invoice->activated_at !== null) {
+                app(AICreditCommercialService::class)->refund($order, $refunded);
+            }
+            if ($invoice->activated_at === null && $invoice->paid_minor > 0 && $invoice->paid_minor < $invoice->amount_minor) {
+                $invoice->forceFill(['status' => 'partially_paid', 'paid_at' => null])->save();
+                $order->forceFill(['status' => 'pending_payment'])->save();
+                $payment->forceFill(['provider_status' => 'pending', 'terminal_at' => null])->save();
+            }
             if ($invoice->paid_minor === 0 && $invoice->paid_at === null) {
                 $invoice->forceFill(['status' => 'canceled'])->save();
                 $order->forceFill(['status' => 'canceled'])->save();
@@ -133,14 +148,19 @@ final class BankRefundService
             if ($invoice->paid_minor === 0 && $invoice->paid_at !== null) {
                 $invoice->forceFill(['status' => 'refunded'])->save();
                 $order->forceFill(['status' => 'refunded'])->save();
-                OrganizationPackageSubscription::query()->where('organization_id', $invoice->organization_id)
-                    ->where('source_order_id', $order->id)->get()->each(fn ($row) => $row->forceFill([
+                $rows = OrganizationPackageSubscription::query()->where('organization_id', $invoice->organization_id)
+                    ->where('source_order_id', $order->id)->lockForUpdate()->get();
+                $restored = $order->renew_subscription && app(\App\Services\Billing\CommercialPaidPeriodService::class)
+                    ->restoreAfterRefund($order, $account, $rows);
+                if (! $restored) {
+                    $rows->each(fn ($row) => $row->forceFill([
                         'status' => 'expired', 'current_period_end_at' => now(), 'canceled_at' => now(),
                     ])->save());
+                }
                 OrganizationResourceAllocation::query()->where('organization_id', $invoice->organization_id)
                     ->where('metadata->commercial_order_id', $order->public_id)->get()
                     ->each(fn ($row) => $row->forceFill(['status' => 'expired', 'period_end_at' => now()])->save());
-                if (! OrganizationPackageSubscription::query()->where('organization_id', $invoice->organization_id)
+                if (! $restored && ! OrganizationPackageSubscription::query()->where('organization_id', $invoice->organization_id)
                     ->whereIn('access_source', ['paid_package', 'full_suite'])->whereIn('status', ['active', 'grace', 'scheduled_for_removal'])
                     ->where('current_period_end_at', '>', now())->exists()) {
                     OrganizationCommercialAccount::query()->whereKey($order->commercial_account_id)

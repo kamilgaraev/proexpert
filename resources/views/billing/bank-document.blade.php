@@ -23,6 +23,9 @@
 <table>
     <thead><tr><th>{{ trans_message('bank_billing.description') }}</th><th>{{ trans_message('bank_billing.amount') }}</th></tr></thead>
     <tbody><tr><td>{{ $snapshot['description'] }}<br>
+    @if(!empty($snapshot['billing_period']))
+        {{ trans_message('bank_billing.period_'.$snapshot['billing_period']) }}<br>
+    @endif
     @if(!empty($snapshot['period_start_at']) && !empty($snapshot['period_end_at']))
         {{ \Carbon\CarbonImmutable::parse($snapshot['period_start_at'])->setTimezone('Europe/Moscow')->format('d.m.Y H:i') }} —
         {{ \Carbon\CarbonImmutable::parse($snapshot['period_end_at'])->setTimezone('Europe/Moscow')->format('d.m.Y H:i') }}

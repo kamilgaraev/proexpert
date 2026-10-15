@@ -157,7 +157,7 @@ final class BankSettlementService
                     $invoice->paid_at = now();
                     $invoice->order->forceFill(['status' => 'paid'])->save();
                     $invoice->payment->forceFill(['provider_status' => 'succeeded', 'terminal_at' => now(),
-                        'provider_payment_id' => 'bank-'.$invoice->public_id, 'reconciliation_required' => false])->save();
+                        'provider_payment_id' => 'bank-'.$invoice->public_id, 'reconciliation_required' => false, 'refunded_amount_minor' => 0])->save();
                 }
                 $invoice->save();
             }

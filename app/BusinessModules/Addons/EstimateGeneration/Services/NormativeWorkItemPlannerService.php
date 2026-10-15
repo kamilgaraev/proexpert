@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
@@ -28,21 +29,28 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
-    public function build(array $localEstimate, array $section, array $analysis): array
+    public function build(array $localEstimate, array $section, array $analysis, ?int $workItemLimit = null, ?array $projectReferences = null, ?PackagePlanData $packagePlan = null): array
     {
         $quantityModel = $this->documentQuantityModel($analysis);
-        $items = [];
+        $items = $this->projectReferenceItems($projectReferences ?? $this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section, $workItemLimit), $localEstimate, $section);
 
-        foreach ($this->projectDocumentNormativeReferenceExtractor->extract($analysis, $localEstimate, $section) as $referenceIndex => $reference) {
-            $items[] = $this->workItemFromProjectReference($reference, $localEstimate, $section, $referenceIndex);
-        }
-
-        foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel) as $index => $definition) {
+        foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel, $packagePlan) as $index => $definition) {
             $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
 
             if ($item !== null) {
                 $items[] = $item;
             }
+        }
+
+        return $this->uniquePricedItems($items);
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function projectReferenceItems(array $references, array $localEstimate, array $section): array
+    {
+        $items = [];
+        foreach ($references as $index => $reference) {
+            $items[] = $this->workItemFromProjectReference($reference, $localEstimate, $section, $index);
         }
 
         return $this->uniquePricedItems($items);
@@ -101,6 +109,10 @@ final class NormativeWorkItemPlannerService
         array $quantityModel,
         int $index
     ): ?array {
+        if (($definition['quantity_key'] ?? null) === 'office.ceiling'
+            && ! isset($quantityModel['explicit_quantity_keys']['office.ceiling'])) {
+            return null;
+        }
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         if (! $this->allowsRoofCompositionPricing($definition, $analysis)) {
             return null;
@@ -630,10 +642,17 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $quantityModel
      * @return array<int, array<string, mixed>>
      */
-    private function definitions(array $localEstimate, array $section, array $analysis, array $quantityModel): array
+    private function definitions(array $localEstimate, array $section, array $analysis, array $quantityModel, ?PackagePlanData $packagePlan): array
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
+        $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
+        $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);
+        $openingQuantityKeys = match ($packageKey) {
+            'gates' => ['warehouse.gates', 'warehouse.loading_nodes', 'openings.gates'],
+            'entrance_group' => ['openings.windows', 'openings.doors'],
+            default => null,
+        };
         $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
@@ -649,9 +668,29 @@ final class NormativeWorkItemPlannerService
         return array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
-                && (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
+                && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
+                && ($openingQuantityKeys === null || in_array($definition['quantity_key'] ?? null, $openingQuantityKeys, true))
+                && $this->definitionBelongsToPackage((string) ($definition['quantity_key'] ?? ''), $packageKey, $packagePlan)
+                && ($universal || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
                 && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));
+    }
+
+    private function definitionBelongsToPackage(string $quantityKey, string $packageKey, ?PackagePlanData $plan): bool
+    {
+        $packages = $plan === null ? [] : array_column($plan->packages, 'key');
+        $waterPackage = in_array('plumbing', $packages, true) ? 'plumbing' : 'water_sewerage';
+        $separateSanitary = in_array('sanitary_rooms', $packages, true) && in_array($waterPackage, $packages, true);
+        $owner = match (true) {
+            str_starts_with($quantityKey, 'lighting.') || $quantityKey === 'warehouse.lighting' => 'lighting',
+            in_array($quantityKey, ['warehouse.low_current', 'office.network_points'], true) => 'low_current',
+            $quantityKey === 'server.room' => 'server_room',
+            $separateSanitary && str_starts_with($quantityKey, 'sanitary.') => 'sanitary_rooms',
+            $separateSanitary && $quantityKey === 'plumbing.pipe' => $waterPackage,
+            default => null,
+        };
+
+        return $owner === null || ! in_array($owner, $packages, true) || $packageKey === $owner;
     }
 
     private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool
@@ -1362,25 +1401,31 @@ final class NormativeWorkItemPlannerService
 
     /**
      * @param  array<string, mixed>  $analysis
-     * @return array{quantities: array<string, array<string, mixed>>, features: array<string, mixed>}
+     * @return array{quantities: array<string, array<string, mixed>>, explicit_quantity_keys: array<string, true>, features: array<string, mixed>}
      */
     private function documentQuantityModel(array $analysis): array
     {
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $quantities = $this->quantitiesFromFactsSummary($documentContext);
+        $explicitQuantityKeys = [];
 
         foreach ($this->quantitiesFromTakeoffs($documentContext) as $key => $quantity) {
             $quantities[$key] = $quantity;
+            if (($quantity['source_refs'] ?? []) !== []) {
+                $explicitQuantityKeys[$key] = true;
+            }
         }
 
         foreach ($this->quantitiesFromCanonicalBuildingQuantities($documentContext) as $key => $quantity) {
             $quantities[$key] = $quantity;
+            $explicitQuantityKeys[$key] = true;
         }
 
         $quantities = $this->withQuantityLearningHints($quantities, $documentContext);
 
         return [
             'quantities' => $quantities,
+            'explicit_quantity_keys' => $explicitQuantityKeys,
             'features' => [
                 'roof_type' => $this->roofTypeFromDocumentContext($analysis, $documentContext),
             ],
@@ -1946,6 +1991,8 @@ final class NormativeWorkItemPlannerService
     private function uniquePricedItems(array $items): array
     {
         $unique = [];
+        $references = [];
+        $referenceGroups = [];
 
         foreach ($items as $item) {
             $semanticIdentity = (string) (
@@ -1960,10 +2007,33 @@ final class NormativeWorkItemPlannerService
                 ?? $item['key']
             );
             $key = $normativeIdentity.'|'.$semanticIdentity;
+            if (($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+                $referenceGroups[$key][] = count($references);
+                $references[] = $item;
+
+                continue;
+            }
             $unique[$key] = $item;
         }
 
-        return array_values($unique);
+        foreach ($referenceGroups as $indexes) {
+            if (count($indexes) < 2) {
+                continue;
+            }
+            foreach ($indexes as $index) {
+                // One norm does not prove that two source rows describe the same physical work.
+                $references[$index]['item_type'] = 'quantity_review';
+                $references[$index]['pricing_status'] = 'not_applicable';
+                $references[$index]['pricing_blocker'] = 'quantity_review_required';
+                $references[$index]['validation_flags'] = array_values(array_unique([
+                    ...($references[$index]['validation_flags'] ?? []), 'quantity_review_required',
+                ]));
+                $references[$index]['metadata']['display_role'] = 'quantity_review';
+                $references[$index]['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
+            }
+        }
+
+        return [...$references, ...array_values($unique)];
     }
 
     /**

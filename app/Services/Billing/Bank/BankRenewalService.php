@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing\Bank;
 
+use App\Enums\Billing\CommercialBillingPeriod;
 use App\Models\CommercialBankInvoice;
 use App\Models\CommercialContourChange;
 use App\Models\CommercialOrder;
@@ -118,21 +119,23 @@ final class BankRenewalService
             $now = CarbonImmutable::instance(now());
             $anchor = CarbonImmutable::instance($account->current_period_end_at);
             $start = $now->lessThan($anchor->addDays((int) config('bank_billing.grace_days', 7))) ? $anchor : $anchor->max($now);
-            $end = $start->addDays(30);
-            $quote = $this->calculator->preview($slugs, $current, $full, $now, $account->current_period_start_at, $account->current_period_end_at);
+            $term = CommercialBillingPeriod::from($account->billing_period ?? '30_days');
+            $end = $term->endAt($start);
+            $quote = $this->calculator->preview($slugs, $current, $full, $now, $account->current_period_start_at, $account->current_period_end_at,
+                billingPeriod: $term->value, currentBillingPeriod: $term->value);
             $order = new CommercialOrder([
                 'public_id' => (string) Str::uuid(), 'organization_id' => $account->organization_id,
                 'commercial_account_id' => $account->id, 'user_id' => $account->responsible_user_id,
                 'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $quote['offer_type'],
-                'quote_version' => $quote['quote_version'], 'selected_package_slugs' => $quote['target_package_slugs'],
+                'quote_version' => $quote['quote_version'], 'billing_period' => $term->value, 'selected_package_slugs' => $quote['target_package_slugs'],
                 'current_package_slugs' => $current, 'selected_resource_addons' => [],
-                'amount_minor' => $quote['monthly_total_minor'], 'amount' => $quote['monthly_total'], 'currency' => 'RUB',
+                'amount_minor' => $quote['period_total_minor'], 'amount' => $quote['period_total'], 'currency' => 'RUB',
                 'period_start_at' => $start, 'period_end_at' => $end, 'auto_renew_consent' => false,
                 'client_idempotency_key' => $key, 'server_idempotency_key' => $key,
             ]);
             $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)
                 ->snapshot($quote, $now, $account->current_period_start_at, $account->current_period_end_at,
-                    $quote['monthly_total_minor'], true, $start, $end)]);
+                    $quote['period_total_minor'], true, $start, $end)]);
             $order->save();
             $payment = $order->payments()->create(['provider' => 'tochka', 'role' => 'initial', 'attempt_number' => 1,
                 'provider_status' => 'created', 'amount_minor' => $order->amount_minor, 'currency' => 'RUB',

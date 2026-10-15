@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Enums\Billing\CommercialBillingPeriod;
 use App\Contracts\Billing\CommercialWebhookProcessor;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
@@ -152,7 +153,8 @@ final class CommercialRenewalService
             }
             $this->providerPolicy->assertCanCharge((int) $account->organization_id);
             $periodStart = CarbonImmutable::instance($account->current_period_end_at);
-            $periodEnd = $periodStart->addDays(30);
+            $term = CommercialBillingPeriod::from($account->billing_period ?? '30_days');
+            $periodEnd = $term->endAt($periodStart);
             $dueDay = $periodStart->setTimezone(self::TIMEZONE)->startOfDay();
             $deadline = $dueDay->addDays(7);
 
@@ -235,19 +237,19 @@ final class CommercialRenewalService
                 $fullSuite = $scheduledChange !== null
                     ? $scheduledChange->offer_type->value === 'full_suite'
                     : $account->offer_type->value === 'full_suite';
-                $quote = $this->calculator->preview($slugs, $currentSlugs, $fullSuite, $now, $account->current_period_start_at, $account->current_period_end_at);
+                $quote = $this->calculator->preview($slugs, $currentSlugs, $fullSuite, $now, $account->current_period_start_at, $account->current_period_end_at, billingPeriod: $term->value, currentBillingPeriod: $term->value);
                 $key = sprintf('renewal:%d:%s', $account->id, $periodStart->toIso8601String());
                 $order = new CommercialOrder([
                     'public_id' => (string) Str::uuid(), 'organization_id' => $account->organization_id,
                     'commercial_account_id' => $account->id, 'user_id' => $account->responsible_user_id,
                     'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $quote['offer_type'],
-                    'quote_version' => $quote['quote_version'], 'selected_package_slugs' => $quote['target_package_slugs'],
-                    'current_package_slugs' => $currentSlugs, 'amount_minor' => $quote['monthly_total_minor'],
-                    'amount' => $quote['monthly_total'], 'currency' => $quote['currency'],
+                    'quote_version' => $quote['quote_version'], 'billing_period' => $term->value, 'selected_package_slugs' => $quote['target_package_slugs'],
+                    'current_package_slugs' => $currentSlugs, 'amount_minor' => $quote['period_total_minor'],
+                    'amount' => $quote['period_total'], 'currency' => $quote['currency'],
                     'period_start_at' => $periodStart, 'period_end_at' => $periodEnd, 'auto_renew_consent' => true,
                     'client_idempotency_key' => $key, 'server_idempotency_key' => $key,
                 ]);
-                $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)->snapshot($quote, $now, $account->current_period_start_at, $account->current_period_end_at, $quote['monthly_total_minor'], true, $periodStart, $periodEnd)]);
+                $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)->snapshot($quote, $now, $account->current_period_start_at, $account->current_period_end_at, $quote['period_total_minor'], true, $periodStart, $periodEnd)]);
                 $order->save();
                 $cycle = CommercialRenewalCycle::query()->create([
                     'organization_id' => $account->organization_id, 'commercial_account_id' => $account->id,

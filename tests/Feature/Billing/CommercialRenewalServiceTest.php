@@ -78,6 +78,17 @@ final class CommercialRenewalServiceTest extends TestCase
         ]);
     }
 
+    public function test_annual_renewal_charges_discounted_year_and_creates_a_calendar_year_cycle(): void
+    {
+        $this->account->forceFill(['billing_period' => '12_months', 'current_period_start_at' => '2025-07-31 00:00:00'])->save();
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow'), 50);
+        $order = CommercialOrder::query()->sole();
+        $this->assertSame('12_months', $order->billing_period);
+        $this->assertSame(49464000, $order->amount_minor);
+        $this->assertSame('2027-07-31', $order->period_end_at->format('Y-m-d'));
+        $this->assertSame($order->amount_minor, CommercialPayment::query()->sole()->amount_minor);
+    }
+
     public function test_due_account_creates_one_fixed_cycle_order_and_attempt_and_reuses_it(): void
     {
         $at = CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow');
@@ -733,6 +744,7 @@ final class CommercialRenewalServiceTest extends TestCase
         }
         Schema::create('organizations', fn (Blueprint $t) => [$t->id(), $t->string('name'), $t->boolean('is_active'), $t->boolean('is_verified'), $t->timestamps(), $t->softDeletes()]);
         Schema::create('organization_commercial_accounts', function (Blueprint $t): void {
+            $t->string('billing_period', 20)->default('30_days');
             $t->id();
             $t->foreignId('organization_id');
             $t->string('status');
@@ -750,6 +762,9 @@ final class CommercialRenewalServiceTest extends TestCase
             $t->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $t): void {
+            $t->string('billing_period', 20)->default('30_days');
+            $t->boolean('renew_subscription')->default(false);
+            $t->jsonb('paid_period_snapshot')->nullable();
             $t->id();
             $t->uuid('public_id');
             $t->jsonb('assistant_revenue_allocation')->nullable();

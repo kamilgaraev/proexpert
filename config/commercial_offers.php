@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'quote_version' => 3,
+    'quote_version' => 4,
     'currency' => 'RUB',
     'billing_period_days' => 30,
     'renewal_processing_window_minutes' => 5,

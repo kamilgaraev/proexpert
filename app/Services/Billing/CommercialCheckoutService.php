@@ -50,6 +50,7 @@ class CommercialCheckoutService
                 ->first();
 
             $this->selfServiceGuard->assertCanMutate($account);
+            $input['billing_period'] = $input['billing_period'] ?? $account?->billing_period ?? '30_days';
             $useBalance = (bool) $input['use_balance'];
 
             if ($account?->status->value === 'grace') {
@@ -114,11 +115,17 @@ class CommercialCheckoutService
                 calculatedAt: $calculatedAt,
                 currentPeriodStartAt: $account?->current_period_start_at,
                 currentPeriodEndAt: $account?->current_period_end_at,
+                billingPeriod: $input['billing_period'],
+                currentBillingPeriod: $account?->billing_period ?? '30_days',
+                renewSubscription: (bool) ($input['renew_subscription'] ?? false),
             );
 
             $resourceQuote = $resources === []
                 ? null
-                : $this->quotas->calculateResourceAddonQuote($organization, $resources, $quote['target_package_slugs']);
+                : CommercialResourcePeriodPricing::apply($this->quotas->calculateResourceAddonQuote($organization, $resources, $quote['target_package_slugs']), $quote);
+            if ($resources !== [] && $quote['renew_subscription']) {
+                throw new InvalidArgumentException('Renew packages separately from resource addons.');
+            }
 
             if ($resourceQuote !== null && (bool) $resourceQuote['requires_manager']) {
                 throw new InvalidArgumentException('Resource addon quote requires manager.');
@@ -148,6 +155,8 @@ class CommercialCheckoutService
                 'status' => CommercialOrderStatus::PendingPayment,
                 'offer_type' => $quote['offer_type'],
                 'quote_version' => $quote['quote_version'],
+                'billing_period' => $quote['billing_period'],
+                'renew_subscription' => $quote['renew_subscription'],
                 'selected_package_slugs' => $quote['target_package_slugs'],
                 'current_package_slugs' => $quote['current_package_slugs'],
                 'selected_resource_addons' => $resourceQuote === null ? [] : $resourceQuote['items'],
@@ -328,6 +337,8 @@ class CommercialCheckoutService
             || ! $sameCurrent
             || ! $sameResources
             || ($order->offer_type->value === 'full_suite') !== $requestedFullSuite
+            || ($order->billing_period ?? '30_days') !== $input['billing_period']
+            || (bool) $order->renew_subscription !== (bool) ($input['renew_subscription'] ?? false)
             || $order->quote_version !== (int) $input['quote_version']
             || $order->auto_renew_consent !== (bool) $input['auto_renew_consent']
             || ($order->latestPayment?->provider === 'balance') !== (bool) $input['use_balance']) {
@@ -370,6 +381,8 @@ class CommercialCheckoutService
         return [
             'order_id' => $order->public_id,
             'status' => $order->status->value,
+            'billing_period' => $order->billing_period ?? '30_days',
+            'renew_subscription' => (bool) $order->renew_subscription,
             'amount' => $order->amount,
             'amount_minor' => $order->amount_minor,
             'currency' => $order->currency,

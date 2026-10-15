@@ -25,6 +25,7 @@ final readonly class UniversalEvaluationBuilder
         $scope = $policy['selected_sections'] ?? [];
         $positions = [];
         $assumptions = [];
+        $scopeExclusions = [];
         $questionCandidates = [];
         $entityIds = array_column($snapshot->entities, null, 'id');
         $factsById = array_column($snapshot->facts, null, 'id');
@@ -32,6 +33,14 @@ final readonly class UniversalEvaluationBuilder
         $workContexts = new EvaluationWorkContextProjector($snapshot);
         $entityScope = [];
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            if (($estimate['key'] ?? null) === 'document_review') {
+                foreach ($estimate['coverage_warnings'] ?? [] as $warning) {
+                    if (($warning['reason'] ?? null) === 'work_scope_review_required'
+                        && is_string($warning['quantity_key'] ?? null) && is_string($warning['message'] ?? null)) {
+                        $scopeExclusions[] = ['key' => $warning['quantity_key'], 'message' => $warning['message']];
+                    }
+                }
+            }
             $sectionKey = EvaluationSectionMap::forPackage((string) $estimate['key']);
             if ($scope !== [] && ! in_array($sectionKey, $scope, true) && ! in_array($estimate['key'], $scope, true)) {
                 continue;
@@ -183,6 +192,7 @@ final readonly class UniversalEvaluationBuilder
         unset($requirement);
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],
+            ...($scopeExclusions === [] ? [] : ['scope_exclusions' => $scopeExclusions]),
             'coverage' => $coverage, 'priority_questions' => $this->questions->prioritize($questionCandidates),
             'scope_boundaries' => ['sections' => $scope, 'uncovered_sections' => array_values(array_diff($scope, $coveredSections))]];
     }
