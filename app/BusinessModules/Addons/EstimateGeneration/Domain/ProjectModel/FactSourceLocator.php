@@ -25,7 +25,7 @@ final readonly class FactSourceLocator
         $value = $source['value'] ?? null;
         if (($source['kind'] ?? null) === 'native') {
             return ($source['coordinate_space'] ?? null) === 'native' && is_string($value)
-                && strlen($value) <= 240 && preg_match('~^(?:pdf|image|cad|xlsx):(?!.*\\\\)[^\x00-\x1F]{1,220}$~uD', $value) === 1;
+                && mb_strlen($value) <= 240 && preg_match('~^(?:pdf|image|cad|xlsx):(?!.*\\\\)[^\x00-\x1F]{1,220}$~uD', $value) === 1;
         }
         if (($source['kind'] ?? null) !== 'polygon' || ($source['coordinate_space'] ?? null) !== 'normalized_source_v1'
             || ! is_array($value) || ! array_is_list($value) || count($value) < 2 || count($value) > 64) {
@@ -44,9 +44,8 @@ final readonly class FactSourceLocator
             $unique[] = sprintf('%.12F:%.12F', $point[0], $point[1]);
         }
 
-        return count(array_unique($unique)) === count($value)
-            && min(array_column($value, 0)) < max(array_column($value, 0))
-            && min(array_column($value, 1)) < max(array_column($value, 1));
+        // The public Vision contract also permits horizontal/vertical line segments.
+        return count(array_unique($unique)) === count($value);
     }
 
     public static function fromLocator(array $locator): ?self
@@ -54,5 +53,20 @@ final readonly class FactSourceLocator
         $source = $locator['fact_source'] ?? null;
 
         return self::valid($source) ? new self($source) : null;
+    }
+
+    /** A line retains its exact points, but must not be presented as an area. */
+    public function region(): ?array
+    {
+        if ($this->value['kind'] !== 'polygon') {
+            return null;
+        }
+        $points = $this->value['value'];
+        $left = min(array_column($points, 0));
+        $top = min(array_column($points, 1));
+        $width = max(array_column($points, 0)) - $left;
+        $height = max(array_column($points, 1)) - $top;
+
+        return $width > 0 && $height > 0 ? ['x' => $left, 'y' => $top, 'width' => $width, 'height' => $height] : null;
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CanonicalDocumentFactPresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -21,6 +22,8 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         /** @var EstimateGenerationDocument $document */
         $document = $this->resource;
         $payload = parent::toArray($request);
+        $payload['document_source_version'] = preg_match('/\A[a-f0-9]{64}\z/', strtolower(trim((string) $document->checksum_sha256))) === 1
+            ? DocumentSourceVersion::fromDocument($document) : null;
         $user = $request->user();
         $payload['preview_url'] = $user instanceof User
             ? app(EstimateGenerationDocumentPreviewService::class)->forDocument($document, $user)

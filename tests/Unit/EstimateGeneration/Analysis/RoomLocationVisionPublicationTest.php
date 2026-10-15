@@ -16,6 +16,54 @@ use Tests\Support\EstimateGeneration\RoomLocationVisionFixture;
 
 final class RoomLocationVisionPublicationTest extends TestCase
 {
+    public function test_public_numeric_string_coordinates_are_canonicalized_before_strict_domain_validation(): void
+    {
+        $claims = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', variant: 'numeric_string');
+        self::assertCount(3, $claims);
+        foreach ($claims as $claim) {
+            self::assertSame([[0.1, 0.5], [0.9, 0.5]], $claim->locator['fact_source']['value']);
+        }
+    }
+
+    public function test_registered_multibyte_native_reference_keeps_the_public_character_limit(): void
+    {
+        $claims = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', variant: 'native_unicode');
+        self::assertCount(3, $claims);
+        foreach ($claims as $claim) {
+            self::assertSame('pdf:'.str_repeat('я', 150), $claim->locator['fact_source']['value'] ?? null);
+        }
+    }
+
+    public function test_public_vision_contract_accepts_horizontal_and_vertical_sources_without_inventing_area(): void
+    {
+        foreach (['horizontal' => [[0.1, 0.5], [0.9, 0.5]], 'vertical' => [[0.5, 0.1], [0.5, 0.9]]] as $variant => $points) {
+            $claims = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', variant: $variant);
+            self::assertCount(3, $claims, $variant);
+            foreach ($claims as $claim) {
+                self::assertSame($points, $claim->locator['fact_source']['value']);
+            }
+        }
+    }
+
+    public function test_equivalent_room_keys_attach_independent_location_observations(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        foreach ([13 => 'floor_plan', 14 => 'explication'] as $document => $role) {
+            $claims = RoomLocationVisionFixture::claims([7, 9, 11], $document, 'sha256:'.str_repeat((string) ($document - 12), 64), $role);
+            $claims = array_map(static fn (ObservationClaim $claim): ObservationClaim => new ObservationClaim(
+                $claim->id, $claim->observerRole, $claim->factType === 'room_number' ? 'room.office' : 'room:office',
+                $claim->factType, $claim->value, $claim->unit, $claim->evidenceRef, $claim->explicitEvidence,
+                $claim->organizationId, $claim->projectId, $claim->sessionId, $claim->sourceVersion, $claim->locator, $claim->confidence), $claims);
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            $writer->writeArbitration($claims, $decisions, $document, 1);
+        }
+        $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link(array_values($models->entities), array_values($models->facts), array_values($models->evidence));
+        self::assertCount(1, $run->links);
+        self::assertSame(0, $run->providerCalls);
+    }
+
     public function test_literal_location_identity_preserves_sign_case_and_leading_zeroes(): void
     {
         $matcher = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;

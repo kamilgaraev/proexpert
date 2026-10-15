@@ -14,6 +14,10 @@ final class FactSourceLocatorTest extends TestCase
         $polygon = ['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1',
             'value' => [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]]];
         self::assertSame($polygon, (new FactSourceLocator($polygon))->value);
+        self::assertEqualsWithDelta(['x' => 0.1, 'y' => 0.1, 'width' => 0.3, 'height' => 0.1], (new FactSourceLocator($polygon))->region(), 0.000001);
+        foreach ([[[0.1, 0.5], [0.9, 0.5]], [[0.5, 0.1], [0.5, 0.9]]] as $line) {
+            self::assertNull((new FactSourceLocator([...$polygon, 'value' => $line]))->region());
+        }
         self::assertTrue(FactSourceLocator::valid(['kind' => 'native', 'coordinate_space' => 'native', 'value' => 'pdf:page:1/text']));
         foreach ([null, [], [...$polygon, 'kind' => null], [...$polygon, 'extra' => true],
             [...$polygon, 'coordinate_space' => 'normalized_derivative_v1'], [...$polygon, 'value' => [[0, 0], [0, 0]]],

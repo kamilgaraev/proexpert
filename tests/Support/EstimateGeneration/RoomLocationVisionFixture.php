@@ -20,6 +20,7 @@ final class RoomLocationVisionFixture
     public static function claims(array $scope, int $documentId, string $version, string $sheetType, ?string $floor = '-1', string $variant = 'valid', ?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null): array
     {
         [$organization, $project, $session] = $scope;
+        $nativeReference = $variant === 'native_unicode' ? 'pdf:'.str_repeat('я', 150) : 'pdf:page:1/text';
         $image = imagecreatetruecolor(2, 2);
         ob_start();
         imagepng($image);
@@ -29,7 +30,7 @@ final class RoomLocationVisionFixture
             new AiOperationContext(AiOperationContext::deterministicId('room-location:correlation'),
                 AiOperationContext::deterministicId('room-location:'.$documentId),
                 $organization, $project, $session, 'understand_documents', 'vision', 1, $documentId, 17, 19),
-            $transform ?? (new ProjectiveTransformFactory)->identity(), nativeReferences: ['pdf:page:1/text']);
+            $transform ?? (new ProjectiveTransformFactory)->identity(), nativeReferences: [$nativeReference]);
         $input = (new ObserverInputBuilder)->build($source, ObserverProfile::Literal, static function (): void {});
         $facts = $evidence = [];
         foreach (['room_number' => '001', 'room_floor' => $floor, 'room_zone' => 'A'] as $type => $value) {
@@ -41,7 +42,13 @@ final class RoomLocationVisionFixture
             $facts[] = ['entityKey' => $type === 'room_floor' && $variant === 'other_room' ? 'room:other' : 'room:office',
                 'factType' => $type, 'value' => ['type' => 'string', 'data' => $value], 'unit' => null,
                 'evidenceRef' => $type,
-                'sourcePolygonOrNativeRef' => $variant === 'native' ? 'pdf:page:1/text' : ($type === 'room_floor' && $variant === 'implicit' ? null : [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]]),
+                'sourcePolygonOrNativeRef' => match ($variant) {
+                    'horizontal' => [[0.1, 0.5], [0.9, 0.5]],
+                    'vertical' => [[0.5, 0.1], [0.5, 0.9]],
+                    'numeric_string' => [['0.1', '0.5'], ['0.9', '0.5']],
+                    'native', 'native_unicode' => $nativeReference,
+                    default => $type === 'room_floor' && $variant === 'implicit' ? null : [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]],
+                },
                 'confidence' => 0.9, 'contractVersion' => 'sheet-analysis:v3'];
         }
         $payload = (new RoleVisionResponseCanonicalizer)->canonicalize([

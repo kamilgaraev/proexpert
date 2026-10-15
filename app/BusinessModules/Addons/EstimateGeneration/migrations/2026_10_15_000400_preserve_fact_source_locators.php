@@ -20,13 +20,12 @@ return new class extends Migration
 CREATE OR REPLACE FUNCTION eg_fact_source_locator_valid(source jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE point jsonb; coordinate jsonb; seen text[] := ARRAY[]::text[]; signature text;
-        xmin numeric := 1; ymin numeric := 1; xmax numeric := 0; ymax numeric := 0;
 BEGIN
     IF jsonb_typeof(source) IS DISTINCT FROM 'object' OR NOT source ?& ARRAY['kind','coordinate_space','value']
       OR source - ARRAY['kind','coordinate_space','value'] <> '{}'::jsonb THEN RETURN false; END IF;
     IF source->>'kind' = 'native' THEN
       RETURN COALESCE(source->>'coordinate_space' = 'native' AND jsonb_typeof(source->'value') = 'string'
-        AND octet_length(source->>'value') <= 240
+        AND char_length(source->>'value') <= 240
         AND source->>'value' ~ '^(pdf|image|cad|xlsx):.{1,220}$'
         AND source->>'value' !~ '[[:cntrl:]]' AND strpos(source->>'value', chr(92)) = 0, false);
     END IF;
@@ -42,10 +41,8 @@ BEGIN
       signature := round((point->>0)::numeric, 12)::text || ':' || round((point->>1)::numeric, 12)::text;
       IF signature = ANY(seen) THEN RETURN false; END IF;
       seen := array_append(seen, signature);
-      xmin := least(xmin, (point->>0)::numeric); xmax := greatest(xmax, (point->>0)::numeric);
-      ymin := least(ymin, (point->>1)::numeric); ymax := greatest(ymax, (point->>1)::numeric);
     END LOOP;
-    RETURN xmin < xmax AND ymin < ymax;
+    RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;
 END; $$;
 SQL);

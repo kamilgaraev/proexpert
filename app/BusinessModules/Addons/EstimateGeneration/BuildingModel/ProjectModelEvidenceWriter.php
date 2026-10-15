@@ -94,7 +94,7 @@ final readonly class ProjectModelEvidenceWriter
                 $evidenceIds = [];
                 $numericProofs = [];
                 $locationClaims = $claim->factType === 'room_number'
-                    ? ($roomLocations[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)] ?? []) : [];
+                    ? ($roomLocations[(new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey).(new ClaimSemanticMatcher)->entityScope($claim)] ?? []) : [];
                 $locationClaimIds = array_column($locationClaims, 'id');
                 foreach (array_values(array_unique([...$decision->supportingClaimIds, ...$locationClaimIds])) as $supportingClaimId) {
                     $supportingClaim = $byId[$supportingClaimId]
@@ -514,9 +514,11 @@ final readonly class ProjectModelEvidenceWriter
         }
         $source = FactSourceLocator::fromLocator($locator);
         if (($source?->value['kind'] ?? null) === 'polygon') {
-            $points = $source->value['value'];
-            $locator['bbox'] = [min(array_column($points, 0)), min(array_column($points, 1)),
-                max(array_column($points, 0)), max(array_column($points, 1))];
+            unset($locator['bbox']);
+            $region = $source->region();
+            if ($region !== null) {
+                $locator['bbox'] = [$region['x'], $region['y'], $region['x'] + $region['width'], $region['y'] + $region['height']];
+            }
         }
         $documentRole = SourceDocumentRole::normalize($claim->locator['document_role'] ?? null);
         if ($documentRole !== null) {
@@ -576,7 +578,7 @@ final readonly class ProjectModelEvidenceWriter
                 }
             }
             if ($supported) {
-                $groups[$claim->entityKey.$matcher->entityScope($claim)][$claim->factType][$value][] = $claim;
+                $groups[(new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey).$matcher->entityScope($claim)][$claim->factType][$value][] = $claim;
             }
         }
         $result = [];

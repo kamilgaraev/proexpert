@@ -41,6 +41,87 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_public_numeric_strings_and_unicode_native_sources_are_preserved_through_sql(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        foreach (['numeric_string' => 'floor_plan', 'native_unicode' => 'explication'] as $variant => $role) {
+            $marker = $role === 'floor_plan' ? '1' : '2';
+            $version = 'sha256:'.str_repeat($marker, 64);
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+                'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'public-source.pdf', 'mime_type' => 'application/pdf',
+                'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat($marker, 64)]);
+            $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id, $version, $role, variant: $variant);
+            self::assertCount(3, $claims);
+            foreach ($claims as $claim) {
+                self::assertTrue((bool) DB::scalar('SELECT eg_fact_source_locator_valid(?::jsonb)',
+                    [json_encode($claim->locator['fact_source'], JSON_THROW_ON_ERROR)]));
+            }
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            app(ProjectModelEvidenceWriter::class)->writeArbitration($claims, $decisions, (int) $document->id, 1);
+        }
+        $capture = app(ProjectModelRepository::class)->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $snapshot = $capture['snapshot'];
+        $proofs = array_column($snapshot->evidence, null, 'id');
+        $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+        self::assertCount(2, $numbers);
+        foreach ($numbers as $number) {
+            $source = $proofs[$number->evidenceIds[1]]->factSource;
+            self::assertNotNull($source);
+            self::assertSame($source->value['kind'] === 'native' ? 'pdf:'.str_repeat('я', 150) : [[0.1, 0.5], [0.9, 0.5]], $source->value['value']);
+        }
+        $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
+        self::assertCount(1, $run->links);
+        self::assertSame(0, $run->providerCalls);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
+    public function test_linear_vision_sources_and_equivalent_room_keys_survive_sql_and_source_opening(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        foreach (['horizontal' => 'floor_plan', 'vertical' => 'explication'] as $variant => $role) {
+            $marker = $role === 'floor_plan' ? '1' : '2';
+            $version = 'sha256:'.str_repeat($marker, 64);
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+                'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'linear-room.pdf', 'mime_type' => 'application/pdf',
+                'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat($marker, 64)]);
+            $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id, $version, $role, variant: $variant);
+            self::assertCount(3, $claims);
+            $claims = array_map(static fn (ObservationClaim $claim): ObservationClaim => new ObservationClaim(
+                $claim->id, $claim->observerRole, $claim->factType === 'room_number' ? 'room.office' : 'room:office',
+                $claim->factType, $claim->value, $claim->unit, $claim->evidenceRef, $claim->explicitEvidence,
+                $claim->organizationId, $claim->projectId, $claim->sessionId, $claim->sourceVersion, $claim->locator, $claim->confidence), $claims);
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            app(ProjectModelEvidenceWriter::class)->writeArbitration($claims, $decisions, (int) $document->id, 1);
+            foreach ($claims as $claim) {
+                self::assertTrue((bool) DB::scalar('SELECT eg_fact_source_locator_valid(?::jsonb)',
+                    [json_encode($claim->locator['fact_source'], JSON_THROW_ON_ERROR)]));
+            }
+        }
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $snapshot = $capture['snapshot'];
+        $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+        self::assertCount(2, $numbers);
+        foreach ($numbers as $number) {
+            self::assertCount(3, $number->evidenceIds);
+            $source = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvidenceSources::class)
+                ->handle($actor, $scope[1], $scope[2], [$number->evidenceIds[1]])['sources'][0];
+            self::assertSame('available', $source['status']);
+            self::assertSame('page', $source['target']['representation_kind']);
+            self::assertSame(1, $source['target']['page']);
+            self::assertNull($source['target']['region']); // A line is not a fabricated two-dimensional area.
+            self::assertNull($source['target']['coordinate_space']);
+        }
+        $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
+        self::assertCount(1, $run->links);
+        self::assertSame(0, $run->providerCalls);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_changed_vision_polygons_and_observation_order_do_not_duplicate_current_rooms(): void
     {
         [$actor, $session] = $this->fixture();
@@ -140,6 +221,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             ->handle($actor, $scope[1], $scope[2], [$numbers[0]->evidenceIds[1]])['sources'][0];
         self::assertSame('available', $source['status']);
         self::assertSame('page', $source['target']['representation_kind']);
+        self::assertSame('normalized_source_v1', $source['target']['coordinate_space']);
         self::assertEqualsWithDelta(['x' => 0.1, 'y' => 0.1, 'width' => 0.3, 'height' => 0.1], $source['target']['region'], 0.000001);
         $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
         self::assertCount(1, $run->links);

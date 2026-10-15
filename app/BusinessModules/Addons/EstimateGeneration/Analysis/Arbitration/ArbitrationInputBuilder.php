@@ -178,6 +178,10 @@ final class ArbitrationInputBuilder
                     $claimEvidence = $evidence;
                     $reference = $claim['sourcePolygonOrNativeRef'] ?? null;
                     if (is_array($reference)) {
+                        // The public Vision contract accepts numeric strings; domain provenance stores numbers.
+                        $reference = array_values(array_map(static fn (mixed $point): mixed => is_array($point)
+                            && array_keys($point) === [0, 1] && is_numeric($point[0]) && is_numeric($point[1])
+                                ? [is_string($point[0]) ? (float) $point[0] : $point[0], is_string($point[1]) ? (float) $point[1] : $point[1]] : $point, $reference));
                         if (! FactSourceLocator::valid(['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => $reference])) {
                             throw new InvalidArgumentException('observation_claim_locator_out_of_scope');
                         }
