@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Requests;
 
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionAccessService;
+use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Http\FormRequest;
 
 class RefundPaymentTransactionRequest extends FormRequest
@@ -11,11 +15,17 @@ class RefundPaymentTransactionRequest extends FormRequest
     public function authorize(): bool
     {
         $organizationId = (int) $this->attributes->get('current_organization_id');
+        $actor = $this->user();
+        if (! $actor instanceof User || $organizationId <= 0) {
+            return false;
+        }
+        $id = filter_var($this->route('id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($id === false) {
+            throw (new ModelNotFoundException)->setModel(PaymentTransaction::class);
+        }
+        app(PaymentTransactionAccessService::class)->find($organizationId, $actor, $id, 'payments.transaction.refund');
 
-        return $organizationId > 0
-            && (bool) $this->user()?->can('payments.transaction.refund', [
-                'organization_id' => $organizationId,
-            ]);
+        return true;
     }
 
     public function rules(): array

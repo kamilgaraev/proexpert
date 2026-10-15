@@ -207,9 +207,10 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         } finally {
             \Illuminate\Support\Facades\DB::disableQueryLog();
         }
-        $this->assertGreaterThanOrEqual(2, count($lockingQueries));
-        $this->assertStringContainsString('"payment_documents"', $lockingQueries[0]['query']);
-        $this->assertStringContainsString('"payment_transactions"', $lockingQueries[1]['query']);
+        $this->assertGreaterThanOrEqual(3, count($lockingQueries));
+        $this->assertStringContainsString('"contracts"', $lockingQueries[0]['query']);
+        $this->assertStringContainsString('"payment_documents"', $lockingQueries[1]['query']);
+        $this->assertStringContainsString('"payment_transactions"', $lockingQueries[2]['query']);
 
         $this->assertSame('600.00', $document->fresh()->paid_amount);
         $this->assertSame('6.00000000', $item->fresh()->actual_quantity);

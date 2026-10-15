@@ -7,9 +7,12 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Http\Requests\RefundPaymentTransactionRequest;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
-use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionAccessService;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,12 +22,17 @@ use function trans_message;
 
 class TransactionController extends Controller
 {
-    public function __construct(private readonly PaymentTransactionService $transactions) {}
+    public function __construct(
+        private readonly PaymentTransactionWorkflowService $transactions,
+        private readonly PaymentTransactionAccessService $access,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->access->assertFilters($organizationId, $actor, $request->all());
             $validated = $request->validate([
                 'payment_document_id' => [
                     'nullable',
@@ -48,10 +56,7 @@ class TransactionController extends Controller
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);
 
-            $query = PaymentTransaction::query()
-                ->where('organization_id', $organizationId)
-                ->withRefundAvailability()
-                ->with(['paymentDocument']);
+            $query = $this->access->query($organizationId, $actor, 'payments.transaction.view')->withRefundAvailability($organizationId);
 
             $paymentDocumentId = $validated['payment_document_id'] ?? $validated['invoice_id'] ?? null;
             if ($paymentDocumentId !== null) {
@@ -90,6 +95,8 @@ class TransactionController extends Controller
                 ],
                 trans_message('payments.transactions.loaded')
             );
+        } catch (ModelNotFoundException $e) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
@@ -106,11 +113,7 @@ class TransactionController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $transaction = PaymentTransaction::query()
-                ->where('organization_id', $organizationId)
-                ->withRefundAvailability()
-                ->with(['paymentDocument', 'createdBy', 'approvedBy'])
-                ->findOrFail((int) $id);
+            $transaction = $this->access->findForResponse($organizationId, $this->actor($request), (int) $id, 'payments.transaction.view');
 
             return AdminResponse::success($this->formatTransaction($transaction, true), trans_message('payments.transactions.loaded'));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -128,34 +131,21 @@ class TransactionController extends Controller
     public function approve(Request $request, int|string $id): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->access->find($organizationId, $actor, $id, 'payments.transaction.approve');
             $validated = $request->validate([
                 'notes' => ['nullable', 'string', 'max:1000'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
-            $transaction = PaymentTransaction::query()
-                ->where('organization_id', $organizationId)
-                ->findOrFail((int) $id);
-
-            if ($transaction->status !== PaymentTransactionStatus::PENDING) {
-                return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
-            }
-
-            $notes = trim((string) $transaction->notes);
-            if (! empty($validated['notes'])) {
-                $notes = trim($notes.PHP_EOL.$validated['notes']);
-            }
-
-            PaymentTransaction::query()->whereKey($transaction->id)->update([
-                'status' => PaymentTransactionStatus::COMPLETED->value,
-                'approved_by_user_id' => $request->user()->id,
-                'notes' => $notes !== '' ? $notes : null,
-            ]);
+            $transaction = $this->transactions->changeStatus($organizationId, $actor, (int) $id, 'approve', $validated);
 
             return AdminResponse::success(
-                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
+                $this->formatTransaction($transaction, true),
                 trans_message('payments.transactions.approved')
             );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -173,31 +163,21 @@ class TransactionController extends Controller
     public function reject(Request $request, int|string $id): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->access->find($organizationId, $actor, $id, 'payments.transaction.reject');
             $validated = $request->validate([
                 'reason' => ['required', 'string', 'max:500'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
-            $transaction = PaymentTransaction::query()
-                ->where('organization_id', $organizationId)
-                ->findOrFail((int) $id);
-
-            if ($transaction->status !== PaymentTransactionStatus::PENDING) {
-                return AdminResponse::error(trans_message('payments.transactions.pending_only'), 422);
-            }
-
-            PaymentTransaction::query()->whereKey($transaction->id)->update([
-                'status' => PaymentTransactionStatus::FAILED->value,
-                'notes' => $this->appendNote(
-                    $transaction->notes,
-                    trans_message('payments.transactions.reject_note', ['reason' => $validated['reason']])
-                ),
-            ]);
+            $transaction = $this->transactions->changeStatus($organizationId, $actor, (int) $id, 'reject', $validated);
 
             return AdminResponse::success(
-                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
+                $this->formatTransaction($transaction, true),
                 trans_message('payments.transactions.rejected')
             );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -217,21 +197,7 @@ class TransactionController extends Controller
         try {
             $validated = $request->validated();
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $userId = (int) $request->user()->id;
-            $payload = $this->transactions->refundPayment(
-                (int) $id,
-                $organizationId,
-                $userId,
-                $validated['amount'] ?? null,
-                $validated['reason'],
-                $validated['refund_date'] ?? null,
-                $validated['idempotency_key'],
-            );
-            $payload['original_transaction'] = $this->findTransactionForResponse(
-                $payload['original_transaction']->id
-            );
-            $payload['refund_transaction'] = $payload['refund_transaction']
-                ->fresh(['paymentDocument', 'createdBy', 'approvedBy']);
+            $payload = $this->transactions->refund($organizationId, $this->actor($request), (int) $id, $validated);
 
             return AdminResponse::success([
                 'original_transaction' => $this->formatTransaction($payload['original_transaction'], true),
@@ -256,36 +222,21 @@ class TransactionController extends Controller
     public function cancel(Request $request, int|string $id): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $this->access->find($organizationId, $actor, $id, 'payments.transaction.edit');
             $validated = $request->validate([
                 'reason' => ['nullable', 'string', 'max:500'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
-            $transaction = PaymentTransaction::query()
-                ->where('organization_id', $organizationId)
-                ->findOrFail((int) $id);
-
-            if (! in_array($transaction->status, [PaymentTransactionStatus::PENDING, PaymentTransactionStatus::PROCESSING], true)) {
-                return AdminResponse::error(trans_message('payments.transactions.cancel_forbidden'), 422);
-            }
-
-            $reason = $validated['reason'] ?? null;
-            $notes = $this->appendNote(
-                $transaction->notes,
-                $reason
-                    ? trans_message('payments.transactions.cancel_note', ['reason' => $reason])
-                    : trans_message('payments.transactions.cancel_note_without_reason')
-            );
-
-            PaymentTransaction::query()->whereKey($transaction->id)->update([
-                'status' => PaymentTransactionStatus::CANCELLED->value,
-                'notes' => $notes,
-            ]);
+            $transaction = $this->transactions->changeStatus($organizationId, $actor, (int) $id, 'cancel', $validated);
 
             return AdminResponse::success(
-                $this->formatTransaction($this->findTransactionForResponse($transaction->id), true),
+                $this->formatTransaction($transaction, true),
                 trans_message('payments.transactions.cancelled')
             );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
@@ -341,16 +292,13 @@ class TransactionController extends Controller
         return $data;
     }
 
-    private function findTransactionForResponse(int $transactionId): PaymentTransaction
+    private function actor(Request $request): User
     {
-        return PaymentTransaction::query()
-            ->withRefundAvailability()
-            ->with(['paymentDocument', 'createdBy', 'approvedBy'])
-            ->findOrFail($transactionId);
-    }
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw (new ModelNotFoundException)->setModel(PaymentTransaction::class);
+        }
 
-    private function appendNote(?string $currentNote, string $newNote): string
-    {
-        return trim(trim((string) $currentNote).PHP_EOL.$newNote);
+        return $actor;
     }
 }
