@@ -16,8 +16,8 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
 
     public static function hasIntent(string $query): bool
     {
-        return preg_match('/подотч[её]тн|авансов[а-яё]*\s+отч[её]т/iu', $query) === 1
-            && preg_match('/настройк|лимит|правил|порог|согласован|уведомл|напомина|напомин|обязательн|(?:требуется|нужен)\s+ли\s+проект|срок[а-яё]*\s+сдачи/iu', $query) === 1;
+        return preg_match('/подотч[её]т[а-яё]*|авансов[а-яё]*\s+отч[её]т/iu', $query) === 1
+            && preg_match('/настройк|лимит|правил|порог|согласован|уведомл|напомина|напомин|обязательн|(?:требуется|нужен)\s+ли\s+проект|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1;
     }
 
     public static function matches(string $query): bool

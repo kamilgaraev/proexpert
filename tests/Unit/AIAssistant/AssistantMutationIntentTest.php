@@ -18,7 +18,8 @@ final class AssistantMutationIntentTest extends TestCase
             'Примени фильтр по активным договорам', 'Примените сортировку по сроку окончания',
             'Поставь фильтр по активным договорам', 'Выставь сортировку по сроку окончания',
             'Задай фильтр по активным договорам', 'Установи фильтр по активным договорам',
-            'Настрой сортировку по сроку окончания'] as $query) {
+            'Настрой сортировку по сроку окончания', 'Сделай общую сумму расходов по проекту',
+            'Сделай сумму расходов по проекту'] as $query) {
             self::assertNull(AssistantMutationIntent::type($query), $query);
             self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
         }
