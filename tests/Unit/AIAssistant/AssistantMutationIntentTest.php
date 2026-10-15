@@ -12,11 +12,11 @@ final class AssistantMutationIntentTest extends TestCase
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
     {
         foreach (['Увеличь', 'Увеличьте', 'Уменьши', 'Уменьшите', 'Настрой', 'Настройте', 'Установи', 'Установите',
-            'Снизь', 'Снизьте', 'Повысь', 'Повысьте', 'Поменяй', 'Поменяйте'] as $command) {
+            'Снизь', 'Снизьте', 'Повысь', 'Повысьте', 'Поменяй', 'Поменяйте', 'Задай', 'Задайте', 'Выставь', 'Выставьте'] as $command) {
             self::assertSame('update', AssistantMutationIntent::type($command.' лимит подотчётных средств'));
             self::assertTrue(AssistantMutationIntent::containsRequest('Покажи настройки и '.$command.' лимит подотчётных средств'));
         }
-        foreach (['Увеличить', 'Уменьшить', 'Настроить', 'Установить', 'Снизить', 'Повысить', 'Поменять'] as $command) {
+        foreach (['Увеличить', 'Уменьшить', 'Настроить', 'Установить', 'Снизить', 'Повысить', 'Поменять', 'Задать', 'Выставить'] as $command) {
             self::assertTrue(AssistantMutationIntent::containsRequest($command.' лимит подотчётных средств'));
         }
         foreach (['Какие настройки подотчётных средств действуют?', 'Какой лимит установлен для подотчётных средств?',

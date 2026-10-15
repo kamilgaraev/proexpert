@@ -18,11 +18,15 @@ final readonly class AssistantProjectContractRosterReader
     public static function matches(string $query): bool
     {
         $query = preg_replace('/(?<!\pL)документ[а-яё]*\s+без\s+(?:указанн[а-яё]*\s+)?дат[а-яё]*\s+окончания(?!\pL)/iu', 'договоры без даты окончания', $query) ?? $query;
-        $statusQuery = preg_replace('/(?<!\pL)не\s*(?:заверш[её]н|расторгнут|приостановл|закрыт)[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
-        return preg_match('/(?:действующ|активн)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*(?:действу(?:ют|ет)|активн|срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1
+        $terminalStatuses = '(?:заверш[её]н|расторгнут|приостановл|чернов|архив|закрыт)[а-яё]*';
+        $statusQuery = preg_replace('/(?<!\pL)не\s*'.$terminalStatuses.'(?!\pL)/iu', '', $query) ?? $query;
+        $hasActiveStatus = preg_match('/(?<!\pL)(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) === 1;
+        $hasEndDate = preg_match('/договор[а-яё]*[\s\S]*(?:срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1;
+        return preg_match('/договор/iu', $query) === 1 && ($hasActiveStatus || $hasEndDate)
+            && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
             && preg_match('/написан|содержани|текст|услови|пункт/iu', $query) !== 1
             && preg_match('/исполнени[ея]|выполнени[ея]|обязательств/iu', $query) !== 1
-            && preg_match('/(?<!\pL)(?:заверш[её]н|расторгнут|приостановл|чернов|архив|закрыт)[а-яё]*(?!\pL)/iu', $statusQuery) !== 1
+            && preg_match('/(?<!\pL)'.$terminalStatuses.'(?!\pL)/iu', $statusQuery) !== 1
             && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
     public function read(User $actor, int $organizationId, array $arguments): array

@@ -90,7 +90,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_contract_roster', ['project_id' => 999]));
         foreach (['Какие договоры нашего объекта уже просрочены по сроку окончания? Покажи номера, подрядчиков и даты; договоры без срока выдели отдельно, не называй их просроченными.',
             'Какие договоры нашего объекта имеют просроченную дату окончания?', 'У каких договоров нашего объекта не указана дата окончания?',
-            'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.'] as $query) {
+            'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.',
+            'Покажи активные, не архивные договоры нашего объекта.', 'Покажи активные, не черновые договоры нашего объекта.'] as $query) {
             self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', 'Какие действующие договоры нашего проекта и сколько по ним надо оплатить?'));
@@ -100,6 +101,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Что написано в договоре нашего объекта о сроках?', 'Какие условия договора нашего объекта о сроках окончания?',
             'Какие договоры нашего объекта просрочили выполнение обязательств?',
             'Какие активные договоры нашего объекта просрочили выполнение обязательств?',
+            'Покажи не активные договоры нашего объекта по дате окончания.',
             'Какие просроченные договоры нашего объекта и сколько по ним оплатить?'] as $mixed) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
