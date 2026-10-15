@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\AssetReservation;
 use App\BusinessModules\Features\MachineryOperations\Services\SiteRequestAssetProjectionService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver;
@@ -1410,10 +1411,6 @@ class SiteRequestService
     {
         $metadata = $request->metadata ?? [];
 
-        if (! ($metadata['material_reserved'] ?? false)) {
-            return;
-        }
-
         $accessController = app(\App\Modules\Core\AccessController::class);
 
         if (! $accessController->hasModuleAccess($request->organization_id, 'basic-warehouse')) {
@@ -1424,19 +1421,14 @@ class SiteRequestService
             $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
             $warehouseId = $metadata['reserved_warehouse_id'] ?? null;
             $quantity = $metadata['reserved_quantity'] ?? null;
-            $reservationId = $metadata['asset_reservation_id'] ?? null;
+            $reservationIds = AssetReservation::query()
+                ->where('organization_id', $request->organization_id)
+                ->where('metadata->site_request_id', $request->id)
+                ->where('status', AssetReservation::STATUS_ACTIVE)
+                ->pluck('id');
 
-            if ($reservationId) {
-                // Если есть ID резервации - снимаем через неё (это правильный путь)
-                $warehouseService->unreserveAssets($reservationId);
-            } elseif ($warehouseId && $quantity && $request->material_id) {
-                // Fallback для старых заявок: снимаем количество напрямую
-                $warehouseService->unreserveQuantity(
-                    $request->organization_id,
-                    $warehouseId,
-                    $request->material_id,
-                    $quantity
-                );
+            foreach ($reservationIds as $reservationId) {
+                $warehouseService->unreserveAssets((int) $reservationId);
             }
 
             // Обновляем metadata

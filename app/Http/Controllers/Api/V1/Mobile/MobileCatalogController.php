@@ -215,7 +215,7 @@ final class MobileCatalogController extends Controller
                 ->paginate(min((int) ($filters['per_page'] ?? 20), 50));
 
             return MobileResponse::paginated(
-                collect($paginator->items())->map(fn (ReportFile $file): array => $this->readCatalog->reportFilePayload($file, $organizationId))->all(),
+                collect($paginator->items())->map(fn (ReportFile $file): array => $this->readCatalog->reportFilePayload($file, $organizationId, $user))->all(),
                 $this->pagination($paginator),
             );
         } catch (ValidationException $exception) {
@@ -234,7 +234,7 @@ final class MobileCatalogController extends Controller
             $this->readCatalog->assertCanView($user, $organizationId, 'file-management', ['report_files.view']);
             $file = $this->readCatalog->findReportFile($user, $organizationId, $id);
 
-            return MobileResponse::success(['item' => $this->readCatalog->reportFilePayload($file, $organizationId)]);
+            return MobileResponse::success(['item' => $this->readCatalog->reportFilePayload($file, $organizationId, $user)]);
         } catch (DomainException $exception) {
             return $this->domainError($exception);
         } catch (ModelNotFoundException) {

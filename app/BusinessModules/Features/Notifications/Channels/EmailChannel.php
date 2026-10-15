@@ -128,18 +128,22 @@ class EmailChannel
         return preg_replace_callback(
             '/<a\s+([^>]*href=["\'])([^"\']+)(["\'][^>]*)>/i',
             function ($matches) use ($trackingId) {
-                $originalUrl = $matches[2];
+                $originalUrl = html_entity_decode($matches[2], ENT_QUOTES | ENT_HTML5, 'UTF-8');
                 
                 if (strpos($originalUrl, 'notifications.track') !== false) {
                     return $matches[0];
                 }
 
-                $trackedUrl = route('notifications.track.click', [
+                if (!filter_var($originalUrl, FILTER_VALIDATE_URL)
+                    || !in_array(strtolower((string) parse_url($originalUrl, PHP_URL_SCHEME)), ['http', 'https'], true)) {
+                    return $matches[0];
+                }
+                $trackedUrl = \Illuminate\Support\Facades\URL::signedRoute('notifications.track.click', [
                     'tracking_id' => $trackingId,
-                    'url' => urlencode($originalUrl),
+                    'url' => $originalUrl,
                 ]);
 
-                return '<a ' . $matches[1] . $trackedUrl . $matches[3] . '>';
+                return '<a ' . $matches[1] . htmlspecialchars($trackedUrl, ENT_QUOTES | ENT_HTML5, 'UTF-8') . $matches[3] . '>';
             },
             $html
         );

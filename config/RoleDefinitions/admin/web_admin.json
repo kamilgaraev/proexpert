@@ -590,6 +590,7 @@
       "brigades.requests.create",
       "brigades.invitations.view",
       "brigades.invitations.create",
+      "brigades.invitations.cancel",
       "brigades.assignments.view",
       "brigades.assignments.edit"
     ],

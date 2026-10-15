@@ -146,10 +146,13 @@ final class SpreadsheetCostBlockParser
                     'base_total' => $positionTotal ?? ($quantity !== null && $price !== null ? $quantity * $price : null),
                     'base_price' => $price,
                     'quantity' => $quantity,
+                    'base_price_total_consistent' => $quantity !== null && $price !== null && ($positionTotal === null
+                        || BigDecimal::of((string) $quantity)->multipliedBy((string) $price)->toScale($this->precision($positionTotal), RoundingMode::HalfUp)->compareTo((string) $positionTotal) === 0),
                     'overhead' => null,
                     'profit' => null,
                     'index' => 1.0,
                     'total' => null,
+                    'total_precision' => 2,
                 ];
 
                 continue;
@@ -246,6 +249,7 @@ final class SpreadsheetCostBlockParser
                 $index ??= $base !== null && $base != 0 ? $amount / $base : 1.0;
                 $positions[$current]['index'] = $index;
                 $positions[$current]['total'] = $amount;
+                $positions[$current]['total_precision'] = $this->precision($rawAmount);
                 $indexedPrecisions[] = $this->precision($rawAmount);
                 if ($index > 0) {
                     $indices[(string) $index] = $index;
@@ -335,14 +339,23 @@ final class SpreadsheetCostBlockParser
             $sp = $position['profit'] !== null ? round($position['profit'] * $index, 2) : null;
             $overhead += $oh ?? 0;
             $profit += $sp ?? 0;
+            $priceDerivedFromTotal = $index != 1 && $total !== null && ($position['quantity'] ?? 0) != 0;
+            $independentTotalMatches = $total !== null && $position['base_total'] !== null
+                && BigDecimal::of((string) $position['base_total'])
+                    ->plus((string) ($position['overhead'] ?? 0))->plus((string) ($position['profit'] ?? 0))
+                    ->multipliedBy((string) $index)->toScale($position['total_precision'], RoundingMode::HalfUp)
+                    ->compareTo((string) $total) === 0;
             $result[$rowNumber] = [
                 'total' => $total,
                 'overhead' => $oh,
                 'profit' => $sp,
                 'base_price' => $position['base_price'],
                 'index' => $index,
-                'current_price' => $index != 1 && $total !== null && ($position['quantity'] ?? 0) != 0
+                'current_price' => $priceDerivedFromTotal
                     ? ($total - ($oh ?? 0) - ($sp ?? 0)) / $position['quantity'] : $position['base_price'],
+                'current_price_derived_from_total' => $priceDerivedFromTotal && $position['base_price_total_consistent'] && $independentTotalMatches,
+                'source_math_mismatch' => ($position['quantity'] !== null && $position['base_price'] !== null && !$position['base_price_total_consistent'])
+                    || ($priceDerivedFromTotal && !$independentTotalMatches),
             ];
         }
 

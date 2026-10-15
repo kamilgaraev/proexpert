@@ -24,11 +24,17 @@ class UserProjectAccessService
             ?? UserProjectAccessMode::ASSIGNED_PROJECTS;
     }
 
-    public function queryAccessibleProjects(User $user, int $organizationId): Builder
+    public function queryAccessibleProjects(User $user, int $organizationId, bool $includeArchived = false): Builder
     {
         $query = Project::query()
             ->accessibleByOrganization($organizationId)
-            ->where('is_archived', false);
+            ->whereExists(static fn ($membership) => $membership->selectRaw('1')
+                ->from('organization_user')->where('user_id', $user->id)
+                ->where('organization_id', $organizationId)->where('is_active', true));
+
+        if (! $includeArchived) {
+            $query->where('is_archived', false);
+        }
 
         if ($this->modeFor($user, $organizationId) === UserProjectAccessMode::ALL_PROJECTS) {
             return $query;

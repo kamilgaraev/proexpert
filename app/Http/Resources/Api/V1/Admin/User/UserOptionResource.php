@@ -36,6 +36,11 @@ class UserOptionResource extends JsonResource
         $roles = $this->resolveRoles();
         $rolePolicy = app(AdminUserRolePolicy::class);
         $primaryRole = $this->resolvePrimaryRole($roles);
+        $organizationId = (int) ($request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id ?? 0);
+        $membership = $organizationId > 0 ? ($this->resource->relationLoaded('organizations')
+            ? $this->resource->organizations->firstWhere('id', $organizationId)
+            : $this->resource->organizations()->where('organizations.id', $organizationId)->first()) : null;
 
         return [
             'id' => $this->resource->id,
@@ -43,7 +48,7 @@ class UserOptionResource extends JsonResource
             'email' => $this->resource->email,
             'phone' => $this->resource->phone,
             'position' => $this->resource->position,
-            'is_active' => (bool) $this->resource->is_active,
+            'is_active' => (bool) $this->resource->is_active && (bool) ($membership?->pivot?->is_active ?? false),
             'roles' => $roles,
             'role_labels' => $rolePolicy->labelsFor($roles),
             'primary_role' => $primaryRole,

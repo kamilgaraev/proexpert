@@ -33,7 +33,8 @@ interface ProjectRepositoryInterface extends BaseRepositoryInterface
         int $perPage = 15,
         array $filters = [],
         string $sortBy = 'created_at',
-        string $sortDirection = 'desc'
+        string $sortDirection = 'desc',
+        ?\App\Models\User $actor = null
     );
 
     /**
@@ -72,4 +73,4 @@ interface ProjectRepositoryInterface extends BaseRepositoryInterface
     public function getProjectCountsByStatus(int $organizationId, array $filters = []): Collection;
 
     public function findBy(string $field, mixed $value, array $columns = ['*']);
-} 
+}

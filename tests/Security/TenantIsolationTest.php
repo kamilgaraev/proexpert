@@ -226,7 +226,8 @@ it('admin user cannot apply a library item with section from another estimate', 
 
 it('contractor verification stores rejection reason without interpolating raw sql', function () {
     [$organization] = createOrganizationUser();
-    Project::factory()->create(['organization_id' => $organization->id]);
+    $project = Project::factory()->create();
+    $project->organizations()->attach($organization->id, ['is_active' => true]);
 
     $reason = '"); select pg_sleep(1); --';
     $controller = app(ContractorVerificationController::class);

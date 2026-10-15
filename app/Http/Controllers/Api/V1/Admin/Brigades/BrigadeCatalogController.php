@@ -20,6 +20,7 @@ class BrigadeCatalogController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeModerationAccess::class)->assert($request->user(), 'brigades.catalog.view');
         $query = BrigadeProfile::query()->with(['specializations', 'members', 'documents']);
 
         if ($request->filled('status')) {
@@ -43,6 +44,7 @@ class BrigadeCatalogController extends Controller
 
     public function show(int $brigadeId): JsonResponse
     {
+        app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeModerationAccess::class)->assert(auth()->user(), 'brigades.catalog.view');
         $brigade = BrigadeProfile::query()
             ->with(['specializations', 'members', 'documents', 'assignments.project', 'invitations.project'])
             ->findOrFail($brigadeId);
@@ -52,6 +54,7 @@ class BrigadeCatalogController extends Controller
 
     public function updateStatus(UpdateBrigadeVerificationRequest $request, int $brigadeId): JsonResponse
     {
+        app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeModerationAccess::class)->assert($request->user(), 'brigades.catalog.moderate');
         $brigade = BrigadeProfile::query()->findOrFail($brigadeId);
         $settings = is_array($brigade->settings) ? $brigade->settings : [];
         $moderationNote = $request->input('moderation_note');
@@ -73,6 +76,7 @@ class BrigadeCatalogController extends Controller
 
     public function updateDocumentStatus(UpdateBrigadeDocumentStatusRequest $request, int $brigadeId, int $documentId): JsonResponse
     {
+        app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeModerationAccess::class)->assert($request->user(), 'brigades.documents.verify');
         $document = BrigadeDocument::query()
             ->where('brigade_id', $brigadeId)
             ->findOrFail($documentId);

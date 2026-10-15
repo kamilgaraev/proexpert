@@ -15,6 +15,14 @@ class ReportFileControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new \App\Models\Module(['slug' => 'file-management'])]));
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
+    }
+
     public function test_report_files_are_filtered_renamed_and_deleted_inside_organization_report_storage(): void
     {
         Storage::fake('s3');
@@ -147,5 +155,32 @@ class ReportFileControllerWorkflowTest extends TestCase
         $ids = collect($response->json('data'))->pluck('id')->all();
         $this->assertContains($legacyReport->id, $ids);
         $this->assertNotContains($foreignLegacyReport->id, $ids);
+    }
+
+    public function test_colleague_cannot_list_rename_or_delete_a_private_report(): void
+    {
+        Storage::fake('s3');
+        $context = AdminApiTestContext::create();
+        $colleague = User::factory()->create();
+        $context->organization->users()->attach($colleague->id, ['is_active' => true]);
+        $path = 'org-'.$context->organization->id.'/personal/'.$colleague->id.'/private.xlsx';
+        Storage::disk('s3')->put($path, 'private');
+        $file = ReportFile::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $colleague->id,
+            'path' => $path,
+            'filename' => 'private.xlsx',
+            'type' => 'xlsx',
+            'size' => 7,
+            'expires_at' => now()->addYear(),
+        ]);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/report-files')
+            ->assertOk()->assertJsonMissing(['id' => $file->id]);
+        $this->withHeaders($context->authHeaders())->patchJson('/api/v1/admin/report-files/'.$file->id, [
+            'filename' => 'changed.xlsx',
+        ])->assertNotFound();
+        $this->withHeaders($context->authHeaders())->deleteJson('/api/v1/admin/report-files/'.$file->id)->assertNotFound();
+        self::assertSame('private.xlsx', $file->fresh()->filename);
+        Storage::disk('s3')->assertExists($path);
     }
 }

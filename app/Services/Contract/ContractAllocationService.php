@@ -5,8 +5,12 @@ namespace App\Services\Contract;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Events\HoldingAllocationFactsProjected;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
 use App\Models\Contract;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
+use App\Domain\Authorization\Services\AuthorizationService;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Validation\ValidationException;
 use App\Models\ContractProjectAllocation;
-use App\Models\Project;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -32,9 +36,25 @@ class ContractAllocationService
      * ]
      * @return Collection
      */
-    public function syncAllocations(Contract $contract, array $allocationsData): Collection
+    public function syncAllocations(Contract $contract, array $allocationsData, ?User $actor = null): Collection
     {
-        return DB::transaction(function () use ($contract, $allocationsData) {
+        $actor ??= Auth::user();
+        return DB::transaction(function () use ($contract, $allocationsData, $actor) {
+            $contract = Contract::query()->whereKey($contract->id)->lockForUpdate()->firstOrFail();
+            $this->assertContractAccess($contract, $actor, 'contracts.edit');
+            $relatedIds = $this->relatedProjectIds($contract);
+            $accessibleIds = app(UserProjectAccessService::class)
+                ->queryAccessibleProjects($actor, (int) $contract->organization_id, true)->pluck('projects.id')->map(fn ($id) => (int) $id)->all();
+            foreach ($allocationsData as $data) {
+                $projectId = (int) $data['project_id'];
+                if (!in_array($projectId, $relatedIds, true) || !in_array($projectId, $accessibleIds, true)) {
+                    throw ValidationException::withMessages(['allocations' => trans_message('project.not_found_or_access_denied')]);
+                }
+            }
+            $existingIds = $contract->activeAllocations()->pluck('project_id')->map(fn ($id) => (int) $id)->all();
+            if (array_diff(array_intersect($existingIds, $relatedIds), $accessibleIds) !== []) {
+                throw new AuthorizationException(trans_message('permissions.access_denied'));
+            }
             $allocations = collect();
             $factIds = [];
 
@@ -49,10 +69,10 @@ class ContractAllocationService
             ContractProjectAllocation::where('contract_id', $contract->id)
                 ->where('is_active', true)
                 ->whereNotIn('project_id', $newProjectIds)
-                ->update(['is_active' => false, 'updated_by' => Auth::id()]);
+                ->update(['is_active' => false, 'updated_by' => $actor->id]);
 
             foreach ($allocationsData as $allocationData) {
-                $allocation = $this->createOrUpdateAllocation($contract, $allocationData);
+                $allocation = $this->createOrUpdateAllocation($contract, $allocationData, $actor);
                 $allocations->push($allocation);
                 $fact = $this->holdingAllocationFacts->recordContractAllocation($contract, $allocation);
                 if ($fact !== null) {
@@ -82,7 +102,7 @@ class ContractAllocationService
      * 2. Если найдено - обновляем его
      * 3. Если не найдено - создаем новое активное
      */
-    protected function createOrUpdateAllocation(Contract $contract, array $data): ContractProjectAllocation
+    protected function createOrUpdateAllocation(Contract $contract, array $data, User $actor): ContractProjectAllocation
     {
         // Сначала пытаемся найти существующее активное распределение
         $existingAllocation = ContractProjectAllocation::where('contract_id', $contract->id)
@@ -96,7 +116,7 @@ class ContractAllocationService
             'allocated_percentage' => $data['allocated_percentage'] ?? null,
             'custom_formula' => $data['custom_formula'] ?? null,
             'notes' => $data['notes'] ?? null,
-            'updated_by' => Auth::id(),
+            'updated_by' => $actor->id,
         ];
 
         if ($existingAllocation) {
@@ -108,7 +128,7 @@ class ContractAllocationService
             $allocationData['contract_id'] = $contract->id;
             $allocationData['project_id'] = $data['project_id'];
             $allocationData['is_active'] = true;
-            $allocationData['created_by'] = Auth::id();
+            $allocationData['created_by'] = $actor->id;
             
             return ContractProjectAllocation::create($allocationData);
         }
@@ -232,7 +252,13 @@ class ContractAllocationService
      */
     public function getAllocationSummary(Contract $contract): array
     {
-        $allocations = $contract->activeAllocations()->with('project')->get();
+        $allocations = $this->readableAllocations($contract);
+        $accessibleIds = app(UserProjectAccessService::class)
+            ->queryAccessibleProjects(Auth::user(), (int) $contract->organization_id, true)
+            ->pluck('projects.id')->map(fn ($id) => (int) $id)->all();
+        if (array_diff($this->relatedProjectIds($contract), $accessibleIds) !== []) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
         $contractTotal = (float) $contract->total_amount;
 
         $allocated = $allocations->sum(function ($allocation) {
@@ -269,8 +295,60 @@ class ContractAllocationService
      */
     public function deleteAllocation(int $allocationId): bool
     {
-        $allocation = ContractProjectAllocation::findOrFail($allocationId);
-        return $allocation->delete();
+        return DB::transaction(function () use ($allocationId): bool {
+            $allocation = ContractProjectAllocation::query()->lockForUpdate()->findOrFail($allocationId);
+            $this->assertAllocationAccess($allocation, 'contracts.edit', true);
+            return (bool) $allocation->delete();
+        });
+    }
+
+    public function readableAllocations(Contract $contract): Collection
+    {
+        $actor = Auth::user();
+        $this->assertContractAccess($contract, $actor, 'contracts.view');
+        $accessible = app(UserProjectAccessService::class)
+            ->queryAccessibleProjects($actor, (int) $contract->organization_id, true)->select('projects.id');
+
+        return $contract->activeAllocations()->whereIn('project_id', $this->relatedProjectIds($contract))
+            ->whereIn('project_id', $accessible)->with('project')->get();
+    }
+
+    private function relatedProjectIds(Contract $contract): array
+    {
+        return $contract->is_multi_project
+            ? $contract->projects()->pluck('projects.id')->map(fn ($id) => (int) $id)->all()
+            : ($contract->project_id === null ? [] : [(int) $contract->project_id]);
+    }
+
+    private function assertContractAccess(Contract $contract, ?User $actor, string $permission): void
+    {
+        $organizationId = (int) $contract->organization_id;
+        if ($actor === null || (int) $actor->current_organization_id !== $organizationId
+            || !$actor->organizations()->where('organizations.id', $organizationId)->wherePivot('is_active', true)->exists()
+            || !app(AuthorizationService::class)->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+        $relatedIds = $this->relatedProjectIds($contract);
+        if ($relatedIds !== [] && !app(UserProjectAccessService::class)
+            ->queryAccessibleProjects($actor, $organizationId, true)->whereIn('projects.id', $relatedIds)->exists()) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+    }
+
+    private function assertAllocationAccess(ContractProjectAllocation $allocation, string $permission, bool $allowInvalidLink = false): void
+    {
+        $actor = Auth::user();
+        $contract = $allocation->contract()->firstOrFail();
+        $this->assertContractAccess($contract, $actor, $permission);
+        $projectId = (int) $allocation->project_id;
+        if (!in_array($projectId, $this->relatedProjectIds($contract), true) && !$allowInvalidLink) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+        if (in_array($projectId, $this->relatedProjectIds($contract), true)
+            && !app(UserProjectAccessService::class)->queryAccessibleProjects($actor, (int) $contract->organization_id, true)
+                ->whereKey($projectId)->exists()) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
     }
 
     /**
@@ -278,6 +356,7 @@ class ContractAllocationService
      */
     public function getAllocationHistory(int $allocationId): Collection
     {
+        $this->assertAllocationAccess(ContractProjectAllocation::findOrFail($allocationId), 'contracts.view');
         return ContractAllocationHistory::where('allocation_id', $allocationId)
             ->with('user')
             ->orderBy('created_at', 'desc')
@@ -289,11 +368,13 @@ class ContractAllocationService
      */
     public function recalculateAutoAllocations(Contract $contract): Collection
     {
+        $this->assertContractAccess($contract, Auth::user(), 'contracts.edit');
         $autoAllocations = $contract->activeAllocations()
             ->where('allocation_type', ContractAllocationTypeEnum::AUTO->value)
             ->get();
 
         foreach ($autoAllocations as $allocation) {
+            $this->assertAllocationAccess($allocation, 'contracts.edit');
             // Пересчет произойдет автоматически при следующем вызове calculateAllocatedAmount()
             // Но мы можем принудительно обновить timestamp для отслеживания
             $allocation->touch();
@@ -309,7 +390,8 @@ class ContractAllocationService
     public function convertAutoToFixed(int $allocationId): ContractProjectAllocation
     {
         return DB::transaction(function () use ($allocationId) {
-            $allocation = ContractProjectAllocation::findOrFail($allocationId);
+            $allocation = ContractProjectAllocation::query()->lockForUpdate()->findOrFail($allocationId);
+            $this->assertAllocationAccess($allocation, 'contracts.edit');
 
             if ($allocation->allocation_type !== ContractAllocationTypeEnum::AUTO) {
                 throw new \Exception('Можно конвертировать только автоматические распределения');

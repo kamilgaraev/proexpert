@@ -7,7 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfParserRuntime;
+use App\Services\Documents\BoundedPdfParser;
 use Dompdf\Dompdf;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -28,7 +28,6 @@ class OcrPreflightServiceTest extends TestCase
                     'max_cad_file_bytes' => 200 * 1024 * 1024,
                     'max_spreadsheet_file_bytes' => 50 * 1024 * 1024,
                     'max_pdf_pages' => 200,
-                    'pdf_parser_memory_limit' => '512M',
                 ],
             ],
         ]));
@@ -112,6 +111,19 @@ class OcrPreflightServiceTest extends TestCase
         $this->assertTrue($preflightService->isCad($document));
     }
 
+    public function test_page_marker_fallback_rejects_large_inputs_without_collecting_every_match(): void
+    {
+        config()->set('estimate-generation.ocr.max_pdf_pages', 2);
+        $document = new EstimateGenerationDocument(['filename' => 'markers.pdf', 'mime_type' => 'application/pdf']);
+        try {
+            $this->preflightService()->validatePdfPageCount($document, "%PDF-1.4\n".str_repeat("<< /Type /Page >>\n", 100_000));
+            $this->fail('Page limit must reject the marker flood.');
+        } catch (OcrProviderException $exception) {
+            self::assertSame('pdf_page_limit_exceeded', $exception->providerCode);
+            self::assertSame(3, $exception->context['page_count']);
+        }
+    }
+
     public function test_it_rejects_cad_files_above_limit(): void
     {
         config()->set('estimate-generation.ocr.max_cad_file_bytes', 10);
@@ -139,7 +151,7 @@ class OcrPreflightServiceTest extends TestCase
      */
     private function preflightService(): OcrPreflightService
     {
-        return new OcrPreflightService(new PdfParserRuntime());
+        return new OcrPreflightService(new BoundedPdfParser());
     }
 
     private function pdfContent(array $pages): string

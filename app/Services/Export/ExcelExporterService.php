@@ -71,14 +71,14 @@ class ExcelExporterService
                         'filename' => $filename,
                         'columns_count' => count($headers)
                     ]);
-                    $spreadsheet = new Spreadsheet();
+                    $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
                     $sheet = $spreadsheet->getActiveSheet();
 
                     // Явно записываем заголовки колонок
                     $colIndex = 0;
                     foreach ($headers as $header) {
                         $cell = Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
-                        $sheet->setCellValue($cell, $header);
+                        $sheet->setCellValueExplicit($cell, (string) $header, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                         $colIndex++;
                     }
 
@@ -110,7 +110,6 @@ class ExcelExporterService
 
                     // Запись данных и стилизация строк
                     $rowIndex = 2;
-                    $rowLogged = 0;
                     foreach ($data as $rowArray) {
                         $colIndex = 0;
                         foreach ($rowArray as $value) {
@@ -200,7 +199,7 @@ class ExcelExporterService
                     
                     // Не выводим JSON в поток, так как это портит Excel файл
                     // Вместо этого создаем пустой Excel файл с сообщением об ошибке
-                    $errorSpreadsheet = new Spreadsheet();
+                    $errorSpreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
                     $errorSheet = $errorSpreadsheet->getActiveSheet();
                     $errorSheet->setCellValue('A1', 'Ошибка при генерации отчета');
                     $errorSheet->setCellValue('A2', $e->getMessage());
@@ -309,7 +308,7 @@ class ExcelExporterService
                 'data_count' => is_countable($data) ? count($data) : null,
             ]);
 
-            $spreadsheet = new Spreadsheet();
+            $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
             $sheet = $spreadsheet->getActiveSheet();
 
             // Записываем заголовки
@@ -400,7 +399,7 @@ class ExcelExporterService
         try {
             $response = new StreamedResponse(function () use ($reportData) {
                 try {
-                    $spreadsheet = new Spreadsheet();
+                    $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
                     $sheet = $spreadsheet->getActiveSheet();
                     
                     $currentRow = 1;
@@ -624,7 +623,7 @@ class ExcelExporterService
                     ]);
                     
                     // Создаем простой документ с сообщением для пользователя
-                    $errorSpreadsheet = new Spreadsheet();
+                    $errorSpreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
                     $errorSheet = $errorSpreadsheet->getActiveSheet();
                     $errorSheet->setCellValue('A1', 'Файл повреждён');
                     $errorWriter = new Xlsx($errorSpreadsheet);
@@ -650,7 +649,7 @@ class ExcelExporterService
     private function createOfficialMaterialSpreadsheet(array $reportData): \PhpOffice\PhpSpreadsheet\Spreadsheet
     {
         // Скопировано из generateOfficialMaterialReport до места, где создаётся $spreadsheet
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
         $sheet = $spreadsheet->getActiveSheet();
         $currentRow = 1;
         // ниже идёт генерация: я вызову существующую логику генерации в виде отдельного closure чтобы не дублировать, но из-за ограничения индексов вставлю небольшой хак - используем output buffering; поэтому оставлю упрощение: вызову generateOfficialMaterialReport но с кастомным writer? Однако проще дубликат. We'll just call the block.

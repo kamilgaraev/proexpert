@@ -151,13 +151,12 @@ class EstimateLibraryController extends Controller
 
         $item = $this->accessibleItemOrFail($itemId, $organizationId);
         $estimate = Estimate::where('organization_id', $organizationId)->findOrFail($estimateId);
-        $userId = (int) $request->user()->id;
 
         try {
             $addedItems = $this->libraryService->applyLibraryItemToEstimate(
                 $item,
                 $estimate,
-                $userId,
+                $request->user(),
                 $request->input('parameters', []),
                 $request->input('section_id')
             );

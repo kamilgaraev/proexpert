@@ -46,11 +46,8 @@ class BrigadeInvitationManagementController extends Controller
     public function cancel(Request $request, int $invitationId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
-        $invitation = BrigadeInvitation::query()
-            ->where('contractor_organization_id', $organizationId)
-            ->findOrFail($invitationId);
-
-        $invitation->update(['status' => BrigadeStatuses::INVITATION_CANCELLED]);
+        $invitation = app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeWorkflowService::class)
+            ->cancelInvitation($request->user(), (int) $organizationId, $invitationId);
 
         return AdminResponse::success(
             new BrigadeInvitationResource($invitation->load(['project', 'contractorOrganization'])),

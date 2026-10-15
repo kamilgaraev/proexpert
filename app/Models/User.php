@@ -331,6 +331,7 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         // Получаем все организации, где у пользователя есть роль organization_owner
         $ownedOrgContexts = $this->roleAssignments()
             ->active()
+            ->where('role_type', \App\Domain\Authorization\Models\UserRoleAssignment::TYPE_SYSTEM)
             ->where('role_slug', 'organization_owner')
             ->whereHas('context', function ($query) {
                 $query->where('type', \App\Domain\Authorization\Models\AuthorizationContext::TYPE_ORGANIZATION);

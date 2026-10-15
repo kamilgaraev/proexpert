@@ -15,7 +15,6 @@ use Illuminate\Support\Facades\Hash;
 
 class OneTimeDemoAccountsSeeder extends Seeder
 {
-    private const PASSWORD = 'MostDemo123!';
 
     public function run(): void
     {
@@ -29,7 +28,7 @@ class OneTimeDemoAccountsSeeder extends Seeder
         $this->command?->newLine();
         $this->command?->info('Созданы или обновлены демо-аккаунты:');
         $this->command?->table(
-            ['Контур', 'Email', 'Пароль', 'Организация', 'Роль'],
+            ['Контур', 'Email', 'Организация', 'Роль'],
             $accounts
         );
     }
@@ -78,7 +77,7 @@ class OneTimeDemoAccountsSeeder extends Seeder
             'name' => $account['name'],
             'email' => $account['email'],
             'email_verified_at' => now(),
-            'password' => Hash::make(self::PASSWORD),
+            'password' => Hash::make(bin2hex(random_bytes(32))),
             'phone' => $account['user_phone'],
             'position' => $account['position'],
             'is_active' => true,
@@ -120,7 +119,6 @@ class OneTimeDemoAccountsSeeder extends Seeder
         return [
             $account['contour'],
             $account['email'],
-            self::PASSWORD,
             $organization->name,
             'organization_owner',
         ];

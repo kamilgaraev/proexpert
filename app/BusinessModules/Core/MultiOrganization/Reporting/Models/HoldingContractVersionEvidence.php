@@ -45,7 +45,7 @@ final class HoldingContractVersionEvidence extends Model
             'counterparty_organization_id' => $contract->contractor?->source_organization_id === null
                 ? null
                 : (int) $contract->contractor->source_organization_id,
-            'recorded_at' => $history->created_at ?? now(),
+            'recorded_at' => ($history->created_at ?? now())->utc()->format('Y-m-d\TH:i:s.u\Z'),
         ];
         $sourceHash = hash('sha256', CanonicalJson::encode($payload));
         $record = self::query()->firstOrCreate(
