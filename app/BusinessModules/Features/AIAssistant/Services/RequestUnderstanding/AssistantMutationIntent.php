@@ -72,7 +72,7 @@ final class AssistantMutationIntent
 
     public static function compoundType(string $message): ?string
     {
-        $parts = preg_split('/[.!?;,]|\s+(?:и|затем|потом)\s+/u', mb_strtolower($message)) ?: [];
+        $parts = preg_split('/[.!?;,:\r\n]|\s+[-—–]\s+|\s+(?:и|затем|потом)\s+/u', mb_strtolower($message)) ?: [];
         foreach (array_slice($parts, 1) as $part) {
             $type = self::type($part);
             if ($type !== null) {
@@ -91,7 +91,7 @@ final class AssistantMutationIntent
     {
         $query = str_replace('ё', 'е', mb_strtolower($message));
 
-        return preg_match('/(?:\s+(?:и|затем|потом)\s+|[.!?;,]\s*)(?:пожалуйста[,\s]+)?(?:сделай(?:те)?|сделать|'.self::UPDATE_COMMANDS.'|'.self::TOGGLE_COMMANDS.')(?!\pL)/u', $query) === 1;
+        return preg_match('/(?:\s+(?:и|затем|потом)\s+|\s+[-—–]\s+|[.!?;,:\r\n]\s*)(?:пожалуйста[,\s]+)?(?:сделай(?:те)?|сделать|'.self::UPDATE_COMMANDS.'|'.self::TOGGLE_COMMANDS.')(?!\pL)/u', $query) === 1;
     }
 
     public static function hasPresentationRequest(string $message): bool

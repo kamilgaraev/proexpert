@@ -30,6 +30,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             && ! AssistantTemporalIntent::hasNonCurrentScope($query)
             && ($hasProjectRequirement || preg_match('/максимальн[а-яё]*\s+сумм[а-яё]*\s+(?:для\s+)?(?:одн[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*|настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
+            && ! self::asksAboutUnsupportedNotificationEvent($query)
             && preg_match('/позиц[а-яё]*|количеств[а-яё]*|печат[а-яё]*|оформлен[а-яё]*|формат[а-яё]*|шаблон[а-яё]*|содержим[а-яё]*|вложен[а-яё]*|файл[а-яё]*/iu', $query) !== 1
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)|остал[а-яё]*|конкретн|по\s+отч[её]ту|до\s+срок/iu', $query) !== 1
             && preg_match('/(?:каки[её]|покажи(?:те)?|перечисли(?:те)?)\s+авансов[а-яё]*\s+отч[её]т|авансов[а-яё]*\s+отч[её]т[а-яё]*\s+(?:просроч|задерж)/iu', $query) !== 1
@@ -70,6 +71,20 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         }
 
         return false;
+    }
+
+    private static function asksAboutUnsupportedNotificationEvent(string $query): bool
+    {
+        if (preg_match('/уведомл|уведомля/iu', $query) !== 1
+            || preg_match('/(?<!\pL)об?\s+([^.!?;]+)/iu', $query, $event) !== 1) {
+            return false;
+        }
+        if (preg_match('/просроч[а-яё]*\s+авансов[а-яё]*\s+отч[её]т|крупн[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц|крупн[а-яё]*\s+операц/iu', $event[1]) === 1) {
+            return false;
+        }
+
+        return preg_match('/администратор/iu', $query) === 1
+            || preg_match('/(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц/iu', $event[1]) !== 1;
     }
 
     protected function collect(User $actor, int $organizationId): array
