@@ -54,12 +54,16 @@ final class BankSettlementService
                     if ($data['payment_id'] !== null) {
                         $query->orWhere(fn ($payment) => $payment->where('payment_id', $data['payment_id'])->where('direction', $data['direction']));
                     }
-                })->lockForUpdate()->firstOrFail();
-            foreach (['amount_minor', 'currency', 'direction', 'payer_inn', 'payer_account', 'recipient_inn', 'recipient_account', 'purpose'] as $field) {
+                })->orderByRaw('CASE WHEN transaction_id = ? THEN 0 ELSE 1 END', [$data['transaction_id']])
+                ->lockForUpdate()->firstOrFail();
+            foreach (['payment_id', 'amount_minor', 'currency', 'direction', 'payer_inn', 'payer_account', 'recipient_inn', 'recipient_account', 'purpose'] as $field) {
                 if ((string) $operation->getAttribute($field) !== (string) $data[$field]) {
                     $operation->forceFill(['review_reason' => 'bank_operation_changed'])->save();
                     break;
                 }
+            }
+            if ($operation->booked_on->toDateString() !== $data['booked_on']) {
+                $operation->forceFill(['review_reason' => 'bank_operation_changed'])->save();
             }
 
             return $operation;

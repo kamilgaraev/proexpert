@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Billing\Bank;
 
 use App\Enums\Billing\CommercialBillingPeriod;
+use App\Exceptions\Billing\CommercialCheckoutConflictException;
 use App\Models\CommercialBankInvoice;
 use App\Models\CommercialContourChange;
 use App\Models\CommercialOrder;
@@ -53,7 +54,7 @@ final class BankRenewalService
 
                     continue;
                 }
-                if ($ready && $account->bank_auto_invoice) {
+                if ($ready && $account->bank_auto_invoice && ! $this->hasPendingPurchase($account)) {
                     $invoice = $this->create($account);
                     app(BankSettlementService::class)->activate((int) $invoice->id);
                     $account->refresh();
@@ -105,9 +106,20 @@ final class BankRenewalService
                 return $open;
             }
             $key = 'bank:'.$account->id.':'.($manualKey ?? $account->current_period_end_at->format('YmdHis')).':'.($change?->id ?? 0);
+            if ($manualKey === null) {
+                $generation = CommercialBankInvoice::query()->where('organization_id', $account->organization_id)
+                    ->where('status', 'canceled')->whereNull('activated_at')
+                    ->whereHas('order', fn ($query) => $query->where('commercial_account_id', $account->id)
+                        ->where('kind', 'renewal')->where('period_start_at', '>=', $account->current_period_end_at)
+                        ->where('period_end_at', '>', $account->current_period_end_at))->max('id');
+                $key .= ':r'.($generation ?? 0);
+            }
             $existing = CommercialOrder::query()->where('organization_id', $account->organization_id)->where('server_idempotency_key', $key)->first();
             if ($existing !== null) {
                 return CommercialBankInvoice::query()->where('commercial_order_id', $existing->id)->firstOrFail();
+            }
+            if ($this->hasPendingPurchase($account)) {
+                throw new CommercialCheckoutConflictException('A commercial order is awaiting payment.');
             }
             $this->invoices->assertReady();
             $current = $this->currentPackageSlugs($account);
@@ -157,6 +169,15 @@ final class BankRenewalService
             ->whereIn('status', ['active', 'grace', 'expired', 'scheduled_for_removal'])
             ->where('current_period_end_at', '>=', $account->current_period_end_at)
             ->orderBy('package_slug')->pluck('package_slug')->unique()->values()->all();
+    }
+
+    private function hasPendingPurchase(OrganizationCommercialAccount $account): bool
+    {
+        return CommercialOrder::query()->where('organization_id', $account->organization_id)
+            ->where('commercial_account_id', $account->id)->whereNotIn('kind', ['renewal', 'ai_credits'])
+            ->where(fn ($query) => $query->where('status', 'pending_payment')
+                ->orWhere(fn ($paid) => $paid->where('status', 'paid')->whereIn('id', CommercialBankInvoice::query()
+                    ->select('commercial_order_id')->where('organization_id', $account->organization_id)->whereNull('activated_at'))))->exists();
     }
 
     private function applyFreeChange(OrganizationCommercialAccount $source, CarbonImmutable $now): bool

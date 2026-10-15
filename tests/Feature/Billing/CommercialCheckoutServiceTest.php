@@ -780,6 +780,39 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
+    public function test_disabled_yookassa_does_not_expose_a_saved_payment_url_on_replay(): void
+    {
+        $request = ['auto_renew_consent' => false, 'client_idempotency_key' => fake()->uuid()];
+        $first = $this->checkoutPayload($request);
+        $this->assertNotEmpty($first['confirmation_url']);
+        config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false]);
+        $replayed = $this->checkoutPayload($request);
+        $this->assertSame($first['order_id'], $replayed['order_id']);
+        $this->assertNull($replayed['confirmation_url']);
+        $this->assertFalse($replayed['_created']);
+        $this->assertCount(1, $this->gateway->payments);
+    }
+
+    public function test_bank_ai_credit_purchase_opens_the_configured_cabinet_invoice_without_card_charging(): void
+    {
+        $this->prepareBankBilling();
+        config(['ai-assistant-credits.enforce' => true, 'app.frontend_url' => 'https://cabinet.example.test/']);
+        $this->creditApprovalPath = tempnam(sys_get_temp_dir(), 'most-bank-credit-readiness-');
+        config(['ai-assistant-credits.readiness_approval_path' => $this->creditApprovalPath]);
+        \Tests\Support\AssistantCreditReadinessFixture::write($this->creditApprovalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
+        $credits = app(\App\Services\Credits\AICreditService::class);
+        $key = '33333333-3333-4333-8333-333333333333';
+        $first = $credits->purchase($this->organization, $this->user, 'ai-credits-5000', $key);
+        $again = $credits->purchase($this->organization, $this->user, 'ai-credits-5000', $key);
+        $this->assertEquals($first, $again);
+        $this->assertSame('tochka', $first['payment_source']);
+        $this->assertSame('https://cabinet.example.test/dashboard/billing?bank_invoice='.$first['bank_invoice']['id'], $first['confirmation_url']);
+        $this->assertSame(450000, $first['amount_minor']);
+        $this->assertCount(0, $this->gateway->payments);
+        $this->assertDatabaseCount('commercial_bank_invoices', 1);
+        $this->assertDatabaseCount('ai_credit_lots', 0);
+    }
+
     public function test_bank_renewal_prepayment_waits_for_the_period_and_never_restores_card_charging(): void
     {
         $this->prepareBankBilling();
@@ -815,7 +848,7 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
-    public function test_bank_renewal_ignores_unpaid_purchase_and_can_reissue_a_canceled_invoice(): void
+    public function test_bank_renewal_defers_until_purchase_is_paid_and_can_reissue_a_canceled_invoice(): void
     {
         $this->prepareBankBilling();
         $this->checkout(['machinery']);
@@ -826,15 +859,100 @@ class CommercialCheckoutServiceTest extends TestCase
             'client_idempotency_key' => '33333333-3333-4333-8333-333333333333']);
         $purchase = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
         $renewals = app(\App\Services\Billing\Bank\BankRenewalService::class);
+        try {
+            $renewals->create($account, '44444444-4444-4444-8444-444444444444');
+            $this->fail('Renewal was created before the pending purchase was resolved');
+        } catch (CommercialCheckoutConflictException) {
+            $this->assertDatabaseCount('commercial_bank_invoices', 2);
+        }
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($purchase, 'paid-before-renewal', $purchase->amount_minor));
         $renewal = $renewals->create($account, '44444444-4444-4444-8444-444444444444');
         $this->assertNotSame($purchase->id, $renewal->id);
         $this->assertSame('renewal', $renewal->order->kind);
-        $this->assertEqualsCanonicalizing(['working-entry', 'machinery'], $renewal->order->selected_package_slugs);
+        $this->assertEqualsCanonicalizing(['working-entry', 'machinery', 'finance-contracts'], $renewal->order->selected_package_slugs);
         app(\App\Services\Billing\Bank\BankBillingService::class)->cancel($this->user, (int) $this->organization->id, $renewal->public_id);
         $reissued = $renewals->create($account, '55555555-5555-4555-8555-555555555555');
         $this->assertNotSame($renewal->id, $reissued->id);
         $this->assertSame('canceled', $renewal->refresh()->status);
         $this->assertSame('awaiting_payment', $reissued->status);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('bankCheckoutSources')]
+    public function test_bank_checkout_replaces_unfunded_renewal_without_disabling_automatic_invoices(bool $balance): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $initial = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($initial, 'initial-before-upgrade', $initial->amount_minor));
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->travelTo($account->current_period_end_at->subDays(5));
+        try {
+            $renewals = app(\App\Services\Billing\Bank\BankRenewalService::class);
+            $old = $renewals->create($account);
+            if ($balance) {
+                OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 10000000, 'currency' => 'RUB']);
+            }
+            $request = ['target_package_slugs' => ['machinery', 'finance-contracts'],
+                'current_package_slugs' => ['working-entry', 'machinery'], 'use_balance' => $balance,
+                'client_idempotency_key' => fake()->uuid()];
+            $result = $this->checkoutPayload($request);
+            $this->assertSame('canceled', $old->refresh()->status);
+            $this->assertSame('canceled', $old->order->status->value);
+            $this->assertTrue($account->refresh()->bank_auto_invoice);
+            if (! $balance) {
+                $counts = $renewals->process(now(), 100);
+                $this->assertSame(0, $counts['failed']);
+                $this->assertSame(1, \App\Models\CommercialBankInvoice::query()->whereHas('order', fn ($query) => $query->where('kind', 'renewal'))->count());
+                $purchase = \App\Models\CommercialBankInvoice::query()->where('public_id', $result['bank_invoice']['id'])->firstOrFail();
+                $settlement->ingest($this->bankTransaction($purchase, 'upgraded-before-renewal', $purchase->amount_minor));
+            }
+            $new = $renewals->create($account->refresh());
+            $this->assertNotSame($old->id, $new->id);
+            $this->assertEqualsCanonicalizing(['working-entry', 'machinery', 'finance-contracts'], $new->order->selected_package_slugs);
+            $this->assertSame($old->order->period_start_at->toJSON(), $new->order->period_start_at->toJSON());
+            $this->assertSame($new->id, $renewals->create($account)->id);
+            $replay = $this->checkoutPayload($request);
+            $this->assertSame($result['order_id'], $replay['order_id']);
+            $this->assertSame('awaiting_payment', $new->refresh()->status);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public static function bankCheckoutSources(): array
+    {
+        return ['bank' => [false], 'balance' => [true]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('changedBankOperationFields')]
+    public function test_bank_corrected_operation_identity_or_date_is_quarantined_without_reactivation(string $field): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $transaction = $this->bankTransaction($invoice, 'corrected-operation', $invoice->amount_minor);
+        $originalDate = $transaction['documentProcessDate'];
+        $operation = $settlement->ingest($transaction);
+        $activated = $invoice->refresh()->activated_at->toJSON();
+        if ($field === 'paymentId') {
+            $settlement->ingest($this->bankTransaction($invoice, 'corrected-payment-id', 1000));
+        }
+        $transaction[$field] = $field === 'paymentId' ? 'corrected-payment-id' : now('Europe/Moscow')->addDay()->toDateString();
+        $changed = $settlement->ingest($transaction);
+        $this->assertSame($operation->id, $changed->id);
+        $this->assertSame('bank_operation_changed', $changed->review_reason);
+        $this->assertSame('corrected-operation', $changed->payment_id);
+        $this->assertSame($originalDate, $changed->booked_on->toDateString());
+        $this->assertSame($activated, $invoice->refresh()->activated_at->toJSON());
+        $this->assertDatabaseCount('commercial_bank_allocations', 1);
+        $this->assertDatabaseCount('commercial_bank_operations', $field === 'paymentId' ? 2 : 1);
+    }
+
+    public static function changedBankOperationFields(): array
+    {
+        return ['date' => ['documentProcessDate'], 'identity' => ['paymentId']];
     }
 
     public function test_bank_existing_invoice_replays_when_the_bank_or_buyer_configuration_changes(): void
@@ -905,7 +1023,7 @@ class CommercialCheckoutServiceTest extends TestCase
         return ['partial' => [false], 'full' => [true]];
     }
 
-    public function test_bank_paid_purchase_waits_for_the_conflicting_future_prepayment_to_be_resolved(): void
+    public function test_bank_legacy_paid_purchase_waits_for_the_conflicting_future_prepayment_to_be_resolved(): void
     {
         $this->prepareBankBilling();
         $this->checkout(['machinery']);
@@ -915,7 +1033,9 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->checkoutPayload(['target_package_slugs' => ['machinery', 'finance-contracts'],
             'current_package_slugs' => ['working-entry', 'machinery'], 'client_idempotency_key' => '33333333-3333-4333-8333-333333333333']);
         $purchase = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+        $purchase->order->forceFill(['status' => 'canceled'])->save();
         $renewal = app(\App\Services\Billing\Bank\BankRenewalService::class)->create(OrganizationCommercialAccount::query()->sole());
+        $purchase->order->forceFill(['status' => 'pending_payment'])->save();
         $settlement->ingest($this->bankTransaction($renewal, 'funded-conflict', $renewal->amount_minor));
         $settlement->ingest($this->bankTransaction($purchase, 'purchase-conflict', $purchase->amount_minor));
         $this->assertNull($purchase->refresh()->activated_at);

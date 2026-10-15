@@ -71,6 +71,7 @@ class CommercialCheckoutService
 
             if ($account !== null && $this->providerPolicy->checkoutProvider() === 'tochka') {
                 app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertNoFundedRenewal($account);
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->invalidateRenewalInvoices($account, $user);
             }
             if ($this->providerPolicy->checkoutProvider() === 'tochka' && CommercialOrder::query()
                 ->where('organization_id', $organization->id)->where('status', 'pending_payment')
