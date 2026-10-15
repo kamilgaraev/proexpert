@@ -7,15 +7,16 @@ namespace Tests\Feature\ExecutiveDocumentation;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentLegalArchiveVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
-use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentLegalArchiveService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
-use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentLegalArchiveService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Modules\Core\AccessController;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Dompdf\Dompdf;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
@@ -25,7 +26,6 @@ use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 final class ExecutiveDocumentLegalArchiveTest extends TestCase
 {
@@ -235,6 +235,7 @@ final class ExecutiveDocumentLegalArchiveTest extends TestCase
             $mock->shouldReceive('hasModuleAccess')->andReturn(true);
         });
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($allowLegalArchive): void {
+            $mock->shouldReceive('forCurrentChecks')->andReturnSelf();
             $mock->shouldReceive('can')->andReturnUsing(
                 static fn (mixed $actor, string $permission): bool => $permission !== 'legal_archive.create' || $allowLegalArchive,
             );

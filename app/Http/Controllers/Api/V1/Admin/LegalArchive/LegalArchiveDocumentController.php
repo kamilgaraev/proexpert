@@ -98,6 +98,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 (int) $this->actor($request)->id,
                 $request->validated(),
                 $request->file('file'),
+                true,
             );
 
             return $this->etag(AdminResponse::success(
