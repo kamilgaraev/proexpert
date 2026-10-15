@@ -12,7 +12,8 @@ final class AssistantTemporalIntentTest extends TestCase
     public function test_bounded_roster_does_not_ignore_explicit_windows(): void
     {
         foreach (['в октябре 2026 года', 'с 2026-10-01 по 2026-10-31', 'с 01.10.2026 по 31.10.2026',
-            'за семь дней', 'на следующей неделе', 'в этом году', 'завтра', 'сегодня'] as $query) {
+            'за семь дней', 'на следующей неделе', 'в этом году', 'завтра', 'сегодня',
+            'осенью', 'весной', 'летом', 'зимой', 'в первом квартале', 'во 2 квартале'] as $query) {
             self::assertTrue(AssistantTemporalIntent::hasExplicitWindow($query), $query);
         }
         self::assertFalse(AssistantTemporalIntent::hasExplicitWindow('Какие договоры просрочены по сроку окончания?'));
@@ -27,7 +28,8 @@ final class AssistantTemporalIntentTest extends TestCase
         foreach (['действовал в сентябре', 'были в прошлом месяце', 'были вчера', 'на дату 2026-10-01',
             'раньше', 'будут завтра', 'в следующем месяце', 'через неделю', 'неделю назад',
             'через три дня', 'спустя два месяца', 'пять дней назад', 'на следующий квартал',
-            'на следующую пятницу', 'в прошлом квартале', 'на следующий рабочий день', 'на выходных'] as $query) {
+            'на следующую пятницу', 'в прошлом квартале', 'на следующий рабочий день', 'на выходных',
+            'в первом квартале', 'во 2 квартале', 'в III квартале', 'осенью', 'весной', 'летом', 'зимой'] as $query) {
             self::assertTrue(AssistantTemporalIntent::hasNonCurrentScope($query), $query);
         }
         foreach (['Какой срок подотчёта?', 'Сколько дней даётся на подотчёт?', 'Какие настройки действуют сейчас?',

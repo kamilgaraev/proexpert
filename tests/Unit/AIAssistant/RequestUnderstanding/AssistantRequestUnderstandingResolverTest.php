@@ -21,6 +21,7 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             self::assertSame('update', $result->primaryIntent);
             self::assertSame('requires_confirmation', $result->actionPolicy);
         }
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Замени лимит подотчётных средств на 10000')->actionPolicy);
     }
 
     public function test_make_project_summary_remains_read_only(): void

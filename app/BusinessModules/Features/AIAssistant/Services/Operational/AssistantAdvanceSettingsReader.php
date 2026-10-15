@@ -49,9 +49,9 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
     private static function hasUnsupportedSubjectScope(string $query): bool
     {
         $scopeQuery = preg_replace('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект(?!\pL)/iu', '', $query) ?? $query;
-        $scopeQuery = preg_replace('/(?:для|у|в)\s+(?:(?:нашей|текущей|этой)\s+организац[а-яё]*|организац[а-яё]*(?!\pL)(?!\s+\pL))|у\s+нас(?!\pL)|(?:для|у)\s+подотч[её]т[а-яё]*(?:\s+(?:средств|расход[а-яё]*|операц[а-яё]*))?|для\s+(?:одн[а-яё]*|кажд[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
+        $scopeQuery = preg_replace('/(?<!\pL)(?:нашей|текущей|этой)\s+организац[а-яё]*|(?:для|у|в)\s+(?:(?:нашей|текущей|этой)\s+организац[а-яё]*|организац[а-яё]*(?!\pL)(?!\s+\pL))|у\s+нас(?!\pL)|(?:для|у)\s+подотч[её]т[а-яё]*(?:\s+(?:средств|расход[а-яё]*|операц[а-яё]*))?|для\s+(?:одн[а-яё]*|кажд[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
 
-        return preg_match('/проект|объект|сотрудник|работник|пользоват|контрагент|подрядчик|(?<!\pL)(?:для|у)\s+\pL/iu', $scopeQuery) === 1;
+        return preg_match('/организац|проект|объект|сотрудник|работник|пользоват|контрагент|подрядчик|(?<!\pL)(?:для|у)\s+\pL/iu', $scopeQuery) === 1;
     }
 
     private static function asksAboutReportApproval(string $query): bool
