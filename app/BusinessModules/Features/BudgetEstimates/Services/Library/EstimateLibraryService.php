@@ -1,30 +1,63 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Library;
 
+use App\BusinessModules\Features\BudgetEstimates\Policies\EstimatePolicy;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
+use App\Models\EstimateItem;
 use App\Models\EstimateLibrary;
 use App\Models\EstimateLibraryItem;
 use App\Models\EstimateLibraryItemPosition;
 use App\Models\EstimateLibraryUsage;
-use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\User;
-use App\Repositories\EstimateLibraryRepository;
 use App\Repositories\EstimateItemRepository;
-use Illuminate\Support\Facades\DB;
+use App\Repositories\EstimateLibraryRepository;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class EstimateLibraryService
 {
     public function __construct(
-        protected EstimateLibraryRepository $repository
+        protected EstimateLibraryRepository $repository,
+        private readonly AuthorizationService $authorization,
     ) {}
 
-    public function createLibrary(int $organizationId, int $userId, array $data): EstimateLibrary
+    public function getLibraries(User $actor, array $filters = [], bool $accessible = true): LengthAwarePaginator
     {
+        $organizationId = $this->authorizeRead($actor);
+
+        return $accessible
+            ? $this->repository->getAccessible($organizationId, $filters)
+            : $this->repository->getByOrganization($organizationId, $filters);
+    }
+
+    public function getLibrary(int $id, User $actor): EstimateLibrary
+    {
+        return $this->repository->findCurrentLibrary($id, $this->authorizeRead($actor))->load('items.positions');
+    }
+
+    public function getLibraryItems(int $libraryId, User $actor): Collection
+    {
+        return $this->repository->getItemsByAccessibleLibrary($libraryId, $this->authorizeRead($actor));
+    }
+
+    public function getLibraryItem(int $itemId, User $actor): EstimateLibraryItem
+    {
+        return $this->repository->findCurrentItem($itemId, $this->authorizeRead($actor))->load('positions.normativeRate');
+    }
+
+    public function createLibrary(User $actor, array $data): EstimateLibrary
+    {
+        $organizationId = $this->authorizeManage($actor);
         $library = EstimateLibrary::create([
             'organization_id' => $organizationId,
-            'created_by_user_id' => $userId,
+            'created_by_user_id' => $actor->id,
             'name' => $data['name'],
             'description' => $data['description'] ?? null,
             'category' => $data['category'] ?? null,
@@ -38,32 +71,40 @@ class EstimateLibraryService
         return $library;
     }
 
-    public function updateLibrary(EstimateLibrary $library, array $data): EstimateLibrary
+    public function updateLibrary(int $libraryId, User $actor, array $data): EstimateLibrary
     {
-        $library->update([
-            'name' => $data['name'] ?? $library->name,
-            'description' => $data['description'] ?? $library->description,
-            'category' => $data['category'] ?? $library->category,
-            'access_level' => $data['access_level'] ?? $library->access_level,
-            'tags' => $data['tags'] ?? $library->tags,
-            'is_active' => $data['is_active'] ?? $library->is_active,
-        ]);
+        return DB::transaction(function () use ($libraryId, $actor, $data) {
+            $library = $this->repository->findCurrentLibrary($libraryId, $this->authorizeManage($actor), true, true);
+            $library->update([
+                'name' => $data['name'] ?? $library->name,
+                'description' => $data['description'] ?? $library->description,
+                'category' => $data['category'] ?? $library->category,
+                'access_level' => $data['access_level'] ?? $library->access_level,
+                'tags' => $data['tags'] ?? $library->tags,
+                'is_active' => $data['is_active'] ?? $library->is_active,
+            ]);
 
-        $this->repository->clearCache($library->id);
+            $this->repository->clearCache($library->id);
 
-        return $library->fresh();
+            return $library->fresh();
+        });
     }
 
-    public function deleteLibrary(EstimateLibrary $library): bool
+    public function deleteLibrary(int $libraryId, User $actor): bool
     {
-        $this->repository->clearCache($library->id);
-        
-        return $library->delete();
+        return DB::transaction(function () use ($libraryId, $actor) {
+            $library = $this->repository->findCurrentLibrary($libraryId, $this->authorizeManage($actor), true, true);
+            $deleted = $library->delete();
+            $this->repository->clearCache($library->id);
+
+            return (bool) $deleted;
+        });
     }
 
-    public function createLibraryItem(EstimateLibrary $library, array $data): EstimateLibraryItem
+    public function createLibraryItem(int $libraryId, User $actor, array $data): EstimateLibraryItem
     {
-        return DB::transaction(function () use ($library, $data) {
+        return DB::transaction(function () use ($libraryId, $actor, $data) {
+            $library = $this->repository->findCurrentLibrary($libraryId, $this->authorizeManage($actor), true, true);
             $item = EstimateLibraryItem::create([
                 'library_id' => $library->id,
                 'name' => $data['name'],
@@ -73,11 +114,11 @@ class EstimateLibraryService
                 'positions_count' => 0,
             ]);
 
-            if (!empty($data['positions'])) {
+            if (! empty($data['positions'])) {
                 foreach ($data['positions'] as $index => $positionData) {
                     $this->addPositionToItem($item, $positionData, $index);
                 }
-                
+
                 $item->positions_count = count($data['positions']);
                 $item->save();
             }
@@ -88,16 +129,12 @@ class EstimateLibraryService
         });
     }
 
-    public function addPositionToItem(
+    private function addPositionToItem(
         EstimateLibraryItem $item,
         array $positionData,
-        ?int $sortOrder = null
+        int $sortOrder,
     ): EstimateLibraryItemPosition {
-        if ($sortOrder === null) {
-            $sortOrder = $item->positions()->max('sort_order') + 1;
-        }
-
-        $position = EstimateLibraryItemPosition::create([
+        return EstimateLibraryItemPosition::create([
             'library_item_id' => $item->id,
             'normative_rate_id' => $positionData['normative_rate_id'] ?? null,
             'normative_rate_code' => $positionData['normative_rate_code'] ?? null,
@@ -110,10 +147,6 @@ class EstimateLibraryService
             'coefficient' => $positionData['coefficient'] ?? 1,
             'parameters_mapping' => $positionData['parameters_mapping'] ?? [],
         ]);
-
-        $item->increment('positions_count');
-
-        return $position;
     }
 
     public function applyLibraryItemToEstimate(
@@ -123,14 +156,20 @@ class EstimateLibraryService
         array $parameters = [],
         ?int $sectionId = null
     ): array {
-        if (!$libraryItem->validateParameters($parameters)) {
-            throw new \InvalidArgumentException('Отсутствуют обязательные параметры для применения типового решения');
-        }
-
         return DB::transaction(function () use ($libraryItem, $estimate, $actor, $parameters, $sectionId) {
-            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
-            if (!app(\App\BusinessModules\Features\BudgetEstimates\Policies\EstimatePolicy::class)->update($actor, $estimate)) {
-                throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('permissions.access_denied'));
+            $organizationId = $this->authorizeRead($actor);
+            $libraryItem = $this->repository->findCurrentItem($libraryItem->id, $organizationId, false, true);
+            $estimate = Estimate::query()->useWritePdo()->whereKey($estimate->id)
+                ->where('organization_id', $organizationId)->lockForUpdate()->firstOrFail();
+            $permission = $estimate->isApproved() ? 'budget-estimates.edit_approved' : 'budget-estimates.edit';
+            if (! $this->can($actor, $permission, $organizationId) || ! app(EstimatePolicy::class)->update($actor, $estimate)) {
+                throw new AuthorizationException(trans_message('permissions.access_denied'));
+            }
+            if ($sectionId !== null) {
+                EstimateSection::query()->useWritePdo()->whereKey($sectionId)->where('estimate_id', $estimate->id)->firstOrFail();
+            }
+            if (! $libraryItem->validateParameters($parameters)) {
+                throw new \InvalidArgumentException('Отсутствуют обязательные параметры для применения типового решения');
             }
             (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             $addedItems = [];
@@ -176,8 +215,9 @@ class EstimateLibraryService
         });
     }
 
-    public function getUsageStatistics(EstimateLibraryItem $item, ?int $days = 30): array
+    public function getUsageStatistics(int $itemId, User $actor, ?int $days = 30): array
     {
+        $item = $this->repository->findCurrentItem($itemId, $this->authorizeRead($actor), true);
         $query = EstimateLibraryUsage::where('library_item_id', $item->id);
 
         if ($days) {
@@ -196,29 +236,34 @@ class EstimateLibraryService
         ];
     }
 
-    public function shareLibrary(EstimateLibrary $library, string $accessLevel = 'public'): EstimateLibrary
+    public function shareLibrary(int $libraryId, User $actor, string $accessLevel = 'public'): EstimateLibrary
     {
-        if (!in_array($accessLevel, ['private', 'organization', 'public'])) {
+        if (! in_array($accessLevel, ['private', 'organization', 'public'])) {
             throw new \InvalidArgumentException('Недопустимый уровень доступа');
         }
 
-        $library->update(['access_level' => $accessLevel]);
-        $this->repository->clearCache($library->id);
+        return DB::transaction(function () use ($libraryId, $actor, $accessLevel) {
+            $library = $this->repository->findCurrentLibrary($libraryId, $this->authorizeManage($actor), true, true);
+            $library->update(['access_level' => $accessLevel]);
+            $this->repository->clearCache($library->id);
 
-        return $library->fresh();
+            return $library->fresh();
+        });
     }
 
     public function duplicateLibrary(
-        EstimateLibrary $library,
-        int $organizationId,
-        int $userId,
+        int $libraryId,
+        User $actor,
         ?string $newName = null
     ): EstimateLibrary {
-        return DB::transaction(function () use ($library, $organizationId, $userId, $newName) {
+        return DB::transaction(function () use ($libraryId, $actor, $newName) {
+            $organizationId = $this->authorizeManage($actor);
+            $this->authorizeRead($actor);
+            $library = $this->repository->findCurrentLibrary($libraryId, $organizationId, false, true);
             $newLibrary = EstimateLibrary::create([
                 'organization_id' => $organizationId,
-                'created_by_user_id' => $userId,
-                'name' => $newName ?? ($library->name . ' (копия)'),
+                'created_by_user_id' => $actor->id,
+                'name' => $newName ?? ($library->name.' (копия)'),
                 'description' => $library->description,
                 'category' => $library->category,
                 'access_level' => 'private',
@@ -255,8 +300,51 @@ class EstimateLibraryService
                 }
             }
 
+            $this->repository->clearCache();
+
             return $newLibrary->fresh(['items.positions']);
         });
+    }
+
+    private function authorizeRead(User $actor): int
+    {
+        $organizationId = $this->activeOrganizationId($actor);
+        if (! $this->can($actor, 'budget-estimates.view', $organizationId)
+            && ! $this->can($actor, 'budget-estimates.view_all', $organizationId)) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+
+        return $organizationId;
+    }
+
+    private function authorizeManage(User $actor): int
+    {
+        $organizationId = $this->activeOrganizationId($actor);
+        if (! $this->can($actor, 'budget-estimates.templates.manage', $organizationId)) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+
+        return $organizationId;
+    }
+
+    private function activeOrganizationId(User $actor): int
+    {
+        $organizationId = (int) $actor->current_organization_id;
+        if ($organizationId <= 0
+            || ! User::query()->useWritePdo()->whereKey($actor->id)->where('is_active', true)->exists()
+            || ! $actor->organizations()->useWritePdo()->where('organizations.id', $organizationId)
+                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()) {
+            throw new AuthorizationException(trans_message('permissions.access_denied'));
+        }
+
+        return $organizationId;
+    }
+
+    private function can(User $actor, string $permission, int $organizationId): bool
+    {
+        return $this->authorization->canCurrent($actor, $permission, [
+            'context_type' => 'organization', 'organization_id' => $organizationId,
+        ]);
     }
 
     protected function analyzeMostCommonParameters(Collection $usages): array
@@ -265,14 +353,14 @@ class EstimateLibraryService
 
         foreach ($usages as $usage) {
             $params = $usage->applied_parameters ?? [];
-            
+
             foreach ($params as $key => $value) {
-                $paramKey = $key . '=' . $value;
-                
-                if (!isset($parametersCount[$paramKey])) {
+                $paramKey = $key.'='.$value;
+
+                if (! isset($parametersCount[$paramKey])) {
                     $parametersCount[$paramKey] = 0;
                 }
-                
+
                 $parametersCount[$paramKey]++;
             }
         }
@@ -282,4 +370,3 @@ class EstimateLibraryService
         return array_slice($parametersCount, 0, 10, true);
     }
 }
-
