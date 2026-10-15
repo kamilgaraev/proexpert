@@ -22,6 +22,58 @@ use PHPUnit\Framework\TestCase;
 
 final class PersistedTechnologyReviewSelectionsTest extends TestCase
 {
+    public function test_reselected_choices_read_previous_decisions_in_batches_of_at_most_one_hundred(): void
+    {
+        $source = 'sha256:'.str_repeat('a', 64);
+        $catalog = TechnologySystemCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php');
+        $facts = $history = $entities = $decisions = $previousDecisions = $mirror = [];
+        foreach (range(1, 101) as $index) {
+            $entityId = 'entity:roof:'.$index;
+            $key = 'roof_covering_system.'.substr(hash('sha256', $entityId), 0, 24);
+            $entities[] = new Entity($entityId, 10, 20, 30, $source, 'material', 'roof:'.$index, []);
+            $target = new Fact('fact:target:'.$index, 10, 20, 30, $source, $entityId, 'material', null, null, 0, 'unresolved', 'unresolved', []);
+            $previous = new Fact('fact:previous:'.$index, 10, 20, 30, $source, $entityId, 'material',
+                ['kind' => 'catalog_system', 'decision_key' => $key], null, 1, 'user_assumption', 'confirmed', [], 2, $target->id);
+            $oldDecision = new Decision('decision:previous:'.$index, 10, 20, 30, $source, 'fact', $target->id, $previous->id, 'user', '7', 'Первый выбор', 2);
+            $previousDecisions[$oldDecision->id] = $oldDecision;
+            $choice = new Fact('fact:choice:'.$index, 10, 20, 30, $source, $entityId, 'material',
+                ['kind' => 'catalog_system', 'system_id' => 'pitched_roof.metal_tile', 'decision_key' => $key,
+                    'catalog_version' => $catalog->version, 'catalog_hash' => $catalog->contentHash,
+                    'previous_fact_id' => $previous->id, 'previous_decision_id' => $oldDecision->id],
+                null, 1, 'user_assumption', 'confirmed', [], 3, $previous->id);
+            $facts[] = $choice;
+            foreach ([['roof_type', 'pitched', null], ['roof_slope_degrees', '28', 'degree'],
+                ['roof_geometry', 'simple_gable', null], ['roof_area', '120', 'm2']] as [$type, $value, $unit]) {
+                $facts[] = new Fact('fact:'.$type.':'.$index, 10, 20, 30, $source, $entityId, $type, $value, $unit, 1, 'user_assumption', 'confirmed', []);
+            }
+            array_push($history, $target, $previous);
+            $decisions[] = new Decision('decision:choice:'.$index, 10, 20, 30, $source, 'fact', $target->id, $choice->id, 'user', '7', 'Новый выбор', 3);
+            $mirror[$entityId] = 'pitched_roof.metal_tile';
+        }
+        $models = $this->createMock(ProjectModelRepository::class);
+        $models->expects(self::once())->method('decisionsForSelectedFacts')->willReturn($decisions);
+        $models->expects(self::once())->method('factsByIds')->willReturn($history);
+        $batches = [];
+        $models->expects(self::exactly(2))->method('decisions')->willReturnCallback(
+            static function (int $organizationId, int $projectId, int $sessionId, array $ids) use (&$batches, $previousDecisions): array {
+                if (count($ids) > 100) {
+                    throw new \InvalidArgumentException('Decision read batch exceeds its limit.');
+                }
+                self::assertSame([10, 20, 30], [$organizationId, $projectId, $sessionId]);
+                $batches[] = count($ids);
+
+                return array_values(array_intersect_key($previousDecisions, array_flip($ids)));
+            });
+        $session = (new EstimateGenerationSession)->forceFill(['id' => 30, 'organization_id' => 10, 'project_id' => 20,
+            'input_payload' => ['technology_selections' => ['roofing' => $mirror]]]);
+        $service = new PersistedTechnologyReviewSelections($models, $catalog, new TechnologyRecommendationService($catalog, static fn (string $key): string => $key));
+        $result = $service->current($session, new ProjectModelSnapshot($entities, $facts, [], []), 1001);
+        self::assertSame([100, 1], $batches);
+        self::assertFalse($result['truncated']);
+        self::assertCount(101, $result['items']);
+        self::assertSame(['selected'], array_values(array_unique(array_column($result['items'], 'selection_state'))));
+    }
+
     public function test_in_memory_fact_batch_keeps_history_and_scope_without_changing_the_current_projection(): void
     {
         $source = 'sha256:'.str_repeat('a', 64);

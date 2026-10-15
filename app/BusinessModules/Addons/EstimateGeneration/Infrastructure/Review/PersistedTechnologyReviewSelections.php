@@ -64,8 +64,14 @@ final readonly class PersistedTechnologyReviewSelections
             }
         }
         $targets = $targetIds === [] || $overflow ? [] : array_column($this->models->factsByIds(...[...$scope, array_values(array_unique($targetIds))]), null, 'id');
-        $previousDecisions = $previousDecisionIds === [] || $overflow ? [] : array_column(
-            $this->models->decisions(...[...$scope, array_values(array_unique($previousDecisionIds))]), null, 'id');
+        $previousDecisions = [];
+        if (! $overflow) {
+            foreach (array_chunk(array_values(array_unique($previousDecisionIds)), 100) as $batch) {
+                foreach ($this->models->decisions(...[...$scope, $batch]) as $decision) {
+                    $previousDecisions[$decision->id] = $decision;
+                }
+            }
+        }
         $entities = array_column($snapshot->entities, null, 'id');
         $conflicted = [];
         foreach ($snapshot->conflicts as $conflict) {

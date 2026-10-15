@@ -83,8 +83,8 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
         self::assertSame([], $models->factsByIds($scope[0] + 1000, $scope[1], $scope[2], ['fact:roof-material', $first['fact_id']]));
         self::assertSame([], $models->factsByIds($scope[0], $scope[1] + 1000, $scope[2], ['fact:roof-material', $first['fact_id']]));
         self::assertSame([], $models->factsByIds($scope[0], $scope[1], $scope[2] + 1000, ['fact:roof-material', $first['fact_id']]));
-        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
-            ->current($session->fresh(), 100);
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions::class)
+            ->handle($session->fresh(), ['type' => 'technology_recommendation']);
         $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
         self::assertCount(1, $technologyItems, 'The saved technology must remain visible after its question is superseded.');
         $technology = $technologyItems[0]['recommendation'];
@@ -144,8 +144,8 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
         $selected = $models->fact(...[...$scope, $second['fact_id']]);
         self::assertSame($first['fact_id'], $selected->supersedesFactId);
         self::assertSame('pitched_roof.standing_seam', $selected->value['system_id']);
-        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
-            ->current($session->fresh(), 100);
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions::class)
+            ->handle($session->fresh(), ['type' => 'technology_recommendation']);
         $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
         self::assertCount(1, $technologyItems);
         self::assertSame('pitched_roof.standing_seam', $technologyItems[0]['recommendation']['selected_option']);
@@ -179,8 +179,8 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
             $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class, $catalog);
             $this->app->instance(TechnologyRecommendationService::class, new TechnologyRecommendationService($catalog));
         }
-        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review\ProjectModelEstimateReviewExceptionSource::class)
-            ->current($session->fresh(), 100);
+        $review = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions::class)
+            ->handle($session->fresh(), ['type' => 'technology_recommendation']);
         $technologyItems = array_values(array_filter($review['items'], static fn (array $item): bool => $item['type'] === 'technology_recommendation'));
         self::assertCount(1, $technologyItems);
         self::assertNull($technologyItems[0]['recommendation']['selected_option']);
