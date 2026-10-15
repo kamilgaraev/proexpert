@@ -13,6 +13,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -21,14 +22,15 @@ final class BudgetLineService
 {
     public function __construct(
         private readonly BudgetVersionService $versionService,
-        private readonly BudgetPeriodClosureService $periodClosureService
+        private readonly BudgetPeriodClosureService $periodClosureService,
+        private readonly UserProjectAccessService $projectAccessService
     ) {}
 
     public function lines(User $user, string $versionUuid, array $filters): array
     {
         $version = $this->versionService->findVersion($user, $versionUuid);
 
-        return BudgetLine::query()
+        $lines = BudgetLine::query()
             ->where('budget_version_id', $version->id)
             ->with(['article', 'responsibilityCenter', 'amounts'])
             ->when($filters['article_id'] ?? null, function (Builder $query, string $uuid): void {
@@ -40,8 +42,16 @@ final class BudgetLineService
             ->when($filters['project_id'] ?? null, fn (Builder $query, int|string $projectId) => $query->where('project_id', (int) $projectId))
             ->orderBy('budget_article_id')
             ->orderBy('responsibility_center_id')
-            ->get()
-            ->map(fn (BudgetLine $line): array => $this->versionService->lineToArray($line))
+            ->get();
+        $projectIds = $lines->pluck('project_id')->filter()->unique()->values()->all();
+        $projectNames = $projectIds === [] ? [] : $this->projectAccessService
+            ->queryAccessibleProjects($user, $version->organization_id, true)
+            ->whereIn('projects.id', $projectIds)
+            ->pluck('projects.name', 'projects.id')
+            ->all();
+
+        return $lines
+            ->map(fn (BudgetLine $line): array => $this->versionService->lineToArray($line, $projectNames[$line->project_id] ?? null))
             ->all();
     }
 

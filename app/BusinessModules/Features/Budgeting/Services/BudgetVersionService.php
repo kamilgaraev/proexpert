@@ -250,7 +250,7 @@ final class BudgetVersionService
         return $data;
     }
 
-    public function lineToArray(BudgetLine $line): array
+    public function lineToArray(BudgetLine $line, ?string $projectName = null): array
     {
         return [
             'id' => $line->uuid,
@@ -261,6 +261,7 @@ final class BudgetVersionService
             'responsibility_center_code' => $line->responsibilityCenter?->code,
             'responsibility_center_name' => $line->responsibilityCenter?->name,
             'project_id' => $line->project_id,
+            'project_name' => $projectName,
             'contract_id' => $line->contract_id,
             'counterparty_id' => $line->counterparty_id,
             'currency' => $line->currency,
