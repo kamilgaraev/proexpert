@@ -24,7 +24,10 @@ final readonly class AssistantProjectContractRosterReader
     {
         $query = preg_replace('/не\s+(?:называй|считай)[^.!?;]*просроч[а-яё]*/iu', '', $query) ?? $query;
         $overdue = preg_match('/(?<!\pL)просроч[а-яё]*(?!\pL)/iu', $query) === 1;
-        $undatedPattern = '/без\s+(?:указанн[а-яё]*\s+)?(?:дат[а-яё]*|срок[а-яё]*)|не\s+указан[а-яё]*\s+дат[а-яё]*|нет\s+(?:дат[а-яё]*|срок[а-яё]*)/iu';
+        $deadlineField = '(?:указанн[а-яё]*\s+)?(?:дат[а-яё]*|срок[а-яё]*)(?:\s+(?:окончан[а-яё]*|действи[а-яё]*))?';
+        $missingFields = $deadlineField.'(?:\s*(?:,|\/|и|или|ни)\s*'.$deadlineField.')*';
+        $undatedPattern = '/(?:без|нет)\s+(?:ни\s+)?'.$missingFields.'|не\s+указан[а-яё]*\s+(?:ни\s+)?'.$missingFields
+            .'|'.$missingFields.'\s+(?:не\s+указан[а-яё]*|отсутству[а-яё]*)/iu';
         $undated = preg_match($undatedPattern, $query) === 1;
         if ($undated && ! $overdue && preg_match('/(?:срок[а-яё]*|дат[а-яё]*)\s+окончан/iu', preg_replace($undatedPattern, '', $query) ?? $query) === 1) {
             return 'all';
