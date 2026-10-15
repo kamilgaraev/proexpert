@@ -9,6 +9,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeWorkflowResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 
 final class EvaluationWorkContextTest extends TestCase
@@ -131,6 +140,33 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertSame($before, hash('sha256', json_encode($draft, JSON_THROW_ON_ERROR)));
     }
 
+    public function test_normative_enrichment_preserves_legacy_planner_context(): void
+    {
+        foreach (['normative_intent_catalog', 'scope_inference'] as $source) {
+            [$draft, $snapshot] = $this->legacyPlannerFixture();
+            $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+            $item['metadata']['generation_source'] = $source;
+            $item['quantity'] = '20';
+            $item = $this->assembleLegacyItem($item);
+            self::assertSame('fsnb_norm', $item['metadata']['composition_source']);
+            self::assertSame($source, $item['metadata']['generation_source']);
+            self::assertSame('finish.floor', $item['metadata']['composition_work_key']);
+            self::assertSame('matched', $item['normative_match']['status']);
+            $before = $draft;
+            $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+            $position = $result['scenarios'][0]['positions'][0];
+            self::assertSame('room:1', $position['proposed_entity_context']['entity_id'] ?? null, $source);
+            self::assertNull($position['entity_id']);
+            self::assertSame('20', $position['quantity']);
+            self::assertSame('unknown', $position['quantity_status']);
+            self::assertNull($position['price_snapshot']);
+            self::assertNull($position['total_cost']);
+            self::assertFalse($result['can_confirm_for_apply']);
+            self::assertSame($before, $draft);
+            unset($item);
+        }
+    }
+
     public function test_legacy_metadata_never_overrides_explicit_work_key_or_unknown_source_contract(): void
     {
         [$original, $snapshot] = $this->legacyPlannerFixture();
@@ -140,6 +176,10 @@ final class EvaluationWorkContextTest extends TestCase
             ['metadata' => ['composition_source' => 'scope_inference', 'composition_work_key' => 'finish.floor']],
             ['metadata' => ['composition_source' => 'planner_intent', 'composition_work_key' => 'unregistered.custom']],
             ['metadata' => ['composition_source' => 'planner_intent', 'composition_work_key' => 42]],
+            ['metadata' => ['composition_source' => 'fsnb_norm', 'composition_work_key' => 'finish.floor']],
+            ['metadata' => ['composition_source' => 'fsnb_norm', 'composition_work_key' => 'finish.floor', 'generation_source' => 'normative_intent_catalog']],
+            ['metadata' => ['composition_source' => 'fsnb_norm', 'composition_work_key' => 'finish.floor', 'generation_source' => 'normative_intent_catalog'], 'normative_match' => ['status' => 'rejected']],
+            ['metadata' => ['composition_source' => 'fsnb_norm', 'composition_work_key' => 'finish.floor', 'generation_source' => 'project_document_normative_reference'], 'normative_match' => ['status' => 'matched']],
         ];
         foreach ($variants as $override) {
             $draft = $original;
@@ -153,6 +193,36 @@ final class EvaluationWorkContextTest extends TestCase
             self::assertNull($position['price_snapshot']);
             self::assertFalse($result['can_confirm_for_apply']);
         }
+    }
+
+    private function assembleLegacyItem(array $item): array
+    {
+        $candidate = new NormativeCandidateData(
+            'candidate-101', 101, 77, 'fsnb-2026.1', 'parsed', '10-01-001-01', 'Чистовое покрытие пола',
+            'm2', 'area', 'tile', 'flooring', 'floor', '10-01', 'residential', '77',
+            new DateTimeImmutable('2026-01-01'), null, 0.91, null, 'lexical-v1', null, ['evidence:norm-101'],
+        );
+        $workflow = new NormativeWorkflowResultData('retrieval_only', new NormativeCandidateSetData(
+            1, 2, 3, $item['key'], 'fsnb-2026.1', 'lexical-v1', null, [$candidate],
+        ), null, []);
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($workflow, [
+            'candidate_id' => 'candidate-101', 'normative_id' => 101, 'dataset_id' => 77,
+            'dataset_version' => 'fsnb-2026.1', 'dataset_status' => 'parsed', 'code' => '10-01-001-01',
+            'name' => 'Чистовое покрытие пола', 'unit' => 'm2',
+            'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+            'section' => ['code' => '10-01', 'name' => 'Полы'], 'work_composition' => ['Монтаж покрытия'],
+            'resources' => ['materials' => [[
+                'code' => '01.7.01', 'name' => 'Покрытие пола', 'unit' => 'm2', 'quantity' => 1,
+                'price_id' => 9001, 'price_source' => 'fsbc', 'linked_resource_id' => 501, 'price_unit' => 'm2',
+            ]], 'labor' => [], 'machinery' => [], 'other' => []],
+        ]);
+        $service = new ResourceAssemblyService($this->createMock(EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService, new NormativeCandidatePresenter);
+
+        return $service->assembleFromDecision($item, $decision, [
+            'dataset_id' => 77, 'dataset_version' => 'fsnb-2026.1', 'region_id' => 77,
+            'price_zone_id' => 1, 'period_id' => 202606, 'price_version' => 'prices-2026.06',
+        ]);
     }
 
     private function legacyPlannerFixture(): array
