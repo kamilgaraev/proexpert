@@ -29,6 +29,10 @@ final class AssistantMutationIntentTest extends TestCase
             'Покажи настройки и сделай нам новый максимальный лимит 10000'] as $query) {
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
+        foreach (['Покажи активные договоры нашего объекта и поставь им новый срок окончания',
+            'Покажи активные договоры нашего объекта и установи для них дату окончания'] as $query) {
+            self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
+        }
     }
 
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
