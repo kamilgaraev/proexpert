@@ -232,6 +232,7 @@ class EstimateImportController extends Controller
         $correlationId = (string) Str::uuid();
         Log::log($status >= 500 ? 'error' : 'warning', '[EstimateImport] Request failed', [
             'correlation_id' => $correlationId, 'reason_code' => $reasonCode, 'exception_class' => $exception::class,
+            'exception_file' => basename($exception->getFile()), 'exception_line' => $exception->getLine(),
         ]);
 
         return AdminResponse::error(trans_message('estimate.'.$key), $status, null, ['code' => $reasonCode, 'correlation_id' => $correlationId]);
