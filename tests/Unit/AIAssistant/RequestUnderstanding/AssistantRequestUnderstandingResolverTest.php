@@ -44,6 +44,11 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 
     public function test_compound_mutation_requires_confirmation_without_overriding_no_actions(): void
     {
+        foreach (['Покажи инструкцию: установить лимит подотчётных средств',
+            'Вопрос: установить лимит можно только администратору?'] as $query) {
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy, $query);
+        }
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Поставь лимит 10000 и покажи настройки таблицей')->actionPolicy);
         foreach (['Покажи лимит подотчётных средств и замени его на 10000',
             'Покажи лимит подотчётных средств; замени его на 10000',
             'Покажи лимит подотчётных средств: замени его на 10000',

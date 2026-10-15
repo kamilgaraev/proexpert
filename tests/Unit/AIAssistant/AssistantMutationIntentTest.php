@@ -57,6 +57,11 @@ final class AssistantMutationIntentTest extends TestCase
 
     public function test_setting_changes_are_mutations_in_both_command_and_contains_checks(): void
     {
+        foreach (['Поставь лимит 10000 и покажи настройки таблицей',
+            'Поставь лимит 10000 и выведи настройки таблицей'] as $query) {
+            self::assertSame('update', AssistantMutationIntent::type($query));
+            self::assertTrue(AssistantMutationIntent::containsRequest($query));
+        }
         foreach (['Поставь лимит 10000 в таблице настроек', 'Выставь лимит 10000 в колонке настроек'] as $query) {
             self::assertFalse(AssistantMutationIntent::hasPresentationRequest($query));
             self::assertSame('update', AssistantMutationIntent::type($query));
