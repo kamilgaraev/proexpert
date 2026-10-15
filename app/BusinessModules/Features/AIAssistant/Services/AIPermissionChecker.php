@@ -77,6 +77,7 @@ class AIPermissionChecker
         'get_own_notification_preferences' => ['ai_assistant.chat'],
         'get_organization_credit_balance' => ['ai_assistant.chat'],
         'get_organization_active_packages' => ['billing.view'],
+        'get_organization_advance_settings' => ['advance_settings.view', 'finance.view'],
         'get_organization_effective_modules' => ['ai_assistant.chat'],
         'get_organization_purchase_orders' => ['procurement.purchase_orders.view'],
         'get_catalog_lookup' => ['ai_assistant.chat'],
@@ -188,6 +189,11 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
+        if ($toolName === 'get_organization_advance_settings') {
+            return in_array('advance-accounting', $policy->effectiveModuleSlugs($user, $organizationId), true)
+                && $policy->canCurrentPermission($user, $organizationId, 'advance_settings.view')
+                && $policy->canCurrentPermission($user, $organizationId, 'finance.view');
+        }
         if ($toolName === 'get_project_material_stock' && ! $policy->canCurrentPermission($user, $organizationId, 'warehouse.manage_stock')) { return false; }
         if ($toolName === 'get_bim_model_elements') {
             return $policy->canReadDomain($user, $organizationId, 'design')
@@ -349,7 +355,7 @@ class AIPermissionChecker
             'get_project_daily_staff' => ['projects', 'workforce'],
             'get_own_project_access' => ['assistant'],
             'get_organization_user_counts', 'get_assignable_user_roles', 'get_own_admin_permissions', 'get_organization_business_profile', 'get_own_report_workspace', 'get_own_organization_roles', 'get_organization_verification', 'get_own_report_subscriptions', 'get_organization_contacts', 'get_own_notification_preferences', 'get_organization_credit_balance' => ['assistant'],
-            'get_organization_active_packages', 'get_organization_effective_modules' => ['assistant'],
+            'get_organization_advance_settings', 'get_organization_active_packages', 'get_organization_effective_modules' => ['assistant'],
             'get_organization_purchase_orders' => ['assistant'],
             'get_catalog_lookup' => ['assistant'],
             'get_project_deliveries' => ['projects', 'warehouse'],

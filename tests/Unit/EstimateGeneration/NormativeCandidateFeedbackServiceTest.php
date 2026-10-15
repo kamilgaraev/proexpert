@@ -258,6 +258,24 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertSame(218.25, $workItem['metadata']['quantity_feedback']['quantity']);
     }
 
+    public function test_missing_document_unit_requires_an_explicit_unit_before_quantity_confirmation(): void
+    {
+        $draft = $this->draft(['key' => 'document-row', 'item_type' => 'quantity_review', 'quantity' => null, 'unit' => null,
+            'validation_flags' => ['quantity_review_required', 'unit_requires_confirmation']]);
+        try {
+            $this->service()->applyQuantityConfirmationToDraft($draft, 'document-row', ['quantity' => 12.5]);
+            self::fail('An unknown unit must be explicitly confirmed.');
+        } catch (ValidationException $error) {
+            self::assertSame(['estimate_generation.quantity_confirmation_unit_required'], $error->errors()['payload.unit']);
+        }
+        $updated = $this->service()->applyQuantityConfirmationToDraft($draft, 'document-row', ['quantity' => 12.5, 'unit' => 'м2']);
+        $item = $updated['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('priced_work', $item['item_type']);
+        self::assertSame('м2', $item['unit']);
+        self::assertNotContains('quantity_review_required', $item['validation_flags']);
+        self::assertNotContains('unit_requires_confirmation', $item['validation_flags']);
+    }
+
     public function test_confirms_current_review_priced_normative_match(): void
     {
         $draft = $this->draft([

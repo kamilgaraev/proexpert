@@ -37,6 +37,8 @@ Route::prefix('v1/blog')->name('api.v1.blog.')->group(function () {
 // Начинаем группу маршрутов API v1
 Route::prefix('v1')->name('api.v1.')->group(function () {
     Route::post('webhooks/yookassa', YooKassaWebhookController::class)->name('webhooks.yookassa');
+    Route::post('webhooks/tochka', \App\Http\Controllers\Api\V1\Webhook\TochkaWebhookController::class)
+        ->middleware('throttle:120,1')->name('webhooks.tochka');
 
     Route::prefix('landing')->name('landing.')->group(function () {
         // Явно включаем маршруты для Landing API
@@ -228,6 +230,9 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__.'/api/v1/admin/immutable_audit.php';
         require __DIR__.'/api/v1/admin/access_recertification.php';
         require __DIR__.'/api/v1/admin/erp_controls.php';
+        Route::prefix('billing')->name('billing.')->group(function (): void {
+            require __DIR__.'/api/v1/bank_billing.php';
+        });
         require __DIR__.'/api/v1/admin/legal_archive.php';
         require __DIR__.'/api/v1/admin/report_templates.php';
         // Подключаем маршруты для подотчетных средств

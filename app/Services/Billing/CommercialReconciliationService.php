@@ -25,6 +25,7 @@ final class CommercialReconciliationService
         $refundLimit = max(1, intdiv($limit, 2));
         $paymentLimit = max(0, $limit - $refundLimit);
         $paymentIds = $paymentLimit === 0 ? collect() : CommercialPayment::query()
+            ->where('provider', 'yookassa')
             ->whereNotNull('provider_payment_id')
             ->where(function ($query): void {
                 $query->whereIn('provider_status', ['pending', 'waiting_for_capture', 'unknown'])
@@ -35,6 +36,7 @@ final class CommercialReconciliationService
             ->limit($paymentLimit)
             ->pluck('id');
         $refundIds = CommercialRefund::query()
+            ->where('provider', 'yookassa')
             ->whereNotNull('provider_refund_id')
             ->where(function ($query): void {
                 $query->whereIn('provider_status', ['created', 'pending', 'unknown'])
@@ -80,7 +82,7 @@ final class CommercialReconciliationService
 
     private function payment(int $id): bool
     {
-        $payment = CommercialPayment::query()->whereKey($id)->whereNotNull('provider_payment_id')->first();
+        $payment = CommercialPayment::query()->whereKey($id)->where('provider', 'yookassa')->whereNotNull('provider_payment_id')->first();
         if ($payment === null) {
             return false;
         }

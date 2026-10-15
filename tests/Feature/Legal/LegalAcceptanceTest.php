@@ -30,10 +30,10 @@ final class LegalAcceptanceTest extends TestCase
     public function test_registered_provider_is_published_without_changing_form_validation(): void
     {
         $this->getJson('/api/public/legal')->assertOk()
-            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-15.json')))
+            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-15.bank.json')))
             ->assertJsonPath('data.privacy_ready', true)->assertJsonPath('data.commercial_ready', true)
             ->assertJsonPath('data.analytics_ready', true)
-            ->assertJsonPath('data.version', '2026-10-15.1')
+            ->assertJsonPath('data.version', '2026-10-15.bank.1')
             ->assertJsonPath('data.provider.name', 'Индивидуальный предприниматель Гараев Камиль Фиркатович')
             ->assertJsonPath('data.provider.inn', '166014506751')
             ->assertJsonPath('data.provider.registration_number', '326169000250677')

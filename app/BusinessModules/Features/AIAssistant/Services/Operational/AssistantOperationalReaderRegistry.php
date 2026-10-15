@@ -43,6 +43,7 @@ final class AssistantOperationalReaderRegistry
     ];
 
     public const ORGANIZATION_TOOLS = [
+        'get_organization_advance_settings' => AssistantAdvanceSettingsReader::class,
         'get_organization_contacts' => AssistantOrganizationContactsReader::class,
         'get_own_notification_preferences' => AssistantNotificationPreferencesReader::class,
         'get_organization_access_review_summary' => AssistantAccessRecertificationReader::class,
@@ -129,6 +130,9 @@ final class AssistantOperationalReaderRegistry
         }
         $financeQuery = AssistantProjectMaterialRequestReader::intentQuery($financeQuery);
         $financeQuery = AssistantProjectActReader::intentQuery($financeQuery);
+        if (AssistantAdvanceSettingsReader::matches($query)) {
+            $financeQuery = preg_replace('/подотч[её]тн[а-яё]*\s+расход[а-яё]*/iu', '', $financeQuery) ?? $financeQuery;
+        }
         $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
         if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $financeQuery) === 1)
             || (! $ownPermissions && ! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
@@ -140,6 +144,7 @@ final class AssistantOperationalReaderRegistry
         $topicQuery = AssistantAccessRecertificationReader::matches($query)
             ? preg_replace('/((?:провер(?:к|ок)|пересмотр|ревизи|переаттестаци)[а-яё]*\s+доступ[а-яё]*)\s+(?:сотрудник[а-яё]*|персонал[а-яё]*)/iu', '$1', $query) ?? $query
             : $query;
+        $topicQuery = AssistantAdvanceSettingsReader::intentQuery($topicQuery);
         foreach (self::TOPICS as $pattern) {
             if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
                 continue;
@@ -150,6 +155,7 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
+            if (AssistantAdvanceSettingsReader::matches($query) && in_array($class, [AssistantNotificationPreferencesReader::class, AssistantOrganizationNotificationsReader::class], true)) { continue; }
             if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
             if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }

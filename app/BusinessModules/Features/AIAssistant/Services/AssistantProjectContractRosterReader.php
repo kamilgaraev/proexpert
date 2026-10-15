@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractOrganizationListScope;
@@ -14,18 +16,48 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 final readonly class AssistantProjectContractRosterReader
 {
     public const TYPE = 'live_project_contract_roster_projection';
+    public const DEADLINE_FILTERS = ['all', 'overdue', 'undated', 'overdue_or_undated'];
     public function __construct(private AssistantDataAccessPolicy $access, private ContractOrganizationListScope $nativeScope) {}
+    public static function deadlineFilter(string $query): string
+    {
+        $query = preg_replace('/не\s+(?:называй|считай)[^.!?;]*просроч[а-яё]*/iu', '', $query) ?? $query;
+        $overdue = preg_match('/(?<!\pL)просроч[а-яё]*(?!\pL)/iu', $query) === 1;
+        $undated = preg_match('/без\s+(?:указанн[а-яё]*\s+)?(?:дат[а-яё]*|срок[а-яё]*)|не\s+указан[а-яё]*\s+дат[а-яё]*|нет\s+(?:дат[а-яё]*|срок[а-яё]*)/iu', $query) === 1;
+
+        return $overdue && $undated ? 'overdue_or_undated' : ($overdue ? 'overdue' : ($undated ? 'undated' : 'all'));
+    }
     public static function matches(string $query): bool
     {
         $query = preg_replace('/(?<!\pL)документ[а-яё]*\s+без\s+(?:указанн[а-яё]*\s+)?дат[а-яё]*\s+окончания(?!\pL)/iu', 'договоры без даты окончания', $query) ?? $query;
-        return preg_match('/(?:действующ|активн)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*действу(?:ют|ет)|договор[а-яё]*[\s\S]*активн/iu', $query) === 1
-            && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $query) !== 1;
+        $terminalStatuses = '(?:заверш[её]н|расторгнут|приостановл|чернов|архив|закрыт)[а-яё]*';
+        $statusQuery = preg_replace('/(?<!\pL)не\s*'.$terminalStatuses.'(?!\pL)/iu', '', $query) ?? $query;
+        $detailQuery = preg_replace('/(?:по\s+состоянию\s+)?на\s+сегодня(?:шний\s+день)?/iu', '', $query) ?? $query;
+        $hasActiveStatus = preg_match('/(?<!\pL)(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) === 1;
+        $hasEndDate = preg_match('/(?:срок[а-яё]*\s+окончан|без\s+срока\s+(?:окончан|действи)[а-яё]*|без\s+срока(?=\s*(?:$|[.!?;,]))|дат[а-яё]*\s+окончан)/iu', $query) === 1;
+        $hasPluralContracts = preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)|(?:действующие|активные|какие)\s+договора(?!\pL)/iu', $query) === 1;
+        return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
+            && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
+            && preg_match('/(?<!\pL)(?:подрядчика|подрядчиком|контрагента|контрагентом|поставщика|поставщиком|заказчика|заказчиком|исполнителя|исполнителем)(?!\pL)|по\s+(?:подрядчик|контрагент|поставщик|заказчик|исполнител)[а-яё]*|сгруппир/iu', $query) !== 1
+            && preg_match('/(?<!\pL)(?:субподряд[а-яё]*|генподряд[а-яё]*|подряд(?:а|у|ом|е)?|генеральн[а-яё]*\s+подряд[а-яё]*|многопроект[а-яё]*|мультипроект[а-яё]*|основн[а-яё]*|дополнительн[а-яё]*\s+соглашен[а-яё]*|спецификац[а-яё]*|смр|общестроительн[а-яё]*|строительно[\s-]*монтажн[а-яё]*|отделочн[а-яё]*|монтажн[а-яё]*|проектирован[а-яё]*|консультационн[а-яё]*|услуг[а-яё]*|тмц|материал[а-яё]*|аренд[а-яё]*|доходн[а-яё]*|родительск[а-яё]*|дочерн[а-яё]*|иерарх[а-яё]*)(?!\pL)/iu', $query) !== 1
+            && ! AssistantMutationIntent::containsRequest($query)
+            && ! AssistantMutationIntent::containsFollowUpCommand($query)
+            && ! AssistantMutationIntent::hasPresentationRequest($query)
+            && ! AssistantTemporalIntent::hasExplicitWindow($query)
+            && preg_match('/(?:позже|раньше)\s+вс(?:его|ех)|сам[а-яё]*\s+(?:поздн|ранн|дальн|дал[её]к|близк)|отсортир|по\s+убыван|в\s+обратн|максимальн|минимальн/iu', $query) !== 1
+            && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
+            && preg_match('/(?<!\pL)не\s*просроч/iu', $query) !== 1
+            && preg_match('/аванс|гаранти|начал|написан|содержани|текст|услови|пункт/iu', $query) !== 1
+            && preg_match('/исполнени[ея]|выполнени[ея]|обязательств/iu', $query) !== 1
+            && preg_match('/(?<!\pL)'.$terminalStatuses.'(?!\pL)/iu', $statusQuery) !== 1
+            && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $detailQuery) !== 1;
     }
     public function read(User $actor, int $organizationId, array $arguments): array
     {
         $projectId = $arguments['project_id'] ?? null;
-        if (! is_int($projectId) || $projectId < 1 || array_keys($arguments) !== ['project_id']) { throw new \InvalidArgumentException('invalid_contract_roster_scope'); }
-        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $projectId): array {
+        $filter = $arguments['deadline_filter'] ?? 'all';
+        if (! is_int($projectId) || $projectId < 1 || array_diff(array_keys($arguments), ['project_id', 'deadline_filter']) !== []
+            || ! in_array($filter, self::DEADLINE_FILTERS, true)) { throw new \InvalidArgumentException('invalid_contract_roster_scope'); }
+        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $projectId, $filter): array {
             if (! $this->access->canReadDomain($actor, $organizationId, 'assistant') || ! $this->access->canReadDomain($actor, $organizationId, 'contracts')
                 || ! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)) { throw new AuthorizationException; }
             $project = $this->access->entityQuery($actor, $organizationId, 'project')?->whereKey($projectId)->first(['id', 'name']);
@@ -54,30 +86,39 @@ final readonly class AssistantProjectContractRosterReader
                     'shared' => ! $own, 'source_version' => $record->getRawOriginal('updated_at')];
             }
             $asOf = today()->toDateString(); $endingBy = today()->addDays(7)->toDateString(); $complete = count($rows) <= 10000;
+            $selected = array_values(array_filter($rows, static fn (array $row): bool => match ($filter) {
+                'overdue' => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf,
+                'undated' => $row['end_date'] === null,
+                'overdue_or_undated' => $row['end_date'] === null || substr($row['end_date'], 0, 10) < $asOf,
+                default => true,
+            }));
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => $asOf, 'complete' => $complete,
-                'total' => count($rows) <= 10000 ? count($rows) : null, 'items' => array_slice($rows, 0, 20),
+                'deadline_filter' => $filter, 'selected_total' => $complete ? count($selected) : null,
+                'total' => count($rows) <= 10000 ? count($rows) : null, 'items' => array_slice($selected, 0, 20),
+                'undated_items' => array_slice(array_values(array_filter($selected, static fn (array $row): bool => $row['end_date'] === null)), 0, 20),
                 'ending_by_date' => $endingBy,
                 'overdue_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf)) : null,
                 'ending_soon_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) >= $asOf && substr($row['end_date'], 0, 10) <= $endingBy)) : null,
                 'missing_end_date_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] === null)) : null];
-            $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
+            $version = AssistantSourceReferenceIdentity::key(['schema' => 2, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
-                'actor_id' => (int) $actor->id, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
+                'actor_id' => (int) $actor->id, 'deadline_filter' => $filter, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
             return ['status' => 'success', 'source_refs' => [$ref], 'data' => $payload, 'server_formatted_answer' => self::format($payload)];
         }, true);
     }
     public function matchesReference(User $actor, int $organizationId, array $ref): bool
     {
         if (($ref['entity_type'] ?? null) !== self::TYPE || ($ref['organization_id'] ?? null) !== $organizationId || ($ref['actor_id'] ?? null) !== (int) $actor->id
-            || ($ref['project_id'] ?? null) !== ($ref['entity_id'] ?? null) || ! is_int($ref['entity_id'] ?? null) || ! is_string($ref['source_version'] ?? null)) { return false; }
-        try { return $this->read($actor, $organizationId, ['project_id' => $ref['entity_id']])['source_refs'][0]['source_version'] === $ref['source_version']; }
+            || ($ref['project_id'] ?? null) !== ($ref['entity_id'] ?? null) || ! is_int($ref['entity_id'] ?? null) || ! is_string($ref['source_version'] ?? null)
+            || ! in_array($ref['deadline_filter'] ?? 'all', self::DEADLINE_FILTERS, true)) { return false; }
+        try { return $this->read($actor, $organizationId, ['project_id' => $ref['entity_id'], 'deadline_filter' => $ref['deadline_filter'] ?? 'all'])['source_refs'][0]['source_version'] === $ref['source_version']; }
         catch (\Throwable) { return false; }
     }
     public function verifiedAnswer(array $result, User $actor, int $organizationId): ?array
     {
         $ref = $result['source_refs'][0] ?? null;
         if (! is_array($ref) || ! $this->matchesReference($actor, $organizationId, $ref)) { return null; }
-        $current = $this->read($actor, $organizationId, ['project_id' => $ref['entity_id']]);
+        $current = $this->read($actor, $organizationId, ['project_id' => $ref['entity_id'], 'deadline_filter' => $ref['deadline_filter'] ?? 'all']);
         if ($current['source_refs'][0]['source_version'] !== $ref['source_version']) { return null; }
         return ['text' => $current['server_formatted_answer'], 'source_refs' => $current['source_refs'], 'validation_status' => 'verified', 'replaced' => true, 'needs_clarification' => false];
     }
@@ -85,10 +126,13 @@ final readonly class AssistantProjectContractRosterReader
     {
         $lines = [trans_message('ai_assistant_contract_roster.scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']])];
         if (! $data['complete']) { return $lines[0]."\n".trans_message('ai_assistant_contract_roster.limit'); }
-        $lines[] = trans_message('ai_assistant_contract_roster.count', ['total' => $data['total'], 'shown' => count($data['items'])]);
+        $datedItems = array_values(array_filter($data['items'], static fn (array $item): bool => $item['end_date'] !== null));
+        $lines[] = trans_message('ai_assistant_contract_roster.count', ['total' => $data['total'], 'shown' => count($datedItems) + count($data['undated_items'])]);
+        if ($data['deadline_filter'] !== 'all') { $lines[] = trans_message('ai_assistant_contract_roster.filter_'.$data['deadline_filter'], ['total' => $data['selected_total']]); }
         $lines[] = trans_message('ai_assistant_contract_roster.deadlines', ['overdue' => $data['overdue_count'], 'soon' => $data['ending_soon_count'],
             'date' => $data['ending_by_date'], 'undated' => $data['missing_end_date_count']]);
-        foreach ($data['items'] as $item) {
+        foreach (array_merge($datedItems, $data['undated_items']) as $index => $item) {
+            if ($index === count($datedItems)) { $lines[] = trans_message('ai_assistant_contract_roster.undated_group', ['shown' => count($data['undated_items']), 'total' => $data['missing_end_date_count']]); }
             $name = $item['self_execution'] ? trans_message('ai_assistant_contract_roster.self_execution')
                 : ($item['counterparty'] === null ? trans_message('ai_assistant_contract_roster.counterparty_unknown') : self::text($item['counterparty']));
             $end = $item['end_date'] === null ? trans_message('ai_assistant_contract_roster.no_date') : substr($item['end_date'], 0, 10);

@@ -32,6 +32,11 @@ final class AssistantRequestUnderstandingResolver
         $sectionNavigation = !in_array('no_navigation', $constraints, true)
             && $this->isSectionNavigation($normalized, $context, $capability);
         $primaryIntent = $sectionNavigation ? 'navigate' : $this->resolvePrimaryIntent($normalized, $constraints);
+        $compoundMutation = AssistantMutationIntent::compoundType($message);
+        if ($compoundMutation !== null && ! $this->hasConstraint($constraints, ['no_actions', 'text_only', 'json_only'])) {
+            $primaryIntent = $compoundMutation;
+            $sectionNavigation = false;
+        }
         $outputFormat = $this->resolveOutputFormat($normalized, $constraints, $primaryIntent);
         $actionPolicy = $this->resolveActionPolicy($primaryIntent, $constraints);
         $evidence = $this->buildEvidence($normalized, $primaryIntent, $outputFormat, $actionPolicy, $constraints, $requestedEntities);

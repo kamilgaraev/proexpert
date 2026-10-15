@@ -6,8 +6,8 @@ namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
 use App\Exceptions\Billing\CommercialCheckoutAmountException;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
-use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\Billing\CorporateSelfServiceMutationException;
+use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialCheckoutRequest;
 use App\Http\Responses\LandingResponse;
@@ -79,6 +79,8 @@ class CommercialCheckoutController
                 trans_message('billing.checkout.balance_insufficient'),
                 Response::HTTP_UNPROCESSABLE_ENTITY,
             );
+        } catch (\App\Exceptions\Billing\PaymentGatewayConfigurationException $exception) {
+            return LandingResponse::error(trans_message('bank_billing.unavailable'), Response::HTTP_SERVICE_UNAVAILABLE);
         } catch (ConnectionException|RequestException $exception) {
             Log::warning('Commercial checkout provider request failed.', [
                 'organization_id' => $request->attributes->get('current_organization_id'),
@@ -95,7 +97,6 @@ class CommercialCheckoutController
                 'organization_id' => $request->attributes->get('current_organization_id'),
                 'user_id' => $request->user()?->id,
                 'exception' => $exception::class,
-                'error' => $exception->getMessage(),
             ]);
 
             return LandingResponse::error(

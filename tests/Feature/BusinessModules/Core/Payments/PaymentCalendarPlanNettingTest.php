@@ -1,0 +1,468 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\BusinessModules\Core\Payments;
+
+use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
+use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
+use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
+use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
+use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
+use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
+use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
+use App\Models\Organization;
+use App\Models\Project;
+use Carbon\CarbonImmutable;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Support\AdminApiTestContext;
+use Tests\TestCase;
+
+final class PaymentCalendarPlanNettingTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public static function forecasts(): array
+    {
+        return [
+            'linked ACT without plan counterparty' => ['linked', '0.00', '100000.00'],
+            'part of plan remains' => ['smaller', '40000.00', '100000.00'],
+            'invoice exceeds plan' => ['larger', '0.00', '120000.00'],
+            'partially paid invoice' => ['partial', '0.00', '100000.00'],
+            'fully paid invoice' => ['paid', '0.00', '100000.00'],
+            'invoice outside visible week' => ['week', '0.00', '0.00'],
+            'invoice in another month' => ['month', '100000.00', '100000.00'],
+            'different currency' => ['currency', '100000.00', '100000.00'],
+            'different project' => ['project', '100000.00', '100000.00'],
+            'different contract' => ['contract', '100000.00', '200000.00'],
+            'explicit matching counterparty' => ['counterparty', '0.00', '100000.00'],
+            'different counterparty' => ['other-counterparty', '100000.00', '200000.00'],
+            'different article' => ['article', '100000.00', '200000.00'],
+            'different responsibility center' => ['center', '100000.00', '200000.00'],
+            'ambiguous active versions' => ['versions', '100000.00', '300000.00'],
+            'cancelled invoice' => ['cancelled', '100000.00', '100000.00'],
+            'document scope excludes invoice' => ['scope', '100000.00', '100000.00'],
+            'foreign organization invoice' => ['organization', '100000.00', '100000.00'],
+            'schedule reservation and actual payment' => ['dedup', '0.00', '100000.00'],
+            'multi-project ACT in allowed project' => ['multi-act', '0.00', '100000.00'],
+            'multi-project direct contract' => ['multi-direct', '0.00', '100000.00'],
+            'multi-project contract source' => ['multi-source', '0.00', '100000.00'],
+            'multi-project contract without this project' => ['multi-unlinked', '100000.00', '200000.00'],
+            'single-project contract ignores stale pivot' => ['single-pivot', '100000.00', '200000.00'],
+            'organization ID collides with contractor ID' => ['counterparty-type', '100000.00', '200000.00'],
+            'outgoing payment order' => ['payment-order', '0.00', '100000.00'],
+        ];
+    }
+
+    #[DataProvider('forecasts')]
+    public function test_forecast_keeps_only_the_uncommitted_plan(string $case, string $expectedPlan, string $expectedTotal): void
+    {
+        Queue::fake();
+        $fixture = $this->fixture();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount,
+            'version' => $version, 'project' => $project, 'contractor' => $contractor] = $fixture;
+        $start = '2026-10-01';
+        $end = '2026-10-31';
+        $scope = null;
+        $projectScope = null;
+        if ($case === 'payment-order') {
+            $document->update(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+                'invoiceable_type' => Contract::class, 'invoiceable_id' => $fixture['contract']->id]);
+        } elseif ($case === 'smaller' || $case === 'larger') {
+            $value = $case === 'smaller' ? '60000.00' : '120000.00';
+            $document->update(['amount' => $value, 'remaining_amount' => $value]);
+        } elseif (in_array($case, ['partial', 'paid', 'dedup'], true)) {
+            $paid = $case === 'paid' ? '100000.00' : '40000.00';
+            $document->update(['status' => $case === 'paid' ? PaymentDocumentStatus::PAID : PaymentDocumentStatus::PARTIALLY_PAID,
+                'paid_amount' => $paid, 'remaining_amount' => $case === 'paid' ? '0.00' : '60000.00']);
+            PaymentTransaction::query()->create([
+                'payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+                'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+                'payee_organization_id' => $document->payee_organization_id,
+                'amount' => $paid, 'currency' => 'RUB', 'payment_method' => 'bank_transfer',
+                'transaction_date' => '2026-10-15', 'value_date' => '2026-10-15', 'status' => 'completed',
+                'created_by_user_id' => $context->user->id,
+            ]);
+            if ($case === 'dedup') {
+                PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => 1,
+                    'due_date' => '2026-10-20', 'amount' => '100000.00', 'paid_amount' => '40000.00', 'status' => 'pending']);
+                BudgetLimitReservation::query()->create([
+                    'organization_id' => $context->organization->id, 'payment_document_id' => $document->id,
+                    'budget_period_id' => $version->budget_period_id, 'project_id' => $project->id,
+                    'contract_id' => $fixture['contract']->id, 'counterparty_id' => $contractor->id,
+                    'budget_article_id' => $line->budget_article_id, 'responsibility_center_id' => $line->responsibility_center_id,
+                    'period_month' => '2026-10-01', 'currency' => 'RUB', 'amount' => '100000.00',
+                    'status' => BudgetLimitReservation::STATUS_RESERVED, 'reserved_at' => now(),
+                    'created_by_user_id' => $context->user->id,
+                ]);
+            }
+        } elseif ($case === 'week') {
+            $document->update(['due_date' => '2026-10-28']);
+            $start = '2026-10-12';
+            $end = '2026-10-18';
+        } elseif ($case === 'month') {
+            $document->update(['due_date' => '2026-11-20']);
+        } elseif ($case === 'currency') {
+            $document->update(['currency' => 'USD']);
+        } elseif ($case === 'project') {
+            $other = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $document->update(['project_id' => $other->id]);
+        } elseif ($case === 'contract') {
+            $other = $this->contract($context, $project, $contractor);
+            $line->update(['contract_id' => $other->id]);
+        } elseif ($case === 'counterparty') {
+            $line->update(['counterparty_id' => $contractor->id]);
+        } elseif ($case === 'other-counterparty') {
+            $other = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Другой подрядчик']);
+            $line->update(['counterparty_id' => $other->id]);
+        } elseif ($case === 'article' || $case === 'center') {
+            $model = $case === 'article' ? $fixture['article'] : $fixture['center'];
+            $other = $model->replicate(['uuid']);
+            $other->code = 'OTHER-'.uniqid();
+            $other->save();
+            $document->update([$case === 'article' ? 'budget_article_id' : 'responsibility_center_id' => $other->id]);
+        } elseif ($case === 'versions') {
+            $otherVersion = $version->replicate(['uuid']);
+            $otherVersion->version_number = 2;
+            $otherVersion->save();
+            $otherLine = $line->replicate(['uuid']);
+            $otherLine->budget_version_id = $otherVersion->id;
+            $otherLine->save();
+            BudgetAmount::query()->create(['budget_line_id' => $otherLine->id, 'month' => '2026-10-01',
+                'plan_amount' => '100000.00', 'forecast_amount' => '100000.00', 'currency' => 'RUB']);
+        } elseif ($case === 'cancelled') {
+            $document->update(['status' => PaymentDocumentStatus::CANCELLED]);
+        } elseif ($case === 'scope') {
+            $scope = static fn ($query) => $query->whereKey(-1);
+        } elseif ($case === 'organization') {
+            $document->update(['organization_id' => Organization::factory()->create()->id]);
+        } elseif (str_starts_with($case, 'multi-') || $case === 'single-pivot') {
+            $contract = $fixture['contract'];
+            $contract->update(['is_multi_project' => $case !== 'single-pivot', 'project_id' => null]);
+            if ($case !== 'multi-unlinked') $contract->projects()->attach($project->id);
+            if ($case === 'multi-direct') {
+                $document->update(['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id]);
+            } elseif ($case === 'multi-source') {
+                $document->update(['invoiceable_type' => null, 'invoiceable_id' => null, 'source_type' => Contract::class, 'source_id' => $contract->id]);
+            }
+            $scope = static fn ($query) => $query->where('project_id', $project->id);
+            $projectScope = static fn ($query) => $query->where('project_id', $project->id);
+        } elseif ($case === 'counterparty-type') {
+            $collisionId = max((int) Organization::query()->max('id'), (int) Contractor::query()->max('id')) + 100;
+            $organization = Organization::factory()->create(['id' => $collisionId]);
+            $otherContractor = new Contractor(['organization_id' => $context->organization->id,
+                'name' => 'Отдельный подрядчик', 'source_organization_id' => $document->payee_organization_id]);
+            $otherContractor->id = $collisionId;
+            $otherContractor->save();
+            $line->update(['counterparty_id' => $otherContractor->id]);
+            $document->update(['payee_contractor_id' => null, 'contractor_id' => null,
+                'counterparty_organization_id' => $organization->id, 'payee_organization_id' => $organization->id]);
+        }
+
+        $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+            organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end,
+            projectId: (int) $project->id, currency: 'RUB',
+        ), new CarbonImmutable('2026-10-15'), $scope, $projectScope);
+        $plan = collect($items)->first(fn ($item) => $item->sourceType === 'budget_amount' && (int) $item->sourceId === (int) $amount->id);
+        $this->assertNotNull($plan);
+        $this->assertSame('100000.00', $plan->amount);
+        $this->assertSame($expectedPlan, $plan->remainingAmount);
+        $total = '0.00';
+        foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
+        $this->assertSame($expectedTotal, $total);
+        $this->assertSame('100000.00', $amount->fresh()->plan_amount);
+        $this->assertSame('100000.00', $amount->fresh()->forecast_amount);
+        $this->assertSame($case === 'versions' ? 2 : 1, collect($items)->where('sourceType', 'budget_amount')->count());
+        if ($case === 'dedup') {
+            $this->assertSame(1, collect($items)->where('sourceType', 'payment_schedule')->count());
+            $this->assertSame(1, collect($items)->where('sourceType', 'payment_transaction')->count());
+            $this->assertSame(0, collect($items)->whereIn('sourceType', ['payment_document', 'budget_limit_reservation'])->count());
+        }
+    }
+
+    public static function installmentForecasts(): array
+    {
+        return [
+            'two-month pending schedule' => ['pending', '2026-10-01', '2026-11-30', '100000.00'],
+            'October installment only' => ['pending', '2026-10-01', '2026-10-31', '50000.00'],
+            'November installment with document dated October' => ['pending', '2026-11-01', '2026-11-30', '50000.00'],
+            'first installment paid' => ['first-paid', '2026-10-01', '2026-11-30', '100000.00'],
+            'paid October does not repeat November remainder' => ['first-paid', '2026-10-01', '2026-10-31', '50000.00'],
+            'November after paid October' => ['first-paid', '2026-11-01', '2026-11-30', '50000.00'],
+            'first installment partly paid' => ['partial', '2026-10-01', '2026-11-30', '100000.00'],
+            'all installments paid' => ['paid', '2026-10-01', '2026-11-30', '100000.00'],
+            'document and first payment before visible months' => ['earlier', '2026-11-01', '2026-11-30', '50000.00'],
+            'inaccessible scheduled document' => ['scope', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed procurement schedule' => ['managed', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed procurement October only' => ['managed', '2026-10-01', '2026-10-31', '50000.00'],
+            'managed procurement November only' => ['managed', '2026-11-01', '2026-11-30', '50000.00'],
+            'managed paid October' => ['managed-first-paid', '2026-10-01', '2026-10-31', '50000.00'],
+            'managed undated remainder' => ['managed-undated', '2026-10-01', '2026-11-30', '100000.00'],
+            'managed all installments undated' => ['managed-all-undated', '2026-10-01', '2026-11-30', '100000.00'],
+            'inaccessible managed procurement' => ['managed-scope', '2026-10-01', '2026-11-30', '100000.00'],
+        ];
+    }
+
+    #[DataProvider('installmentForecasts')]
+    public function test_installments_replace_only_the_plan_of_their_own_month(string $case, string $start, string $end, string $expectedTotal): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project, 'contract' => $contract] = $this->fixture();
+        $amount->update(['plan_amount' => '50000.00', 'forecast_amount' => '50000.00']);
+        $november = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-11-01',
+            'plan_amount' => '50000.00', 'forecast_amount' => '50000.00', 'currency' => 'RUB']);
+        $firstDate = $case === 'earlier' ? '2026-09-20' : '2026-10-20';
+        $firstPaid = in_array($case, ['first-paid', 'paid', 'earlier', 'managed-first-paid'], true) ? '50000.00' : ($case === 'partial' ? '20000.00' : '0.00');
+        $secondPaid = $case === 'paid' ? '50000.00' : '0.00';
+        $paid = PortfolioDecimal::add($firstPaid, $secondPaid);
+        $document->update(['scheduled_at' => $firstDate, 'due_date' => $firstDate,
+            'document_date' => $case === 'earlier' ? '2026-09-15' : '2026-10-15',
+            'status' => $case === 'paid' ? PaymentDocumentStatus::PAID : ($paid !== '0.00' ? PaymentDocumentStatus::PARTIALLY_PAID : PaymentDocumentStatus::SCHEDULED),
+            'paid_amount' => $paid, 'remaining_amount' => PortfolioDecimal::subtract('100000.00', $paid)]);
+        $managed = str_starts_with($case, 'managed');
+        if ($managed) $document->forceFill(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id, 'source_type' => Contract::class, 'source_id' => $contract->id,
+            'schedule_source' => 'procurement', 'scheduled_at' => null, 'due_date' => null])->save();
+        foreach ([[$firstDate, $firstPaid], ['2026-11-20', $secondPaid]] as $index => [$date, $installmentPaid]) {
+            if ($case === 'managed-all-undated' || ($case === 'managed-undated' && $index === 1)) $date = null;
+            PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => $index + 1,
+                'due_date' => $date, 'amount' => '50000.00', 'paid_amount' => $installmentPaid,
+                'source_key' => $managed ? 'procurement:term:'.($index + 1) : null,
+                'status' => $installmentPaid === '50000.00' ? 'paid' : 'pending']);
+            if ($installmentPaid !== '0.00') {
+                PaymentTransaction::query()->create(['payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+                    'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+                    'payee_organization_id' => $document->payee_organization_id,
+                    'amount' => $installmentPaid, 'currency' => 'RUB', 'payment_method' => 'bank_transfer',
+                    'transaction_date' => $date, 'value_date' => $date, 'status' => 'completed', 'created_by_user_id' => $context->user->id]);
+            }
+        }
+        $scope = str_ends_with($case, 'scope') ? static fn ($query) => $query->whereKey(-1) : null;
+        $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+            organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end,
+            projectId: (int) $project->id, currency: 'RUB',
+        ), new CarbonImmutable('2026-10-15'), $scope);
+        $plans = collect($items)->where('sourceType', 'budget_amount');
+        $this->assertCount($start === '2026-10-01' && $end === '2026-11-30' ? 2 : 1, $plans);
+        foreach ($plans as $plan) {
+            $this->assertSame('50000.00', $plan->amount);
+            $uncommitted = str_ends_with($case, 'scope') || $case === 'managed-all-undated'
+                || ($case === 'managed-undated' && $plan->date === '2026-11-01');
+            $this->assertSame($uncommitted ? '50000.00' : '0.00', $plan->remainingAmount);
+        }
+        $total = '0.00';
+        foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
+        $this->assertSame($expectedTotal, $total);
+        $this->assertSame(0, collect($items)->where('sourceType', 'payment_document')->count());
+        if (str_ends_with($case, 'scope')) $this->assertSame(0, collect($items)->whereIn('sourceType', ['payment_schedule', 'payment_transaction'])->count());
+        if (in_array($case, ['managed-undated', 'managed-all-undated'], true)) {
+            $undated = app(PaymentCalendarSourceService::class)->collectUndated(new PaymentCalendarSourceFilters(
+                organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end, projectId: (int) $project->id, currency: 'RUB',
+            ));
+            $this->assertCount($case === 'managed-all-undated' ? 2 : 1, $undated);
+        }
+        foreach ([$amount, $november] as $storedAmount) {
+            $this->assertSame('50000.00', $storedAmount->fresh()->plan_amount);
+            $this->assertSame('50000.00', $storedAmount->fresh()->forecast_amount);
+        }
+    }
+
+    public static function actualPaymentMonths(): array
+    {
+        return [
+            'paid installment in November' => ['scheduled-late', '100000.00', '0.00'],
+            'partly paid installment in November' => ['scheduled-partial', '40000.00', '60000.00'],
+            'paid invoice in November' => ['plain-late', '100000.00', '0.00'],
+            'partly paid invoice in November' => ['plain-partial', '40000.00', '60000.00'],
+            'installment paid before due month' => ['scheduled-early', '0.00', '100000.00'],
+            'invoice paid before due month' => ['plain-early', '0.00', '100000.00'],
+            'value date takes precedence' => ['value-date', '100000.00', '0.00'],
+            'transaction date without value date' => ['transaction-date', '100000.00', '0.00'],
+            'inaccessible paid installment' => ['scheduled-scope', '100000.00', '100000.00'],
+            'inaccessible project transaction' => ['scheduled-project-scope', '100000.00', '100000.00'],
+        ];
+    }
+
+    #[DataProvider('actualPaymentMonths')]
+    public function test_paid_amount_replaces_plan_on_the_actual_cash_flow_date(string $case, string $octoberPlan, string $novemberPlan): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project] = $this->fixture();
+        $november = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-11-01',
+            'plan_amount' => '100000.00', 'forecast_amount' => '100000.00', 'currency' => 'RUB']);
+        $partial = str_ends_with($case, 'partial');
+        $early = str_ends_with($case, 'early');
+        $paid = $partial ? '40000.00' : '100000.00';
+        $document->update(['due_date' => $early ? '2026-11-20' : '2026-10-20',
+            'status' => $partial ? PaymentDocumentStatus::PARTIALLY_PAID : PaymentDocumentStatus::PAID,
+            'paid_amount' => $paid, 'remaining_amount' => $partial ? '60000.00' : '0.00']);
+        $transaction = PaymentTransaction::query()->create([
+            'organization_id' => $context->organization->id, 'payment_document_id' => $document->id,
+            'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $document->payee_organization_id, 'payee_contractor_id' => $document->payee_contractor_id,
+            'amount' => $paid, 'currency' => 'RUB', 'payment_method' => 'bank_transfer',
+            'transaction_date' => $early || $case === 'value-date' ? '2026-10-25' : '2026-11-05',
+            'value_date' => $case === 'transaction-date' ? null : ($early ? '2026-10-25' : '2026-11-05'),
+            'status' => 'completed', 'created_by_user_id' => $context->user->id,
+        ]);
+        if (! str_starts_with($case, 'plain')) {
+            PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => 1,
+                'due_date' => $document->due_date, 'amount' => '100000.00', 'paid_amount' => $paid,
+                'status' => $partial ? 'pending' : 'paid', 'payment_transaction_id' => $transaction->id]);
+        }
+        $scope = $case === 'scheduled-scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        $projectScope = $case === 'scheduled-project-scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        foreach (['10' => $octoberPlan, '11' => $novemberPlan] as $month => $expectedPlan) {
+            $date = new CarbonImmutable('2026-'.$month.'-01');
+            $items = collect(app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+                organizationId: (int) $context->organization->id, periodStart: $date, periodEnd: $date->endOfMonth(),
+                projectId: (int) $project->id, currency: 'RUB',
+            ), new CarbonImmutable('2026-10-15'), $scope, $projectScope));
+            $plan = $items->first(fn ($item) => $item->sourceType === 'budget_amount');
+            if ($projectScope === null) {
+                $this->assertNotNull($plan);
+                $this->assertSame($expectedPlan, $plan->remainingAmount);
+            } else {
+                $this->assertNull($plan);
+            }
+            $actual = $items->first(fn ($item) => $item->sourceType === 'payment_transaction');
+            if ($scope === null && $projectScope === null && (string) $month === ($early ? '10' : '11')) {
+                $this->assertNotNull($actual);
+                $this->assertSame($early ? '2026-10-25' : '2026-11-05', $actual->date);
+                $this->assertSame($paid, $actual->remainingAmount);
+                $this->assertSame($document->id, $actual->drillDown['payment_document_id']);
+            } else {
+                $this->assertNull($actual);
+            }
+        }
+        foreach ([$amount, $november] as $stored) {
+            $this->assertSame('100000.00', $stored->fresh()->plan_amount);
+            $this->assertSame('100000.00', $stored->fresh()->forecast_amount);
+        }
+    }
+
+    public static function paymentSourceChains(): array
+    {
+        return [
+            'request with contract' => ['contract', '0.00', '100000.00'],
+            'request with act' => ['act', '0.00', '100000.00'],
+            'two source documents' => ['nested', '0.00', '100000.00'],
+            'source in another organization' => ['organization', '100000.00', '200000.00'],
+            'source in another project of the same contract' => ['project', '100000.00', '200000.00'],
+            'inaccessible source document' => ['scope', '100000.00', '200000.00'],
+            'missing source document' => ['missing', '100000.00', '200000.00'],
+            'cyclic source documents' => ['cycle', '100000.00', '200000.00'],
+        ];
+    }
+
+    #[DataProvider('paymentSourceChains')]
+    public function test_order_resolves_a_contract_only_through_accessible_source_documents(string $case, string $expectedPlan, string $expectedTotal): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'amount' => $amount, 'project' => $project, 'contract' => $contract] = $this->fixture();
+        $source = $document->replicate(['uuid', 'document_number']);
+        $source->forceFill(['document_type' => PaymentDocumentType::PAYMENT_REQUEST, 'document_number' => 'SOURCE-'.uniqid(),
+            'document_date' => '2026-09-01', 'due_date' => '2026-11-20']);
+        if ($case !== 'act') $source->forceFill(['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'source_type' => Contract::class, 'source_id' => $contract->id]);
+        if ($case === 'organization') $source->organization_id = Organization::factory()->verified()->create()->id;
+        if ($case === 'project') {
+            $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+            $contract->update(['is_multi_project' => true, 'project_id' => null]);
+            $contract->projects()->attach([$project->id, $otherProject->id]);
+            $source->project_id = $otherProject->id;
+        }
+        $source->save();
+        if ($case === 'nested') {
+            $parent = $source;
+            $source = $parent->replicate(['uuid', 'document_number']);
+            $source->forceFill(['document_number' => 'MIDDLE-'.uniqid(), 'invoiceable_type' => null, 'invoiceable_id' => null,
+                'source_type' => PaymentDocument::class, 'source_id' => $parent->id])->save();
+        }
+        $document->update(['document_type' => PaymentDocumentType::PAYMENT_ORDER, 'invoice_type' => null,
+            'invoiceable_type' => null, 'invoiceable_id' => null, 'source_type' => PaymentDocument::class,
+            'source_id' => $case === 'missing' ? $source->id + 1000000 : $source->id]);
+        if ($case === 'cycle') $source->update(['invoiceable_type' => null, 'invoiceable_id' => null,
+            'source_type' => PaymentDocument::class, 'source_id' => $document->id]);
+        $scope = $case === 'scope' ? static fn ($query) => $query->where('payment_documents.id', '!=', $source->id) : null;
+        $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+            organizationId: (int) $context->organization->id, periodStart: '2026-10-01', periodEnd: '2026-10-31',
+            projectId: (int) $project->id, currency: 'RUB',
+        ), new CarbonImmutable('2026-10-15'), $scope);
+        $plan = collect($items)->first(fn ($item) => $item->sourceType === 'budget_amount');
+        $this->assertNotNull($plan);
+        $this->assertSame($expectedPlan, $plan->remainingAmount);
+        $total = '0.00';
+        foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
+        $this->assertSame($expectedTotal, $total);
+        $this->assertSame('100000.00', $amount->fresh()->plan_amount);
+        $this->assertSame(1, collect($items)->where('sourceType', 'payment_document')->count());
+    }
+
+    private function contract(AdminApiTestContext $context, Project $project, Contractor $contractor): Contract
+    {
+        return Contract::query()->create(['organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'contractor_id' => $contractor->id, 'number' => 'CAL-'.uniqid(), 'date' => '2026-10-01',
+            'subject' => 'Учебные работы', 'total_amount' => '100000.00', 'status' => 'active']);
+    }
+
+    private function fixture(): array
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = Organization::factory()->verified()->create();
+        $contractor = Contractor::query()->create(['organization_id' => $context->organization->id,
+            'name' => 'Учебный подрядчик', 'source_organization_id' => $payee->id]);
+        $contract = $this->contract($context, $project, $contractor);
+        $act = ContractPerformanceAct::withoutEvents(static fn () => ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id, 'project_id' => $project->id, 'act_document_number' => 'ACT-CAL-1',
+            'act_date' => '2026-10-13', 'period_start' => '2026-10-01', 'period_end' => '2026-10-13',
+            'amount' => '100000.00', 'currency' => 'RUB', 'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+        ]));
+        $period = BudgetPeriod::query()->create(['organization_id' => $context->organization->id,
+            'code' => 'CAL-PER-'.uniqid(), 'name' => 'Октябрь', 'period_type' => 'month',
+            'starts_at' => '2026-10-01', 'ends_at' => '2026-10-31', 'status' => 'open']);
+        $scenario = BudgetScenario::query()->create(['organization_id' => $context->organization->id,
+            'code' => 'CAL-BASE-'.uniqid(), 'name' => 'Проектный', 'scenario_type' => 'base', 'is_default' => false, 'is_active' => true]);
+        $article = BudgetArticle::query()->create(['organization_id' => $context->organization->id,
+            'code' => 'CAL-PAY-'.uniqid(), 'name' => 'Работы', 'budget_kind' => 'bdds',
+            'flow_direction' => 'outflow', 'is_leaf' => true, 'is_active' => true]);
+        $center = ResponsibilityCenter::query()->create(['organization_id' => $context->organization->id,
+            'center_type' => 'project', 'code' => 'CAL-CFO-'.uniqid(), 'name' => 'ЦФО проекта', 'is_active' => true]);
+        $version = BudgetVersion::query()->create(['organization_id' => $context->organization->id,
+            'budget_period_id' => $period->id, 'scenario_id' => $scenario->id, 'budget_kind' => 'bdds',
+            'version_number' => 1, 'name' => 'Проектный бюджет', 'status' => 'active', 'approved_at' => now(), 'activated_at' => now()]);
+        $line = BudgetLine::query()->create(['budget_version_id' => $version->id, 'budget_article_id' => $article->id,
+            'responsibility_center_id' => $center->id, 'project_id' => $project->id, 'contract_id' => $contract->id, 'currency' => 'RUB']);
+        $amount = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-10-01',
+            'plan_amount' => '100000.00', 'forecast_amount' => '100000.00', 'currency' => 'RUB']);
+        $document = PaymentDocument::query()->create(['organization_id' => $context->organization->id,
+            'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $payee->id, 'payee_contractor_id' => $contractor->id, 'contractor_id' => $contractor->id,
+            'document_type' => PaymentDocumentType::INVOICE, 'invoice_type' => InvoiceType::ACT,
+            'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+            'document_number' => 'CAL-INV-'.uniqid(), 'document_date' => '2026-10-15', 'due_date' => '2026-10-20',
+            'direction' => InvoiceDirection::OUTGOING, 'status' => PaymentDocumentStatus::SUBMITTED,
+            'amount' => '100000.00', 'paid_amount' => '0.00', 'remaining_amount' => '100000.00', 'currency' => 'RUB',
+            'budget_article_id' => $article->id, 'responsibility_center_id' => $center->id, 'created_by_user_id' => $context->user->id]);
+
+        return compact('context', 'project', 'contractor', 'contract', 'period', 'scenario', 'article', 'center', 'version', 'line', 'amount', 'document');
+    }
+}

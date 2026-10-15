@@ -132,6 +132,22 @@ final class ProjectDocumentNormativeReferenceExtractorTest extends TestCase
         self::assertSame(83, $references[0]['source_refs'][0]['document_id']);
     }
 
+    public function test_missing_document_quantity_stays_null_with_its_origin_and_review_requirement(): void
+    {
+        foreach (['ФЕР08-02-001-01 Кладка стен', 'ФЕР08-02-001-01 м2'] as $line) {
+            $references = $this->extractor()->extract(['source_documents' => [[
+                'id' => 82, 'filename' => 'volumes.pdf', 'status' => 'ready',
+                'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'], 'text' => $line,
+            ]]], $this->localEstimate(), $this->section());
+            self::assertCount(1, $references);
+            self::assertNull($references[0]['quantity']);
+            self::assertContains('quantity_review_required', $references[0]['validation_flags']);
+            self::assertSame(82, $references[0]['source_refs'][0]['document_id']);
+            self::assertSame($line, $references[0]['source_refs'][0]['excerpt']);
+        }
+    }
+
     private function extractor(): ProjectDocumentNormativeReferenceExtractor
     {
         return new ProjectDocumentNormativeReferenceExtractor;

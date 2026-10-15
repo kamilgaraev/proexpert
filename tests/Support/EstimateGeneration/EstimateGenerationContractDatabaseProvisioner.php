@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '61d2733c1834212005c592d170e75130538c05346ebc6c43d766be20facf7c68',
-        'training' => '15787bd2fbd52e7d5001524d390bc4f4b54a92b87f12cd4dd8a3f77c6d0cc0e5',
-        'pricing' => '15787bd2fbd52e7d5001524d390bc4f4b54a92b87f12cd4dd8a3f77c6d0cc0e5',
+        'geometry' => '73e40f0c572c02eb37ee2eae97126ec2bfabc5da994f12ae50ce4579878d8587',
+        'training' => '3678de49348c47686892f039f1f43078251a2db57c9d704fb7c291bf58caec76',
+        'pricing' => '3678de49348c47686892f039f1f43078251a2db57c9d704fb7c291bf58caec76',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'd64e50289e9154c7b8e3e216874bb454be94baa1b1ed53debd508c3b5292a779';
+    private const FRESH_INVENTORY_DIGEST = 'bc6d6aff82366cdd7cb308daecbb9a17c0b96acb69e026120496ef32d1bfb994';
 
     private const SUBJECT = [
         'geometry' => [
@@ -128,6 +128,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2026_09_09_180000_create_estimate_finance_allocations.php',
         'database/migrations/2026_09_29_000006_create_ai_credit_tables.php',
         'database/migrations/2026_10_11_001100_add_estimate_other_costs_and_resource_precision.php',
+        'database/migrations/2026_10_15_235000_add_commercial_billing_periods.php',
     ];
 
     private const MODULE = [
@@ -282,6 +283,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000200_allow_room_number_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000300_allow_room_location_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000400_preserve_fact_source_locators.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_001600_allow_unknown_estimate_review_costs.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

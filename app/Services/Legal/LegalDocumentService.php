@@ -8,7 +8,7 @@ use Illuminate\Validation\ValidationException;
 
 final class LegalDocumentService
 {
-    private const BUNDLE_PATH = 'legal/2026-10-15.json';
+    private const BUNDLE_PATH = 'legal/2026-10-15.bank.json';
 
     public function bundle(): array
     {

@@ -13,6 +13,67 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_settings_toggles_require_confirmation(): void
+    {
+        foreach (['Отключи уведомления администратора о просроченном авансовом отчёте',
+            'Отключи мне уведомления администратора о просроченном авансовом отчёте',
+            'Включи нам обязательное указание проекта для подотчётного расхода',
+            'Включи обязательное указание проекта для подотчётного расхода'] as $query) {
+            $result = (new AssistantRequestUnderstandingResolver)->resolve($query);
+            self::assertSame('update', $result->primaryIntent);
+            self::assertSame('requires_confirmation', $result->actionPolicy);
+        }
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Замени лимит подотчётных средств на 10000')->actionPolicy);
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Поставь лимит 10000 в таблице настроек')->actionPolicy);
+    }
+
+    public function test_make_project_summary_remains_read_only(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Сделай сводку по проектам');
+
+        self::assertSame('summarize', $result->primaryIntent);
+        self::assertSame('read_only', $result->actionPolicy);
+        foreach (['Сделай список договоров проекта', 'Сделай подборку просроченных задач',
+            'Сделай таблицу договоров проекта', 'Сделай перечень договоров', 'Сделай выборку просроченных задач',
+            'Примени фильтр по активным договорам', 'Примените сортировку по сроку окончания',
+            'Поставь даты окончания договоров в отдельную колонку', 'Выставь сроки окончания договоров отдельной колонкой',
+            'Поставь в таблицу даты окончания договоров'] as $query) {
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy);
+        }
+    }
+
+    public function test_compound_mutation_requires_confirmation_without_overriding_no_actions(): void
+    {
+        foreach (['Покажи инструкцию: установить лимит подотчётных средств',
+            'Покажи инструкцию: поставь лимит подотчётных средств',
+            'Что означает команда: поставь лимит 10000?',
+            "Покажи инструкцию:\nпоставь лимит подотчётных средств",
+            "Пример:\nотключи уведомления администратора",
+            'Вопрос: установить лимит можно только администратору?'] as $query) {
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy, $query);
+        }
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Поставь лимит 10000 и покажи настройки таблицей')->actionPolicy);
+        self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve('Покажи инструкцию и установи лимит подотчётных средств 10000')->actionPolicy);
+        foreach (['Покажи лимит подотчётных средств и замени его на 10000',
+            'Покажи лимит подотчётных средств; замени его на 10000',
+            'Покажи лимит подотчётных средств: замени его на 10000',
+            'Покажи лимит подотчётных средств — замени его на 10000',
+            'Покажи лимит подотчётных средств - замени его на 10000',
+            'Какой лимит подотчётных средств? Увеличь его до 10000',
+            'Покажи настройки и отключи мне уведомления администратора'] as $query) {
+            $result = (new AssistantRequestUnderstandingResolver)->resolve($query);
+            self::assertSame('update', $result->primaryIntent, $query);
+            self::assertSame('requires_confirmation', $result->actionPolicy, $query);
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query.'. Ничего не меняй.')->actionPolicy);
+        }
+        foreach (['Покажи уведомления администратора о просроченном авансовом отчёте и отключи их',
+            'Покажи уведомления администратора о просроченном авансовом отчёте и включи их',
+            'Покажи обязательное указание проекта для подотчётного расхода и отключи это'] as $query) {
+            self::assertSame('update', (new AssistantRequestUnderstandingResolver)->resolve($query)->primaryIntent, $query);
+            self::assertSame('requires_confirmation', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy, $query);
+        }
+    }
+
     public function test_mutation_commands_share_classification_with_project_read_guards(): void
     {
         foreach ([

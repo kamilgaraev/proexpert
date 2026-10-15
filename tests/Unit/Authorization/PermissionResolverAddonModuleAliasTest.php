@@ -23,18 +23,21 @@ final class PermissionResolverAddonModuleAliasTest extends TestCase
     {
         self::assertContains('file-management', ModulePermissionAliases::variants('report_files'));
         self::assertContains('rate-management', ModulePermissionAliases::variants('rate_coefficients'));
+        self::assertContains('advance-accounting', ModulePermissionAliases::variants('advance_settings'));
     }
 
     public function test_owner_module_grants_authorize_registered_read_permissions(): void
     {
         self::assertTrue($this->permits(['file-management' => ['*']], 'report_files', 'view'));
         self::assertTrue($this->permits(['rate-management' => ['*']], 'rate_coefficients', 'view'));
+        self::assertTrue($this->permits(['advance-accounting' => ['*']], 'advance_settings', 'view'));
     }
 
     public function test_full_permission_resolution_uses_active_canonical_modules(): void
     {
         self::assertTrue($this->resolves('report_files.view', ['file-management'], 38));
         self::assertTrue($this->resolves('rate_coefficients.view', ['rate-management'], 38));
+        self::assertTrue($this->resolves('advance_settings.view', ['advance-accounting'], 38));
     }
 
     public function test_module_activation_and_organization_context_remain_required(): void
@@ -43,6 +46,8 @@ final class PermissionResolverAddonModuleAliasTest extends TestCase
         self::assertFalse($this->resolves('rate_coefficients.view', [], 38));
         self::assertFalse($this->resolves('report_files.view', ['file-management'], 41));
         self::assertFalse($this->resolves('rate_coefficients.view', ['rate-management'], 41));
+        self::assertFalse($this->resolves('advance_settings.view', [], 38));
+        self::assertFalse($this->resolves('advance_settings.view', ['advance-accounting'], 41));
     }
 
     public function test_explicit_read_grants_preserve_action_boundaries(): void
@@ -51,6 +56,9 @@ final class PermissionResolverAddonModuleAliasTest extends TestCase
         self::assertFalse($this->permits(['file-management' => ['report_files.view']], 'report_files', 'delete'));
         self::assertTrue($this->permits(['rate-management' => ['rate_coefficients.view']], 'rate_coefficients', 'view'));
         self::assertFalse($this->permits(['rate-management' => ['rate_coefficients.view']], 'rate_coefficients', 'edit'));
+        self::assertTrue($this->permits(['advance-accounting' => ['advance_settings.view']], 'advance_settings', 'view'));
+        self::assertFalse($this->permits(['advance-accounting' => ['advance_settings.view']], 'advance_settings', 'edit'));
+        self::assertFalse($this->permits(['advance-accounting' => ['advance_transactions.view']], 'advance_settings', 'view'));
     }
 
     public function test_other_modules_and_personal_file_grants_do_not_authorize_report_reads(): void
@@ -79,7 +87,7 @@ final class PermissionResolverAddonModuleAliasTest extends TestCase
 
             public function getModulePermissions(UserRoleAssignment $assignment): array
             {
-                return ['file-management' => ['*'], 'rate-management' => ['*']];
+                return ['file-management' => ['*'], 'rate-management' => ['*'], 'advance-accounting' => ['*']];
             }
         };
 
@@ -121,6 +129,7 @@ final class PermissionResolverAddonModuleAliasTest extends TestCase
                 $activeModule = match ($requestedModule) {
                     'report_files' => 'file-management',
                     'rate_coefficients' => 'rate-management',
+                    'advance_settings' => 'advance-accounting',
                     default => $requestedModule,
                 };
 

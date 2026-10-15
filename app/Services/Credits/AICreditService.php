@@ -624,7 +624,12 @@ final class AICreditService
         }
         $this->assertCreditPurchasesEnabled();
 
-        return app(\App\Services\Billing\CommercialCheckoutService::class)->checkoutCredits($organization, $user, $packId, $requestId ?? (string) Str::uuid());
+        $checkout = app(\App\Services\Billing\CommercialCheckoutService::class)->checkoutCredits($organization, $user, $packId, $requestId ?? (string) Str::uuid());
+        if (($checkout['payment_source'] ?? null) === 'tochka' && isset($checkout['bank_invoice']['id'])) {
+            $checkout['confirmation_url'] = rtrim((string) config('app.frontend_url'), '/').'/dashboard/billing?bank_invoice='.rawurlencode($checkout['bank_invoice']['id']);
+        }
+
+        return $checkout;
     }
 
     public function creditPurchasesEnabled(): bool
