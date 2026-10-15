@@ -14,6 +14,29 @@ class EstimateLibraryRepository
 
     protected const CACHE_TAG = 'estimate_libraries';
 
+    public function findCurrentLibrary(int $id, int $organizationId, bool $owned = false, bool $lock = false): EstimateLibrary
+    {
+        $query = EstimateLibrary::query()->useWritePdo()->active()->whereKey($id);
+        $owned ? $query->byOrganization($organizationId) : $query->accessibleBy($organizationId);
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return $query->firstOrFail();
+    }
+
+    public function findCurrentItem(int $id, int $organizationId, bool $owned = false, bool $lock = false): EstimateLibraryItem
+    {
+        $item = EstimateLibraryItem::query()->useWritePdo()->findOrFail($id);
+        $library = $this->findCurrentLibrary((int) $item->library_id, $organizationId, $owned, $lock);
+        $query = EstimateLibraryItem::query()->useWritePdo()->whereKey($id)->where('library_id', $library->id);
+        if ($lock) {
+            $query->lockForUpdate();
+        }
+
+        return $query->firstOrFail()->setRelation('library', $library);
+    }
+
     public function find(int $id): ?EstimateLibrary
     {
         return Cache::tags([self::CACHE_TAG])->remember(
@@ -182,18 +205,14 @@ class EstimateLibraryRepository
 
     public function getItemsByAccessibleLibrary(int $libraryId, int $organizationId): Collection
     {
-        return Cache::tags([self::CACHE_TAG])->remember(
-            "estimate_library.{$libraryId}.items.accessible.{$organizationId}",
-            self::CACHE_TTL,
-            fn () => EstimateLibraryItem::where('library_id', $libraryId)
-                ->whereHas('library', function ($query) use ($organizationId) {
-                    $query->active()->accessibleBy($organizationId);
-                })
-                ->with('positions')
-                ->orderBy('usage_count', 'desc')
-                ->orderBy('name')
-                ->get()
-        );
+        return EstimateLibraryItem::query()->useWritePdo()->where('library_id', $libraryId)
+            ->whereHas('library', function ($query) use ($organizationId) {
+                $query->active()->accessibleBy($organizationId);
+            })
+            ->with('positions')
+            ->orderBy('usage_count', 'desc')
+            ->orderBy('name')
+            ->get();
     }
 
     public function clearCache(?int $id = null): void

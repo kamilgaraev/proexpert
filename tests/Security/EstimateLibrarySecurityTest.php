@@ -12,23 +12,17 @@ use App\Models\EstimateLibraryItem;
 use App\Models\EstimateLibraryItemPosition;
 use App\Models\Organization;
 use App\Models\Project;
-use App\Modules\Core\AccessController;
 use Illuminate\Auth\Access\AuthorizationException;
-use Mockery;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class EstimateLibrarySecurityTest extends TestCase
 {
     public function test_library_application_uses_session_organization_and_requires_edit_permission(): void
     {
-        $access = Mockery::mock(AccessController::class);
-        $access->shouldReceive('hasModuleAccess')->andReturnUsing(fn (int $organizationId, string $slug) => $slug === 'budget-estimates');
-        $this->app->instance(AccessController::class, $access);
-        $this->app->forgetInstance(\App\Domain\Authorization\Services\ModulePermissionChecker::class);
-        $this->app->forgetInstance(\App\Domain\Authorization\Services\PermissionResolver::class);
-        $this->app->forgetInstance(\App\Domain\Authorization\Services\AuthorizationService::class);
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = new AdminApiTestContext($fixture->organization, $fixture->owner, '');
         $otherOrganization = Organization::factory()->create();
         $context->user->organizations()->attach($otherOrganization->id, ['is_active' => true]);
         $context->user->update(['current_organization_id' => $otherOrganization->id]);
