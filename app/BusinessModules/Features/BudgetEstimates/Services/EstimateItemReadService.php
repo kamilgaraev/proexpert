@@ -23,12 +23,18 @@ class EstimateItemReadService
 
     public function paginate(Estimate $estimate, int $perPage): LengthAwarePaginator
     {
-        return EstimatePositionOrder::apply(
+        $items = EstimatePositionOrder::apply(
             $estimate->items()
                 ->with(['workType', 'measurementUnit', 'section'])
         )
             ->orderBy('id', 'asc')
             ->paginate($perPage);
+
+        foreach ($items as $item) {
+            $item->setRelation('estimate', $estimate);
+        }
+
+        return $items;
     }
 
     public function loadDetails(EstimateItem $item): EstimateItem

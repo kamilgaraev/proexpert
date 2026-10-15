@@ -18,6 +18,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -80,9 +81,43 @@ class EstimateItemControllerWorkflowTest extends TestCase
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('meta.total', 1);
 
-        $ids = collect($response->json('data'))->pluck('id')->all();
+        $ids = collect($response->json('data.data'))->pluck('id')->all();
         $this->assertContains($item->id, $ids);
         $this->assertNotContains($foreignItem->id, $ids);
+    }
+
+    public function test_index_reads_parent_estimate_once_for_all_serialized_items(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project, ['vat_rate' => 22]);
+        $unit = $this->createMeasurementUnit($context->organization);
+        foreach (range(1, 3) as $position) {
+            $this->createItem($estimate, $unit, ['position_number' => (string) $position]);
+        }
+        $this->allowAdminAccess();
+        $headers = $context->authHeaders();
+
+        DB::enableQueryLog();
+        try {
+            $response = $this->withHeaders($headers)
+                ->getJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items?per_page=-1&page=1");
+            $estimateQueries = array_filter(DB::getQueryLog(), static fn (array $query): bool =>
+                str_starts_with($query['query'], 'select * from "estimates" ')
+            );
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $response->assertOk();
+        $response->assertJsonPath('meta.total', 3);
+        $response->assertJsonCount(3, 'data.data');
+        foreach ($response->json('data.data') as $item) {
+            self::assertSame($estimate->id, $item['estimate_id']);
+            self::assertEquals(1220, $item['total_amount_with_vat']);
+        }
+        self::assertCount(1, $estimateQueries);
     }
 
     public function test_item_detail_mutations_and_delete_are_scoped_to_project_estimate(): void
