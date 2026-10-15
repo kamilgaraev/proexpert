@@ -11,14 +11,14 @@ use ReflectionClass;
 
 final class AssistantEntitySchemaMetadataTest extends TestCase
 {
-    public function test_unqualified_tables_resolve_the_current_schema_and_keep_the_prefix(): void
+    public function test_unqualified_tables_preserve_a_nullable_schema_and_table_prefix(): void
     {
         $connection = new PostgresConnection(null, 'testing', 'tenant_', ['search_path' => 'tenant_schema']);
         $builder = $connection->getSchemaBuilder();
         $metadata = new AssistantEntitySchemaMetadata;
         $method = (new ReflectionClass($metadata))->getMethod('schemaMetadataTableReference');
 
-        self::assertSame(['tenant_schema', 'tenant_projects'], $method->invoke($metadata, $builder, $connection, 'projects'));
+        self::assertSame([null, 'tenant_projects'], $method->invoke($metadata, $builder, $connection, 'projects'));
         self::assertSame(['reports', 'tenant_monthly'], $method->invoke($metadata, $builder, $connection, 'reports.monthly'));
     }
 }
