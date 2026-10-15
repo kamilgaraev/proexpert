@@ -177,11 +177,72 @@ final class AssistantRequiredProjectReadTest extends TestCase
         }
     }
 
+    public function test_quality_priorities_recognize_questions_about_delegating_work(): void
+    {
+        foreach ([
+            'Какие незакрытые замечания по качеству сейчас есть на нашем объекте? Выдели критические и просроченные: что мне поручить ответственным в первую очередь?',
+            'Кому поручить разбор критических замечаний качества нашего объекта?',
+        ] as $query) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectAttentionIntent::matches($query));
+            self::assertSame(['name' => 'get_project_attention', 'arguments' => ['project_id' => 52, 'focus' => 'quality', 'limit' => 3]],
+                AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        foreach ([
+            'Поручи Ивану закрыть критические замечания качества нашего объекта в первую очередь.',
+            'Назначь ответственных за главные проблемы качества нашего объекта.',
+            'Что мне поручить по качеству и сколько денег потрачено на нашем объекте?',
+        ] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectAttentionIntent::matches($query));
+        }
+    }
+
+    public function test_material_request_queue_is_selected_without_excluded_machinery(): void
+    {
+        $query = 'Какие именно заявки на материалы на нашем объекте просрочены или остались без ответственного? Покажи номера, сроки и кому поручить разбор; заявки на технику сюда не включай.';
+        self::assertSame(['name' => 'get_project_material_request_queue', 'arguments' => ['project_id' => 52]],
+            AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_material_request_queue', $query));
+        self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_site_request_queue', $query));
+        foreach (['Создай заявку на материалы нашего объекта.', 'Какие заявки на материалы нашего объекта просрочены и сколько стоит техника?',
+            'Какие заявки на материалы нашего объекта без ответственного и какие счета оплатить?',
+            'Какие заявки на материалы и запросы информации нашего объекта просрочены или без ответственного?',
+            'Какие заявки на материалы и персонал нашего объекта остались без ответственного?'] as $mixed) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+        }
+    }
+
+    public function test_act_amounts_do_not_become_a_payment_question_when_payments_are_explicitly_excluded(): void
+    {
+        $query = 'По нашему объекту какие акты выполненных работ ещё ждут согласования, а какие уже приняты? Дай количества и суммы отдельно, чтобы на совещании не смешать их с оплатой счетов.';
+        self::assertSame(['name' => 'get_project_act_readiness', 'arguments' => ['project_id' => 52]],
+            AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_act_readiness', $query));
+        foreach (['Какие акты нашего объекта ждут согласования и какие счета нужно оплатить?',
+            'Согласуй акты нашего объекта и оплати счета.', 'Какие акты нашего объекта ждут согласования и какие расходы за октябрь?',
+            'Какие акты нашего объекта ждут согласования, чтобы сравнить расходы и не смешать их с оплатой счетов?'] as $mixed) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+        }
+    }
+
+    public function test_workforce_month_to_date_overrides_model_supplied_historical_dates(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(\Carbon\CarbonImmutable::parse('2026-10-15 10:00:00', 'Europe/Moscow'));
+        try {
+            $query = 'За октябрь по сегодняшний день сколько людей работало на нашем объекте и сколько часов учтено? Раздели согласованные табели и те, которые ещё требуют решения.';
+            $plan = $this->plan($query);
+            $expected = ['project_id' => 52, 'period_start' => '2026-10-01', 'period_end' => '2026-10-15'];
+            self::assertSame(['name' => 'get_project_workforce_summary', 'arguments' => $expected], AssistantRequiredProjectRead::fromPlan($plan));
+            self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($plan, 'get_project_workforce_summary',
+                ['project_id' => 999, 'period_start' => '2025-10-01', 'period_end' => '2025-10-31']));
+        } finally { \Carbon\CarbonImmutable::setTestNow(); }
+    }
+
     public function test_attention_remains_executable_in_the_terminal_read_only_phase(): void
     {
         $service = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class))->newInstanceWithoutConstructor();
         $method = new \ReflectionMethod($service, 'isTerminalReadOnlyTool');
         self::assertTrue($method->invoke($service, 'get_project_attention'));
+        self::assertTrue($method->invoke($service, 'get_project_material_request_queue'));
         self::assertTrue($method->invoke($service, 'get_project_finance_overview'));
         self::assertTrue($method->invoke($service, 'analyze_project_schedule_impact'));
         self::assertTrue($method->invoke($service, 'get_project_workforce_summary'));

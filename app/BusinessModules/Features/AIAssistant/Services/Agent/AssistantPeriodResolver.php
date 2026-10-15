@@ -331,8 +331,9 @@ final class AssistantPeriodResolver
                 continue;
             }
 
-            $year = $month < (int) $now->month ? (int) $now->year : (int) $now->year - 1;
             $suffix = trim($matches['suffix']);
+            $throughToday = preg_match('/^(?:(?:\d{4}(?:\s+года)?|(?:этого|текущего|прошлого)\s+года)\s+)?(?:по\s+(?:сегодняшний|текущий)\s+день|по\s+сегодня|до\s+сегодня(?:шнего\s+дня)?)(?!\pL)/u', $suffix) === 1;
+            $year = $throughToday || $month < (int) $now->month ? (int) $now->year : (int) $now->year - 1;
             if (preg_match('/^([+-]?\d[\p{L}\d+-]*)/u', $suffix, $yearMatch) === 1) {
                 if (preg_match('/^\d{4}$/', $yearMatch[1]) !== 1 || (int) $yearMatch[1] < 1) {
                     return null;
@@ -346,6 +347,9 @@ final class AssistantPeriodResolver
             $date = $this->dateFromParts($year, $month, 1);
             if ($date === null) {
                 return null;
+            }
+            if ($throughToday) {
+                return $date->greaterThan($now) ? null : $this->period($date->startOfMonth(), $now, self::MONTH_LABELS[$month].' '.$year, $sourceText);
             }
 
             return $this->period($date->startOfMonth(), $date->endOfMonth(), self::MONTH_LABELS[$month].' '.$year, $sourceText);

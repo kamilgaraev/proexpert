@@ -270,6 +270,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_organization_supplier_roster' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationSupplierRosterTool::class,
                 'get_organization_project_roster' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationProjectRosterTool::class,
                 'get_project_site_request_queue' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectSiteRequestQueueTool::class,
+                'get_project_material_request_queue' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectMaterialRequestQueueTool::class,
                 'get_project_tender_decisions' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectTenderDecisionsTool::class,
                 'get_project_daily_staff' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectDailyStaffTool::class,
                 'get_organization_user_counts' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationUserCountsTool::class,
