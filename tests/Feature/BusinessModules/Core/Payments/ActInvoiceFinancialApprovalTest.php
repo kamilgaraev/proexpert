@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Payments\Notifications\PaymentApprovedNotification;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentActionPresenter;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentNotificationRecipients;
 use App\Models\Module;
 use App\Models\Contract;
 use App\Models\Contractor;
@@ -963,6 +964,85 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
             try {
                 app(PaymentDocumentService::class)->submit($document, $context->user);
                 $this->fail('A financial route without an eligible approver was created.');
+            } catch (\DomainException $exception) {
+                $this->assertSame(trans_message('payments.validation.approver_unavailable'), $exception->getMessage());
+            }
+            $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->fresh()->status);
+            $this->assertSame(0, $document->approvals()->count());
+            Notification::assertNothingSent();
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public static function inheritedApprovalPermissions(): array
+    {
+        return [
+            'system permission route' => ['system', true],
+            'system default route' => ['system-default', true],
+            'parent organization permission route' => ['parent', true],
+            'parent organization default route' => ['parent-default', true],
+            'unrelated organization' => ['unrelated', false],
+            'inactive system assignment' => ['inactive-role', false],
+            'expired system assignment' => ['expired-role', false],
+            'inactive organization membership' => ['inactive-membership', false],
+            'system role without project access' => ['project-denied', false],
+        ];
+    }
+
+    #[DataProvider('inheritedApprovalPermissions')]
+    public function test_inherited_permissions_create_routes_and_notify_only_accessible_members(string $case, bool $allowed): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $parent = in_array($case, ['parent', 'parent-default', 'unrelated'], true)
+            ? Organization::factory()->verified()->create() : null;
+        $context = AdminApiTestContext::create(organizationAttributes: $parent !== null && $case !== 'unrelated'
+            ? ['parent_organization_id' => $parent->id] : [], roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id])->save();
+        $this->assignPaymentPermissions($context, ['payments.invoice.view', 'payments.invoice.issue']);
+        $approver = $this->createOrganizationApprover($context, $case === 'project-denied' ? 'assigned_projects' : 'all_projects');
+        $this->assignPaymentPermissions(new AdminApiTestContext($context->organization, $approver, ''), ['payments.invoice.view']);
+        if ($parent === null) UserRoleAssignment::query()->where('user_id', $approver->id)->delete();
+        $assignmentContext = AuthorizationContext::getSystemContext();
+        if ($parent !== null) {
+            $assignmentContext = AuthorizationContext::getOrganizationContext((int) $parent->id);
+            $this->activatePayments(new AdminApiTestContext($parent, $approver, ''));
+        }
+        UserRoleAssignment::query()->create([
+            'user_id' => $approver->id, 'role_slug' => $assignmentContext->type === AuthorizationContext::TYPE_SYSTEM ? 'super_admin' : 'web_admin',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM, 'context_id' => $assignmentContext->id,
+            'is_active' => $case !== 'inactive-role', 'expires_at' => $case === 'expired-role' ? now()->subDay() : null,
+        ]);
+        if ($case === 'inactive-membership') $context->organization->users()->updateExistingPivot($approver->id, ['is_active' => false]);
+        if (! str_ends_with($case, '-default')) {
+            PaymentApprovalRule::query()->create(['organization_id' => $context->organization->id,
+                'name' => 'Проверка унаследованных прав', 'conditions' => [], 'is_active' => true,
+                'approval_chain' => [['level' => 1, 'order' => 1, 'permission' => 'payments.transaction.approve']]]);
+        }
+        $recipients = app(PaymentNotificationRecipients::class);
+        if ($allowed) $this->assertTrue($approver->can('payments.transaction.approve', ['organization_id' => $context->organization->id]));
+        $this->assertSame($allowed, $recipients->usersWithAnyPermission((int) $context->organization->id,
+            ['payments.transaction.approve'], $document)->contains('id', $approver->id));
+        if ($allowed) {
+            $this->assertTrue($recipients->usersWithAnyPermission((int) $context->organization->id,
+                ['payments.transaction.register'])->contains('id', $approver->id));
+            app(PaymentDocumentService::class)->submit($document, $context->user);
+            $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->fresh()->status);
+            Notification::assertSentToTimes($approver, PaymentApprovalRequiredNotification::class, 1);
+            $levels = str_ends_with($case, '-default') ? 2 : 1;
+            $this->assertSame($levels, $document->approvals()->count());
+            for ($level = 0; $level < $levels; $level++) {
+                app(PaymentDocumentService::class)->approve($document->fresh(), (int) $approver->id);
+            }
+            $this->assertSame(PaymentDocumentStatus::APPROVED, $document->fresh()->status);
+            Notification::assertSentToTimes($approver, PaymentApprovedNotification::class, 1);
+        } else {
+            try {
+                app(PaymentDocumentService::class)->submit($document, $context->user);
+                $this->fail('An inaccessible inherited role was accepted as an approver.');
             } catch (\DomainException $exception) {
                 $this->assertSame(trans_message('payments.validation.approver_unavailable'), $exception->getMessage());
             }

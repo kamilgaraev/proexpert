@@ -7,7 +7,6 @@ namespace App\BusinessModules\Core\Payments\Services;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Collection;
@@ -58,15 +57,10 @@ final class PaymentNotificationRecipients
 
     public function usersWithAnyPermission(int $organizationId, array $permissions, ?PaymentDocument $document = null): Collection
     {
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-        $contextIds = [$context->id];
-        if ($document?->project_id !== null) {
-            $contextIds[] = AuthorizationContext::getProjectContext((int) $document->project_id, $organizationId)->id;
-        }
-
-        return User::query()->whereHas('roleAssignments', static function ($query) use ($contextIds): void {
-            $query->whereIn('context_id', $contextIds);
-        })->get()->filter(function (User $user) use ($permissions, $organizationId, $document): bool {
+        return User::query()->whereHas('organizations', static function ($query) use ($organizationId): void {
+            $query->where('organizations.id', $organizationId)->where('organization_user.is_active', true);
+        })->whereHas('roleAssignments', static fn ($query) => $query->active())
+            ->get()->filter(function (User $user) use ($permissions, $organizationId, $document): bool {
             foreach ($permissions as $permission) {
                 if ($document !== null ? $this->allows($user, $document, $permission)
                     : $user->can($permission, ['organization_id' => $organizationId])) {
