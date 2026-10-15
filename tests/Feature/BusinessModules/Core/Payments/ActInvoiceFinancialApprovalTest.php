@@ -974,6 +974,79 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_recipient_resolution_does_not_check_unrelated_role_contexts_per_member(): void
+    {
+        Queue::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id])->save();
+        $approver = $this->createOrganizationApprover($context);
+        $resolve = function () use ($context, $document): array {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $ids = app(PaymentNotificationRecipients::class)->usersWithAnyPermission((int) $context->organization->id,
+                    ['payments.transaction.approve'], $document)->pluck('id')->all();
+                sort($ids);
+
+                return [$ids, count(DB::getQueryLog())];
+            } finally {
+                DB::disableQueryLog();
+            }
+        };
+        [$firstIds, $firstQueries] = $resolve();
+        $other = Organization::factory()->verified()->create();
+        $otherContext = AuthorizationContext::getOrganizationContext((int) $other->id);
+        for ($index = 0; $index < 20; $index++) {
+            $user = User::factory()->create(['current_organization_id' => $context->organization->id]);
+            $context->organization->users()->attach($user->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+            UserRoleAssignment::assignRole(user: $user, roleSlug: 'web_admin', context: $otherContext);
+        }
+        [$secondIds, $secondQueries] = $resolve();
+        $this->assertSame([$context->user->id, $approver->id], $firstIds);
+        $this->assertSame($firstIds, $secondIds);
+        $this->assertLessThanOrEqual($firstQueries + 2, $secondQueries);
+    }
+
+    public static function expiredApprovalActions(): array
+    {
+        return ['approval decision' => ['decision'], 'approval reminder' => ['reminder']];
+    }
+
+    #[DataProvider('expiredApprovalActions')]
+    public function test_expired_assignment_cannot_reuse_a_cached_approval_permission(string $action): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $approver = $this->createOrganizationApprover($context);
+        UserRoleAssignment::query()->where('user_id', $approver->id)->update(['expires_at' => now()->addMinute()]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id, 'status' => PaymentDocumentStatus::PENDING_APPROVAL,
+            'submitted_at' => now()->subDays(2)])->save();
+        $approval = PaymentApproval::query()->create(['payment_document_id' => $document->id,
+            'organization_id' => $context->organization->id, 'approver_user_id' => $approver->id,
+            'approval_level' => 1, 'approval_order' => 1, 'status' => 'pending']);
+        $this->assertTrue(app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document, $approver));
+        try {
+            $this->travel(2)->minutes();
+            if ($action === 'decision') {
+                $this->assertFalse(app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document->fresh(), $approver));
+            } else {
+                app()->call([new \App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob, 'handle']);
+                Notification::assertNotSentTo($approver, PaymentApprovalRequiredNotification::class);
+                $this->assertNull($approval->fresh()->last_reminder_at);
+            }
+            $this->assertDatabaseCount('payment_transactions', 0);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public static function inheritedApprovalPermissions(): array
     {
         return [

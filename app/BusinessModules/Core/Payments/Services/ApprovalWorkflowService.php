@@ -6,6 +6,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentApprovalRule;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -294,8 +295,10 @@ class ApprovalWorkflowService
             return false;
         }
 
-        return $user->can($permission, ['organization_id' => $organizationId])
-            || ($projectId !== null && $user->can($permission, [
+        $authorization = app(AuthorizationService::class);
+
+        return $authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])
+            || ($projectId !== null && $authorization->canCurrent($user, $permission, [
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'strict_project_scope' => true,
