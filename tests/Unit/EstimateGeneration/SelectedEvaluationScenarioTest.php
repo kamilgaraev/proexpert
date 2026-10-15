@@ -10,6 +10,22 @@ use PHPUnit\Framework\TestCase;
 
 final class SelectedEvaluationScenarioTest extends TestCase
 {
+    public function test_context_presentation_does_not_invalidate_a_preexisting_confirmation_hash(): void
+    {
+        $result = $this->evaluationFixture();
+        $selector = new SelectedEvaluationScenario;
+        $legacy = $selector->select($result, 'base');
+        self::assertSame('3de23fc1764d7e846eddd750ff51bd7a3c79380a11c21d8be15e0803f739079c', $legacy['scenario_hash']);
+        $result['scenarios'][1]['positions'][0]['proposed_entity_context'] = ['status' => 'proposed',
+            'entity_id' => 'room:1', 'entity_name' => 'Кухня'];
+        self::assertSame($legacy['scenario_hash'], $selector->select($result, 'base')['scenario_hash']);
+        $result['scenarios'][1]['positions'][0]['proposed_entity_context']['entity_name'] = 'Другое название';
+        self::assertSame($legacy['scenario_hash'], $selector->select($result, 'base')['scenario_hash']);
+        $result['scenarios'][1]['positions'][0]['quantity'] = '21';
+        $result = [...(new ScenarioEstimateCalculator)->calculate($result['scenarios'], ['finishing'], [], true), 'profile_version' => 'test:v1'];
+        self::assertNotSame($legacy['scenario_hash'], $selector->select($result, 'base')['scenario_hash']);
+    }
+
     public function test_one_selected_case_preserves_assumptions_and_does_not_sum_other_cases(): void
     {
         $result = $this->evaluationFixture();
