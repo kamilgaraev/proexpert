@@ -130,6 +130,9 @@ final class AssistantOperationalReaderRegistry
         }
         $financeQuery = AssistantProjectMaterialRequestReader::intentQuery($financeQuery);
         $financeQuery = AssistantProjectActReader::intentQuery($financeQuery);
+        if (AssistantAdvanceSettingsReader::matches($query)) {
+            $financeQuery = preg_replace('/подотч[её]тн[а-яё]*\s+расход[а-яё]*/iu', '', $financeQuery) ?? $financeQuery;
+        }
         $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
         if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $financeQuery) === 1)
             || (! $ownPermissions && ! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)

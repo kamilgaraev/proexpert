@@ -23,7 +23,8 @@ final readonly class AssistantProjectContractRosterReader
         $statusQuery = preg_replace('/(?<!\pL)не\s*'.$terminalStatuses.'(?!\pL)/iu', '', $query) ?? $query;
         $hasActiveStatus = preg_match('/(?<!\pL)(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) === 1;
         $hasEndDate = preg_match('/договор[а-яё]*[\s\S]*(?:срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1;
-        return preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)/iu', $query) === 1 && ($hasActiveStatus || $hasEndDate)
+        $hasPluralContracts = preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)|(?:действующие|активные|какие)\s+договора(?!\pL)/iu', $query) === 1;
+        return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
             && ! AssistantMutationIntent::containsRequest($query)
             && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
