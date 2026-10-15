@@ -37,6 +37,21 @@ class YooKassaWebhookControllerTest extends TestCase
         $this->assertSame(1, $this->processor->calls);
     }
 
+    public function test_disabled_provider_rejects_notifications_before_validation_or_processing(): void
+    {
+        foreach ([['tochka', true], ['yookassa', false]] as [$provider, $enabled]) {
+            config(['bank_billing.default_provider' => $provider, 'services.yookassa.payments_enabled' => $enabled]);
+            $this->withServerVariables(['REMOTE_ADDR' => '185.71.76.4'])
+                ->postJson('/api/v1/webhooks/yookassa', [
+                    'type' => 'notification', 'event' => 'payment.succeeded',
+                    'object' => ['id' => 'payment-id', 'status' => 'succeeded'],
+                ])->assertStatus(410);
+            $this->withServerVariables(['REMOTE_ADDR' => '185.71.76.4'])
+                ->postJson('/api/v1/webhooks/yookassa', ['event' => 'invalid'])->assertStatus(410);
+            $this->assertSame(0, $this->processor->calls);
+        }
+    }
+
     public function test_forbidden_or_spoofed_source_returns_403_without_processing(): void
     {
         $payload = ['type' => 'notification', 'event' => 'payment_method.active', 'object' => ['id' => 'm', 'type' => 'bank_card']];

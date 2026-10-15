@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGu
 use App\Models\Contract;
 use App\Models\ContractOrganizationView;
 use App\Models\Contractor;
+use App\Models\ContractParty;
 use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Database\Eloquent\Model;
@@ -18,6 +19,60 @@ use Tests\TestCase;
 
 final class AssistantContractRosterTest extends TestCase
 {
+    public function test_shared_party_names_follow_native_direction_without_disclosing_private_party_fields(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $foreignProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]));
+        $reader = app(AssistantProjectContractRosterReader::class);
+        $contracts = [];
+        foreach (['expense', 'income'] as $direction) {
+            $contract = Contract::withoutEvents(fn () => Contract::query()->create([
+                'organization_id' => $fixture->foreignOrganization->id, 'project_id' => $foreignProject->id,
+                'contract_side_type' => 'general_contract', 'number' => 'SHARED-'.$direction, 'date' => '2026-06-01',
+                'subject' => 'Общий договор', 'status' => 'active', 'end_date' => null, 'is_multi_project' => true,
+                'is_self_execution' => false, 'total_amount' => '123456.78',
+            ]));
+            Model::withoutEvents(fn () => $contract->projects()->attach($project->id));
+            $view = ContractOrganizationView::query()->create(['contract_id' => $contract->id, 'organization_id' => $fixture->organization->id, 'visibility' => 'active', 'version' => 1]);
+            foreach (['first', 'second'] as $side) {
+                $isCurrent = $side === ($direction === 'income' ? 'second' : 'first');
+                ContractParty::withoutEvents(fn () => ContractParty::query()->create([
+                    'contract_id' => $contract->id, 'side' => $side, 'party_key' => $side,
+                    'role' => $side === 'first' ? 'customer' : 'general_contractor',
+                    'linked_organization_id' => $isCurrent ? $fixture->organization->id : $fixture->foreignOrganization->id,
+                    'name' => $isCurrent ? 'Наша организация' : 'Контрагент '.$direction,
+                    'inn' => 'private_inn_marker', 'email' => 'private_email_marker@example.test',
+                    'phone' => 'private_phone_marker', 'snapshot' => ['private' => 'private_snapshot_marker'],
+                ]));
+            }
+            $contracts[$direction] = [$contract, $view];
+        }
+        $result = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(2, $result['data']['total']);
+        $rows = array_column($result['data']['items'], null, 'id');
+        foreach ($contracts as $direction => [$contract]) {
+            $native = app(\App\Services\Contract\ContractSideResolverService::class)->resolve($contract, $fixture->organization->id);
+            $opposite = $native[$native['is_income'] ? 'first_party' : 'second_party'];
+            self::assertSame('Контрагент '.$direction, $opposite['name']);
+            self::assertSame($opposite['name'], $rows[$contract->id]['counterparty']);
+            self::assertStringContainsString('Контрагент '.$direction, $result['server_formatted_answer']);
+        }
+        foreach (['private_inn_marker', 'private_email_marker', 'private_phone_marker', 'private_snapshot_marker', '123456.78', 'Наша организация'] as $excluded) {
+            self::assertStringNotContainsString($excluded, json_encode($result, JSON_UNESCAPED_UNICODE));
+        }
+        $contracts['expense'][0]->secondParty()->update(['name' => 'Изменённый контрагент']);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $result['source_refs'][0]));
+        $contracts['expense'][1]->update(['access_revoked_at' => now()]);
+        $current = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(1, $current['data']['total']);
+        self::assertStringNotContainsString('Изменённый контрагент', $current['server_formatted_answer']);
+        $contracts['income'][1]->update(['visibility' => 'archived']);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $current['source_refs'][0]));
+        self::assertSame(0, $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id])['data']['total']);
+    }
+
     public function test_roster_matches_native_active_placement_status_and_multiproject_scope_without_shared_counterparty_leak(): void
     {
         Queue::fake(); config(['cache.default' => 'array']);

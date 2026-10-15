@@ -32,6 +32,36 @@ use Tests\TestCase;
 
 final class AssistantAdminGovernanceCoverageTest extends TestCase
 {
+    public function test_report_subscription_catalog_uses_native_capabilities_and_current_access_without_creating_schedules(): void
+    {
+        $fixture = $this->fixture();
+        $organizationId = (int) $fixture->organization->id;
+        $authorization = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer::class)
+            ->authorizeCatalog((int) $fixture->owner->id, $organizationId, new \DateTimeZone((string) config('app.timezone', 'UTC')),
+                app(\App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver::class)->catalog());
+        $native = app(\App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction::class)->handle($authorization->context, $authorization);
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionCatalogReader::class);
+        $before = DB::table('report_subscriptions')->count();
+        $result = $reader->read($fixture->owner, $organizationId, ['scope' => 'organization']);
+        self::assertSame(count($native->definitions), $result['data']['catalog_total']);
+        self::assertSame($native->manifestSha256->value, $result['data']['manifest']);
+        self::assertGreaterThan(0, $result['data']['catalog_total']);
+        foreach ($native->definitions as $definition) {
+            self::assertFalse($definition->scheduling->supportsSubscriptions && $definition->scheduling->reproducibleScheduledSnapshot);
+        }
+        self::assertSame(0, $result['data']['supported_total']);
+        self::assertSame(0, $result['data']['available_total']);
+        self::assertSame([], $result['data']['items']);
+        self::assertStringContainsString('для новой автоматической подписки сейчас нет', $result['server_formatted_answer']);
+        self::assertSame($before, DB::table('report_subscriptions')->count());
+        self::assertTrue($reader->matchesReference($fixture->owner, $organizationId, $result['source_refs'][0]));
+        self::assertFalse($reader->matchesReference($fixture->foreignOwner, $organizationId, $result['source_refs'][0]));
+        self::assertInstanceOf(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetReportSubscriptionCatalogTool::class,
+            app(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetReportSubscriptionCatalogTool::class));
+        $fixture->ownerAssignment->update(['is_active' => false]);
+        self::assertFalse($reader->matchesReference($fixture->owner, $organizationId, $result['source_refs'][0]));
+    }
+
     private function fixture(): AssistantRealAuthorizationFixture
     {
         Queue::fake(); config(['cache.default' => 'array']);
@@ -215,10 +245,18 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
         self::assertFalse($limitedDelivery['data']['sections']['subscriptions']['available']);
         self::assertArrayNotHasKey('data', $limitedDelivery['data']['sections']['subscriptions']);
         self::assertTrue($limitedDelivery['data']['sections']['exports']['available']);
-        $records[0]->updateQuietly(['status' => 'paused']);
+        $records[0]->updateQuietly(['status' => 'paused', 'next_run_at' => null]);
         self::assertFalse($delivery->matchesReference($f->owner, $org, $deliveryResult['source_refs'][0]));
         self::assertFalse($subscriptions->matchesReference($f->owner, $org, $result['source_refs'][0]));
-        self::assertSame('paused', $subscriptions->read($f->owner, $org, $args)['data']['items'][0]['status']);
+        $paused = $subscriptions->read($f->owner, $org, $args);
+        self::assertSame('paused', $paused['data']['items'][0]['status']);
+        self::assertNull($paused['data']['items'][0]['next_run_at']);
+        $records[0]->updateQuietly(['status' => 'disabled']);
+        self::assertFalse($subscriptions->matchesReference($f->owner, $org, $paused['source_refs'][0]));
+        $disabledSubscription = $subscriptions->read($f->owner, $org, $args);
+        self::assertSame('disabled', $disabledSubscription['data']['items'][0]['status']);
+        self::assertNull($disabledSubscription['data']['items'][0]['next_run_at']);
+        self::assertStringContainsString('отключены: 1', $disabledSubscription['server_formatted_answer']);
         try { $subscriptions->read($f->member, $org, $args); self::fail('Report manage permission missing'); }
         catch (AuthorizationException) { self::assertTrue(true); }
         $f->ownerAssignment->updateQuietly(['expires_at' => now()->subSecond()]);

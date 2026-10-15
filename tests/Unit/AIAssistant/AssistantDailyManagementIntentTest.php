@@ -12,6 +12,24 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantDailyManagementIntentTest extends TestCase
 {
+    public function test_contract_deadline_lists_preserve_both_dated_and_undated_requests(): void
+    {
+        $reader = \App\BusinessModules\Features\AIAssistant\Services\AssistantProjectContractRosterReader::class;
+        self::assertSame('all', $reader::deadlineFilter('Покажи действующие договоры нашего объекта и ближайшие сроки окончания. Есть ли документы без даты окончания?'));
+        self::assertSame('all', $reader::deadlineFilter('Покажи договоры с датами окончания, а без даты выдели отдельно.'));
+        self::assertSame('all', $reader::deadlineFilter('Какие действующие договоры есть у нашего объекта, включая общие с другими организациями? Покажи номера, контрагентов и даты окончания. Договоры без даты окончания выдели отдельно.'));
+        self::assertSame('undated', $reader::deadlineFilter('Покажи действующие договоры без даты окончания.'));
+        self::assertSame('overdue_or_undated', $reader::deadlineFilter('Покажи просроченные договоры и договоры без даты окончания.'));
+        foreach (['без даты и срока окончания', 'без срока и даты окончания', 'без даты окончания и срока окончания',
+            'без даты или срока окончания', 'без даты/срока окончания', 'где нет даты и срока окончания',
+            'где дата и срок окончания не указаны'] as $missing) {
+            $query = 'Покажи действующие договоры нашего объекта '.$missing;
+            self::assertSame('undated', $reader::deadlineFilter($query), $query);
+            self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52, 'deadline_filter' => 'undated']],
+                AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]]), $query);
+        }
+    }
+
     public function test_real_manager_questions_preserve_every_requested_source(): void
     {
         foreach ([

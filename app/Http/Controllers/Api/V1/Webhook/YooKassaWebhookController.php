@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Webhook;
 use App\Contracts\Billing\CommercialWebhookProcessor;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
+use App\Services\Billing\CommercialPaymentProviderPolicy;
 use App\Services\Billing\YooKassaWebhookPayloadValidator;
 use App\Services\Billing\YooKassaWebhookSourceResolver;
 use Illuminate\Http\JsonResponse;
@@ -23,10 +24,15 @@ final class YooKassaWebhookController extends Controller
         private readonly YooKassaWebhookSourceResolver $sourceResolver,
         private readonly YooKassaWebhookPayloadValidator $validator,
         private readonly CommercialWebhookProcessor $processor,
+        private readonly CommercialPaymentProviderPolicy $providerPolicy,
     ) {}
 
     public function __invoke(Request $request): JsonResponse
     {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return LandingResponse::error(trans_message('billing.provider.configuration_error'), 410);
+        }
+
         $sourceIp = $this->sourceResolver->resolve($request);
 
         if ($sourceIp === null) {
