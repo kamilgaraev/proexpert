@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
@@ -28,9 +29,11 @@ use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Services\Workflow\JournalScheduleTaskResolver;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Route;
 use Mockery\MockInterface;
@@ -275,6 +278,72 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'name' => 'Journal with invalid contract',
         ]);
+    }
+
+    public function test_journal_payload_reuses_parent_read_check_and_keeps_entry_reporting_checks(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $journal = $this->createJournal($context->organization, $project, $context->user);
+        $authorization = $this->allowAdminAccess();
+        Gate::before(static fn (): bool => false);
+
+        for ($number = 1; $number <= 8; $number++) {
+            $this->createEntry($journal, $context->user, ['entry_number' => $number]);
+        }
+
+        $journal->load([
+            'project', 'contract', 'createdBy',
+            'entries' => fn ($query) => $query->with(ConstructionJournalPayloadService::ENTRY_RELATIONS)->withCount('completedWorks'),
+        ])->loadCount(ConstructionJournalPayloadService::journalCountRelations());
+        $service = app(ConstructionJournalPayloadService::class);
+        $service->prepareEntryPage($journal->entries);
+
+        $payload = $service->mapJournal($journal, $context->user, true);
+
+        $this->assertCount(8, $payload['entries']);
+        foreach ($payload['entries'] as $entry) {
+            $this->assertSame($journal->id, $entry['journal_id']);
+            $this->assertSame(['view'], $entry['available_actions']);
+        }
+        $authorization->shouldHaveReceived('can')->withArgs(
+            static fn (User $actor, string $permission, array $scope): bool => $actor->is($context->user)
+                && $permission === 'construction-journal.view'
+                && $scope['project_id'] === $project->id
+                && $scope['strict_project_scope'] === true
+        )->times(9);
+    }
+
+    public function test_standalone_entry_payload_denies_a_foreign_journal(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignJournal = $this->createJournal($foreignOrganization, $foreignProject, $context->user);
+        $entry = $this->createEntry($foreignJournal, $context->user);
+        $this->allowAdminAccess();
+
+        $this->expectException(AuthorizationException::class);
+
+        app(ConstructionJournalPayloadService::class)->mapEntry($entry, $context->user, false);
+    }
+
+    public function test_journal_payload_rechecks_entries_loaded_from_a_different_journal(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $journal = $this->createJournal($context->organization, $project, $context->user);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignJournal = $this->createJournal($foreignOrganization, $foreignProject, $context->user);
+        $entry = $this->createEntry($foreignJournal, $context->user);
+        $journal->setRelation('entries', $journal->entries()->getRelated()->newCollection([$entry]));
+        $this->allowAdminAccess();
+
+        $this->expectException(AuthorizationException::class);
+
+        app(ConstructionJournalPayloadService::class)->mapJournal($journal, $context->user, true);
     }
 
     public function test_journal_pages_batch_entry_history_and_completed_work_counts(): void
@@ -650,9 +719,9 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
         ], $overrides));
     }
 
-    private function allowAdminAccess(): void
+    private function allowAdminAccess(): MockInterface
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        return $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
