@@ -27,7 +27,8 @@ final class UniversalDraftProjector
                         && is_string($item['key'] ?? null) && $item['key'] !== ''
                         && is_string($item['name'] ?? null) && trim($item['name']) !== ''
                         && is_string($item['metadata']['quantity_key'] ?? null)
-                        && is_string($item['unit'] ?? null) && WorkQuantityInputUnit::parse($item['unit']) !== null) {
+                        && ((is_string($item['unit'] ?? null) && WorkQuantityInputUnit::parse($item['unit']) !== null)
+                            || (($item['unit'] ?? null) === null && in_array('unit_requires_confirmation', $item['validation_flags'] ?? [], true)))) {
                         // Retain a real planned work with unknown volume so a user can supply its basis.
                         // Notes and nested operations remain non-payable rows.
                         $item['item_type'] = 'priced_work';

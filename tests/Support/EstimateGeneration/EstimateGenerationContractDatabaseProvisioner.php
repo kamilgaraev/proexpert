@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '61d2733c1834212005c592d170e75130538c05346ebc6c43d766be20facf7c68',
-        'training' => '15787bd2fbd52e7d5001524d390bc4f4b54a92b87f12cd4dd8a3f77c6d0cc0e5',
-        'pricing' => '15787bd2fbd52e7d5001524d390bc4f4b54a92b87f12cd4dd8a3f77c6d0cc0e5',
+        'geometry' => '724f18b420d9a63270dff53bae38fbb5c2ea475bc05c2495a8974dfc7b0470e4',
+        'training' => 'a64287ba93d3073ee3a9e2a07d925a84d403c422eac12d6585c8c977ce7abf81',
+        'pricing' => 'a64287ba93d3073ee3a9e2a07d925a84d403c422eac12d6585c8c977ce7abf81',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'd64e50289e9154c7b8e3e216874bb454be94baa1b1ed53debd508c3b5292a779';
+    private const FRESH_INVENTORY_DIGEST = '2141ee11b1945984f4ad3f5c4d6e20522019773ed8496f5c93be231a99c2a24e';
 
     private const SUBJECT = [
         'geometry' => [
@@ -282,6 +282,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000200_allow_room_number_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000300_allow_room_location_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_000400_preserve_fact_source_locators.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_001600_allow_unknown_estimate_review_costs.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

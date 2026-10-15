@@ -35,7 +35,7 @@ final class EstimateDocumentRowExtractor
             return null;
         }
 
-        $quantity = $this->quantityFromLine($line);
+        $quantity = $this->quantityFromLine(str_replace($referenceCode['raw_code'], ' ', $line));
 
         return [
             'line' => $line,
@@ -107,11 +107,11 @@ final class EstimateDocumentRowExtractor
     }
 
     /**
-     * @return array{value: float, unit: string, basis: string, source: string}
+     * @return array{value: float|null, unit: string|null, basis: string, source: string}
      */
     private function quantityFromLine(string $line): array
     {
-        if (preg_match('/(?<![\p{L}\p{N}])(\d+(?:[,.]\d+)?)\s*(100\s*)?(м2|м²|м3|м³|м|шт\.?|т|кг|компл\.?)(?![\p{L}\p{N}])/ui', $line, $match) === 1) {
+        if (preg_match('/(?<![\p{L}\p{N}.,+\-])(\d+(?:[,.]\d+)?)\s*(100\s*)?(м2|м²|м3|м³|м|шт\.?|т|кг|компл\.?)(?![\p{L}\p{N}])/ui', $line, $match) === 1) {
             $multiplier = trim((string) ($match[2] ?? '')) === '100' ? 100.0 : 1.0;
 
             return [
@@ -122,9 +122,11 @@ final class EstimateDocumentRowExtractor
             ];
         }
 
+        preg_match('/(?<![\p{L}\p{N}])(м2|м²|м3|м³|м|шт\.?|т|кг|компл\.?)(?![\p{L}\p{N}])/ui', $line, $unit);
+
         return [
-            'value' => 1.0,
-            'unit' => 'компл',
+            'value' => null,
+            'unit' => isset($unit[1]) ? $this->normalizeUnit($unit[1]) : null,
             'basis' => 'В проектной документации найдена ссылка на норму без надежного количества.',
             'source' => 'review',
         ];
