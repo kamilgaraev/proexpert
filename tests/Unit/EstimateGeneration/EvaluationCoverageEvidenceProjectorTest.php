@@ -13,6 +13,23 @@ use PHPUnit\Framework\TestCase;
 
 final class EvaluationCoverageEvidenceProjectorTest extends TestCase
 {
+    public function test_coverage_preserves_typed_original_coordinates_instead_of_guessing_legacy_region_units(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $entity = new Entity('wall:1', 1, 2, 3, $version, 'wall', 'wall:1');
+        $source = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator([
+            'kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => [[0.1, 0.2], [0.4, 0.6]]]);
+        $proof = new Evidence('proof:1', 1, 2, 3, $version, 'document:42', 'document', 7,
+            ['x' => 10, 'y' => 20, 'width' => 30, 'height' => 40], 'element:legacy', factSource: $source);
+        $fact = new Fact('fact:1', 1, 2, 3, $version, $entity->id, 'material', 'concrete', null, 0, 'document', 'confirmed', [$proof->id]);
+        $result = (new EvaluationCoverageEvidenceProjector)->project(['covered_requirements' => [['entity_id' => $entity->id, 'fact_ids' => [$fact->id]]]],
+            new ProjectModelSnapshot([$entity], [$fact], [$proof], []));
+        $locator = $result['covered_requirements'][0]['sources'][0]['locators'][0];
+        self::assertSame('normalized_source_v1', $locator['coordinate_space'] ?? null);
+        self::assertEqualsWithDelta($source->region(), $locator['region'], 0.000001);
+        self::assertNull($locator['native_reference']);
+    }
+
     public function test_projects_exact_sources_for_linked_document_entity_without_promoting_scope(): void
     {
         $version = 'sha256:'.str_repeat('a', 64);

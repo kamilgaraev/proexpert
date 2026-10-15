@@ -54,6 +54,20 @@ final readonly class Evidence
         }
     }
 
+    /** Presentation of an existing source; does not measure or confirm the fact. */
+    public function sourceDisplayLocator(): array
+    {
+        $region = $this->factSource !== null ? $this->factSource->region() : $this->region;
+        $native = match ($this->factSource?->value['kind'] ?? null) {
+            'polygon' => null,
+            'native' => $this->factSource->value['value'],
+            default => $this->nativeReference,
+        };
+
+        return ['region' => $region, 'native_reference' => $native,
+            'coordinate_space' => $this->factSource?->region() !== null ? 'normalized_source_v1' : null];
+    }
+
     private function assertRegion(array $region): void
     {
         if (array_keys($region) !== ['x', 'y', 'width', 'height']) {

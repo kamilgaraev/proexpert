@@ -48,9 +48,12 @@ final class EvaluationCoverageEvidenceProjector
                         if ($documentId === false) {
                             continue;
                         }
+                        $displayLocator = $proof->sourceDisplayLocator();
+                        if ($proof->page === null && $displayLocator['native_reference'] === null) {
+                            continue;
+                        }
                         $locators[] = ['source_type' => 'document', 'source_version' => $fact->sourceVersion,
-                            'document_id' => $documentId, 'page' => $proof->page, 'region' => $proof->region,
-                            'native_reference' => $proof->nativeReference];
+                            'document_id' => $documentId, 'page' => $proof->page, ...$displayLocator];
                     }
                     $row['sources'][] = ['fact_id' => $fact->id, 'origin' => $fact->origin, 'locators' => $locators];
                 }

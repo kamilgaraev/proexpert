@@ -248,7 +248,7 @@ final readonly class UniversalEvaluationBuilder
                 $details[$fact->id.':'.$id] = ['fact_id' => $fact->id, 'entity_id' => $fact->entityId, 'parameter' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::parameter($fact->type),
                     'value' => $fact->value, 'unit' => $fact->unit, 'basis' => $fact->origin, 'verification_status' => $fact->status,
                     'evidence_id' => $id, 'source_type' => $proof->sourceType, 'source_version' => $proof->sourceVersion,
-                    'document_id' => $documentId, 'page' => $proof->page, 'region' => $proof->region, 'native_reference' => $proof->nativeReference];
+                    'document_id' => $documentId, 'page' => $proof->page, ...$proof->sourceDisplayLocator()];
             }
         }
 
