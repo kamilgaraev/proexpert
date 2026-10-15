@@ -201,6 +201,7 @@ final class ProjectPortfolioDashboardService
                 'generated_at' => $report['meta']['generated_at'] ?? null,
                 'source_rows_count' => count($report['rows'] ?? []),
             ],
+            rejectDomainErrors: $filters->budgetVersionUuid !== null,
         );
     }
 
@@ -244,8 +245,12 @@ final class ProjectPortfolioDashboardService
         return $input;
     }
 
-    private function reportComponent(string $component, callable $callback, callable $freshness): array
-    {
+    private function reportComponent(
+        string $component,
+        callable $callback,
+        callable $freshness,
+        bool $rejectDomainErrors = false,
+    ): array {
         try {
             $report = $callback();
 
@@ -255,6 +260,10 @@ final class ProjectPortfolioDashboardService
                 'freshness' => $freshness($report),
             ];
         } catch (DomainException|InvalidArgumentException $exception) {
+            if ($rejectDomainErrors) {
+                throw $exception;
+            }
+
             return $this->unavailableComponent($component, $exception->getMessage());
         } catch (Throwable $exception) {
             Log::error('budgeting.project_portfolio_dashboard.component_failed', [

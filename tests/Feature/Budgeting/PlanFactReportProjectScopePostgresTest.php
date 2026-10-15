@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactCalculator;
 use App\BusinessModules\Features\Budgeting\Services\PlanFactReportService;
+use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
@@ -99,10 +100,9 @@ final class PlanFactReportProjectScopePostgresTest extends TestCase
         $fixture['scenario']->update(['is_default' => false]);
         $filters = $this->portfolioFilters($fixture);
 
-        $report = (new PlanFactReportService(new PlanFactCalculator()))->report([
-            ...$filters->planFactInput(),
-            '_skip_data_mart_meta' => true,
-        ]);
+        $component = $this->portfolioPlanFactComponent($filters);
+        self::assertTrue($component['available']);
+        $report = $component['report'];
 
         $plans = array_column($report['rows'], 'plan_amount');
         sort($plans);
@@ -146,6 +146,65 @@ final class PlanFactReportProjectScopePostgresTest extends TestCase
             'outside budget period' => ['period', 'budgeting.plan_fact.errors.version_period_mismatch'],
             'different scenario' => ['scenario', 'budgeting.plan_fact.errors.scenario_mismatch'],
         ];
+    }
+
+    #[DataProvider('invalidPortfolioSelections')]
+    public function test_portfolio_component_rejects_invalid_explicit_selection(string $case, string $messageKey): void
+    {
+        $fixture = $this->fixture();
+        $input = $this->portfolioFilters($fixture)->planFactInput();
+        if ($case === 'organization') {
+            $foreign = $this->fixture();
+            $input['budget_version_uuid'] = $foreign['version']->uuid;
+        } elseif ($case === 'period') {
+            $input['period_start'] = '2026-02-01';
+            $input['period_end'] = '2026-02-28';
+        } else {
+            $scenario = BudgetScenario::query()->create([
+                'organization_id' => $fixture['organization']->id,
+                'code' => 'PF-MISMATCH-'.uniqid(),
+                'name' => 'Other scenario',
+                'scenario_type' => 'base',
+                'is_default' => false,
+                'is_active' => true,
+            ]);
+            $input['scenario_uuid'] = $scenario->uuid;
+        }
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(trans_message($messageKey));
+        $this->portfolioPlanFactComponent(new ProjectPortfolioDashboardFilters(
+            organizationId: $input['organization_id'],
+            periodStart: $input['period_start'],
+            periodEnd: $input['period_end'],
+            asOfDate: $input['period_end'],
+            budgetVersionUuid: $input['budget_version_uuid'],
+            scenarioUuid: $input['scenario_uuid'],
+        ));
+    }
+
+    public function test_automatic_plan_fact_can_remain_unavailable_without_rejecting_the_portfolio(): void
+    {
+        $fixture = $this->fixture();
+        $fixture['scenario']->update(['is_default' => false]);
+        $component = $this->portfolioPlanFactComponent(new ProjectPortfolioDashboardFilters(
+            organizationId: $fixture['organization']->id,
+            periodStart: '2026-01-01',
+            periodEnd: '2026-01-31',
+            asOfDate: '2026-01-31',
+        ));
+
+        self::assertFalse($component['available']);
+        self::assertSame('unavailable', $component['freshness']['status']);
+    }
+
+    private function portfolioPlanFactComponent(ProjectPortfolioDashboardFilters $filters): array
+    {
+        $reflection = new \ReflectionClass(ProjectPortfolioDashboardService::class);
+        $service = $reflection->newInstanceWithoutConstructor();
+        $reflection->getProperty('planFactReportService')->setValue($service, new PlanFactReportService(new PlanFactCalculator()));
+
+        return $reflection->getMethod('planFactComponent')->invoke($service, $filters, true);
     }
 
     private function portfolioFilters(array $fixture): ProjectPortfolioDashboardFilters
