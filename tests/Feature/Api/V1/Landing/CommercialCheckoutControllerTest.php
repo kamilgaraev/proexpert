@@ -169,6 +169,31 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertCount(7, $selected->json('data.target_package_slugs'));
     }
 
+    public function test_annual_resource_quote_charges_the_remaining_paid_period_on_both_routes(): void
+    {
+        $at = \Carbon\CarbonImmutable::now('UTC')->startOfSecond();
+        $start = $at->subMonthsNoOverflow(6);
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($at);
+        $this->authenticatedAs($this->owner);
+        $expected = (int) round(150000 * 12 * $at->diffInSeconds($end) / $start->diffInSeconds($end));
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 4, 'billing_period' => '12_months',
+            'auto_renew_enabled' => false, 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        \App\Models\OrganizationPackageSubscription::query()->create(['organization_id' => $this->organization->id, 'commercial_account_id' => $account->id,
+            'package_slug' => 'working-entry', 'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => '430920.00',
+            'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        foreach (['/billing/commercial/resource-addons/quote', '/billing/resource-addons/quote'] as $route) {
+            $this->postJson('/api/v1/landing'.$route, ['resources' => [['slug' => 'extra_users', 'quantity' => 5]]])
+                ->assertOk()->assertJsonPath('data.monthly_amount_minor', 150000)
+                ->assertJsonPath('data.amount_minor', $expected)->assertJsonPath('data.items.0.amount_minor', $expected);
+        }
+        $account->forceFill(['status' => 'grace'])->save();
+        foreach (['/billing/commercial/resource-addons/quote', '/billing/resource-addons/quote'] as $route) {
+            $this->postJson('/api/v1/landing'.$route, ['resources' => [['slug' => 'extra_users', 'quantity' => 5]]])->assertStatus(409);
+        }
+    }
+
     public function test_quote_rejects_unsupported_billing_period_and_returns_server_annual_price(): void
     {
         $this->authenticatedAs($this->owner)->postJson('/api/v1/landing/billing/commercial/quote', ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'billing_period' => '24_months'])->assertUnprocessable();

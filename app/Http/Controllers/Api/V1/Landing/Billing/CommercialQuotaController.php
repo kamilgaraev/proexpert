@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
+use App\Exceptions\Billing\CommercialBillingConflictException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialResourceAddonQuoteRequest;
 use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Billing\CommercialBillingQueryService;
 use App\Services\Billing\CommercialQuotaService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -23,6 +25,7 @@ class CommercialQuotaController
 {
     public function __construct(
         private readonly CommercialQuotaService $quotaService,
+        private readonly CommercialBillingQueryService $billing,
     ) {}
 
     public function show(Request $request): JsonResponse
@@ -41,11 +44,16 @@ class CommercialQuotaController
     {
         try {
             return LandingResponse::success(
-                $this->quotaService->calculateResourceAddonQuote(
+                $this->billing->quoteResourceAddons(
                     $this->organization($request),
                     $request->validated('resources'),
                 ),
                 trans_message('billing.quota.quote_ready'),
+            );
+        } catch (CommercialBillingConflictException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.grace_blocked'),
+                Response::HTTP_CONFLICT,
             );
         } catch (InvalidArgumentException $exception) {
             return LandingResponse::error(

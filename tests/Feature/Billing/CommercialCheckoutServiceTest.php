@@ -604,6 +604,30 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame(52918000, OrganizationBalance::query()->sole()->balance);
     }
 
+    public function test_resources_bought_after_prepayment_are_quoted_consistently_and_available_immediately(): void
+    {
+        $at = CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($at);
+        OrganizationBalance::query()->create(['organization_id' => $this->organization->id, 'balance' => 100000000, 'currency' => 'RUB']);
+        $current = ['target_package_slugs' => ['working-entry'], 'use_balance' => true, 'auto_renew_consent' => false];
+        $this->checkoutPayload($current);
+        $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'billing_period' => '6_months', 'renew_subscription' => true]);
+        $account = OrganizationCommercialAccount::query()->sole();
+        $this->assertTrue($account->current_period_start_at->isFuture());
+        $resources = [['slug' => 'extra_users', 'quantity' => 10]];
+        $queries = app(\App\Services\Billing\CommercialBillingQueryService::class);
+        $resourceQuote = $queries->quoteResourceAddons($this->organization, $resources);
+        $combined = $queries->quote($this->organization, ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'resources' => $resources]);
+        $this->assertSame($combined['resource_addons_quote']['amount_minor'], $resourceQuote['amount_minor']);
+        $this->assertGreaterThan(1800000, $resourceQuote['amount_minor']);
+        $paid = $this->checkoutPayload($current + ['current_package_slugs' => ['working-entry'], 'resources' => $resources]);
+        $this->assertSame('paid', $paid['status']);
+        $this->assertSame($resourceQuote['amount_minor'], $paid['amount_minor']);
+        $allocation = OrganizationResourceAllocation::query()->active()->sole();
+        $this->assertTrue($at->equalTo($allocation->period_start_at));
+        $this->assertTrue($account->current_period_end_at->equalTo($allocation->period_end_at));
+    }
+
     public function test_checkout_idempotency_key_cannot_be_reused_for_another_billing_period(): void
     {
         $key = fake()->uuid();

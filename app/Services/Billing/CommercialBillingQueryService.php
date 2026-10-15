@@ -55,7 +55,18 @@ final class CommercialBillingQueryService
             throw new CommercialBillingConflictException('Commercial contour cannot change during grace.');
         }
 
-        return $this->quotas->calculateResourceAddonQuote($organization, $resources);
+        $resourceQuote = $this->quotas->calculateResourceAddonQuote($organization, $resources);
+        $current = $this->currentPackageSlugs((int) $organization->getKey());
+        if ($current === [] || $account?->current_period_start_at === null || $account->current_period_end_at === null) {
+            return $resourceQuote;
+        }
+        $quote = $this->calculator->preview($current, $current, $account->offer_type->value === 'full_suite',
+            currentPeriodStartAt: $account->current_period_start_at,
+            currentPeriodEndAt: $account->current_period_end_at,
+            billingPeriod: $account->billing_period ?? '30_days',
+            currentBillingPeriod: $account->billing_period ?? '30_days');
+
+        return CommercialResourcePeriodPricing::apply($resourceQuote, $quote);
     }
 
     private function withResourceAddons(Organization $organization, array $quote, array $resources): array

@@ -689,7 +689,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'quantity' => $quantity,
                 'source' => 'paid_addon',
                 'status' => 'active',
-                'period_start_at' => $order->period_start_at,
+                'period_start_at' => now(),
                 'period_end_at' => $order->period_end_at,
                 'metadata' => [
                     'commercial_order_id' => $order->public_id,
