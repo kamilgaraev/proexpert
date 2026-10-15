@@ -13,6 +13,7 @@ use App\Services\ActReport\ActReportAccessService;
 use App\Services\ActReport\OfficialFormsDownloadService;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Throwable;
 
 class OfficialFormsExportController extends Controller
 {
@@ -42,7 +43,19 @@ class OfficialFormsExportController extends Controller
             $actor = $request->user();
             if (! $actor instanceof User) throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
 
-            return $this->downloads->download($actor, $this->access->currentOrganizationId($request), $actId, $form, (string) $request->validated('format'));
+            $file = $this->downloads->download($actor, $this->access->currentOrganizationId($request), $actId, $form, (string) $request->validated('format'));
+            try {
+                clearstatcache(true, $file->path);
+                $response = response()->download($file->path, $file->filename, ['Content-Type' => $file->mimeType])->deleteFileAfterSend(true);
+                $response->setPrivate();
+                $response->headers->addCacheControlDirective('no-store');
+
+                return $response;
+            } catch (Throwable $exception) {
+                $file->cleanup();
+
+                throw $exception;
+            }
         } catch (BusinessLogicException $exception) {
             $messageKey = match ($exception->getMessage()) {
                 trans_message('act_reports.access_denied') => 'act_reports.access_denied',

@@ -6,6 +6,7 @@ namespace App\Services\ActReport;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\ActReport\OfficialFormsDownloadResult;
 use App\Exceptions\BusinessLogicException;
 use App\Models\ContractPerformanceAct;
 use App\Models\User;
@@ -13,7 +14,6 @@ use App\Services\Contract\ContractAccessService;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 use ZipArchive;
 
@@ -26,7 +26,7 @@ final class OfficialFormsDownloadService
         private readonly AuthorizationService $authorization,
     ) {}
 
-    public function download(User $actor, int $organizationId, int $actId, string $form, string $format): BinaryFileResponse
+    public function download(User $actor, int $organizationId, int $actId, string $form, string $format): OfficialFormsDownloadResult
     {
         if (! in_array($form, ['ks2', 'ks3', 'ks-both'], true) || ! in_array($format, ['xlsx', 'pdf'], true)) {
             throw new BusinessLogicException(trans_message('act_reports.export_failed'), 422);
@@ -90,13 +90,10 @@ final class OfficialFormsDownloadService
                 $filename = $this->filename('KS-2-3', $act, 'zip');
                 $mime = 'application/zip';
             }
-            clearstatcache(true, $downloadPath);
-            $response = response()->download($downloadPath, $filename, ['Content-Type' => $mime])->deleteFileAfterSend(true);
-            $response->setPrivate();
-            $response->headers->addCacheControlDirective('no-store');
+            $result = new OfficialFormsDownloadResult($downloadPath, $filename, $mime);
             $servedPath = $downloadPath;
 
-            return $response;
+            return $result;
         } catch (BusinessLogicException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
