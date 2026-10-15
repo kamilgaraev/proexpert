@@ -55,7 +55,9 @@ final readonly class FileStorageService
                 $sha256,
             );
         } finally {
-            fclose($stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
         }
 
         return [
