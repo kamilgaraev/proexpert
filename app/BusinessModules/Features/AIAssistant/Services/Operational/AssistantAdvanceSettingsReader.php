@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
 use App\DTOs\AdvanceAccountSettingDTO;
 use App\Models\AdvanceAccountSetting;
 use App\Models\User;
@@ -24,6 +25,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
         $hasProjectRequirement = preg_match('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект/iu', $query) === 1;
         return self::hasIntent($query)
+            && ! AssistantTemporalIntent::hasNonCurrentScope($query)
             && ($hasProjectRequirement || preg_match('/настройк|лимит|правил|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)|остал[а-яё]*|конкретн|по\s+отч[её]ту|до\s+срок/iu', $query) !== 1

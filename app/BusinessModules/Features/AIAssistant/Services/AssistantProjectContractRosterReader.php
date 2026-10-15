@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractOrganizationListScope;
@@ -27,6 +28,7 @@ final readonly class AssistantProjectContractRosterReader
         return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
             && ! AssistantMutationIntent::containsRequest($query)
+            && ! AssistantTemporalIntent::hasExplicitWindow($query)
             && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
             && preg_match('/написан|содержани|текст|услови|пункт/iu', $query) !== 1
             && preg_match('/исполнени[ея]|выполнени[ея]|обязательств/iu', $query) !== 1
