@@ -1407,7 +1407,10 @@ final class DesignManagementApiTest extends TestCase
                 $this->assertSame(trans_message('design_links.errors.target_out_of_scope'), $exception->getMessage());
             }
             $this->assertSame('pending', $review->fresh()->status);
-            $site->forceFill(['organization_id' => $context->organization->id, 'updated_at' => $siteFacts['updated_at']])->save();
+            DB::table('site_requests')->where('id', $site->id)->update([
+                'organization_id' => $context->organization->id,
+                'updated_at' => $siteFacts['updated_at'],
+            ]);
             $service->decideReview($context->user, $context->organization->id, $review->id, $decision, 'Проверено', 1);
             $stored = DesignSourceLink::query()->findOrFail($link['id']);
             $this->assertSame(match ($decision) { 'keep_old' => 'active', 'move_to_new' => 'replaced', default => 'ended' }, $stored->status);

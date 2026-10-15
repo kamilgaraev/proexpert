@@ -619,6 +619,38 @@ final class QualityControlMobileTest extends TestCase
         ]);
     }
 
+    public function test_private_photo_references_are_rejected_on_mobile_create_and_resolve(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $defect = $this->createDefect($context, $project, 'in_progress', 'major');
+        $this->allowAccess();
+        $files = $this->mock(FileService::class);
+        $files->shouldNotReceive('temporaryUrl');
+        $files->shouldNotReceive('url');
+        $files->shouldNotReceive('putPrivate');
+        foreach ([
+            's3://org-999999/hr/private.pdf',
+            "org-{$context->organization->id}/quality-control/defects/999999/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
+        ] as $reference) {
+            $photo = ['type' => 'after', 'url' => $reference, 'metadata' => ['storage_identity_verified' => true]];
+            $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/quality-control/defects', [
+                'project_id' => $project->id,
+                'title' => 'Rejected mobile reference',
+                'severity' => 'major',
+                'inspection_required' => true,
+                'photos' => [$photo],
+            ])->assertStatus(422);
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", ['photos' => [$photo]])
+                ->assertStatus(422);
+            self::assertSame(QualityDefectStatusEnum::IN_PROGRESS, $defect->fresh()->status);
+            self::assertSame(0, $defect->photos()->count());
+            self::assertSame(0, $defect->statusHistory()->count());
+            $this->assertDatabaseMissing('quality_defects', ['title' => 'Rejected mobile reference']);
+        }
+    }
+
     private function allowAccess(bool $canResolve = true): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {

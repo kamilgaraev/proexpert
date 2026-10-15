@@ -8,6 +8,7 @@ use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectWorkflowService;
+use App\BusinessModules\Features\QualityControl\Services\QualityDefectPhotoReferencePolicy;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Storage\FileService;
@@ -167,21 +168,24 @@ final class QualityDefectResource extends JsonResource
         QualityDefect $defect,
     ): array
     {
-        $rawUrl = trim((string) $photo->url);
-        $path = $this->resolvePhotoStoragePath($rawUrl);
+        $rawUrl = (string) $photo->url;
+        $references = app(QualityDefectPhotoReferencePolicy::class);
+        $belongsToDefect = $references->belongsToDefect($photo, $defect);
+        $path = $belongsToDefect ? $references->storagePath($rawUrl, $defect) : null;
+        $previewUrl = $belongsToDefect ? $references->externalUrl($rawUrl) : null;
         $organization = $defect->relationLoaded('organization')
             ? $defect->organization
             : null;
-        $previewUrl = $this->resolvePhotoPreviewUrl(
-            $rawUrl,
-            $path,
-            $organization
-        );
+        if ($path !== null) {
+            $fileService = app(FileService::class);
+            $previewUrl = $fileService->temporaryUrl($path, 60, $organization)
+                ?? $fileService->url($path, $organization);
+        }
 
         return [
             'id' => $photo->id,
             'type' => $photo->type,
-            'url' => $rawUrl,
+            'url' => $path !== null || $previewUrl !== null ? $rawUrl : '',
             'path' => $path,
             'preview_url' => $previewUrl,
             'caption' => $photo->caption,
@@ -193,55 +197,4 @@ final class QualityDefectResource extends JsonResource
         ];
     }
 
-    private function resolvePhotoPreviewUrl(
-        string $rawUrl,
-        ?string $path,
-        ?Organization $organization
-    ): ?string
-    {
-        if ($rawUrl === '') {
-            return null;
-        }
-
-        $scheme = parse_url($rawUrl, PHP_URL_SCHEME);
-
-        if (in_array($scheme, ['http', 'https'], true)) {
-            return $rawUrl;
-        }
-
-        if ($path === null) {
-            return null;
-        }
-
-        $fileService = app(FileService::class);
-
-        return $fileService->temporaryUrl($path, 60, $organization)
-            ?? $fileService->url($path, $organization);
-    }
-
-    private function resolvePhotoStoragePath(string $rawUrl): ?string
-    {
-        if ($rawUrl === '') {
-            return null;
-        }
-
-        $scheme = parse_url($rawUrl, PHP_URL_SCHEME);
-
-        if ($scheme === null || $scheme === '') {
-            return ltrim($rawUrl, '/');
-        }
-
-        if ($scheme !== 's3') {
-            return null;
-        }
-
-        $host = parse_url($rawUrl, PHP_URL_HOST);
-        $path = parse_url($rawUrl, PHP_URL_PATH);
-        $parts = array_filter([
-            $host,
-            $path !== null ? ltrim($path, '/') : null,
-        ]);
-
-        return $parts === [] ? null : implode('/', $parts);
-    }
 }

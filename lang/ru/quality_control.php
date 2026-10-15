@@ -89,5 +89,6 @@ return [
         'comment_required' => 'Укажите комментарий',
         'photo_type_required' => 'Укажите тип фото',
         'photo_required' => 'Добавьте фото или ссылку на фото',
+        'photo_reference_invalid' => 'Выберите фото этого замечания или загрузите новое',
     ],
 ];
