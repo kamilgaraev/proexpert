@@ -1194,6 +1194,24 @@ class CommercialCheckoutServiceTest extends TestCase
         }
     }
 
+    public function test_bank_sync_reports_a_busy_lock_and_recovers_after_release(): void
+    {
+        $this->prepareBankBilling();
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(false);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $lock = \Illuminate\Support\Facades\Cache::lock('billing:tochka:sync', 1800);
+        $this->assertTrue($lock->get());
+        $service = app(\App\Services\Billing\Bank\BankSyncService::class);
+        try {
+            $this->assertSame(['ready' => false, 'processed' => 0, 'failed' => 0, 'locked' => true], $service->process());
+            $this->assertDatabaseCount('commercial_bank_statements', 0);
+        } finally {
+            $lock->release();
+        }
+        $this->assertSame(['ready' => false, 'processed' => 0, 'failed' => 0], $service->process());
+    }
+
     public function test_bank_statement_polling_activates_without_webhooks_and_replays_safely(): void
     {
         $this->prepareBankBilling();
@@ -1219,6 +1237,34 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame(0, $again['processed']);
         $this->assertNotNull($invoice->refresh()->activated_at);
         $this->assertDatabaseCount('commercial_bank_allocations', 1);
+    }
+
+    public function test_bank_unexpected_pagination_is_visible_and_never_marks_an_incomplete_statement_done(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $date = now('Europe/Moscow')->toDateString();
+        config(['bank_billing.start_date' => $date]);
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('initializeStatement')->once()->andReturn('unsupported-pages');
+        $client->shouldReceive('statement')->andReturn(['Meta' => ['totalPages' => 2], 'Data' => ['Statement' => [[
+            'accountId' => config('bank_billing.account_id'), 'statementId' => 'unsupported-pages', 'status' => 'Ready',
+            'startDateTime' => $date, 'endDateTime' => $date,
+            'Transaction' => [$this->bankTransaction($invoice, 'incomplete-statement', $invoice->amount_minor)],
+        ]]]]);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
+        $documents->shouldReceive('store')->andReturnUsing(fn ($document) => $document);
+        $this->app->instance(\App\Services\Billing\Bank\BankDocumentService::class, $documents);
+        $result = app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        $this->assertSame(1, $result['failed']);
+        $this->assertSame(0, $result['processed']);
+        $this->assertDatabaseHas('commercial_bank_statements', ['statement_id' => 'unsupported-pages', 'status' => 'error',
+            'failure_code' => 'statement_pagination_unsupported', 'processed_at' => null]);
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertNull($invoice->refresh()->activated_at);
     }
 
     public function test_bank_malformed_statement_record_does_not_hide_later_payments(): void

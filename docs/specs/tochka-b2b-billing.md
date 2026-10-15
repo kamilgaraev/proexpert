@@ -94,9 +94,13 @@
 
 ## Официальный протокол
 
-- [Документация Точки: методы и webhook](https://enter.tochka.com/doc/v2/redoc/section/Opisanie-metodov).
-- [Официальная спецификация API Точки, раздел выписок](https://enter.tochka.com/doc/v2/redoc).
+- [Точка: получение выписок](https://developers.tochka.com/docs/tochka-api/opisanie-metodov/vypiski).
+- [Точка: Get Statement](https://developers.tochka.com/docs/tochka-api/api/get-statement-open-banking-v-1-0-accounts-account-id-statements-statement-id-get).
+- [Актуальная OpenAPI-спецификация Точки](https://enter.tochka.com/doc/openapi/swagger.json).
+- [Точка: подпись webhook](https://developers.tochka.com/docs/tochka-api/opisanie-metodov/vebhuki).
 - [Публичный JWK Точки](https://enter.tochka.com/doc/openapi/static/keys/public).
 - [ФНС: АУСН](https://ausn.nalog.gov.ru/).
 
 Тариф API, доступность webhook на счёте и банковские комиссии подтверждаются в личном кабинете/поддержке банка. Приложение не обещает неподтверждённых тарифных условий.
+
+Проверенная 15.10.2026 официальная спецификация `v1.102.0-stable` задаёт для Get Statement только path-параметры `accountId` и `statementId`; query-параметров пагинации нет. Общая модель `Links` содержит только `self`, а `Meta.totalPages` сама по себе не задаёт контракт постраничного получения. Параметры `page`, `offset`, `cursor` и ссылка `next` не выдумываются. Если банк неожиданно вернёт `totalPages > 1`, выписка не считается полной: фиксируется видимая причина `statement_pagination_unsupported` без токена и тела ответа. Для такого ответа потребуется официальный контракт банка; полная обработка этого неподтверждённого сценария не заявляется. Вопрос включён в инструкцию подключения.

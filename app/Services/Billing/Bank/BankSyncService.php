@@ -23,7 +23,7 @@ final class BankSyncService
         app(BankInvoiceService::class)->expireUnpaid();
         $ready = $this->client->ready();
 
-        return Cache::lock('billing:tochka:sync', 1800)->get(function () use ($limit, $ready): array {
+        $result = Cache::lock('billing:tochka:sync', 1800)->get(function () use ($limit, $ready): array {
             $counts = ['ready' => $ready, 'processed' => 0, 'failed' => 0];
             if ($ready) {
                 $account = (string) config('bank_billing.account_id');
@@ -48,9 +48,11 @@ final class BankSyncService
                             $counts['processed']++;
                         }
                     } catch (Throwable $exception) {
-                        $statement->forceFill(['status' => 'error', 'failure_code' => 'statement_failed'])->save();
+                        $failureCode = $exception instanceof RuntimeException && $exception->getMessage() === 'tochka_statement_pagination_unsupported'
+                            ? 'statement_pagination_unsupported' : 'statement_failed';
+                        $statement->forceFill(['status' => 'error', 'failure_code' => $failureCode])->save();
                         $counts['failed']++;
-                        Log::error('Bank statement processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class]);
+                        Log::error('Bank statement processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class, 'failure_code' => $failureCode]);
                     }
                 }
             }
@@ -77,7 +79,9 @@ final class BankSyncService
                 });
 
             return $counts;
-        }) ?? ['ready' => $ready, 'processed' => 0, 'failed' => 0, 'locked' => true];
+        });
+
+        return is_array($result) ? $result : ['ready' => $ready, 'processed' => 0, 'failed' => 0, 'locked' => true];
     }
 
     private function seed(string $account, string $date, bool $periodic = false): void
