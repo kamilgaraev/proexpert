@@ -12,6 +12,15 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantDailyManagementIntentTest extends TestCase
 {
+    public function test_contract_deadline_lists_preserve_both_dated_and_undated_requests(): void
+    {
+        $reader = \App\BusinessModules\Features\AIAssistant\Services\AssistantProjectContractRosterReader::class;
+        self::assertSame('all', $reader::deadlineFilter('Покажи действующие договоры нашего объекта и ближайшие сроки окончания. Есть ли документы без даты окончания?'));
+        self::assertSame('all', $reader::deadlineFilter('Покажи договоры с датами окончания, а без даты выдели отдельно.'));
+        self::assertSame('undated', $reader::deadlineFilter('Покажи действующие договоры без даты окончания.'));
+        self::assertSame('overdue_or_undated', $reader::deadlineFilter('Покажи просроченные договоры и договоры без даты окончания.'));
+    }
+
     public function test_real_manager_questions_preserve_every_requested_source(): void
     {
         foreach ([

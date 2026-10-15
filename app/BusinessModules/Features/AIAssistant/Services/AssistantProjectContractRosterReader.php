@@ -6,7 +6,9 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantTemporalIntent;
+use App\Enums\Contract\ContractPartySideEnum;
 use App\Models\Contract;
+use App\Models\ContractParty;
 use App\Models\User;
 use App\Services\Contract\ContractOrganizationListScope;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -23,6 +25,9 @@ final readonly class AssistantProjectContractRosterReader
         $query = preg_replace('/не\s+(?:называй|считай)[^.!?;]*просроч[а-яё]*/iu', '', $query) ?? $query;
         $overdue = preg_match('/(?<!\pL)просроч[а-яё]*(?!\pL)/iu', $query) === 1;
         $undated = preg_match('/без\s+(?:указанн[а-яё]*\s+)?(?:дат[а-яё]*|срок[а-яё]*)|не\s+указан[а-яё]*\s+дат[а-яё]*|нет\s+(?:дат[а-яё]*|срок[а-яё]*)/iu', $query) === 1;
+        if ($undated && ! $overdue && preg_match('/ближайш[а-яё]*\s+(?:срок[а-яё]*|дат[а-яё]*)\s+окончан|(?<!\pL)с\s+(?:указанн[а-яё]*\s+)?дат[а-яё]*\s+окончан/iu', $query) === 1) {
+            return 'all';
+        }
 
         return $overdue && $undated ? 'overdue_or_undated' : ($overdue ? 'overdue' : ($undated ? 'undated' : 'all'));
     }
@@ -76,10 +81,18 @@ final readonly class AssistantProjectContractRosterReader
                 'contracts.contractor_id', 'contracts.is_self_execution', 'contracts.updated_at'])->get();
             $counterparties = $this->access->entityQuery($actor, $organizationId, 'contractor')?->whereKey($records->where('organization_id', $organizationId)->pluck('contractor_id')->filter()->all())
                 ->select(['id', 'name'])->get()->keyBy('id');
+            $parties = ContractParty::query()->whereIn('contract_id', $records->pluck('id'))
+                ->get(['contract_id', 'side', 'linked_organization_id', 'name'])->groupBy('contract_id');
             $rows = [];
             foreach ($records as $record) {
                 $own = (int) $record->organization_id === $organizationId;
                 $name = $own ? $counterparties?->get($record->contractor_id)?->name : null;
+                $first = $parties->get($record->id)?->firstWhere('side', ContractPartySideEnum::FIRST);
+                $second = $parties->get($record->id)?->firstWhere('side', ContractPartySideEnum::SECOND);
+                if ($first !== null && $second !== null) {
+                    $opposite = ! $record->is_self_execution && (int) $second->linked_organization_id === $organizationId ? $first : $second;
+                    $name = (int) $opposite->linked_organization_id === $organizationId ? null : (trim((string) $opposite->name) ?: null);
+                }
                 $rows[] = ['id' => (int) $record->id, 'number' => $record->getRawOriginal('number'), 'status' => $record->getRawOriginal('status'),
                     'start_date' => $record->getRawOriginal('start_date'), 'end_date' => $record->getRawOriginal('end_date'),
                     'counterparty' => $name, 'self_execution' => $own && (bool) $record->is_self_execution,
@@ -100,7 +113,7 @@ final readonly class AssistantProjectContractRosterReader
                 'overdue_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf)) : null,
                 'ending_soon_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) >= $asOf && substr($row['end_date'], 0, 10) <= $endingBy)) : null,
                 'missing_end_date_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] === null)) : null];
-            $version = AssistantSourceReferenceIdentity::key(['schema' => 2, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
+            $version = AssistantSourceReferenceIdentity::key(['schema' => 3, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'deadline_filter' => $filter, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
             return ['status' => 'success', 'source_refs' => [$ref], 'data' => $payload, 'server_formatted_answer' => self::format($payload)];

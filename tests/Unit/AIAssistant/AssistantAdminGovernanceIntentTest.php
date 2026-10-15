@@ -12,6 +12,19 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantAdminGovernanceIntentTest extends TestCase
 {
+    public function test_subscription_capabilities_use_catalog_instead_of_personal_schedules_or_project_search(): void
+    {
+        foreach ([
+            'На какие отчёты я могу настроить автоматическую подписку и какие форматы доступны? Посмотри именно поддержку подписок, а не мои существующие расписания.',
+            'Какие отчёты поддерживают автоматические подписки?',
+            'Доступна ли автоматическая подписка на отчёты нашей организации?',
+        ] as $query) {
+            $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            self::assertSame(['name' => 'get_report_subscription_catalog', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
+            self::assertContains('get_report_subscription_catalog', AssistantToolSurface::names(['get_report_subscription_catalog'], $plan));
+        }
+    }
+
     public function test_current_own_roles_with_temporary_assignments_do_not_select_assignable_roles(): void
     {
         $query = 'Какие роли у меня сейчас в этой организации? Есть ли временные назначения и когда они заканчиваются?';
@@ -38,6 +51,7 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             ['Насколько заполнен профиль нашей организации? Какие основные настройки и сведения о деятельности уже указаны?', 'get_organization_business_profile'],
             ['Какие отчёты у меня сохранены в избранном и какие я открывал недавно? Хочу быстро вернуться к нужному отчёту.', 'get_own_report_workspace'],
             ['Есть ли у нас настроенные регулярные отчёты? Какие активны, когда следующий запуск и в каком формате они приходят?', 'get_own_report_subscriptions'],
+            ['Какие подписки на отчёты у меня сейчас настроены в нашей организации?', 'get_own_report_subscriptions'],
             ['Подтверждена ли наша организация? Какой сейчас статус проверки и что руководителю ещё нужно заполнить?', 'get_organization_verification'],
             ['Какая у меня сейчас роль в нашей организации? До какой даты действует мой доступ?', 'get_own_organization_roles'],
             ['Какие модули сейчас включены у нашей организации? Покажи действующие возможности, чтобы понимать, чем команда может пользоваться.', 'get_organization_effective_modules'],
@@ -87,6 +101,9 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             'Какие пакеты МОСТ сейчас действуют и покажи расходы организации?',
             'Какие функциональные модули доступны без платёжных подробностей и сколько расходов у нашей организации?',
             'Что я могу делать с пользователями и договорами и сколько просроченных счетов?',
+            'Какие отчёты поддерживают автоматические подписки и какие мои подписки уже активны?',
+            'Какие пакеты МОСТ дают доступ и какие отчёты поддерживают подписки?',
+            'Создай автоматическую подписку на доступные отчёты',
             'Сколько единиц МОСТ доступно для помощника и покажи расходы организации?',
         ] as $query) {
             self::assertNull(AssistantOperationalReaderRegistry::intent($query), $query);

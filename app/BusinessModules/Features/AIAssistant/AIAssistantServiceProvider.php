@@ -282,6 +282,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'get_own_organization_roles' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOwnRolesTool::class,
                 'get_organization_verification' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationVerificationTool::class,
                 'get_own_report_subscriptions' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetReportSubscriptionsTool::class,
+                'get_report_subscription_catalog' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetReportSubscriptionCatalogTool::class,
                 'get_own_admin_permissions' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOwnAdminPermissionsTool::class,
                 'get_organization_credit_balance' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationCreditBalanceTool::class,
                 'get_organization_active_packages' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetOrganizationActivePackagesTool::class,
