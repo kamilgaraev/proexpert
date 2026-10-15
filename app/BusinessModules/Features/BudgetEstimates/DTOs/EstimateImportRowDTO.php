@@ -57,6 +57,7 @@ class EstimateImportRowDTO
         public bool $isFooter = false,
         public ?int $worksheetIndex = null,
         public ?string $worksheetName = null,
+        public bool $mathPriceDerivedFromTotal = false,
     ) {}
     
     public function toArray(): array
@@ -102,6 +103,7 @@ class EstimateImportRowDTO
             'classification_source' => $this->classificationSource,
             'warnings' => $this->warnings,
             'has_math_mismatch' => $this->hasMathMismatch,
+            'math_price_derived_from_total' => $this->mathPriceDerivedFromTotal,
             'works_list' => $this->worksList,
             'totals' => $this->totals,
             'is_footer' => $this->isFooter,
@@ -175,6 +177,7 @@ class EstimateImportRowDTO
             isFooter: $data['is_footer'] ?? false,
             worksheetIndex: isset($data['worksheet_index']) ? (int) $data['worksheet_index'] : null,
             worksheetName: isset($data['worksheet_name']) ? (string) $data['worksheet_name'] : null,
+            mathPriceDerivedFromTotal: (bool) ($data['math_price_derived_from_total'] ?? false),
         );
     }
 }
