@@ -39,6 +39,9 @@ class CommercialCheckoutService
 
     public function checkout(Organization $organization, User $user, array $input): array
     {
+        if (! (bool) $input['use_balance'] && $this->providerPolicy->checkoutProvider() === 'tochka') {
+            $input['auto_renew_consent'] = false;
+        }
         [$order, $payment, $created] = DB::transaction(function () use ($organization, $user, $input): array {
             Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
             $account = OrganizationCommercialAccount::query()
@@ -49,9 +52,6 @@ class CommercialCheckoutService
             $this->selfServiceGuard->assertCanMutate($account);
             $input['billing_period'] = $input['billing_period'] ?? $account?->billing_period ?? '30_days';
             $useBalance = (bool) $input['use_balance'];
-            if (! $useBalance) {
-                $this->providerPolicy->assertCanCharge((int) $organization->getKey());
-            }
 
             if ($account?->status->value === 'grace') {
                 throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
@@ -67,6 +67,24 @@ class CommercialCheckoutService
                 $this->assertSameExistingRequest($existing, $input);
 
                 return [$existing, $existing->latestPayment, false];
+            }
+
+            if ($account !== null && $this->providerPolicy->checkoutProvider() === 'tochka') {
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertNoFundedRenewal($account);
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->invalidateRenewalInvoices($account, $user);
+            }
+            if ($this->providerPolicy->checkoutProvider() === 'tochka' && CommercialOrder::query()
+                ->where('organization_id', $organization->id)->where('status', 'pending_payment')
+                ->where('kind', '!=', 'ai_credits')->exists()) {
+                throw new CommercialCheckoutConflictException('A commercial order is awaiting payment.');
+            }
+            if (! $useBalance) {
+                $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            }
+
+            if (! $useBalance && $this->providerPolicy->checkoutProvider() === 'tochka') {
+                app(\App\Services\Billing\Bank\BankBillingAccess::class)->organization($user, (int) $organization->id, true);
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertBuyer($organization);
             }
 
             if ((bool) $input['full_suite'] && $input['target_package_slugs'] !== []) {
@@ -148,13 +166,14 @@ class CommercialCheckoutService
                 'currency' => $quote['currency'],
                 'period_start_at' => $quote['period_start_at'],
                 'period_end_at' => $quote['period_end_at'],
-                'auto_renew_consent' => (bool) $input['auto_renew_consent'],
+                'auto_renew_consent' => ! $useBalance && $this->providerPolicy->checkoutProvider() === 'tochka'
+                    ? false : (bool) $input['auto_renew_consent'],
                 'client_idempotency_key' => (string) $input['client_idempotency_key'],
             ]);
             $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)->snapshot($quote, $calculatedAt, $account?->current_period_start_at, $account?->current_period_end_at, $amountDueNowMinor)]);
             $order->save();
             $payment = $order->payments()->create([
-                'provider' => $useBalance ? 'balance' : 'yookassa',
+                'provider' => $useBalance ? 'balance' : $this->providerPolicy->checkoutProvider(),
                 'role' => 'initial',
                 'attempt_number' => 1,
                 'provider_status' => $useBalance ? 'succeeded' : 'created',
@@ -188,19 +207,29 @@ class CommercialCheckoutService
     {
         $credits = app(\App\Services\Credits\AICreditService::class);
         $credits->assertCreditPurchasesEnabled();
-        if (! $credits->canPurchase($organization, $user)) { throw new \DomainException('AI credit purchase permission denied.'); }
+        if (! $credits->canPurchase($organization, $user)) {
+            throw new \DomainException('AI credit purchase permission denied.');
+        }
         $pack = config('ai-assistant-credits.packs.'.$packId);
-        if (! is_array($pack)) { throw new InvalidArgumentException('Unknown AI credit pack.'); }
+        if (! is_array($pack)) {
+            throw new InvalidArgumentException('Unknown AI credit pack.');
+        }
         [$order, $payment] = DB::transaction(function () use ($organization, $user, $pack, $packId, $idempotencyKey): array {
             Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
             $account = OrganizationCommercialAccount::query()->where('organization_id', $organization->getKey())->lockForUpdate()->first();
             $this->selfServiceGuard->assertCanMutate($account);
             $existing = CommercialOrder::query()->where('organization_id', $organization->getKey())->where('client_idempotency_key', $idempotencyKey)->with('latestPayment')->first();
             if ($existing !== null) {
-                if ($existing->kind !== 'ai_credits' || ($existing->selected_resource_addons[0]['slug'] ?? null) !== $packId || (int) $existing->user_id !== (int) $user->getKey()) { throw new CommercialCheckoutConflictException('AI credit purchase idempotency conflict.'); }
+                if ($existing->kind !== 'ai_credits' || ($existing->selected_resource_addons[0]['slug'] ?? null) !== $packId || (int) $existing->user_id !== (int) $user->getKey()) {
+                    throw new CommercialCheckoutConflictException('AI credit purchase idempotency conflict.');
+                }
+
                 return [$existing, $existing->latestPayment];
             }
             $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            if ($this->providerPolicy->checkoutProvider() === 'tochka') {
+                app(\App\Services\Billing\Bank\BankInvoiceService::class)->assertBuyer($organization);
+            }
             $account ??= OrganizationCommercialAccount::query()->create(['organization_id' => $organization->getKey(), 'responsible_user_id' => $user->getKey(), 'status' => 'free', 'offer_type' => 'packages', 'quote_version' => 1, 'auto_renew_enabled' => false]);
             $order = CommercialOrder::query()->create([
                 'public_id' => (string) Str::uuid(), 'organization_id' => $organization->getKey(), 'commercial_account_id' => $account->getKey(), 'user_id' => $user->getKey(),
@@ -209,16 +238,26 @@ class CommercialCheckoutService
                 'amount_minor' => (int) $pack['amount_minor'], 'amount' => $this->money((int) $pack['amount_minor']), 'currency' => 'RUB',
                 'period_start_at' => now(), 'period_end_at' => now(), 'auto_renew_consent' => false, 'client_idempotency_key' => $idempotencyKey,
             ]);
-            $payment = $order->payments()->create(['provider' => 'yookassa', 'role' => 'initial', 'attempt_number' => 1, 'provider_status' => 'created', 'amount_minor' => $order->amount_minor, 'currency' => 'RUB', 'provider_idempotency_key' => (string) Str::uuid(), 'payment_method_saved' => false]);
+            $payment = $order->payments()->create(['provider' => $this->providerPolicy->checkoutProvider(), 'role' => 'initial', 'attempt_number' => 1, 'provider_status' => 'created', 'amount_minor' => $order->amount_minor, 'currency' => 'RUB', 'provider_idempotency_key' => (string) Str::uuid(), 'payment_method_saved' => false]);
+
             return [$order, $payment];
         }, 3);
+
         return $this->completePaymentIntent($order, $payment, $user);
     }
 
     private function completePaymentIntent(CommercialOrder $order, CommercialPayment $payment, User $user): array
     {
-        if ($order->kind === 'ai_credits') { app(\App\Services\Credits\AICreditService::class)->assertCreditPurchasesEnabled(); }
+        if ($payment->provider === 'tochka') {
+            $invoice = app(\App\Services\Billing\Bank\BankInvoiceService::class)->create($order, $payment, $user);
+
+            return $this->response($order, $payment) + ['bank_invoice' => app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)];
+        }
+        if ($order->kind === 'ai_credits') {
+            app(\App\Services\Credits\AICreditService::class)->assertCreditPurchasesEnabled();
+        }
         if ($payment->provider === 'yookassa' && $payment->provider_payment_id === null) {
+            $this->providerPolicy->assertCanCreatePayment();
             $result = $this->gateway->createPayment(new CreatePaymentData(
                 idempotenceKey: $payment->provider_idempotency_key,
                 amountMinor: $order->amount_minor,
@@ -348,11 +387,12 @@ class CommercialCheckoutService
             'amount' => $order->amount,
             'amount_minor' => $order->amount_minor,
             'currency' => $order->currency,
-            'confirmation_url' => $payment->confirmation_url,
+            'confirmation_url' => $payment->provider === 'yookassa' && config('bank_billing.default_provider') === 'yookassa'
+                && config('services.yookassa.payments_enabled') === true ? $payment->confirmation_url : null,
             'payment_status' => $payment->provider_status,
             'payment_source' => $payment->provider,
             'auto_renew_consent' => $order->auto_renew_consent,
-            'test_mode' => PaymentProviderMode::configured()->testMode(),
+            'test_mode' => $payment->provider === 'tochka' ? false : PaymentProviderMode::configured()->testMode(),
         ];
     }
 }

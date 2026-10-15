@@ -26,6 +26,7 @@ class OrganizationCommercialAccount extends Model
         'current_period_start_at',
         'current_period_end_at',
         'auto_renew_enabled',
+        'bank_auto_invoice',
         'saved_payment_method_id', 'saved_payment_method_at', 'saved_payment_method_active',
         'auto_renew_consented_at', 'auto_renew_terms_version', 'grace_started_at', 'grace_ends_at',
     ];
@@ -38,6 +39,7 @@ class OrganizationCommercialAccount extends Model
         'current_period_start_at' => 'datetime',
         'current_period_end_at' => 'datetime',
         'auto_renew_enabled' => 'boolean',
+        'bank_auto_invoice' => 'boolean',
         'saved_payment_method_at' => 'immutable_datetime',
         'saved_payment_method_active' => 'boolean',
         'auto_renew_consented_at' => 'immutable_datetime',

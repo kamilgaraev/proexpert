@@ -30,6 +30,9 @@ final class CommercialManualPaymentService
 
     public function create(Organization $organization, User $user, string $idempotencyKey): array
     {
+        if ($this->providerPolicy->checkoutProvider() === 'tochka') {
+            return app(\App\Services\Billing\Bank\BankRenewalService::class)->manual($organization, $user, $idempotencyKey);
+        }
         $this->providerPolicy->assertCanCharge((int) $organization->getKey());
 
         [$order, $payment, $created, $callProvider] = DB::transaction(function () use (
@@ -185,6 +188,11 @@ final class CommercialManualPaymentService
 
         $payment = $payment->fresh();
 
+        return $this->paymentResponse($order, $payment, $created);
+    }
+
+    public function paymentResponse(CommercialOrder $order, CommercialPayment $payment, bool $created, ?\Carbon\CarbonInterface $graceDeadline = null): array
+    {
         $paidPackageSlugs = $this->paidPackageSlugs($order);
 
         return [
@@ -203,8 +211,8 @@ final class CommercialManualPaymentService
             'paid_composition_items' => $this->paidCompositionItems($order, $paidPackageSlugs),
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
-            'grace_deadline_at' => $order->renewalCycle?->grace_deadline_at?->toJSON(),
-            'test_mode' => PaymentProviderMode::configured()->testMode(),
+            'grace_deadline_at' => $graceDeadline?->toJSON() ?? $order->renewalCycle?->grace_deadline_at?->toJSON(),
+            'test_mode' => $payment->provider === 'tochka' ? false : PaymentProviderMode::configured()->testMode(),
             '_created' => $created,
         ];
     }

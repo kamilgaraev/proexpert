@@ -488,6 +488,8 @@
         <env name="MAIL_MAILER" value="array" force="true"/>
         <env name="PULSE_ENABLED" value="false" force="true"/>
         <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="BILLING_DEFAULT_PROVIDER" value="yookassa" force="true"/>
+        <env name="YOOKASSA_PAYMENTS_ENABLED" value="true" force="true"/>
         <env name="SESSION_DRIVER" value="array" force="true"/>
         <env name="TELESCOPE_ENABLED" value="false" force="true"/>
         <env name="JWT_SECRET" value="testing-jwt-secret-key-for-tests-only-32chars" force="true"/>

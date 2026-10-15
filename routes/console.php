@@ -60,6 +60,12 @@ Schedule::command('commercial:process-renewals --limit=100')
     ->withoutOverlapping(120)
     ->onOneServer();
 
+Schedule::command('commercial:sync-tochka --limit=10')
+    ->everyMinute()
+    ->timezone('Europe/Moscow')
+    ->withoutOverlapping(30)
+    ->onOneServer();
+
 Schedule::command('commercial:process-trial-lifecycle')
     ->hourly()
     ->timezone('Europe/Moscow')

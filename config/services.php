@@ -8,7 +8,8 @@ return [
     ],
 
     'yookassa' => [
-        'mode' => env('YOOKASSA_MODE'),
+        'mode' => env('YOOKASSA_MODE', 'yookassa_live'),
+        'payments_enabled' => (bool) env('YOOKASSA_PAYMENTS_ENABLED', false),
         'shop_id' => env('YOOKASSA_SHOP_ID'),
         'secret_key' => env('YOOKASSA_SECRET_KEY'),
         'api_url' => env('YOOKASSA_API_URL', 'https://api.yookassa.ru/v3'),
