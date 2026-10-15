@@ -219,6 +219,10 @@ class ApprovalWorkflowService
                     ->queryAccessibleProjects($approver, (int) $document->organization_id, true)->whereKey($document->project_id)->exists()) {
                     throw new \DomainException(trans_message('payments.validation.approver_project_access_required'));
                 }
+                if (! $this->userHasPermission($approver, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id,
+                    $document->project_id !== null ? (int) $document->project_id : null)) {
+                    throw new \DomainException(trans_message('payments.validation.approver_permission_required'));
+                }
             }
 
             $approval = PaymentApproval::create([

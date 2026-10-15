@@ -844,6 +844,55 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    public static function explicitApproverPermissions(): array
+    {
+        return [
+            'organization approval' => ['payments.transaction.approve', false, true],
+            'project approval' => ['payments.transaction.approve', true, true],
+            'view only' => ['payments.invoice.view', false, false],
+            'rejection only' => ['payments.transaction.reject', true, false],
+        ];
+    }
+
+    #[DataProvider('explicitApproverPermissions')]
+    public function test_new_rules_validate_explicit_approver_permission(string $permission, bool $projectRole, bool $allowed): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePayments($context);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['project_id' => $project->id])->save();
+        $approver = $this->createOrganizationApprover($context);
+        $this->assignPaymentPermissions(new AdminApiTestContext($context->organization, $approver, ''),
+            [$permission], $projectRole ? (int) $project->id : null);
+        PaymentApprovalRule::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Проверка права согласующего', 'conditions' => [],
+            'is_active' => true, 'approval_chain' => [
+                ['level' => 1, 'order' => 1, 'approver_user_id' => $context->user->id],
+                ['level' => 2, 'order' => 1, 'approver_user_id' => $approver->id],
+            ],
+        ]);
+        if ($allowed) {
+            app(PaymentDocumentService::class)->submit($document, $context->user);
+            $this->assertSame(PaymentDocumentStatus::PENDING_APPROVAL, $document->fresh()->status);
+            $this->assertSame(2, $document->approvals()->count());
+            $this->assertSame($approver->id, $document->approvals()->where('approval_level', 2)->sole()->approver_user_id);
+        } else {
+            try {
+                app(PaymentDocumentService::class)->submit($document, $context->user);
+                $this->fail('An approver without approval permission was assigned.');
+            } catch (\DomainException $exception) {
+                $this->assertSame(trans_message('payments.validation.approver_permission_required'), $exception->getMessage());
+            }
+            $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->fresh()->status);
+            $this->assertSame(0, $document->approvals()->count());
+            Notification::assertNothingSent();
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     private function createOrganizationApprover(AdminApiTestContext $context, string $projectAccessMode = 'all_projects'): User
     {
         $user = User::factory()->create(['current_organization_id' => $context->organization->id]);
