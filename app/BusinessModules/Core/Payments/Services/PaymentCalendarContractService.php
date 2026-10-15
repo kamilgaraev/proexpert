@@ -32,10 +32,11 @@ final class PaymentCalendarContractService
         PaymentCalendarSourceFilters $filters,
         ?PaymentCalendarCashGapOptions $cashGapOptions = null,
         ?\Closure $scopeDocument = null,
+        ?\Closure $scopeProjects = null,
     ): array
     {
         return $this->fromItems(array_merge(
-            $this->sourceService->collect($filters, scopeDocument: $scopeDocument),
+            $this->sourceService->collect($filters, scopeDocument: $scopeDocument, scopeProjects: $scopeProjects),
             $this->sourceService->collectUndated($filters, $scopeDocument),
         ), $filters, $cashGapOptions);
     }

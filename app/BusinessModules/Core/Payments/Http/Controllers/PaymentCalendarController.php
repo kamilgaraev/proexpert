@@ -105,6 +105,7 @@ class PaymentCalendarController extends Controller
             $this->assertSupportedRange($validated['start'], $validated['end']);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
 
             if ($this->usesCashGapOptions($request) && !$this->canViewCashGap($request, $organizationId)) {
                 return AdminResponse::error(trans_message('errors.unauthorized'), 403);
@@ -126,7 +127,8 @@ class PaymentCalendarController extends Controller
 
             return AdminResponse::success(
                 $this->calendarContractService->build($filters, $this->cashGapOptions($validated),
-                    fn (Builder $query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view')),
+                    fn (Builder $query) => $this->access->scope($query, $organizationId, $actor, 'payments.schedule.view'),
+                    fn (Builder $query) => $this->access->scopeProjects($query, $organizationId, $actor, 'payments.schedule.view')),
                 trans_message('payments.calendar.loaded')
             );
         } catch (ValidationException $e) {

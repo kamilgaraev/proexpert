@@ -32,12 +32,18 @@ final class PaymentDocumentAccessService
 
     public function scope(Builder $query, int $organizationId, User $actor, string $permission): Builder
     {
+        $query->where($query->getModel()->qualifyColumn('organization_id'), $organizationId);
+
+        return $this->scopeProjects($query, $organizationId, $actor, $permission);
+    }
+
+    public function scopeProjects(Builder $query, int $organizationId, User $actor, string $permission): Builder
+    {
         if ($organizationId <= 0 || (int) $actor->current_organization_id !== $organizationId) {
             return $query->whereRaw('1 = 0');
         }
 
-        $query->useWritePdo()->where($query->getModel()->qualifyColumn('organization_id'), $organizationId)
-            ->whereExists($this->membership($actor, $organizationId));
+        $query->useWritePdo()->whereExists($this->membership($actor, $organizationId));
         $projectQuery = $this->projects->queryAccessibleProjects($actor, $organizationId, true)
             ->useWritePdo()->select('projects.id');
         $organizationPermission = $this->hasPermission($actor, $permission, ['organization_id' => $organizationId]);
