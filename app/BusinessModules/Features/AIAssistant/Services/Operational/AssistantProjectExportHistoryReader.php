@@ -34,7 +34,8 @@ final readonly class AssistantProjectExportHistoryReader extends AssistantProjec
     {
         $counts = array_fill_keys(['queued', 'running', 'uploading', 'ready', 'failed', 'cancelled', 'expired'], 0);
         foreach ($data['items'] as $row) {
-            $counts[$row['status']]++;
+            $status = $row['status'] === 'ready' && $row['retention_expired'] ? 'expired' : $row['status'];
+            $counts[$status]++;
         }
         $lines = [trans_message('ai_assistant_operational.export_history_scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']]),
             trans_message('ai_assistant_operational.export_history_counts', ['total' => count($data['items']), 'ready' => $counts['ready'],

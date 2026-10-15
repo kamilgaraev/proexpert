@@ -89,6 +89,7 @@ final class AssistantRealAuthorizationFixture
         ]);
         UserRoleAssignment::query()->create([
             'user_id' => $user->id, 'role_slug' => $role->slug, 'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'custom_role_id' => $role->id,
             'context_id' => AuthorizationContext::getOrganizationContext($this->organization->id)->id,
             'assigned_by' => $this->owner->id, 'is_active' => true,
         ]);
