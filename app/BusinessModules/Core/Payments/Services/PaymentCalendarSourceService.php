@@ -500,18 +500,17 @@ final class PaymentCalendarSourceService
         ?DateTimeInterface $today,
         ?\Closure $scopeDocument,
     ): array {
-        $schedules = PaymentSchedule::query()
-            ->with('paymentDocument')
-            ->where('status', 'pending')
-            ->where('due_date', '<=', $filters->periodEnd)
+        $scheduleQuery = PaymentSchedule::query()
             ->whereHas('paymentDocument', function (Builder $query) use ($filters, $scopeDocument): void {
                 $query->where('organization_id', $filters->organizationId);
                 $scopeDocument?->__invoke($query);
-            })
-            ->get();
+            });
+        $schedules = (clone $scheduleQuery)->with('paymentDocument')->where('status', 'pending')
+            ->where('due_date', '<=', $filters->periodEnd)->get();
+        $scheduledDocumentIds = (clone $scheduleQuery)->whereIn('status', ['pending', 'paid'])
+            ->whereNotNull('due_date')->where('amount', '>', 0)->distinct()->pluck('payment_document_id')->all();
 
         $items = [];
-        $scheduledDocumentIds = [];
 
         foreach ($schedules as $schedule) {
             $item = $this->fromPaymentSchedule($schedule, $today);
@@ -522,12 +521,9 @@ final class PaymentCalendarSourceService
 
             $items[] = $item;
 
-            if ($schedule->payment_document_id !== null) {
-                $scheduledDocumentIds[] = (int) $schedule->payment_document_id;
-            }
         }
 
-        return [$items, array_values(array_unique($scheduledDocumentIds))];
+        return [$items, $scheduledDocumentIds];
     }
 
     private function collectPaymentDocumentItems(
@@ -691,13 +687,17 @@ final class PaymentCalendarSourceService
                 $query->where(fn (Builder $scope) => $scope->where('scheduled_at', '>=', $start)->where('scheduled_at', '<', $end))
                     ->orWhere(fn (Builder $scope) => $scope->where('due_date', '>=', $start)->where('due_date', '<', $end))
                     ->orWhere(fn (Builder $scope) => $scope->whereNull('scheduled_at')->whereNull('due_date')
-                        ->where('document_date', '>=', $start)->where('document_date', '<', $end));
+                        ->where('document_date', '>=', $start)->where('document_date', '<', $end))
+                    ->orWhereIn('id', PaymentSchedule::query()->select('payment_document_id')
+                        ->whereIn('status', ['pending', 'paid'])->where('due_date', '>=', $start)->where('due_date', '<', $end));
             })->get();
+        $schedules = PaymentSchedule::query()->whereIn('payment_document_id', $documents->modelKeys())
+            ->whereIn('status', ['pending', 'paid'])->whereNotNull('due_date')->where('amount', '>', 0)
+            ->get()->groupBy('payment_document_id');
         $documentContractIds = $this->calendarDocumentContractIds($documents, $filters->organizationId);
         $consumed = [];
         foreach ($documents as $document) {
-            $date = $this->effectiveDocumentDate($document);
-            if ($date === null || $this->paymentDocumentDirection($document) !== PaymentCalendarItem::DIRECTION_OUTFLOW) {
+            if ($this->paymentDocumentDirection($document) !== PaymentCalendarItem::DIRECTION_OUTFLOW) {
                 continue;
             }
             $dimensions = [
@@ -716,14 +716,21 @@ final class PaymentCalendarSourceService
                 }
                 $matches = $expanded;
             }
-            $indices = [];
-            foreach ($matches as $match) {
-                $key = implode('|', [$filters->organizationId, substr($date, 0, 7), $this->currency($document->currency), ...$match]);
-                foreach ($candidates[$key] ?? [] as $index) $indices[$index] = true;
+            $allocations = $schedules->get($document->id, collect())->map(fn (PaymentSchedule $schedule): array => [
+                $this->dateString($schedule->due_date), $this->positive((string) $schedule->amount),
+            ])->all();
+            if ($allocations === []) $allocations[] = [$this->effectiveDocumentDate($document), $this->positive((string) $document->amount)];
+            foreach ($allocations as [$date, $amount]) {
+                if ($date === null) continue;
+                $indices = [];
+                foreach ($matches as $match) {
+                    $key = implode('|', [$filters->organizationId, substr($date, 0, 7), $this->currency($document->currency), ...$match]);
+                    foreach ($candidates[$key] ?? [] as $index) $indices[$index] = true;
+                }
+                if (count($indices) !== 1) continue;
+                $index = array_key_first($indices);
+                $consumed[$index] = PortfolioDecimal::add($consumed[$index] ?? '0.00', $amount);
             }
-            if (count($indices) !== 1) continue;
-            $index = array_key_first($indices);
-            $consumed[$index] = PortfolioDecimal::add($consumed[$index] ?? '0.00', $this->positive((string) $document->amount));
         }
         foreach ($consumed as $index => $amount) {
             $items[$index] = $items[$index]->withRemainingAmount($this->positive(

@@ -192,6 +192,72 @@ final class PaymentCalendarPlanNettingTest extends TestCase
         }
     }
 
+    public static function installmentForecasts(): array
+    {
+        return [
+            'two-month pending schedule' => ['pending', '2026-10-01', '2026-11-30', '100000.00'],
+            'October installment only' => ['pending', '2026-10-01', '2026-10-31', '50000.00'],
+            'November installment with document dated October' => ['pending', '2026-11-01', '2026-11-30', '50000.00'],
+            'first installment paid' => ['first-paid', '2026-10-01', '2026-11-30', '100000.00'],
+            'paid October does not repeat November remainder' => ['first-paid', '2026-10-01', '2026-10-31', '50000.00'],
+            'November after paid October' => ['first-paid', '2026-11-01', '2026-11-30', '50000.00'],
+            'first installment partly paid' => ['partial', '2026-10-01', '2026-11-30', '100000.00'],
+            'all installments paid' => ['paid', '2026-10-01', '2026-11-30', '100000.00'],
+            'document and first payment before visible months' => ['earlier', '2026-11-01', '2026-11-30', '50000.00'],
+            'inaccessible scheduled document' => ['scope', '2026-10-01', '2026-11-30', '100000.00'],
+        ];
+    }
+
+    #[DataProvider('installmentForecasts')]
+    public function test_installments_replace_only_the_plan_of_their_own_month(string $case, string $start, string $end, string $expectedTotal): void
+    {
+        Queue::fake();
+        ['context' => $context, 'document' => $document, 'line' => $line, 'amount' => $amount, 'project' => $project] = $this->fixture();
+        $amount->update(['plan_amount' => '50000.00', 'forecast_amount' => '50000.00']);
+        $november = BudgetAmount::query()->create(['budget_line_id' => $line->id, 'month' => '2026-11-01',
+            'plan_amount' => '50000.00', 'forecast_amount' => '50000.00', 'currency' => 'RUB']);
+        $firstDate = $case === 'earlier' ? '2026-09-20' : '2026-10-20';
+        $firstPaid = in_array($case, ['first-paid', 'paid', 'earlier'], true) ? '50000.00' : ($case === 'partial' ? '20000.00' : '0.00');
+        $secondPaid = $case === 'paid' ? '50000.00' : '0.00';
+        $paid = PortfolioDecimal::add($firstPaid, $secondPaid);
+        $document->update(['scheduled_at' => $firstDate, 'due_date' => $firstDate,
+            'document_date' => $case === 'earlier' ? '2026-09-15' : '2026-10-15',
+            'status' => $case === 'paid' ? PaymentDocumentStatus::PAID : ($paid !== '0.00' ? PaymentDocumentStatus::PARTIALLY_PAID : PaymentDocumentStatus::SCHEDULED),
+            'paid_amount' => $paid, 'remaining_amount' => PortfolioDecimal::subtract('100000.00', $paid)]);
+        foreach ([[$firstDate, $firstPaid], ['2026-11-20', $secondPaid]] as $index => [$date, $installmentPaid]) {
+            PaymentSchedule::query()->create(['payment_document_id' => $document->id, 'installment_number' => $index + 1,
+                'due_date' => $date, 'amount' => '50000.00', 'paid_amount' => $installmentPaid,
+                'status' => $installmentPaid === '50000.00' ? 'paid' : 'pending']);
+            if ($installmentPaid !== '0.00') {
+                PaymentTransaction::query()->create(['payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+                    'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+                    'payee_organization_id' => $document->payee_organization_id,
+                    'amount' => $installmentPaid, 'currency' => 'RUB', 'payment_method' => 'bank_transfer',
+                    'transaction_date' => $date, 'value_date' => $date, 'status' => 'completed', 'created_by_user_id' => $context->user->id]);
+            }
+        }
+        $scope = $case === 'scope' ? static fn ($query) => $query->whereKey(-1) : null;
+        $items = app(PaymentCalendarSourceService::class)->collect(new PaymentCalendarSourceFilters(
+            organizationId: (int) $context->organization->id, periodStart: $start, periodEnd: $end,
+            projectId: (int) $project->id, currency: 'RUB',
+        ), new CarbonImmutable('2026-10-15'), $scope);
+        $plans = collect($items)->where('sourceType', 'budget_amount');
+        $this->assertCount($start === '2026-10-01' && $end === '2026-11-30' ? 2 : 1, $plans);
+        foreach ($plans as $plan) {
+            $this->assertSame('50000.00', $plan->amount);
+            $this->assertSame($case === 'scope' ? '50000.00' : '0.00', $plan->remainingAmount);
+        }
+        $total = '0.00';
+        foreach ($items as $item) $total = PortfolioDecimal::add($total, $item->remainingAmount);
+        $this->assertSame($expectedTotal, $total);
+        $this->assertSame(0, collect($items)->where('sourceType', 'payment_document')->count());
+        if ($case === 'scope') $this->assertSame(0, collect($items)->whereIn('sourceType', ['payment_schedule', 'payment_transaction'])->count());
+        foreach ([$amount, $november] as $storedAmount) {
+            $this->assertSame('50000.00', $storedAmount->fresh()->plan_amount);
+            $this->assertSame('50000.00', $storedAmount->fresh()->forecast_amount);
+        }
+    }
+
     private function contract(AdminApiTestContext $context, Project $project, Contractor $contractor): Contract
     {
         return Contract::query()->create(['organization_id' => $context->organization->id, 'project_id' => $project->id,
