@@ -30,6 +30,7 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
@@ -202,6 +203,129 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             ])->save();
             $this->assertSame('block', $this->service()->check($document->fresh(), $context->user)['decision']);
         }
+    }
+
+    public static function contractUsageCases(): array
+    {
+        return [['paid', 'actual_payments'], ['legacy', 'pending_approvals']];
+    }
+
+    #[DataProvider('contractUsageCases')]
+    public function test_other_acts_of_the_same_contract_consume_its_budget(string $usage, string $source): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $act = $this->createApprovedAct($context);
+        $nextAct = ContractPerformanceAct::withoutEvents(static fn () => ContractPerformanceAct::query()->create([
+            'contract_id' => $act->contract_id,
+            'project_id' => $act->project_id,
+            'act_document_number' => 'ACT-BUDGET-NEXT',
+            'act_date' => now()->toDateString(),
+            'amount' => '100000.00',
+            'currency' => 'RUB',
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+        ]));
+        $budget['line']->forceFill([
+            'project_id' => $act->project_id,
+            'contract_id' => $act->contract_id,
+            'metadata' => ['enforcement_mode' => 'hard_block'],
+        ])->save();
+        $first = $this->createDocument($context, $budget, 60000.0);
+        $first->forceFill([
+            'project_id' => $act->project_id,
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'status' => PaymentDocumentStatus::APPROVED,
+        ])->save();
+        if ($usage === 'paid') {
+            $this->service()->syncReservation($first->fresh(), $context->user);
+            $transaction = PaymentTransaction::query()->create([
+                'payment_document_id' => $first->id,
+                'organization_id' => $context->organization->id,
+                'project_id' => $act->project_id,
+                'amount' => 60000,
+                'currency' => 'RUB',
+                'payment_method' => PaymentMethod::BANK_TRANSFER,
+                'transaction_date' => now()->toDateString(),
+                'status' => PaymentTransactionStatus::COMPLETED,
+                'created_by_user_id' => $context->user->id,
+            ]);
+            $first->forceFill(['status' => PaymentDocumentStatus::PAID, 'paid_amount' => 60000, 'remaining_amount' => 0])->save();
+            $this->service()->convertAfterPayment($first->fresh(), $transaction);
+            $this->assertDatabaseHas('budget_limit_reservations', ['payment_document_id' => $first->id, 'status' => BudgetLimitReservation::STATUS_CONVERTED]);
+        }
+        $next = $this->createDocument($context, $budget, 60000.0);
+        $next->forceFill([
+            'project_id' => $nextAct->project_id,
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $nextAct->id,
+        ])->save();
+
+        $check = $this->service()->check($next->fresh(), $context->user);
+
+        $this->assertSame('60000.00', $check['sources'][$source]);
+        $this->assertSame('block', $check['decision']);
+    }
+
+    #[DataProvider('contractUsageCases')]
+    public function test_act_budget_usage_keeps_other_scopes_and_months_outside_the_limit(string $usage, string $source): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $act = $this->createApprovedAct($context);
+        $otherAct = $this->createApprovedAct($context, $act->project_id);
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $budget['line']->forceFill(['project_id' => $act->project_id, 'contract_id' => $act->contract_id])->save();
+        $variants = [
+            [$context, $otherAct, $act->project_id, now(), 'RUB', InvoiceDirection::OUTGOING],
+            [$foreignContext, $act, $act->project_id, now(), 'RUB', InvoiceDirection::OUTGOING],
+            [$context, $act, $otherProject->id, now(), 'RUB', InvoiceDirection::OUTGOING],
+            [$context, $act, $act->project_id, now()->subMonthNoOverflow(), 'RUB', InvoiceDirection::OUTGOING],
+            [$context, $act, $act->project_id, now(), 'USD', InvoiceDirection::OUTGOING],
+            [$context, $act, $act->project_id, now(), 'RUB', InvoiceDirection::INCOMING],
+        ];
+        foreach ($variants as [$owner, $basis, $projectId, $date, $currency, $direction]) {
+            $existing = $this->createDocument($owner, $budget, 60000.0);
+            $existing->forceFill([
+                'project_id' => $projectId,
+                'invoiceable_type' => ContractPerformanceAct::class,
+                'invoiceable_id' => $basis->id,
+                'direction' => $direction,
+                'currency' => $currency,
+                'due_date' => $date->toDateString(),
+                'status' => $usage === 'paid' ? PaymentDocumentStatus::PAID : PaymentDocumentStatus::APPROVED,
+                'paid_amount' => $usage === 'paid' ? 60000 : 0,
+                'remaining_amount' => $usage === 'paid' ? 0 : 60000,
+            ])->save();
+            if ($usage === 'paid') {
+                PaymentTransaction::query()->create([
+                    'payment_document_id' => $existing->id,
+                    'organization_id' => $owner->organization->id,
+                    'project_id' => $projectId,
+                    'amount' => 60000,
+                    'currency' => $currency,
+                    'payment_method' => PaymentMethod::BANK_TRANSFER,
+                    'transaction_date' => $date->toDateString(),
+                    'status' => PaymentTransactionStatus::COMPLETED,
+                    'created_by_user_id' => $owner->user->id,
+                ]);
+            }
+        }
+        $next = $this->createDocument($context, $budget, 60000.0);
+        $next->forceFill([
+            'project_id' => $act->project_id,
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+        ])->save();
+
+        $check = $this->service()->check($next->fresh(), $context->user);
+
+        $this->assertSame('0.00', $check['sources'][$source]);
+        $this->assertContains($check['decision'], ['allow', 'warn']);
     }
 
     public function test_payment_registration_preview_uses_selected_month_without_writes(): void

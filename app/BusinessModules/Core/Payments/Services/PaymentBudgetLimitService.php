@@ -718,6 +718,10 @@ final class PaymentBudgetLimitService
                 })->orWhere(function (Builder $nested) use ($value): void {
                     $nested->where('source_type', Contract::class)
                         ->where('source_id', $value);
+                })->orWhereHasMorph('invoiceable', [ContractPerformanceAct::class], function (Builder $actQuery) use ($value): void {
+                    $actQuery->where('contract_id', $value)
+                        ->whereHas('contract', fn (Builder $contractQuery) => $contractQuery
+                            ->whereColumn('contracts.organization_id', 'payment_documents.organization_id'));
                 });
             });
 
