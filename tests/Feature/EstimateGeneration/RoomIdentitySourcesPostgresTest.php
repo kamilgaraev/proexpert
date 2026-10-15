@@ -41,6 +41,74 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_vision_floor_sources_survive_postgres_hydration_replay_and_forward_migration(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshot(...$scope)->facts;
+        foreach (['floor_plan', 'explication'] as $index => $role) {
+            $version = 'sha256:'.str_repeat((string) ($index + 1), 64);
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $scope[2], 'organization_id' => $scope[0],
+                'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'room-floor.pdf', 'mime_type' => 'application/pdf',
+                'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat((string) ($index + 1), 64)]);
+            $claims = \Tests\Support\EstimateGeneration\RoomLocationVisionFixture::claims($scope, (int) $document->id, $version, $role);
+            self::assertSame(['room_number', 'room_floor', 'room_zone'], array_column($claims, 'factType'));
+            $decisions = array_map(static fn ($claim): ArbitrationDecision => new ArbitrationDecision($claim->id, 'accepted',
+                [$claim->id], [$claim->evidenceRef], 'explicit', null), $claims);
+            app(ProjectModelEvidenceWriter::class)->writeArbitration($claims, $decisions, (int) $document->id, 1);
+            app(ProjectModelEvidenceWriter::class)->writeArbitration($claims, $decisions, (int) $document->id, 1);
+        }
+        $capture = $models->snapshotForUnderstanding(...[...$scope, 100, true]);
+        $snapshot = $capture['snapshot'];
+        $evidence = array_column($snapshot->evidence, null, 'id');
+        $entities = array_column($capture['source_entities'], null, 'id');
+        $numbers = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_number'));
+        self::assertCount(2, $numbers);
+        foreach ($numbers as $number) {
+            self::assertSame('confirmed', $number->status);
+            self::assertSame('-1', $entities[$number->entityId]->attributes['floor_id']);
+            self::assertSame('A', $entities[$number->entityId]->attributes['zone_id']);
+            self::assertSame(['room_number', 'room_floor', 'room_zone'], array_map(
+                static fn (string $id): string => $evidence[$id]->literalFact->factKey, $number->evidenceIds));
+            self::assertSame(hash('sha256', '-1'), $evidence[$number->evidenceIds[1]]->literalFact->valueHash);
+        }
+        $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
+        self::assertCount(1, $run->links);
+        self::assertSame(0, $run->providerCalls);
+        self::assertNotSame($numbers[0]->entityId, $numbers[1]->entityId);
+        $fingerprint = hash('sha256', 'actual-vision-room-floor-v1');
+        self::assertTrue($models->replaceUnderstanding(...[...$scope, $run->links[0]['source_version'], $fingerprint, $capture['token'],
+            $run->links, $run->conflicts, $run->questions, $run->limitations, 0]));
+        self::assertNotNull($models->replayUnderstanding(...[...$scope, $run->links[0]['source_version'], $fingerprint, $capture['token']]));
+        foreach (['000200_allow_room_number_evidence', '000300_allow_room_location_evidence'] as $name) {
+            $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_'.$name.'.php');
+            $migration->up();
+            $migration->up();
+        }
+        self::assertEquals($snapshot->facts, $models->snapshot(...$scope)->facts);
+        foreach ($before as $fact) {
+            self::assertContainsEquals($fact, $models->snapshot(...$scope)->facts);
+        }
+        $rows = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->get();
+        $floorRow = $rows->first(static fn ($row): bool => (json_decode($row->value, true)['fact_key'] ?? null) === 'room_floor');
+        self::assertNotNull($floorRow);
+        foreach ([['fact_key' => 'room_floor', 'fact_value' => '-1'],
+            ['fact_key' => 'room_zone', 'fact_value' => hash('sha256', 'A'), 'unit' => 'm']] as $invalidValue) {
+            $invalid = (array) $floorRow;
+            unset($invalid['id']);
+            $invalid['fingerprint'] = hash('sha256', json_encode($invalidValue, JSON_THROW_ON_ERROR));
+            $invalid['value'] = json_encode($invalidValue, JSON_THROW_ON_ERROR);
+            try {
+                DB::transaction(static fn () => DB::table('estimate_generation_evidence')->insert($invalid));
+                self::fail('Invalid literal location proof was accepted.');
+            } catch (\Illuminate\Database\QueryException $error) {
+                self::assertStringContainsString('room_location_evidence_invalid', $error->getMessage());
+            }
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
+    }
+
     public function test_native_number_sources_link_after_database_hydration_and_persist_without_merging_geometry(): void
     {
         [$actor, $session] = $this->fixture();

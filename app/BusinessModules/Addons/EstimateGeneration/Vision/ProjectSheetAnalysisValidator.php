@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
@@ -13,12 +14,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionContra
 final class ProjectSheetAnalysisValidator
 {
     private const ROLE_FACT_TYPES = [
-        'plan' => ['room', 'room_name', 'room_number', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'plan' => ['room', 'room_name', 'room_number', 'room_floor', 'room_zone', 'wall', 'opening', 'axis', 'dimension_chain', 'area', 'level', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
         'section' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
         'facade' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
-        'explication' => ['room', 'room_name', 'room_number', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'explication' => ['room', 'room_name', 'room_number', 'room_floor', 'room_zone', 'area', 'level', 'material', 'finish_zone', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
         'specification' => ['table', 'structural_element', 'material', 'equipment', 'quantity', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
-        'unknown' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture', 'quantity', 'room', 'room_name', 'room_number', 'wall', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
+        'unknown' => ['opening', 'axis', 'dimension_chain', 'elevation', 'level', 'area', 'structural_element', 'roof_geometry', 'material', 'finish_zone', 'engineering_element', 'sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture', 'quantity', 'room', 'room_name', 'room_number', 'room_floor', 'room_zone', 'wall', 'table', 'note', 'cross_sheet_link', 'technology_candidate', 'assumption', 'risk', 'unknown', 'recommendation'],
     ];
 
     /** @param array<string, mixed> $data @param list<string> $evidenceKeys @param list<string> $nativeReferences */
@@ -115,6 +116,10 @@ final class ProjectSheetAnalysisValidator
         }
         if ($fact['factType'] === 'room_number' && RoomNumberObservation::label($fact['entityKey'], $fact['value'], $fact['unit']) === null) {
             throw new VisionContractException('invalid_room_number_observation');
+        }
+        if (in_array($fact['factType'], ['room_floor', 'room_zone'], true)
+            && RoomLocationObservation::value($fact['factType'], $fact['entityKey'], $fact['value'], $fact['unit']) === null) {
+            throw new VisionContractException('invalid_room_location_observation');
         }
         if (FactVocabulary::documentDomain($fact['factType']) !== null
             && FactVocabulary::documentObservation($fact['factType'], $fact['entityKey'], $fact['value'], $fact['unit']) === null) {

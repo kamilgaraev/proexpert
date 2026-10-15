@@ -6,11 +6,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 
 final class PhysicalMeasurementPublicationPolicy
 {
     public static function requiresNumericProof(ObservationClaim $claim): bool
     {
+        if ((new RoomLocationObservation)->label($claim) !== null) {
+            return false;
+        }
         $numeric = $claim->value['data'] ?? null;
         if ((! is_string($numeric) && ! is_int($numeric) && ! is_float($numeric)) || ! is_numeric($numeric)) {
             return false;
@@ -32,7 +36,7 @@ final class PhysicalMeasurementPublicationPolicy
 
             return new ArbitrationDecision($decision->claimId, 'candidate', $decision->supportingClaimIds, $decision->evidenceRefs,
                 'numeric_source_requires_user_confirmation', $decision->canonicalClaim,
-                'Локатор и совпадение выводов моделей не подтверждают числовое значение. Нужен проверенный исходный размер или ввод пользователя.');
+                'Р›РѕРєР°С‚РѕСЂ Рё СЃРѕРІРїР°РґРµРЅРёРµ РІС‹РІРѕРґРѕРІ РјРѕРґРµР»РµР№ РЅРµ РїРѕРґС‚РІРµСЂР¶РґР°СЋС‚ С‡РёСЃР»РѕРІРѕРµ Р·РЅР°С‡РµРЅРёРµ. РќСѓР¶РµРЅ РїСЂРѕРІРµСЂРµРЅРЅС‹Р№ РёСЃС…РѕРґРЅС‹Р№ СЂР°Р·РјРµСЂ РёР»Рё РІРІРѕРґ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.');
         }, $decisions);
     }
 }

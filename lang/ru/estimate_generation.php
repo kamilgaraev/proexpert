@@ -26,6 +26,8 @@ return [
         'requested_area_takeoff_name' => 'Площадь цементной стяжки по подтверждённой площади здания',
         'labels' => [
             'room_number' => 'Номер помещения',
+            'room_floor' => 'Этаж помещения',
+            'room_zone' => 'Зона помещения',
             'total_area' => 'Общая площадь',
             'area' => 'Площадь',
             'dimension' => 'Размер',
@@ -40,6 +42,8 @@ return [
     ],
     'canonical_result' => [
         'room_number' => 'Номер помещения',
+        'room_floor' => 'Этаж помещения',
+        'room_zone' => 'Зона помещения',
         'overall_width' => 'Габарит здания по оси X',
         'overall_height' => 'Габарит здания по оси Y',
         'grid_span' => 'Пролёт между осями :axes',

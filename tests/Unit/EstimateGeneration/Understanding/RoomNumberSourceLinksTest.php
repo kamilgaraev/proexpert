@@ -22,7 +22,7 @@ final class RoomNumberSourceLinksTest extends TestCase
             self::assertCount(1, $result->links);
             self::assertSame('linked', $result->links[0]['status']);
             self::assertSame('room_number', $result->links[0]['strategy']);
-            self::assertSame(['left' => ['evidence:1'], 'right' => ['evidence:2']], $result->links[0]['evidence']);
+            self::assertSame(['left' => ['evidence:1', 'evidence:floor:1', 'evidence:zone:1'], 'right' => ['evidence:2', 'evidence:floor:2', 'evidence:zone:2']], $result->links[0]['evidence']);
             self::assertSame(0, $result->providerCalls);
             self::assertSame($result->links, $this->linker()->link(...array_map(array_reverse(...), $input))->links);
         }
@@ -30,7 +30,7 @@ final class RoomNumberSourceLinksTest extends TestCase
 
     public function test_incomplete_unrelated_or_mismatched_sources_do_not_link(): void
     {
-        foreach (['hash', 'key', 'version', 'role', 'artifact', 'source_ref', 'floor', 'missing_floor', 'zone', 'number', 'candidate', 'unit', 'missing_proof'] as $variant) {
+        foreach (['hash', 'key', 'version', 'role', 'artifact', 'source_ref', 'floor', 'missing_floor', 'zone', 'number', 'candidate', 'unit', 'missing_proof', 'missing_floor_proof', 'missing_zone_proof', 'wrong_floor_proof'] as $variant) {
             $input = $this->pair(variant: $variant);
             $result = $this->linker()->link(...$input);
             self::assertSame([], $result->links, $variant);
@@ -54,12 +54,12 @@ final class RoomNumberSourceLinksTest extends TestCase
         $original = $this->linker()->link(...$input)->links[0];
         $version = 'sha256:'.str_repeat('1', 64);
         $input[1][0] = new Fact('fact:1', 1, 2, 3, $version, 'entity:1', 'room_number', '001', null,
-            0.0, 'document', 'confirmed', ['evidence:3']);
+            0.0, 'document', 'confirmed', ['evidence:3', 'evidence:floor:1', 'evidence:zone:1']);
         $input[2][0] = new Evidence('evidence:3', 1, 2, 3, $version, 'document:1', 'document', 2,
             sourceReference: 'document:1', documentRole: 'plan', literalFact: new LiteralFactEvidence('room_number', hash('sha256', '001')));
         $rebound = $this->linker()->link(...$input)->links[0];
         self::assertNotSame($original['operation_identity'], $rebound['operation_identity']);
-        self::assertSame(['evidence:3'], $rebound['evidence']['left']);
+        self::assertSame(['evidence:3', 'evidence:floor:1', 'evidence:zone:1'], $rebound['evidence']['left']);
     }
 
     private function pair(string $rightRole = 'explication', ?string $variant = null): array
@@ -85,6 +85,20 @@ final class RoomNumberSourceLinksTest extends TestCase
                 'document:'.($variant === 'artifact' ? 1 : $index), 'document', 1,
                 sourceReference: 'document:'.($variant === 'source_ref' && $index === 2 ? 99 : ($variant === 'artifact' ? 1 : $index)),
                 documentRole: $variant === 'role' && $index === 2 ? null : $role, literalFact: $proof);
+            foreach (['floor' => 'floor_id', 'zone' => 'zone_id'] as $type => $attribute) {
+                if (! isset($location[$attribute]) || ($index === 2 && $variant === 'missing_'.$type.'_proof')) {
+                    continue;
+                }
+                $id = 'evidence:'.$type.':'.$index;
+                $last = array_key_last($facts);
+                $old = $facts[$last];
+                $facts[$last] = new Fact($old->id, 1, 2, 3, $version, $old->entityId, $old->type, $old->value,
+                    $old->unit, 0.0, $old->origin, $old->status, [...$old->evidenceIds, $id]);
+                $evidence[] = new Evidence($id, 1, 2, 3, $version, 'document:'.$index, 'document', 1,
+                    sourceReference: 'document:'.$index, documentRole: $role,
+                    literalFact: new LiteralFactEvidence('room_'.$type,
+                        hash('sha256', $index === 2 && $variant === 'wrong_floor_proof' && $type === 'floor' ? '9' : $location[$attribute])));
+            }
         }
 
         return [$entities, $facts, $evidence];

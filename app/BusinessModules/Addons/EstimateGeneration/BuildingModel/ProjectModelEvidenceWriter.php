@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Canonical
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomLocationObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomNumberObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
@@ -80,7 +81,8 @@ final readonly class ProjectModelEvidenceWriter
             return;
         }
         $nativeRoomIdentities = $this->nativeRoomIdentities($byId, $decisions, $documentId, $pageNumber, $numericSources);
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $nativeRoomIdentities): void {
+        $roomLocations = $this->roomLocations($byId, $decisions, $documentId, $pageNumber);
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources, $nativeRoomIdentities, $roomLocations): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -90,22 +92,28 @@ final readonly class ProjectModelEvidenceWriter
                 $this->assertScope($claim, $scope);
                 $evidenceIds = [];
                 $numericProofs = [];
-                foreach ($decision->supportingClaimIds as $supportingClaimId) {
+                $locationClaims = $claim->factType === 'room_number'
+                    ? ($roomLocations[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)] ?? []) : [];
+                $locationClaimIds = array_column($locationClaims, 'id');
+                foreach (array_values(array_unique([...$decision->supportingClaimIds, ...$locationClaimIds])) as $supportingClaimId) {
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
-                    if ($claim->factType === 'room_number' && $decision->status === 'accepted'
+                    if (in_array($claim->factType, ['room_number', 'room_floor', 'room_zone'], true) && $decision->status === 'accepted'
                         && (! $supportingClaim->explicitEvidence
                             || ($supportingClaim->locator['document_id'] ?? null) !== $documentId
                             || (array_key_exists('unit_index', $supportingClaim->locator) && $supportingClaim->locator['unit_index'] !== $pageNumber)
                             || ($supportingClaim->locator['page'] ?? $supportingClaim->locator['unit_index'] ?? null) !== $pageNumber)) {
                         continue;
                     }
-                    if (($decision->status === 'accepted' || in_array($claim->factType, ['room_name', 'room_number'], true)) && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
+                    if (($decision->status === 'accepted' || in_array($claim->factType, ['room_name', 'room_number', 'room_floor', 'room_zone'], true))
+                        && ! in_array($supportingClaimId, $locationClaimIds, true)
+                        && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
                         continue;
                     }
                     if ($supportingClaim->evidenceRef === null
-                        || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
+                        || (! in_array($supportingClaimId, $locationClaimIds, true)
+                            && ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true))) {
                         continue;
                     }
                     $hash = hash('sha256', implode('|', [
@@ -155,6 +163,14 @@ final readonly class ProjectModelEvidenceWriter
                 }
                 $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
                 $roomNumberFact = (new RoomNumberObservation)->number($claim) !== null;
+                $roomLocationFact = (new RoomLocationObservation)->label($claim) !== null;
+                if ($roomLocationFact) {
+                    $entityIdentity .= '|room-location:'.$claim->factType.'|document:'.$documentId.'|page:'.$pageNumber;
+                }
+                if ($locationClaims !== []) {
+                    $entityIdentity .= '|room-location-proof:v1:'.hash('sha256', json_encode(array_map(
+                        static fn (ObservationClaim $source): array => [$source->id, $source->factType, $source->value], $locationClaims), JSON_THROW_ON_ERROR));
+                }
                 $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
                 if ($nativeNamedRoom) {
                     // New parser metadata must not collide with immutable older room rows.
@@ -177,6 +193,15 @@ final readonly class ProjectModelEvidenceWriter
                 foreach (['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
                     if (isset($projection['attributes']['semantic_type']) && is_string($claim->locator[$locatorField] ?? null)) {
                         $projection['attributes'][$attribute] = $claim->locator[$locatorField];
+                    }
+                }
+                foreach ($locationClaims as $locationClaim) {
+                    $field = $locationClaim->factType === 'room_floor' ? 'floor_id' : 'zone_id';
+                    $literal = (new RoomLocationObservation)->label($locationClaim);
+                    if (isset($claim->locator[$field]) && $claim->locator[$field] !== $literal) {
+                        unset($projection['attributes'][$field]);
+                    } else {
+                        $projection['attributes'][$field] = $literal;
                     }
                 }
                 $visualInventoryFact = in_array($claim->factType, [
@@ -219,7 +244,7 @@ final readonly class ProjectModelEvidenceWriter
                         $projection['type'],
                         $entityId,
                         array_values(array_unique([$legacyCanonicalEntityId,
-                            ...($entityScope === '' && ! $roomIdentityFact && ! $roomNumberFact && ! $documentEngineering ? $legacyEntityIds : [])])),
+                            ...($entityScope === '' && ! $roomIdentityFact && ! $roomNumberFact && ! $roomLocationFact && ! $documentEngineering ? $legacyEntityIds : [])])),
                     );
                 }
                 if (isset($nativeRoomIdentities[$claim->entityKey.$entityScope])) {
@@ -239,7 +264,7 @@ final readonly class ProjectModelEvidenceWriter
                 );
                 $projectedStatus = match (true) {
                     $roomIdentityFact => $evidenceIds !== [] && in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
-                    $roomNumberFact => $decision->status === 'accepted' && $claim->explicitEvidence && $evidenceIds !== [] ? 'confirmed'
+                    $roomNumberFact || $roomLocationFact => $decision->status === 'accepted' && $claim->explicitEvidence && $evidenceIds !== [] ? 'confirmed'
                         : ($decision->status === 'candidate' && $evidenceIds !== [] ? 'candidate' : 'unresolved'),
                     $visualInventoryFact => in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
                     default => match ($decision->status) {
@@ -253,6 +278,9 @@ final readonly class ProjectModelEvidenceWriter
                     : (new ClaimSemanticMatcher)->key($claim).$entityScope;
                 if ($nativeNamedRoom) {
                     $factIdentity .= '|'.self::NATIVE_NAMED_ROOM_CONTRACT;
+                }
+                if ($locationClaims !== []) {
+                    $factIdentity .= '|'.$entityIdentity;
                 }
                 $factId = 'fact:'.hash('sha256', implode('|', [
                     ($projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity)
@@ -371,6 +399,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
     {
+        $location = (new RoomLocationObservation)->label($claim);
+        if ($location !== null) {
+            return hash('sha256', $location);
+        }
         $roomNumber = (new RoomNumberObservation)->fingerprint($claim);
         if ($roomNumber !== null) {
             return $roomNumber;
@@ -392,6 +424,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function projectModelFactValue(ObservationClaim $claim): mixed
     {
+        $location = (new RoomLocationObservation)->label($claim);
+        if ($location !== null) {
+            return $location;
+        }
         $roomNumber = (new RoomNumberObservation)->number($claim);
         if ($roomNumber !== null) {
             return $roomNumber;
@@ -500,6 +536,55 @@ final readonly class ProjectModelEvidenceWriter
         }
     }
 
+    /** Accepted location claims must independently cite the same captured page and room. */
+    private function roomLocations(array $claims, array $decisions, int $documentId, int $page): array
+    {
+        $groups = [];
+        $matcher = new ClaimSemanticMatcher;
+        foreach ($decisions as $decision) {
+            $claim = $claims[$decision->claimId];
+            $value = (new RoomLocationObservation)->label($claim);
+            if ($decision->status !== 'accepted' || $value === null || ! $this->isExactLiteralSource($claim, $documentId, $page)) {
+                continue;
+            }
+            $supported = false;
+            foreach ($decision->supportingClaimIds as $id) {
+                $support = $claims[$id] ?? null;
+                if ($support instanceof ObservationClaim && $matcher->equivalent($claim, $support)
+                    && $this->isExactLiteralSource($support, $documentId, $page)
+                    && in_array($support->evidenceRef, $decision->evidenceRefs, true)) {
+                    $supported = true;
+                }
+            }
+            if ($supported) {
+                $groups[$claim->entityKey.$matcher->entityScope($claim)][$claim->factType][$value][] = $claim;
+            }
+        }
+        $result = [];
+        foreach ($groups as $key => $types) {
+            foreach ($types as $values) {
+                if (count($values) === 1) {
+                    foreach (array_values($values)[0] as $claim) {
+                        $result[$key][] = $claim;
+                    }
+                }
+            }
+            if (isset($result[$key])) {
+                usort($result[$key], static fn (ObservationClaim $a, ObservationClaim $b): int => $a->id <=> $b->id);
+            }
+        }
+
+        return $result;
+    }
+
+    private function isExactLiteralSource(ObservationClaim $claim, int $documentId, int $page): bool
+    {
+        return $claim->explicitEvidence && $claim->evidenceRef !== null
+            && ($claim->locator['document_id'] ?? null) === $documentId
+            && ($claim->locator['page'] ?? $claim->locator['unit_index'] ?? null) === $page
+            && (! array_key_exists('unit_index', $claim->locator) || $claim->locator['unit_index'] === $page);
+    }
+
     /** Native numeric proofs bind a literal name or number only to the exact parser entity on this sheet. */
     private function nativeRoomIdentities(array $claims, array $decisions, int $documentId, int $page, ?VerifiedNativeNumericSources $sources): array
     {
@@ -533,6 +618,10 @@ final readonly class ProjectModelEvidenceWriter
     /** @return array{type:string,attributes:array<string,mixed>,identity_key?:string,fact_type?:string}|null */
     private function projectModelEntity(ObservationClaim $claim): ?array
     {
+        if ((new RoomLocationObservation)->label($claim) !== null) {
+            return ['type' => 'room', 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['semantic_type' => 'room']];
+        }
         $document = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
         if ($document !== null) {
             $kind = $document['semantic_type'];

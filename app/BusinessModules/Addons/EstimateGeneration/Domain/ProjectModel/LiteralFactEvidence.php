@@ -10,7 +10,7 @@ final readonly class LiteralFactEvidence
 {
     public function __construct(public string $factKey, public string $valueHash)
     {
-        if (! in_array($factKey, ['room_name', 'room_number'], true)
+        if (! in_array($factKey, ['room_name', 'room_number', 'room_floor', 'room_zone'], true)
             || preg_match('/\A[a-f0-9]{64}\z/', $valueHash) !== 1) {
             throw new InvalidArgumentException('literal_fact_evidence_invalid');
         }
@@ -21,7 +21,7 @@ final readonly class LiteralFactEvidence
     {
         $key = $value['fact_key'] ?? null;
         $hash = $value['fact_value'] ?? null;
-        if (! in_array($key, ['room_name', 'room_number'], true) || ! is_string($hash)
+        if (! in_array($key, ['room_name', 'room_number', 'room_floor', 'room_zone'], true) || ! is_string($hash)
             || preg_match('/\A[a-f0-9]{64}\z/', $hash) !== 1) {
             return null;
         }

@@ -268,7 +268,9 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         Http::fake(fn () => Http::response($this->response([
             'schema_version' => 4, 'sheet_type' => $type,
             'project_sheet_analysis' => ['contractVersion' => 'sheet-analysis:v3', 'role' => 'explication',
-                'facts' => [$this->semanticFact('room-1', 'room_number', ['type' => 'string', 'data' => '001'])]],
+                'facts' => [$this->semanticFact('room-1', 'room_number', ['type' => 'string', 'data' => '001']),
+                    $this->semanticFact('room-1', 'room_floor', ['type' => 'string', 'data' => '-1']),
+                    $this->semanticFact('room-1', 'room_zone', ['type' => 'string', 'data' => 'A'])]],
             'analysis_routing' => ['page_kind' => 'explication', 'requested_depth' => 'structured_textual',
                 'information_density' => 'medium', 'readability' => 'high', 'confidence' => 0.96,
                 'ambiguous' => false, 'material_risk' => 'low', 'reasons' => ['Explicit room register.'], 'semantic_regions' => []],
@@ -277,7 +279,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             $this->input(claim: 204), ObserverProfile::Literal, static function (): void {},
         ));
         self::assertSame($type, $analysis->sheetType);
-        self::assertSame('room_number', $analysis->projectSheetAnalysis->facts[0]['factType']);
+        self::assertSame(['room_number', 'room_floor', 'room_zone'], array_column($analysis->projectSheetAnalysis->facts, 'factType'));
+        self::assertSame('-1', $analysis->projectSheetAnalysis->facts[1]['value']['data']);
         Http::assertSent(static fn ($request): bool => str_contains((string) $request['messages'][0]['content'], 'room_schedule, explication')
             && str_contains((string) $request['messages'][0]['content'], 'generic schedules'));
         Http::assertSentCount(1);
