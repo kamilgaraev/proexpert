@@ -100,6 +100,49 @@ final class AgreementProjectScopeSecurityTest extends TestCase
         $this->assertSoftDeleted($mutable);
     }
 
+    #[DataProvider('accessModes')]
+    public function test_project_authorization_precedes_mutation_validation(string $mode): void
+    {
+        $actor = $this->context($mode);
+        [$first] = $this->fixture($actor);
+        [$second, $contract, $agreement] = $this->fixture($actor);
+        $this->grant($actor, ['agreements.create', 'agreements.edit'], $first);
+        $base = '/api/v1/admin/projects/'.$second->id.'/agreements';
+        foreach ([[], ['contract_id' => 999999999], $this->payload($contract, $agreement->number) + ['supersede_agreement_ids' => [999999999]]] as $payload) {
+            $this->postJson($base, $payload, $actor->authHeaders())->assertForbidden();
+            $this->putJson($base.'/'.$agreement->id, array_replace($payload, ['agreement_date' => 'invalid']), $actor->authHeaders())->assertForbidden();
+        }
+    }
+
+    public function test_validation_does_not_distinguish_foreign_and_missing_references(): void
+    {
+        $actor = $this->context();
+        [$project, $contract, $agreement] = $this->fixture($actor);
+        [, $otherContract, $otherAgreement] = $this->fixture($actor);
+        $this->grant($actor, ['agreements.create', 'agreements.edit'], $project);
+        $base = '/api/v1/admin/projects/'.$project->id.'/agreements';
+        $headers = $actor->authHeaders();
+        $foreign = $this->postJson($base, $this->payload($otherContract, 'FOREIGN'), $headers)->assertNotFound();
+        $missingContract = $this->payload($contract, 'MISSING-CONTRACT');
+        $missingContract['contract_id'] = 999999999;
+        $this->postJson($base, $missingContract, $headers)->assertNotFound()->assertJsonPath('message', $foreign->json('message'));
+        $this->putJson($base.'/'.$otherAgreement->id, [], $headers)->assertNotFound();
+
+        foreach (['POST', 'PUT'] as $method) {
+            $url = $method === 'POST' ? $base : $base.'/'.$agreement->id;
+            $errors = [];
+            foreach ([$otherAgreement->id, 999999999] as $supersededId) {
+                $payload = $this->payload($contract, 'VALIDATION-'.$method);
+                $payload['supersede_agreement_ids'] = [$supersededId];
+                $response = $this->json($method, $url, $payload, $headers)->assertUnprocessable();
+                $response->assertJsonValidationErrors('supersede_agreement_ids.0');
+                $errors[] = $response->json('errors');
+            }
+            self::assertSame($errors[0], $errors[1]);
+        }
+        self::assertSame('SEC-DS-'.$project->id, $agreement->fresh()->number);
+    }
+
     public function test_organization_grant_allows_first_project_context_and_filters_stay_scoped(): void
     {
         $actor = $this->context();

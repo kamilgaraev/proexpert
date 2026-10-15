@@ -36,10 +36,17 @@ class ProjectSupplementaryAgreementService
 
     public function create(User $actor, int $organizationId, int $projectId, SupplementaryAgreementDTO $dto): SupplementaryAgreement
     {
-        $this->authorize($actor, $organizationId, $projectId, 'agreements.create');
-        $this->contract($dto->contract_id, $organizationId, $projectId);
+        $this->authorizeCreation($actor, $organizationId, $projectId, $dto->contract_id);
 
         return $this->agreements->create($dto);
+    }
+
+    public function authorizeCreation(User $actor, int $organizationId, int $projectId, ?int $contractId = null): void
+    {
+        $this->authorize($actor, $organizationId, $projectId, 'agreements.create');
+        if ($contractId !== null) {
+            $this->contract($contractId, $organizationId, $projectId);
+        }
     }
 
     public function find(User $actor, int $organizationId, int $projectId, int $agreementId): SupplementaryAgreement
