@@ -80,6 +80,18 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
 
         $checklistResponse->assertCreated();
         $checklistResponse->assertJsonCount(2, 'data.items');
+        $itemsByTitle = collect($checklistResponse->json('data.items'))->keyBy('title');
+        foreach (['Walls accepted' => 'walls_accepted', 'Keys prepared' => 'keys_prepared'] as $title => $code) {
+            $item = $itemsByTitle->get($title);
+            $this->assertNotNull($item);
+            $this->assertSame($code, $item['code']);
+            $this->assertDatabaseHas('acceptance_checklist_items', [
+                'id' => $item['id'],
+                'acceptance_checklist_id' => (int) $checklistResponse->json('data.id'),
+                'title' => $title,
+                'code' => $code,
+            ]);
+        }
 
         $sessionResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/sessions", [
