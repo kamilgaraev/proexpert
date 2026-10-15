@@ -92,7 +92,12 @@ final class EstimateTemplateSecurityTest extends TestCase
 
         self::assertFalse(str_contains($response->getContent(), 'FOREIGN-PRIVATE-CATALOG'));
         self::assertNull($item->work_type_id);
-        self::assertNull($item->measurement_unit_id);
+        self::assertNotSame($unit->id, $item->measurement_unit_id);
+        $localUnit = MeasurementUnit::query()->findOrFail($item->measurement_unit_id);
+        self::assertSame($actor->organization->id, $localUnit->organization_id);
+        self::assertSame($unit->name, $localUnit->name);
+        self::assertSame($unit->short_name, $localUnit->short_name);
+        self::assertNull($localUnit->description);
         self::assertSame('Published snapshot', $item->name);
         self::assertSame('100.0000', $item->unit_price);
     }
@@ -330,6 +335,53 @@ final class EstimateTemplateSecurityTest extends TestCase
             'name' => 'No project', 'estimate_date' => now()->toDateString(),
         ], $actor->authHeaders())->assertUnprocessable()->assertJsonValidationErrors('project_id');
         self::assertSame(0, Estimate::query()->count());
+    }
+
+    #[DataProvider('unitAbbreviations')]
+    public function test_public_template_reuses_a_local_unit_case_insensitively(string $published, string $existing): void
+    {
+        $actor = $this->context();
+        $foreign = $this->context();
+        [$workType, $unit] = $this->catalog($foreign->organization);
+        $unit->update(['short_name' => $published]);
+        $localUnit = MeasurementUnit::query()->create([
+            'organization_id' => $actor->organization->id, 'name' => 'Square metre',
+            'short_name' => $existing, 'type' => 'work',
+        ]);
+        $unitsBefore = MeasurementUnit::query()->where('organization_id', $actor->organization->id)->count();
+        $template = $this->template($foreign, public: true);
+        $this->setTemplateItems($template, $workType, $unit);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+
+        $this->postJson($this->url($template).'/apply', $this->payload($project), $actor->authHeaders())->assertCreated();
+
+        self::assertSame($localUnit->id, Estimate::query()->sole()->items()->sole()->measurement_unit_id);
+        self::assertSame($unitsBefore, MeasurementUnit::query()->where('organization_id', $actor->organization->id)->count());
+        self::assertNull($localUnit->fresh()->description);
+    }
+
+    public static function unitAbbreviations(): array
+    {
+        return ['cyrillic' => ['секм²', 'СЕКМ²'], 'dotted I' => ['СекİN', 'секin']];
+    }
+
+    public function test_public_template_exposes_only_public_author_and_organization_fields(): void
+    {
+        $actor = $this->context();
+        $foreign = $this->context();
+        $foreign->user->update(['last_login_ip' => '198.51.100.37']);
+        $template = $this->template($foreign, public: true);
+
+        $response = $this->getJson($this->url($template), $actor->authHeaders())->assertOk();
+
+        self::assertFalse(str_contains($response->getContent(), '198.51.100.37'));
+        self::assertSame(['id', 'name'], array_keys($response->json('data.created_by')));
+        self::assertSame(['id', 'name'], array_keys($response->json('data.organization')));
+        $response->assertJsonPath('data.created_by.id', $foreign->user->id)
+            ->assertJsonPath('data.organization.id', $foreign->organization->id);
+        $list = $this->getJson('/api/v1/admin/estimate-templates', $actor->authHeaders())->assertOk();
+        self::assertFalse(str_contains($list->getContent(), '198.51.100.37'));
+        self::assertSame(['id', 'name'], array_keys($list->json('data.0.created_by')));
     }
 
     private function contextWithPermissions(array $permissions): AdminApiTestContext

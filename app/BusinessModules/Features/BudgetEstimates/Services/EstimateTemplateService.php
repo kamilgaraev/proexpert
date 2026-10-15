@@ -16,7 +16,6 @@ use App\Repositories\EstimateItemRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
-use Illuminate\Database\Eloquent\Builder;
 
 class EstimateTemplateService
 {
@@ -180,17 +179,40 @@ class EstimateTemplateService
     {
         $workTypeIds = WorkType::query()->where('organization_id', $organizationId)
             ->whereIn('id', array_column($items, 'work_type_id'))->pluck('id')->flip()->all();
-        $unitIds = MeasurementUnit::query()
-            ->where(static function (Builder $query) use ($organizationId): void {
-                $query->where('organization_id', $organizationId)->orWhere('is_system', true);
-            })
-            ->whereIn('id', array_column($items, 'measurement_unit_id'))->pluck('id')->flip()->all();
+        $units = MeasurementUnit::query()->whereIn('id', array_column($items, 'measurement_unit_id'))
+            ->select(['id', 'organization_id', 'name', 'short_name', 'type', 'is_system'])
+            ->selectRaw('LOWER(short_name) AS normalized_short_name')->get();
+        $localUnits = MeasurementUnit::query()->where('organization_id', $organizationId)
+            ->whereIn(DB::raw('LOWER(short_name)'), $units->pluck('normalized_short_name')->all())
+            ->select(['id'])->selectRaw('LOWER(short_name) AS normalized_short_name')->get()->keyBy(
+                static fn (MeasurementUnit $unit): string => (string) $unit->getAttribute('normalized_short_name'),
+            );
+        $unitIds = [];
+        foreach ($units as $unit) {
+            if ((int) $unit->organization_id === $organizationId || $unit->is_system) {
+                $unitIds[$unit->id] = $unit->id;
+                continue;
+            }
+
+            $key = (string) $unit->getAttribute('normalized_short_name');
+            $localUnit = $localUnits->get($key);
+            if (! $localUnit) {
+                $localUnit = MeasurementUnit::query()->where('organization_id', $organizationId)
+                    ->whereRaw('LOWER(short_name) = ?', [$key])
+                    ->firstOrCreate([], [
+                        'organization_id' => $organizationId, 'name' => $unit->name,
+                        'short_name' => $unit->short_name, 'type' => $unit->type, 'is_system' => false,
+                    ]);
+                $localUnits->put($key, $localUnit);
+            }
+            $unitIds[$unit->id] = $localUnit->id;
+        }
 
         return array_map(static function (array $item) use ($workTypeIds, $unitIds): array {
             $workTypeId = (int) ($item['work_type_id'] ?? 0);
             $unitId = (int) ($item['measurement_unit_id'] ?? 0);
             $item['work_type_id'] = isset($workTypeIds[$workTypeId]) ? $workTypeId : null;
-            $item['measurement_unit_id'] = isset($unitIds[$unitId]) ? $unitId : null;
+            $item['measurement_unit_id'] = $unitIds[$unitId] ?? null;
 
             return $item;
         }, $items);
