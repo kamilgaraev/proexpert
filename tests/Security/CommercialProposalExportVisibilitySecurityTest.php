@@ -201,7 +201,7 @@ final class CommercialProposalExportVisibilitySecurityTest extends TestCase
             self::assertSame('failed', $export->status);
             self::assertNull($export->storage_path);
             self::assertNull($export->amounts_visible);
-            self::assertFalse(app(CommercialProposalAmountAccess::class)->canDownload($export));
+            self::assertFalse(app(CommercialProposalAmountAccess::class)->snapshot((int) $export->organization_id)->canDownload($export));
         }
         $retry = $service->export($proposal, $input, true, $actor->id);
         self::assertSame($export->id, $retry->id);
@@ -212,7 +212,7 @@ final class CommercialProposalExportVisibilitySecurityTest extends TestCase
         $inFlight = $service->export($proposal, $input, true, $actor->id);
         self::assertSame($retry->id, $inFlight->id);
         self::assertSame('processing', $inFlight->status);
-        self::assertFalse(app(CommercialProposalAmountAccess::class)->canDownload($inFlight));
+        self::assertFalse(app(CommercialProposalAmountAccess::class)->snapshot((int) $inFlight->organization_id)->canDownload($inFlight));
     }
 
     public function test_amount_viewer_can_explicitly_generate_redacted_preview_and_export(): void
@@ -239,6 +239,62 @@ final class CommercialProposalExportVisibilitySecurityTest extends TestCase
         $this->app->instance(FileService::class, $files);
         $this->deleteJson('/api/v1/admin/commercial-proposals/'.$proposal->id, [], $this->headers($actor))
             ->assertOk()->assertJsonPath('data.exports.0.download_url', null);
+    }
+
+    public function test_list_query_count_stays_bounded_and_new_requests_recheck_amount_permission(): void
+    {
+        [$fixture, $actor, $proposal] = $this->fixture();
+        $headers = $this->headers($actor);
+        $uri = '/api/v1/admin/commercial-proposals?per_page=100';
+        $one = $this->queryCount(fn () => $this->getJson($uri, $headers)->assertOk()->assertJsonCount(1, 'data'));
+        for ($index = 1; $index < 20; $index++) {
+            $copy = $proposal->replicate();
+            $copy->forceFill(['number' => 'PERF-'.$index, 'current_version_id' => null])->save();
+        }
+        $many = $this->queryCount(fn () => $this->getJson($uri, $headers)->assertOk()->assertJsonCount(20, 'data')
+            ->assertJsonPath('data.0.amounts_visible', false));
+        self::assertLessThanOrEqual($one + 8, $many, 'Query count must not scale with each resource: '.$one.' -> '.$many);
+        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
+        OrganizationCustomRole::query()->where('organization_id', $fixture->organization->id)->where('slug', $assignment->role_slug)
+            ->update(['module_permissions' => json_encode(['commercial-proposals' => [
+                'commercial_proposals.view', 'commercial_proposals.export', 'commercial_proposals.amounts.view',
+            ]], JSON_THROW_ON_ERROR)]);
+        $this->getJson($uri, $headers)->assertOk()->assertJsonPath('data.0.amounts_visible', true);
+    }
+
+    public function test_detail_query_count_does_not_scale_with_nested_versions_and_exports(): void
+    {
+        [, $actor, $proposal, $version] = $this->fixture(true);
+        $this->storedExport($proposal, $version);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('temporaryUrl')->times(21)->andReturn('https://storage.example.test/priced');
+        $this->app->instance(FileService::class, $files);
+        $headers = $this->headers($actor);
+        $uri = '/api/v1/admin/commercial-proposals/'.$proposal->id;
+        $one = $this->queryCount(fn () => $this->getJson($uri, $headers)->assertOk()->assertJsonCount(1, 'data.exports'));
+        for ($index = 2; $index <= 20; $index++) {
+            $copy = $version->replicate();
+            $copy->forceFill(['version_number' => $index])->save();
+            $this->storedExport($proposal, $copy);
+        }
+        $many = $this->queryCount(fn () => $this->getJson($uri, $headers)->assertOk()
+            ->assertJsonCount(20, 'data.versions')->assertJsonCount(20, 'data.exports'));
+        self::assertLessThanOrEqual($one + 8, $many, 'Nested query count must stay bounded: '.$one.' -> '.$many);
+    }
+
+    private function queryCount(callable $request): int
+    {
+        $connection = DB::connection();
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+        try {
+            $request();
+
+            return count($connection->getQueryLog());
+        } finally {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
     }
 
     private function fixture(bool $amounts = false, bool $view = true): array

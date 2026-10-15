@@ -1250,15 +1250,21 @@ final class CommercialProposalService
             return;
         }
 
+        if ($proposal->exports->isEmpty()) {
+            return;
+        }
+
+        $access = $this->amountAccess->snapshot((int) $proposal->organization_id);
         foreach ($proposal->exports as $export) {
-            $this->appendExportUrl($export, $proposal);
+            $this->appendExportUrl($export, $proposal, $access);
         }
     }
 
-    private function appendExportUrl(CommercialProposalExport $export, CommercialProposal $proposal): void
+    private function appendExportUrl(CommercialProposalExport $export, CommercialProposal $proposal, ?CommercialProposalAmountSnapshot $access = null): void
     {
         $export->setAttribute('download_url', null);
-        if (! $this->amountAccess->canDownload($export)) {
+        $access ??= $this->amountAccess->snapshot((int) $proposal->organization_id);
+        if (! $access->canDownload($export)) {
             return;
         }
 

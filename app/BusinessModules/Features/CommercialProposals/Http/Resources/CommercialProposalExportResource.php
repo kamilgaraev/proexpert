@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\CommercialProposals\Http\Resources;
 
 use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalAmountAccess;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -16,10 +15,8 @@ final class CommercialProposalExportResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $actor = $request->user();
-        $canDownload = $actor instanceof User
-            && (int) $request->attributes->get('current_organization_id') === (int) $this->organization_id
-            && app(CommercialProposalAmountAccess::class)->canDownload($this->resource, $actor);
+        $canDownload = app(CommercialProposalAmountAccess::class)->forRequest($request, (int) $this->organization_id)
+            ->canDownload($this->resource);
 
         return [
             'id' => $this->id,

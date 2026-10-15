@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\CommercialProposals\Services;
 
-use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposalExport;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 final class CommercialProposalAmountAccess
@@ -17,24 +17,39 @@ final class CommercialProposalAmountAccess
 
     public function canView(int $organizationId, ?User $actor = null): bool
     {
-        $actor ??= Auth::user();
-
-        return $actor instanceof User
-            && $this->isCurrentMember($actor, $organizationId)
-            && $this->authorization->canCurrent($actor, 'commercial_proposals.amounts.view', ['organization_id' => $organizationId]);
+        return $this->snapshot($organizationId, $actor)->canViewAmounts;
     }
 
-    public function canDownload(CommercialProposalExport $export, ?User $actor = null): bool
+    public function snapshot(int $organizationId, ?User $actor = null): CommercialProposalAmountSnapshot
     {
         $actor ??= Auth::user();
+        $isMember = $actor instanceof User && $this->isCurrentMember($actor, $organizationId);
 
-        return $export->status === 'ready'
-            && is_string($export->storage_path)
-            && $export->storage_path !== ''
-            && $actor instanceof User
-            && $this->isCurrentMember($actor, (int) $export->organization_id)
-            && ($export->amounts_visible === false
-                || $this->authorization->canCurrent($actor, 'commercial_proposals.amounts.view', ['organization_id' => (int) $export->organization_id]));
+        return new CommercialProposalAmountSnapshot(
+            $organizationId,
+            $isMember,
+            $actor instanceof User && $isMember
+                && $this->authorization->canCurrent($actor, 'commercial_proposals.amounts.view', ['organization_id' => $organizationId]),
+        );
+    }
+
+    public function forRequest(Request $request, int $organizationId): CommercialProposalAmountSnapshot
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User
+            || (int) $actor->current_organization_id !== $organizationId
+            || (int) $request->attributes->get('current_organization_id') !== $organizationId) {
+            return new CommercialProposalAmountSnapshot($organizationId, false, false);
+        }
+
+        $snapshots = $request->attributes->get(self::class, []);
+        $key = $actor->id.':'.$organizationId;
+        if (! isset($snapshots[$key])) {
+            $snapshots[$key] = $this->snapshot($organizationId, $actor);
+            $request->attributes->set(self::class, $snapshots);
+        }
+
+        return $snapshots[$key];
     }
 
     private function isCurrentMember(User $actor, int $organizationId): bool
