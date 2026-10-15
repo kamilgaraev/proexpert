@@ -26,6 +26,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
         $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
         $hasProjectRequirement = preg_match('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект/iu', $query) === 1;
         return self::hasIntent($query)
+            && ! self::hasUnsupportedSubjectScope($query)
             && ! AssistantTemporalIntent::hasNonCurrentScope($query)
             && ($hasProjectRequirement || preg_match('/настройк|лимит|порог|уведомл|напомина|напомин|срок[а-яё]*\s+(?:сдачи|подотч[её]т)|сколько\s+дней\s+(?:да[её]тся|отводится|отведено|предусмотрено)/iu', $query) === 1)
             && ! self::asksAboutReportApproval($query)
@@ -37,12 +38,20 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             && ! AssistantMutationIntent::containsFollowUpCommand($query)
             && ! AssistantMutationIntent::hasPresentationRequest($query)
             && preg_match('/сколько[\s\S]*(?:раз|выдан|получен|потрачен|превыс|превыш|использован|возвращ|операци|транзакци)|(?:уже|всего|фактически)\s+(?:выдан|потрачен|получен|возвращ|израсходован)|в\s+рамках\s+лимит/iu', $query) !== 1
-            && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|сотрудник|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
+            && preg_match('/измени|установи|поменяй|настрой\s|выдай|создай|одобри|согласуй|отклони|удали|включи|отключи|отправь|мои\s+уведомлен|непрочитан|истори|событи|договор|сч[её]т|оплат|плат[её]ж|бюджет|проект[а-яё]*\s+(?:активн|архив)|какие\s+проекты|поставк|закуп|табел|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
 
     public static function intentQuery(string $query): string
     {
         return preg_replace('/(уведомля[а-яё]*\s+ли\s+)сотрудник[а-яё]*(?=\s+об?\s+(?:одобр|отклон)[а-яё]*\s+подотч[её]тн[а-яё]*\s+операц)/iu', '$1получателя', $query) ?? $query;
+    }
+
+    private static function hasUnsupportedSubjectScope(string $query): bool
+    {
+        $scopeQuery = preg_replace('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект(?!\pL)/iu', '', $query) ?? $query;
+        $scopeQuery = preg_replace('/(?:для|у|в)\s+(?:(?:нашей|текущей|этой)\s+организац[а-яё]*|организац[а-яё]*(?!\pL)(?!\s+\pL))|у\s+нас(?!\pL)|(?:для|у)\s+подотч[её]т[а-яё]*(?:\s+(?:средств|расход[а-яё]*|операц[а-яё]*))?|для\s+(?:одн[а-яё]*|кажд[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
+
+        return preg_match('/проект|объект|сотрудник|работник|пользоват|контрагент|подрядчик|(?<!\pL)(?:для|у)\s+\pL/iu', $scopeQuery) === 1;
     }
 
     private static function asksAboutReportApproval(string $query): bool
