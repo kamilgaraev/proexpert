@@ -18,7 +18,7 @@ final class PrepareExecutiveDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'template_version' => ['required', 'string', Rule::in([ExecutiveDocumentRenderService::TEMPLATE_VERSION])],
+            'template_version' => ['required', 'string', Rule::in(ExecutiveDocumentRenderService::SUPPORTED_TEMPLATE_VERSIONS)],
             'version_number' => ['required', 'string', 'max:40'],
             'expected_version_id' => ['required', 'integer', 'min:0'],
             'expected_revision' => ['required', 'integer', 'min:0'],

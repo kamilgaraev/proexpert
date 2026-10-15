@@ -10,7 +10,9 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 final class ExecutiveDocumentRenderService
 {
-    public const TEMPLATE_VERSION = '344-369-v1';
+    public const TEMPLATE_VERSION = '344-369-v2';
+
+    public const SUPPORTED_TEMPLATE_VERSIONS = ['344-369-v1', self::TEMPLATE_VERSION];
 
     public function __construct(private readonly ExecutiveDocumentMutationGuard $guard) {}
 
@@ -45,7 +47,7 @@ final class ExecutiveDocumentRenderService
 
     public function renderSnapshot(array $snapshot, string $templateVersion): string
     {
-        if ($templateVersion !== self::TEMPLATE_VERSION) {
+        if (! in_array($templateVersion, self::SUPPORTED_TEMPLATE_VERSIONS, true)) {
             throw new BusinessLogicException(trans_message('executive_document_print.template_not_supported'), 422);
         }
         if (strlen(json_encode($snapshot, JSON_THROW_ON_ERROR)) > 1024 * 1024) {

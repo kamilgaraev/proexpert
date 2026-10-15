@@ -17,6 +17,6 @@ final class RenderExecutiveDocumentRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['template_version' => ['required', 'string', Rule::in([ExecutiveDocumentRenderService::TEMPLATE_VERSION])]];
+        return ['template_version' => ['required', 'string', Rule::in(ExecutiveDocumentRenderService::SUPPORTED_TEMPLATE_VERSIONS)]];
     }
 }
