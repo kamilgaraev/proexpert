@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,7 +20,8 @@ class PaymentApprovalController extends Controller
 {
     public function __construct(
         private readonly ApprovalWorkflowService $approvalService,
-        private readonly PaymentBudgetLimitService $budgetLimitService
+        private readonly PaymentBudgetLimitService $budgetLimitService,
+        private readonly PaymentDocumentAccessService $access
     ) {}
 
     public function myApprovals(Request $request): JsonResponse
@@ -27,7 +29,7 @@ class PaymentApprovalController extends Controller
         try {
             $userId = (int) $request->user()->id;
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId);
+            $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId, $this->actor($request));
             $page = max(1, (int) $request->input('page', 1));
             $perPage = max(1, min(100, (int) $request->input('per_page', 20)));
             $total = $approvals->count();
@@ -98,23 +100,23 @@ class PaymentApprovalController extends Controller
         }
 
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $document = $this->access->find($organizationId, $actor, $resolvedDocumentId, 'payments.transaction.approve');
             $validated = $request->validate([
                 'comment' => ['nullable', 'string'],
                 'notes' => ['nullable', 'string'],
                 'budget_override_reason' => ['nullable', 'string', 'max:1000'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
             $userId = (int) $request->user()->id;
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail($resolvedDocumentId);
 
             $this->approvalService->approveByUser(
                 $document,
                 $userId,
                 $validated['comment'] ?? $validated['notes'] ?? null,
-                $validated['budget_override_reason'] ?? null
+                $validated['budget_override_reason'] ?? null,
+                $actor
             );
 
             return AdminResponse::success([
@@ -145,17 +147,16 @@ class PaymentApprovalController extends Controller
         }
 
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $actor = $this->actor($request);
+            $document = $this->access->find($organizationId, $actor, $resolvedDocumentId, 'payments.transaction.reject');
             $validated = $request->validate([
                 'reason' => ['required', 'string', 'min:3'],
             ]);
 
-            $organizationId = (int) $request->attributes->get('current_organization_id');
             $userId = (int) $request->user()->id;
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail($resolvedDocumentId);
 
-            $this->approvalService->rejectByUser($document, $userId, $validated['reason']);
+            $this->approvalService->rejectByUser($document, $userId, $validated['reason'], $actor);
 
             return AdminResponse::success([
                 'approval_status' => $this->approvalService->getApprovalStatus($document),
@@ -186,9 +187,7 @@ class PaymentApprovalController extends Controller
 
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail($resolvedDocumentId);
+            $document = $this->access->find($organizationId, $this->actor($request), $resolvedDocumentId, 'payments.transaction.view');
             $history = $this->approvalService->getApprovalHistory($document);
 
             return AdminResponse::success(
@@ -233,9 +232,7 @@ class PaymentApprovalController extends Controller
 
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail($resolvedDocumentId);
+            $document = $this->access->find($organizationId, $this->actor($request), $resolvedDocumentId, 'payments.transaction.view');
             $status = $this->approvalService->getApprovalStatus($document, (int) $request->user()->id);
 
             return AdminResponse::success($status, trans_message('payments.approval.loaded'));
@@ -260,9 +257,7 @@ class PaymentApprovalController extends Controller
 
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $document = PaymentDocument::query()
-                ->forOrganization($organizationId)
-                ->findOrFail($resolvedDocumentId);
+            $document = $this->access->find($organizationId, $this->actor($request), $resolvedDocumentId, 'payments.settings.manage');
             $sentCount = $this->approvalService->sendReminders($document);
 
             return AdminResponse::success([
@@ -278,6 +273,16 @@ class PaymentApprovalController extends Controller
 
             return AdminResponse::error(trans_message('payments.approval.reminders_error'), 500);
         }
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new \Illuminate\Database\Eloquent\ModelNotFoundException;
+        }
+
+        return $actor;
     }
 
     private function resolveDocumentId(int|string $documentId): ?int

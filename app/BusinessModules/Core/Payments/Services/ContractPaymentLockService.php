@@ -12,26 +12,60 @@ use App\Models\ContractPerformanceAct;
 use App\Services\Contract\ContractAuditedMutationService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 final class ContractPaymentLockService
 {
-    public function lockForPaymentDocument(PaymentDocument $document): void
+    public function lockForPaymentDocument(PaymentDocument $document, ?array $expectedContracts = null): void
+    {
+        $contractId = $expectedContracts === null
+            ? $this->contractIdForPaymentDocument($document)
+            : $this->assertContractUnchanged($document, $expectedContracts);
+        if ($contractId !== null) {
+            Contract::query()->useWritePdo()->whereKey($contractId)->lockForUpdate()->first();
+        }
+    }
+
+    public function lockForPaymentDocuments(iterable $documents): array
+    {
+        $expectedContracts = [];
+        foreach ($documents as $document) {
+            $expectedContracts[(int) $document->id] = $this->contractIdForPaymentDocument($document);
+        }
+        $ids = array_values(array_unique(array_filter($expectedContracts, static fn (?int $id): bool => $id !== null)));
+        if ($ids !== []) {
+            Contract::query()->useWritePdo()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get(['id']);
+        }
+
+        return $expectedContracts;
+    }
+
+    public function assertContractUnchanged(PaymentDocument $document, array $expectedContracts): ?int
+    {
+        $contractId = $this->contractIdForPaymentDocument($document);
+        if (! array_key_exists((int) $document->id, $expectedContracts)
+            || $contractId !== $expectedContracts[(int) $document->id]) {
+            throw (new ModelNotFoundException)->setModel(PaymentDocument::class);
+        }
+
+        return $contractId;
+    }
+
+    public function contractIdForPaymentDocument(PaymentDocument $document): ?int
     {
         $contractId = null;
 
         if ($document->invoiceable_type === Contract::class) {
             $contractId = (int) $document->invoiceable_id;
         } elseif ($document->invoiceable_type === ContractPerformanceAct::class) {
-            $contractId = (int) ContractPerformanceAct::query()
+            $contractId = (int) ContractPerformanceAct::query()->useWritePdo()
                 ->whereKey($document->invoiceable_id)
                 ->value('contract_id');
         } elseif ($document->source_type === Contract::class) {
             $contractId = (int) $document->source_id;
         }
 
-        if ($contractId > 0) {
-            Contract::query()->whereKey($contractId)->lockForUpdate()->first();
-        }
+        return $contractId > 0 ? $contractId : null;
     }
 
     public function synchronizeActualAdvanceAmount(PaymentDocument $document, ?int $actorId): void

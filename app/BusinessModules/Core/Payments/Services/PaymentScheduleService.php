@@ -26,10 +26,11 @@ class PaymentScheduleService
      * @param array<int, array{installment_number: int, due_date: string, amount: int|float|string, notes?: string|null}> $installments
      * @return array<int, PaymentSchedule>
      */
-    public function replacePendingSchedule(PaymentDocument $document, array $installments, ?User $user = null): array
+    public function replacePendingSchedule(PaymentDocument $document, array $installments, ?User $user = null, ?\Closure $authorizeLocked = null): array
     {
-        return DB::transaction(function () use ($document, $installments, $user): array {
+        return DB::transaction(function () use ($document, $installments, $user, $authorizeLocked): array {
             $document = $this->synchronization->lockForManualChange($document);
+            $authorizeLocked?->__invoke($document);
             $totalScheduleAmount = (float) collect($installments)->sum('amount');
             if ((float) $document->amount !== $totalScheduleAmount) {
                 throw new \DomainException(trans_message('payments.schedule.sum_mismatch'));

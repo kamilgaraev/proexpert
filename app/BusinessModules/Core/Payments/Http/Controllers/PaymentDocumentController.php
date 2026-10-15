@@ -26,7 +26,8 @@ use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
-use App\Services\Contract\ContractAccessService;
+use App\Models\User;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -47,7 +48,7 @@ final class PaymentDocumentController extends Controller
         private readonly PaymentBudgetLimitService $budgetLimits,
         private readonly PaymentOrderPdfService $pdfExport,
         private readonly PurchaseOrderContractRequirementService $contractRequirement,
-        private readonly ContractAccessService $contractAccess,
+        private readonly PaymentDocumentAccessService $access,
         private readonly PaymentValidationService $validation,
     ) {}
 
@@ -56,9 +57,11 @@ final class PaymentDocumentController extends Controller
         int|string $contract
     ): JsonResponse {
         try {
-            $accessibleContract = $this->contractAccess->findAccessibleOrFail(
-                (int) $contract,
+            $accessibleContract = $this->access->contract(
                 $this->organizationId($request),
+                $this->actor($request),
+                (int) $contract,
+                'payments.invoice.view',
                 $request->projectId()
             );
 
@@ -89,6 +92,8 @@ final class PaymentDocumentController extends Controller
             );
 
             return AdminResponse::success($results, trans_message('payments.documents.bulk_processed'));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (Throwable $e) {
             Log::error('payment_document.bulk_action.error', [
                 'error' => $e->getMessage(),
@@ -101,7 +106,7 @@ final class PaymentDocumentController extends Controller
     public function index(PaymentDocumentIndexRequest $request): JsonResponse
     {
         try {
-            $documents = $this->queries->listForOrganization($this->organizationId($request), $request->filters());
+            $documents = $this->queries->listForOrganization($this->organizationId($request), $request->filters(), $this->actor($request));
             $pageItems = $documents->getCollection();
             $this->contractRequirement->preload($pageItems);
 
@@ -138,8 +143,18 @@ final class PaymentDocumentController extends Controller
 
     public function show(Request $request, int|string $id): JsonResponse
     {
+        return $this->showDocument($request, $id, 'payments.invoice.view');
+    }
+
+    public function showForSchedule(Request $request, int|string $id): JsonResponse
+    {
+        return $this->showDocument($request, $id, 'payments.schedule.view');
+    }
+
+    private function showDocument(Request $request, int|string $id, string $permission): JsonResponse
+    {
         try {
-            $document = $this->queries->findDetailed($this->organizationId($request), $id);
+            $document = $this->queries->findDetailed($this->organizationId($request), $id, $this->actor($request), $permission);
 
             return AdminResponse::success($this->presenter->detailed($document, $request->user()));
         } catch (ModelNotFoundException) {
@@ -160,7 +175,8 @@ final class PaymentDocumentController extends Controller
             $result = $this->workflow->create(
                 $this->organizationId($request),
                 (int) $request->user()->id,
-                $request->validated()
+                $request->validated(),
+                $this->actor($request),
             );
 
             return AdminResponse::success(
@@ -170,6 +186,8 @@ final class PaymentDocumentController extends Controller
                 trans_message('payments.documents.created'),
                 201
             );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (PaymentDocumentDeviationBlockedException $e) {
             return AdminResponse::error($e->getMessage(), 422, [
                 'requires_justification' => true,
@@ -191,8 +209,8 @@ final class PaymentDocumentController extends Controller
     public function update(UpdatePaymentDocumentRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
-            $updated = $this->workflow->update($document, $request->validated());
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.invoice.edit');
+            $updated = $this->workflow->update($document, $request->validated(), $this->actor($request));
 
             return AdminResponse::success(
                 $this->presenter->detailed($updated, $request->user()),
@@ -217,7 +235,7 @@ final class PaymentDocumentController extends Controller
     public function submit(SubmitPaymentDocumentRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.invoice.issue');
             $submitted = $this->workflow->submit(
                 $document,
                 $request->user(),
@@ -245,7 +263,7 @@ final class PaymentDocumentController extends Controller
     public function printOrder(Request $request, int|string $id): Response
     {
         try {
-            $document = $this->queries->findForPrintOrder($this->organizationId($request), $id);
+            $document = $this->queries->findForPrintOrder($this->organizationId($request), $id, $this->actor($request));
             $pdfContent = $this->pdfExport->generate($document);
 
             return response($pdfContent, 200, [
@@ -288,7 +306,7 @@ final class PaymentDocumentController extends Controller
     public function schedule(SchedulePaymentDocumentRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.schedule.create');
             $scheduled = $this->workflow->schedule(
                 $document,
                 $request->validated('scheduled_at'),
@@ -319,11 +337,12 @@ final class PaymentDocumentController extends Controller
     public function registerPayment(RegisterPaymentDocumentPaymentRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.transaction.register');
             $paid = $this->workflow->registerPayment(
                 $document,
                 (int) $request->user()->id,
-                $request->validated()
+                $request->validated(),
+                $this->actor($request),
             );
 
             return AdminResponse::success(
@@ -349,7 +368,7 @@ final class PaymentDocumentController extends Controller
     public function previewPaymentBudget(PreviewPaymentDocumentBudgetRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.transaction.register');
             $check = $this->budgetLimits->checkPaymentRegistration(
                 $document,
                 $request->validated('amount'),
@@ -375,7 +394,7 @@ final class PaymentDocumentController extends Controller
     public function cancel(CancelPaymentDocumentRequest $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.invoice.cancel');
             $cancelled = $this->workflow->cancel(
                 $document,
                 (string) $request->validated('reason'),
@@ -405,8 +424,8 @@ final class PaymentDocumentController extends Controller
     public function destroy(Request $request, int|string $id): JsonResponse
     {
         try {
-            $document = $this->queries->findForWorkflow($this->organizationId($request), $id);
-            $this->workflow->delete($document);
+            $document = $this->queries->findForWorkflow($this->organizationId($request), $id, $this->actor($request), 'payments.invoice.delete');
+            $this->workflow->delete($document, $this->actor($request));
 
             return AdminResponse::success(null, trans_message('payments.documents.deleted'));
         } catch (\DomainException $e) {
@@ -426,7 +445,7 @@ final class PaymentDocumentController extends Controller
     public function overdue(Request $request): JsonResponse
     {
         try {
-            $documents = $this->queries->overdue($this->organizationId($request));
+            $documents = $this->queries->overdue($this->organizationId($request), $this->actor($request));
             $this->contractRequirement->preload($documents);
 
             return AdminResponse::paginated(
@@ -449,7 +468,7 @@ final class PaymentDocumentController extends Controller
     {
         try {
             $days = $request->days();
-            $documents = $this->queries->upcoming($this->organizationId($request), $days);
+            $documents = $this->queries->upcoming($this->organizationId($request), $days, $this->actor($request));
             $this->contractRequirement->preload($documents);
 
             return AdminResponse::paginated(
@@ -472,7 +491,7 @@ final class PaymentDocumentController extends Controller
     public function statistics(Request $request): JsonResponse
     {
         try {
-            return AdminResponse::success($this->queries->statistics($this->organizationId($request)));
+            return AdminResponse::success($this->queries->statistics($this->organizationId($request), $this->actor($request)));
         } catch (Throwable $e) {
             Log::error('payment_document.statistics.error', [
                 'error' => $e->getMessage(),
@@ -485,5 +504,15 @@ final class PaymentDocumentController extends Controller
     private function organizationId(Request $request): int
     {
         return (int) $request->attributes->get('current_organization_id');
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw (new ModelNotFoundException)->setModel(User::class);
+        }
+
+        return $actor;
     }
 }

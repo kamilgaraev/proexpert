@@ -33,6 +33,7 @@ use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -522,6 +523,19 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
         }
         $actor = User::factory()->create(['current_organization_id' => $this->organization->id]);
         $workflow = app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService::class);
+        $this->organization->users()->attach($actor->id, [
+            'is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects',
+        ]);
+        \App\Domain\Authorization\Models\UserRoleAssignment::assignRole(
+            user: $actor,
+            roleSlug: 'organization_owner',
+            context: \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($this->organization->id),
+        );
+        \App\Models\Module::query()->updateOrCreate(['slug' => 'payments'], [
+            'name' => 'Payments', 'version' => '1.0.0', 'type' => 'core', 'billing_model' => 'free',
+            'category' => 'finance', 'permissions' => array_keys(app(\App\BusinessModules\Core\Payments\PaymentsModule::class)->getPermissions()),
+            'is_active' => true,
+        ]);
         $lockLevel = 0;
         \Illuminate\Support\Facades\DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$lockLevel): void {
             if (str_contains($query->sql, '"contracts"') && str_contains(strtolower($query->sql), 'for update')) {
@@ -570,22 +584,25 @@ class PaymentDocumentEstimateLifecycleTest extends TestCase
             'status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true,
         ]);
         foreach ([
-            ['contract_id' => $foreign->id],
-            ['source_type' => Contract::class, 'source_id' => $foreign->id],
-            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id],
-            ['contract_id' => $contract->id, 'invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id],
-            ['contract_id' => $contract->id, 'project_id' => $this->project->id + 10000],
-            ['source_type' => Contract::class],
-            ['contract_id' => $contract->id, 'invoiceable_type' => ContractPerformanceAct::class],
-        ] as $invalidReference) {
+            [['contract_id' => $foreign->id], ModelNotFoundException::class],
+            [['source_type' => Contract::class, 'source_id' => $foreign->id], ModelNotFoundException::class],
+            [['invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id], ModelNotFoundException::class],
+            [['contract_id' => $contract->id, 'invoiceable_type' => Contract::class, 'invoiceable_id' => $foreign->id], ModelNotFoundException::class],
+            [['contract_id' => $contract->id, 'project_id' => $this->project->id + 10000], ModelNotFoundException::class],
+            [['source_type' => Contract::class], \DomainException::class],
+            [['contract_id' => $contract->id, 'invoiceable_type' => ContractPerformanceAct::class], \DomainException::class],
+        ] as [$invalidReference, $expectedException]) {
             try {
                 $workflow->create($this->organization->id, $actor->id, [
                     ...$invalidReference, 'amount' => '100.00',
                     'document_type' => PaymentDocumentType::INVOICE->value,
                 ]);
                 self::fail('Invalid contract reference was accepted');
-            } catch (\DomainException $exception) {
-                self::assertSame(trans_message('payments.validation.invoice_basis_scope_mismatch'), $exception->getMessage());
+            } catch (\DomainException|ModelNotFoundException $exception) {
+                self::assertInstanceOf($expectedException, $exception);
+                if ($exception instanceof \DomainException) {
+                    self::assertSame(trans_message('payments.validation.invoice_basis_scope_mismatch'), $exception->getMessage());
+                }
             }
         }
         self::assertSame(6, PaymentDocument::query()->where('organization_id', $this->organization->id)->count());

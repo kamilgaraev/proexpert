@@ -19,7 +19,8 @@ class ApprovalWorkflowService
 
     public function __construct(
         private readonly PaymentDocumentStateMachine $stateMachine,
-        private readonly PaymentBudgetLimitService $budgetLimitService
+        private readonly PaymentBudgetLimitService $budgetLimitService,
+        private readonly PaymentDocumentAccessService $access,
     ) {}
 
     /**
@@ -280,13 +281,16 @@ class ApprovalWorkflowService
         PaymentDocument $document,
         int $userId,
         ?string $comment = null,
-        ?string $budgetOverrideReason = null
+        ?string $budgetOverrideReason = null,
+        ?User $actor = null,
     ): bool {
+        $user = $this->access->actor($userId, $actor);
         DB::beginTransaction();
 
         try {
             // Блокируем документ для предотвращения гонок
-            $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
+            $document = $this->access->find((int) $user->current_organization_id, $user, $document->id, self::PAYMENT_APPROVAL_PERMISSION, true);
+            $this->access->assertDocument($document, $user, self::PAYMENT_APPROVAL_PERMISSION);
 
             if (! in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)) {
                 throw new \DomainException(sprintf(
@@ -296,12 +300,11 @@ class ApprovalWorkflowService
             }
 
             // Найти pending утверждение для данного пользователя
-            $user = User::find($userId);
             $approval = $this->approvalQueryForUser($document, $userId, $user)
                 ->lockForUpdate()
                 ->first();
             $approval ??= $this->legacyRoleApprovalForUser($document, $userId);
-            $canApprovePayments = $this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id);
+            $canApprovePayments = $this->access->canOrganization((int) $document->organization_id, $user, self::PAYMENT_APPROVAL_PERMISSION);
 
             // Проверка прав администратора/владельца организации
             $isAdmin = $canApprovePayments || $this->isPrivilegedApprovalActor($user, (int) $document->organization_id);
@@ -472,13 +475,15 @@ class ApprovalWorkflowService
     /**
      * Отклонить документ пользователем
      */
-    public function rejectByUser(PaymentDocument $document, int $userId, string $reason): bool
+    public function rejectByUser(PaymentDocument $document, int $userId, string $reason, ?User $actor = null): bool
     {
+        $user = $this->access->actor($userId, $actor);
         DB::beginTransaction();
 
         try {
             // Блокируем документ
-            $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
+            $document = $this->access->find((int) $user->current_organization_id, $user, $document->id, 'payments.transaction.reject', true);
+            $this->access->assertDocument($document, $user, 'payments.transaction.reject');
 
             if (in_array($document->status, [PaymentDocumentStatus::REJECTED, PaymentDocumentStatus::CANCELLED])) {
                 DB::commit();
@@ -487,7 +492,6 @@ class ApprovalWorkflowService
             }
 
             // Найти pending утверждение для данного пользователя
-            $user = User::find($userId);
             $approval = $this->approvalQueryForUser($document, $userId, $user, 'payments.transaction.reject')
                 ->lockForUpdate()
                 ->first();
@@ -590,16 +594,15 @@ class ApprovalWorkflowService
     /**
      * Получить pending утверждения для пользователя
      */
-    public function getPendingApprovalsForUser(int $userId, ?int $organizationId = null): Collection
+    public function getPendingApprovalsForUser(int $userId, ?int $organizationId = null, ?User $actor = null): Collection
     {
+        $user = $this->access->actor($userId, $actor);
+        $organizationId ??= (int) $user->current_organization_id;
         $isAdmin = false;
 
         if ($organizationId) {
-            $user = User::find($userId);
-            if ($user) {
-                $isAdmin = $this->isPrivilegedApprovalActor($user, $organizationId)
-                    || $this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, $organizationId);
-            }
+            $isAdmin = $this->isPrivilegedApprovalActor($user, $organizationId)
+                || $this->access->canOrganization($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION);
         }
 
         $query = PaymentApproval::with(['paymentDocument', 'organization'])
@@ -638,7 +641,7 @@ class ApprovalWorkflowService
         // Также для админа показываем документы в статусе pending_approval без записей утверждения
         // (если правила утверждения не создали записи)
         if ($isAdmin && $organizationId) {
-            $documentsWithoutApprovals = PaymentDocument::where('organization_id', $organizationId)
+            $documentsWithoutApprovals = $this->access->query($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION)
                 ->where('status', PaymentDocumentStatus::PENDING_APPROVAL)
                 ->whereDoesntHave('approvals', function ($q) {
                     $q->where('status', 'pending');
@@ -651,15 +654,15 @@ class ApprovalWorkflowService
             ]);
 
             foreach ($documentsWithoutApprovals as $doc) {
-                DB::transaction(function () use ($doc, $organizationId, $userId): void {
-                    $document = PaymentDocument::query()
-                        ->where('organization_id', $organizationId)
+                DB::transaction(function () use ($doc, $organizationId, $userId, $user): void {
+                    $document = $this->access->query($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION)
                         ->lockForUpdate()
                         ->find($doc->id);
 
                     if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL) {
                         return;
                     }
+                    $this->access->assertDocument($document, $user, self::PAYMENT_APPROVAL_PERMISSION);
 
                     $existingApproval = $document->approvals()
                         ->where(function ($approvals) use ($userId): void {
@@ -686,15 +689,12 @@ class ApprovalWorkflowService
                 });
             }
 
-            // Перезагружаем запрос после создания записей
-            $query = PaymentApproval::with(['paymentDocument', 'organization'])
-                ->where('status', 'pending')
-                ->where('organization_id', $organizationId);
         }
 
         return $query->orderBy('created_at', 'desc')
-            ->whereHas('paymentDocument', function ($documents): void {
+            ->whereHas('paymentDocument', function ($documents) use ($organizationId, $user): void {
                 $documents->where('status', PaymentDocumentStatus::PENDING_APPROVAL);
+                $this->access->scope($documents, $organizationId, $user, 'payments.transaction.view');
             })
             ->get();
     }

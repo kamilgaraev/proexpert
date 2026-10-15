@@ -227,6 +227,18 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
 
     private function activateBudgetingModule(int $organizationId): void
     {
+        $account = \App\Models\OrganizationCommercialAccount::query()->create([
+            'organization_id' => $organizationId,
+            'responsible_user_id' => \App\Models\User::query()->where('current_organization_id', $organizationId)->value('id'),
+            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1,
+            'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth(),
+            'auto_renew_enabled' => false,
+        ]);
+        \App\Models\OrganizationPackageSubscription::query()->create([
+            'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
+            'package_slug' => 'finance-contracts', 'status' => 'active', 'access_source' => 'paid_package',
+            'price_paid' => 39900, 'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth(),
+        ]);
         $module = Module::query()->firstOrCreate(
             ['slug' => 'budgeting'],
             [
@@ -247,6 +259,8 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
+        self::assertTrue(app(\App\Domain\Authorization\Services\ModulePermissionChecker::class)->isModuleActive('budgeting', $organizationId));
     }
 
     /**

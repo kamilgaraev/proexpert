@@ -432,7 +432,9 @@ class PaymentDocumentService
     public function registerPayment(
         PaymentDocument $document,
         string|int|float $amount,
-        array $paymentData
+        array $paymentData,
+        ?\Closure $authorizeLocked = null,
+        ?array $expectedContracts = null,
     ): PaymentDocument {
         $paymentAmount = BigDecimal::of((string) $amount)->toScale(2, RoundingMode::HalfUp);
 
@@ -444,11 +446,15 @@ class PaymentDocumentService
         DB::beginTransaction();
 
         try {
-            $this->contractPaymentLock->lockForPaymentDocument($document);
+            $this->contractPaymentLock->lockForPaymentDocument($document, $expectedContracts);
             $document = PaymentDocument::query()
                 ->whereKey($document->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            if ($expectedContracts !== null) {
+                $this->contractPaymentLock->assertContractUnchanged($document, $expectedContracts);
+            }
+            $authorizeLocked?->__invoke($document);
             $idempotencyKey = $paymentData['idempotency_key']
                 ?? (isset($paymentData['bank_transaction_id'])
                     ? 'bank:'.(string) $paymentData['bank_transaction_id']
