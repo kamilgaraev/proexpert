@@ -33,9 +33,9 @@ final class ExecutiveDocumentPrintTemplate
         if ($templateVersion === '344-369-v2') {
             $relations = array_map($this->withJournalRequisites(...), $relations);
             $volume = $profile['actual_volume'] ?? null;
-            if ($type === 'hidden_work_act' && is_string($volume) && trim($volume) !== '') {
+            if ($type === 'hidden_work_act' && (is_string($volume) || is_int($volume) || is_float($volume)) && trim((string) $volume) !== '') {
                 $works = is_string($profile['presented_works'] ?? null) ? $profile['presented_works'] : '';
-                $profile['presented_works'] = ltrim($works."\n".trans_message('executive_document_print.actual_volume', ['volume' => $volume]));
+                $profile['presented_works'] = ltrim($works."\n".trans_message('executive_document_print.actual_volume', ['volume' => (string) $volume]));
             }
         }
         $profile = $this->withReferences($profile, $relations);

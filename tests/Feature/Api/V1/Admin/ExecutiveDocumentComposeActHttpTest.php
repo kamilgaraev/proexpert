@@ -20,6 +20,7 @@ use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -27,10 +28,11 @@ final class ExecutiveDocumentComposeActHttpTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_first_composed_pdf_contains_frozen_journal_requisites_and_volume(): void
+    #[DataProvider('printVolumes')]
+    public function test_first_composed_pdf_contains_frozen_journal_requisites_and_volume(string|int|float $volume, string $expected): void
     {
         [$context, $set, $payload] = $this->fixture();
-        $payload['profile_data']['actual_volume'] = '100.000 м²';
+        $payload['profile_data']['actual_volume'] = $volume;
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/executive-documentation/sets/{$set->id}/compose-act", $payload)->assertCreated();
         $document = ExecutiveDocument::query()->findOrFail($response->json('data.id'));
@@ -45,12 +47,22 @@ final class ExecutiveDocumentComposeActHttpTest extends TestCase
         $bytes = Storage::disk('s3')->get($version->file_url);
         $text = (new \Smalot\PdfParser\Parser())->parseContent($bytes)->getText();
         $text = preg_replace('/\s+/u', ' ', $text);
-        self::assertStringContainsString('100.000 м²', $text);
+        self::assertStringContainsString('Фактический объем работ: '.$expected, $text);
         self::assertStringContainsString('ОЖР-1', $text);
         self::assertStringContainsString('Общий журнал', $text);
         self::assertStringContainsString('запись № 1', $text);
         self::assertStringContainsString('02.10.2026', $text);
         self::assertSame(hash('sha256', $bytes), $version->content_hash);
+    }
+
+    public static function printVolumes(): array
+    {
+        return [
+            'text with unit' => ['100.000 м²', '100.000 м²'],
+            'integer' => [100, '100'],
+            'fractional' => [12.5, '12.5'],
+            'zero' => [0, '0'],
+        ];
     }
 
     public function test_changed_journal_requisites_reject_a_prepared_file_before_upload(): void

@@ -139,6 +139,21 @@ final class ExecutiveDocumentPrintTemplateTest extends TestCase
         self::assertArrayNotHasKey('title', $snapshot['relations'][0]['domain_snapshot']);
     }
 
+    #[DataProvider('numericVolumes')]
+    public function test_current_template_prints_numeric_volume(int|float $volume, string $expected): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => $volume]);
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
+
+        self::assertStringContainsString('Фактический объем работ: '.$expected, $html);
+        self::assertSame($volume, $snapshot['profile_data']['actual_volume']);
+    }
+
+    public static function numericVolumes(): array
+    {
+        return ['integer' => [100, '100'], 'fractional' => [12.5, '12.5'], 'zero' => [0, '0']];
+    }
+
     public function test_legacy_template_keeps_its_original_volume_and_relation_presentation(): void
     {
         $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => '100.000 м²']);
