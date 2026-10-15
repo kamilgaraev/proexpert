@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignAdditionalRagSource;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
@@ -15,6 +16,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignModelSetRevision;
 use App\BusinessModules\Features\DesignManagement\Models\DesignNormativeSource;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewRound;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -246,6 +248,74 @@ final class AssistantDesignAdditionalTest extends TestCase
         self::assertSame($withoutDerivative, $collect());
         $version->updateQuietly(['project_id' => $otherProject->id]);
         self::assertSame([], $collect());
+    }
+
+    public function test_single_source_counter_batch_shares_candidates_across_identities_and_keeps_current_access(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $permissions = ['design-management.view', 'design-management.documents.view', 'design-management.review'];
+        $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'],
+            'project-management' => ['projects.view'], 'design-management' => $permissions]]);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $package = $this->package($fixture->organization->id, $project->id);
+        $section = DesignPackageSection::withoutEvents(fn () => DesignPackageSection::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'code' => 'AR', 'title' => 'Section', 'project_stage' => $package->project_stage,
+        ]));
+        $round = DesignReviewRound::withoutEvents(fn () => DesignReviewRound::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'round_number' => 1,
+        ]));
+        foreach (['design_package_section' => $section->id, 'design_review_round' => $round->id] as $type => $id) {
+            DB::statement("INSERT INTO ai_rag_sources (organization_id, project_id, source_type, entity_type, entity_id, identity_project_id, identity_part_key, title, checksum) SELECT ?, ?, 'design_additional', ?, ?, ?, 'counter-part-' || n, 'Counter source', md5(n::text) FROM generate_series(1, 5000) n",
+                [$fixture->organization->id, $project->id, $type, (string) $id, $project->id]);
+        }
+        foreach ([[$fixture->organization->id, $hidden->id, (string) $section->id],
+            [$fixture->foreignOrganization->id, $project->id, (string) $section->id],
+            [$fixture->organization->id, $project->id, '0'.$section->id]] as [$organizationId, $projectId, $entityId]) {
+            RagSource::withoutEvents(fn () => RagSource::query()->create(['organization_id' => $organizationId,
+                'project_id' => $projectId, 'source_type' => 'design_additional', 'entity_type' => 'design_package_section',
+                'entity_id' => $entityId, 'identity_part_key' => 'excluded', 'title' => 'Excluded', 'checksum' => hash('sha256', $entityId)]));
+        }
+        DB::statement('ANALYZE ai_rag_status_sources');
+        DB::statement("SET LOCAL work_mem = '64kB'");
+        $policy = app(AssistantDataAccessPolicy::class);
+        $compile = static fn () => $policy->withCurrentChecks($fixture->member, $fixture->organization->id,
+            static fn () => $policy->aggregateSourceIdentityBatches(
+                RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->member, $fixture->organization->id,
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+                    ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count')),
+            fresh: true);
+        $batches = $compile();
+        self::assertCount(1, $batches);
+        self::assertSame(10000, (int) $batches[0]->first()->stored_count);
+        $result = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
+        $sourceScans = 0;
+        $sourceRows = 0;
+        $walk = static function (array $node) use (&$walk, &$sourceScans, &$sourceRows): void {
+            if (($node['Relation Name'] ?? null) === 'ai_rag_status_sources') {
+                $sourceScans++;
+                $sourceRows += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+            }
+            foreach ($node['Plans'] ?? [] as $child) { $walk($child); }
+        };
+        $walk(json_decode($result->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        self::assertLessThanOrEqual(2, $sourceScans, 'A single source batch must share its candidate projection across entity branches.');
+        self::assertLessThanOrEqual(20006, $sourceRows);
+        $package->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+        self::assertNull($batches[0]->first());
+        $package->updateQuietly(['organization_id' => $fixture->organization->id]);
+        $fixture->member->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertNull($batches[0]->first());
+        $fixture->member->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'],
+            'project-management' => ['projects.view'], 'design-management' => ['design-management.view', 'design-management.documents.view']]]);
+        self::assertSame(5000, (int) $compile()[0]->first()->stored_count);
+        DB::table('organization_user')->where('organization_id', $fixture->organization->id)->where('user_id', $fixture->member->id)->update(['is_active' => false]);
+        self::assertNull($batches[0]->first());
     }
 
     private function package(int $organizationId, int $projectId): DesignPackage
