@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '724f18b420d9a63270dff53bae38fbb5c2ea475bc05c2495a8974dfc7b0470e4',
-        'training' => 'a64287ba93d3073ee3a9e2a07d925a84d403c422eac12d6585c8c977ce7abf81',
-        'pricing' => 'a64287ba93d3073ee3a9e2a07d925a84d403c422eac12d6585c8c977ce7abf81',
+        'geometry' => '73e40f0c572c02eb37ee2eae97126ec2bfabc5da994f12ae50ce4579878d8587',
+        'training' => '3678de49348c47686892f039f1f43078251a2db57c9d704fb7c291bf58caec76',
+        'pricing' => '3678de49348c47686892f039f1f43078251a2db57c9d704fb7c291bf58caec76',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '2141ee11b1945984f4ad3f5c4d6e20522019773ed8496f5c93be231a99c2a24e';
+    private const FRESH_INVENTORY_DIGEST = 'bc6d6aff82366cdd7cb308daecbb9a17c0b96acb69e026120496ef32d1bfb994';
 
     private const SUBJECT = [
         'geometry' => [
@@ -128,6 +128,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2026_09_09_180000_create_estimate_finance_allocations.php',
         'database/migrations/2026_09_29_000006_create_ai_credit_tables.php',
         'database/migrations/2026_10_11_001100_add_estimate_other_costs_and_resource_precision.php',
+        'database/migrations/2026_10_15_235000_add_commercial_billing_periods.php',
     ];
 
     private const MODULE = [
