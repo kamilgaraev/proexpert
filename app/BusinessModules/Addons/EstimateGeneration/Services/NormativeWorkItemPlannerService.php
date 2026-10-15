@@ -679,14 +679,14 @@ final class NormativeWorkItemPlannerService
     private function definitionBelongsToPackage(string $quantityKey, string $packageKey, ?PackagePlanData $plan): bool
     {
         $packages = $plan === null ? [] : array_column($plan->packages, 'key');
+        $waterPackage = in_array('plumbing', $packages, true) ? 'plumbing' : 'water_sewerage';
+        $separateSanitary = in_array('sanitary_rooms', $packages, true) && in_array($waterPackage, $packages, true);
         $owner = match (true) {
             str_starts_with($quantityKey, 'lighting.') || $quantityKey === 'warehouse.lighting' => 'lighting',
             in_array($quantityKey, ['warehouse.low_current', 'office.network_points'], true) => 'low_current',
             $quantityKey === 'server.room' => 'server_room',
-            in_array('sanitary_rooms', $packages, true) && in_array('water_sewerage', $packages, true)
-                && str_starts_with($quantityKey, 'sanitary.') => 'sanitary_rooms',
-            in_array('sanitary_rooms', $packages, true) && in_array('water_sewerage', $packages, true)
-                && $quantityKey === 'plumbing.pipe' => 'water_sewerage',
+            $separateSanitary && str_starts_with($quantityKey, 'sanitary.') => 'sanitary_rooms',
+            $separateSanitary && $quantityKey === 'plumbing.pipe' => $waterPackage,
             default => null,
         };
 

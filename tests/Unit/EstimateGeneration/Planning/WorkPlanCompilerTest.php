@@ -579,6 +579,37 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
+    public function test_universal_water_with_an_explicit_sanitary_package_uses_each_takeoff_once(): void
+    {
+        foreach ([false, true] as $explicitSanitaryPackage) {
+            $quantities = ['plumbing.pipe' => 64, 'sanitary.points' => 2, 'sanitary.showers' => 3, 'sanitary.toilets' => 4, 'sanitary.washbasins' => 5];
+            $selected = $explicitSanitaryPackage ? ['water_supply', 'sanitary_rooms'] : ['water_supply'];
+            $payload = $this->compiler()->compile(['object' => ['object_type' => 'mixed_warehouse_office'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => $selected],
+                'document_context' => ['quantity_takeoffs' => array_map(static fn (string $key, int $quantity): array => [
+                    'quantity_key' => $key, 'quantity' => $quantity, 'unit' => $key === 'plumbing.pipe' ? 'м' : 'шт',
+                    'source_refs' => [['document_id' => 82]],
+                    'normalized_payload' => ['quantity_key' => $key, 'review_required' => false],
+                ], array_keys($quantities), array_values($quantities))]], deferNormativePin: true);
+            $matches = [];
+            foreach ($payload['local_estimates'] as $estimate) {
+                foreach ($estimate['sections'] as $section) {
+                    foreach ($section['work_items'] as $item) {
+                        $key = $item['quantity_formula'] ?? null;
+                        if (is_string($key) && array_key_exists($key, $quantities)) {
+                            $matches[$key][] = ['package' => $estimate['key'], 'quantity' => $item['quantity']];
+                        }
+                    }
+                }
+            }
+            foreach ($quantities as $key => $quantity) {
+                self::assertCount(1, $matches[$key] ?? [], $key.' '.implode(',', $selected));
+                self::assertSame((string) $quantity, $matches[$key][0]['quantity']);
+                self::assertSame($explicitSanitaryPackage && str_starts_with($key, 'sanitary.') ? 'sanitary_rooms' : 'plumbing', $matches[$key][0]['package']);
+            }
+        }
+    }
+
     public function test_universal_description_without_dimensions_keeps_a_work_list_with_unknown_volumes(): void
     {
         $analysis = $this->analysis();

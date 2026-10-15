@@ -194,30 +194,33 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
     #[DataProvider('generationModes')]
     public function test_real_saved_mixed_opening_takeoffs_are_used_once_in_their_specialized_package(string $mode): void
     {
+        $universal = str_starts_with($mode, 'universal');
+        $explicitSanitaryPackage = $mode === 'universal_explicit_sanitary';
         [$context, $session] = $this->fixture();
         $session->input_payload = [...$session->input_payload, 'object_type' => 'mixed_warehouse_office'];
         $session->save();
         $document = $this->document($session, 'Ведомость окон, дверей, ворот и погрузочных узлов');
         $quantities = ['openings.windows' => 10, 'openings.doors' => 20, 'warehouse.gates' => 3, 'warehouse.loading_nodes' => 4];
         $quantities += ['lighting.lines' => 40, 'warehouse.low_current' => 60, 'office.network_points' => 6, 'server.room' => 7, 'plumbing.pipe' => 64];
-        if ($mode !== 'universal') {
+        $quantities += ['sanitary.points' => 2, 'sanitary.showers' => 3, 'sanitary.toilets' => 4, 'sanitary.washbasins' => 5];
+        if (! $universal || $explicitSanitaryPackage) {
             $quantities += ['sanitary.tile' => 10, 'sanitary.waterproofing' => 20, 'sanitary.floor_tile' => 30];
         }
         foreach ($quantities as $key => $quantity) {
             EstimateGenerationQuantityTakeoff::query()->create([
                 'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
                 'session_id' => $session->id, 'document_id' => $document->id, 'scope_key' => $key,
-                'name' => $key, 'unit' => str_starts_with($key, 'sanitary.') ? 'м2' : (in_array($key, ['lighting.lines', 'warehouse.low_current', 'plumbing.pipe'], true) ? 'м' : 'шт'), 'quantity' => $quantity, 'confidence' => 0.8,
+                'name' => $key, 'unit' => in_array($key, ['sanitary.tile', 'sanitary.waterproofing', 'sanitary.floor_tile'], true) ? 'м2' : (in_array($key, ['lighting.lines', 'warehouse.low_current', 'plumbing.pipe'], true) ? 'м' : 'шт'), 'quantity' => $quantity, 'confidence' => 0.8,
                 'source_element_ids' => [], 'work_intent' => ['quantity_key' => $key],
                 'source_refs' => [['document_id' => $document->id, 'source_version' => $document->source_version]],
-                'normalized_payload' => ['quantity_key' => $key],
+                'normalized_payload' => ['quantity_key' => $key, 'review_required' => false],
             ]);
         }
         $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
         $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
-        $analysis['planning_signals']['generation_mode'] = $mode === 'universal' ? 'ai_assisted' : $mode;
-        if ($mode === 'universal') {
-            $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'electricity', 'water_supply', 'sewerage']];
+        $analysis['planning_signals']['generation_mode'] = $universal ? 'ai_assisted' : $mode;
+        if ($universal) {
+            $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['structures', 'electricity', 'water_supply', 'sewerage', ...($explicitSanitaryPackage ? ['sanitary_rooms'] : [])]];
         }
         $draft = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
         $matches = [];
@@ -235,11 +238,11 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             self::assertCount(1, $matches[$key] ?? [], $key);
             $owner = match (true) {
                 str_starts_with($key, 'openings.') => 'entrance_group',
-                str_starts_with($key, 'sanitary.') => 'sanitary_rooms',
+                str_starts_with($key, 'sanitary.') => ! $universal || $explicitSanitaryPackage ? 'sanitary_rooms' : 'plumbing',
                 $key === 'lighting.lines' => 'lighting',
                 in_array($key, ['warehouse.low_current', 'office.network_points'], true) => 'low_current',
                 $key === 'server.room' => 'server_room',
-                $key === 'plumbing.pipe' => $mode === 'universal' ? 'plumbing' : 'water_sewerage',
+                $key === 'plumbing.pipe' => $universal ? 'plumbing' : 'water_sewerage',
                 default => 'gates',
             };
             self::assertSame($owner, $matches[$key][0]['package']);
@@ -251,7 +254,7 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
 
     public static function generationModes(): array
     {
-        return [['universal'], ['strict'], ['ai_assisted']];
+        return [['universal'], ['strict'], ['ai_assisted'], ['universal_explicit_sanitary']];
     }
 
     public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void
