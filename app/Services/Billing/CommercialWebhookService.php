@@ -628,18 +628,23 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     'organization_id' => $order->organization_id,
                     'package_slug' => $slug,
                 ]);
+            $preserveAiPayment = ! $renewal && ! $order->renew_subscription && $order->offer_type === CommercialOfferType::Packages
+                && $row->exists && $row->access_source->value === 'paid_package' && $row->source_order_id !== null
+                && in_array($slug, $order->current_package_slugs ?? [], true)
+                && $row->current_period_end_at !== null && $row->current_period_end_at->equalTo($order->period_end_at)
+                && array_intersect(['ai-assistant', 'ai-estimates'], $this->catalog->tierModules($slug, 'standard')) !== [];
             $row->forceFill([
                 'commercial_account_id' => $account->id,
                 'status' => 'active',
                 'access_source' => $source,
-                'price_paid' => $order->amount,
+                'price_paid' => $preserveAiPayment ? $row->price_paid : $order->amount,
                 'current_period_start_at' => $order->period_start_at,
                 'current_period_end_at' => $order->period_end_at,
                 'trial_started_at' => null,
                 'trial_ends_at' => null,
                 'cancel_at' => null,
                 'canceled_at' => null,
-                'source_order_id' => $order->id,
+                'source_order_id' => $preserveAiPayment ? $row->source_order_id : $order->id,
             ])->save();
         }
 
@@ -693,7 +698,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ],
             ]);
         }
-        app(\App\Services\Credits\AICreditCommercialService::class)->settlePaidOrder($order);
+        app(\App\Services\Credits\AICreditCommercialService::class)->reconcileCurrentPaidPeriod($order->organization);
     }
 
     private function matchesOrder(
