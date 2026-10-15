@@ -645,6 +645,8 @@ final class NormativeWorkItemPlannerService
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
+        $separateWaterScope = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal'
+            && in_array($packageKey, ['plumbing', 'sewerage'], true);
         $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
@@ -660,6 +662,7 @@ final class NormativeWorkItemPlannerService
         return array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
+                && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
                 && (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
                 && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));

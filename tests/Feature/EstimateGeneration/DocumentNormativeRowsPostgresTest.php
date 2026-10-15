@@ -138,10 +138,47 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             'document water supply' => ['custom', 'Прокладка труб водоснабжения', 'м', 'custom-plumbing', 'water_supply', 'plumbing.pipe'],
             'document heating' => ['custom', 'Прокладка труб отопления', 'м', 'custom-heating', 'heating', 'heating.pipe'],
             'document ventilation' => ['custom', 'Монтаж вентиляционных воздуховодов', 'м', 'custom-ventilation', 'ventilation', 'ventilation.air_exchange'],
-            'mixed water supply' => ['mixed_warehouse_office', 'Прокладка труб водоснабжения', 'м', 'water_sewerage', 'water_supply'],
+            'mixed water supply' => ['mixed_warehouse_office', 'Прокладка труб водоснабжения', 'м', 'plumbing', 'water_supply'],
+            'warehouse sewerage selected' => ['warehouse', 'Прокладка труб канализации', 'м', 'sewerage', 'sewerage'],
+            'industrial sewerage selected' => ['industrial', 'Прокладка труб канализации', 'м', 'sewerage', 'sewerage'],
+            'mixed sewerage selected' => ['mixed_warehouse_office', 'Прокладка труб канализации', 'м', 'sewerage', 'sewerage'],
+            'house facade' => ['house', 'Монтаж фасадных панелей', 'м2', 'facade', 'structures'],
             'warehouse facade' => ['warehouse', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
             'industrial facade' => ['industrial', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
         ];
+    }
+
+    public function test_selected_water_systems_keep_each_source_once_and_preserve_unselected_rows_for_review(): void
+    {
+        foreach (['warehouse', 'industrial', 'mixed_warehouse_office'] as $type) {
+            foreach ([['water_supply'], ['sewerage'], ['water_supply', 'sewerage']] as $selected) {
+                [$context, $session] = $this->fixture();
+                $session->input_payload = [...$session->input_payload, 'object_type' => $type];
+                $session->save();
+                $document = $this->document($session, "ФЕР 08-02-001-01 Прокладка труб водоснабжения 10 м\n\nФЕР 08-02-001-01 Прокладка труб канализации 20 м");
+                $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+                $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+                $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => $selected];
+                $draft = app(WorkPlanCompiler::class)->compile($analysis, deferNormativePin: true);
+                $packages = array_column($draft['local_estimates'], null, 'key');
+                self::assertCount(2, $this->references($draft));
+                foreach (['water_supply' => ['plumbing', '10'], 'sewerage' => ['sewerage', '20']] as $scope => [$key, $quantity]) {
+                    $selectedSystem = in_array($scope, $selected, true);
+                    if (! $selectedSystem) {
+                        self::assertArrayNotHasKey($key, $packages);
+                    }
+                    $rows = $this->references(['local_estimates' => [$packages[$selectedSystem ? $key : 'document_review']]]);
+                    self::assertCount(1, $rows);
+                    self::assertSame($quantity, $rows[0]['quantity']);
+                    self::assertSame($selectedSystem ? 'priced_work' : 'review_note', $rows[0]['item_type']);
+                    self::assertSame($selectedSystem ? 'not_calculated' : 'not_applicable', $rows[0]['pricing_status']);
+                    self::assertArrayNotHasKey('quantity_evidence', $rows[0]);
+                    self::assertArrayNotHasKey('quantity_evidence_id', $rows[0]);
+                    self::assertSame((int) $document->id, $rows[0]['source_refs'][0]['document_id']);
+                }
+                self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            }
+        }
     }
 
     public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void

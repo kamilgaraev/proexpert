@@ -38,7 +38,19 @@ final readonly class WorkPlanCompiler
         $plan = $this->packagePlanner->plan($profile);
         $selected = $analysis['evaluation_policy']['selected_sections'] ?? [];
         if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' && $selected !== []) {
-            $plan = new PackagePlanData(array_values(array_filter($plan->packages, static fn (array $package): bool => in_array(
+            $packages = [];
+            foreach ($plan->packages as $package) {
+                if ($package['key'] === 'water_sewerage') {
+                    foreach (['plumbing' => [16, 34], 'sewerage' => [12, 26]] as $key => [$min, $max]) {
+                        $packages[] = [...$package, 'key' => $key, 'scope_type' => $key,
+                            'title' => trans_message('estimate_generation.selected_package_'.$key),
+                            'target_items_min' => $min, 'target_items_max' => $max];
+                    }
+                } else {
+                    $packages[] = $package;
+                }
+            }
+            $plan = new PackagePlanData(array_values(array_filter($packages, static fn (array $package): bool => in_array(
                 EvaluationSectionMap::forPackage((string) $package['key']), $selected, true,
             ) || in_array((string) $package['key'], $selected, true))), $plan->assumptions);
         }

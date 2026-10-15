@@ -13,10 +13,42 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferen
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
 use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $container = new Container;
+        $container->instance('app', new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 4).'/lang'), 'ru'));
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+        Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
+        parent::tearDown();
+    }
+
     public function test_compilation_rejects_work_items_over_the_frozen_ceiling(): void
     {
         $analysis = $this->analysis();
@@ -388,6 +420,51 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertNotContains('electrical', $keys);
         self::assertSame(array_sum(array_column($payload['package_plan']['packages'], 'target_items_min')), $payload['package_plan']['target_items_min_total']);
         self::assertSame($analysis['evaluation_policy'], $payload['evaluation_policy']);
+    }
+
+    public function test_universal_water_scopes_specialize_combined_profiles_without_including_the_other_system(): void
+    {
+        foreach (['warehouse', 'industrial', 'mixed_warehouse_office'] as $type) {
+            foreach ([['sewerage'], ['water_supply'], ['water_supply', 'sewerage']] as $selected) {
+                $analysis = ['object' => ['object_type' => $type], 'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => $selected]];
+                $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+                $keys = array_column($payload['local_estimates'], 'key');
+                $expected = $selected === ['sewerage'] ? ['sewerage'] : ($selected === ['water_supply'] ? ['plumbing'] : ['plumbing', 'sewerage']);
+                self::assertSame($expected, $keys, $type.' '.implode(',', $selected));
+                self::assertSame($keys, array_column($payload['package_plan']['packages'], 'key'));
+                self::assertLessThanOrEqual(35, $payload['package_plan']['target_items_min_total']);
+                self::assertLessThanOrEqual(80, $payload['package_plan']['target_items_max_total']);
+                foreach ($payload['local_estimates'] as $estimate) {
+                    foreach ($estimate['sections'] as $section) {
+                        self::assertNotEmpty($section['work_items']);
+                        foreach ($section['work_items'] as $item) {
+                            self::assertSame($estimate['scope_type'], $item['work_category']);
+                        }
+                    }
+                }
+                $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build(
+                    $payload, new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+                self::assertSame($selected, $evaluation['selected_scope']);
+                self::assertFalse($evaluation['can_confirm_for_apply']);
+                foreach ($evaluation['scenarios'][0]['positions'] as $position) {
+                    self::assertContains($position['section'], $selected);
+                    self::assertNull($position['quantity']);
+                }
+            }
+            $legacy = $this->compiler()->compile(['object' => ['object_type' => $type]], deferNormativePin: true);
+            self::assertContains('water_sewerage', array_column($legacy['package_plan']['packages'], 'key'));
+        }
+    }
+
+    public function test_structures_selection_keeps_real_facade_and_mixed_structure_packages(): void
+    {
+        foreach (['house' => ['facade'], 'mixed_warehouse_office' => ['envelope', 'office_partitions', 'entrance_group']] as $type => $expected) {
+            $payload = $this->compiler()->compile(['object' => ['object_type' => $type],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['structures']]], deferNormativePin: true);
+            foreach ($expected as $key) {
+                self::assertContains($key, array_column($payload['local_estimates'], 'key'));
+            }
+        }
     }
 
     public function test_universal_description_without_dimensions_keeps_a_work_list_with_unknown_volumes(): void
