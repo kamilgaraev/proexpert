@@ -9,6 +9,19 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectDocumentNormativeReferenceExtractorTest extends TestCase
 {
+    public function test_sewerage_reference_keeps_its_category_in_specific_and_combined_packages(): void
+    {
+        $analysis = ['source_documents' => [['id' => 82, 'status' => 'ready', 'quality' => ['level' => 'good'],
+            'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+            'text' => 'ФЕР 08-02-001-01 Прокладка труб канализации 10 м']]];
+        foreach (['sewerage' => 'sewerage', 'custom-sewerage' => 'sewerage', 'water_sewerage' => 'plumbing', 'engineering' => 'engineering'] as $key => $scope) {
+            $rows = $this->extractor()->extract($analysis, ['key' => $key, 'scope_type' => $scope], ['construction_part' => $scope]);
+            self::assertCount(1, $rows, $key);
+            self::assertSame('sewerage', $rows[0]['work_category']);
+        }
+        self::assertSame([], $this->extractor()->extract($analysis, ['key' => 'plumbing', 'scope_type' => 'plumbing'], ['construction_part' => 'plumbing']));
+    }
+
     public function test_reference_limit_accepts_exact_count_and_preserves_mixed_line_endings(): void
     {
         $line = 'ФЕР 08-02-001-01 Кладка стен 10 м2';

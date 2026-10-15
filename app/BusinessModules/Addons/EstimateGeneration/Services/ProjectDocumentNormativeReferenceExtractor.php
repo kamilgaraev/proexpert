@@ -162,13 +162,14 @@ final class ProjectDocumentNormativeReferenceExtractor
         $text = mb_strtolower($line);
 
         return match (true) {
-            str_contains($text, 'кабел') || str_contains($text, 'электр') || str_contains($text, 'щит') => 'electrical',
-            str_contains($text, 'вент') || str_contains($text, 'воздуховод') => 'ventilation',
+            str_contains($text, 'кабел') || str_contains($text, 'электр') || preg_match('/(?<!\p{L})щит\p{L}*/u', $text) === 1 => 'electrical',
+            str_contains($text, 'вентиляц') || str_contains($text, 'воздуховод') => 'ventilation',
             str_contains($text, 'отоп') || str_contains($text, 'радиатор') => 'heating',
-            str_contains($text, 'труб') || str_contains($text, 'водоснаб') || str_contains($text, 'канализац') => 'plumbing',
+            str_contains($text, 'канализац') => 'sewerage',
+            str_contains($text, 'водоснаб') || str_contains($text, 'хвс') || str_contains($text, 'гвс') || str_contains($text, 'сантех') => 'plumbing',
             str_contains($text, 'кров') || str_contains($text, 'пароизоляц') || str_contains($text, 'утепл') => 'roof',
             str_contains($text, 'бетон') || str_contains($text, 'арматур') || str_contains($text, 'опалуб') => 'foundation',
-            str_contains($text, 'стен') || str_contains($text, 'клад') || str_contains($text, 'перегород') => 'walls',
+            preg_match('/(?<!\p{L})стен(?:а|ы|у|е|ой|ою|ам|ами|ах|ов\p{L}*)?(?!\p{L})/u', $text) === 1 || preg_match('/(?<!\p{L})клад(?:к|оч)\p{L}*/u', $text) === 1 || str_contains($text, 'перегород') => 'walls',
             str_contains($text, 'пол') || str_contains($text, 'стяж') || str_contains($text, 'плит') => 'finishing',
             default => $scope !== '' ? $scope : 'custom',
         };
@@ -186,7 +187,7 @@ final class ProjectDocumentNormativeReferenceExtractor
 
         return match ($scope) {
             'site' => in_array($category, ['site', 'foundation'], true),
-            'engineering' => in_array($category, ['electrical', 'plumbing', 'heating', 'ventilation'], true),
+            'engineering' => in_array($category, ['electrical', 'plumbing', 'sewerage', 'heating', 'ventilation'], true),
             'slabs' => in_array($category, ['slabs', 'foundation', 'industrial_floor', 'finishing'], true),
             'structural' => in_array($category, ['structural', 'metal_frame', 'foundation'], true),
             'facade' => in_array($category, ['facade', 'walls', 'roof'], true),

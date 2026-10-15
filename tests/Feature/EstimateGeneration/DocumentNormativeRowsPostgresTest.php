@@ -133,6 +133,14 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             'document walls' => ['custom', 'Кладка наружных стен', 'м2', 'custom-walls', 'structures', 'walls.external_volume'],
             'document openings' => ['custom', 'Монтаж окон', 'шт', 'custom-openings', 'structures', 'openings.windows'],
             'document finishing' => ['custom', 'Чистовое покрытие пола', 'м2', 'custom-finishing', 'finishing', 'finish.floor'],
+            'house sewerage selected' => ['house', 'Прокладка труб канализации', 'м', 'sewerage', 'sewerage'],
+            'document sewerage' => ['custom', 'Прокладка труб канализации', 'м', 'custom-sewerage', 'sewerage', 'sewerage.pipe'],
+            'document water supply' => ['custom', 'Прокладка труб водоснабжения', 'м', 'custom-plumbing', 'water_supply', 'plumbing.pipe'],
+            'document heating' => ['custom', 'Прокладка труб отопления', 'м', 'custom-heating', 'heating', 'heating.pipe'],
+            'document ventilation' => ['custom', 'Монтаж вентиляционных воздуховодов', 'м', 'custom-ventilation', 'ventilation', 'ventilation.air_exchange'],
+            'mixed water supply' => ['mixed_warehouse_office', 'Прокладка труб водоснабжения', 'м', 'water_sewerage', 'water_supply'],
+            'warehouse facade' => ['warehouse', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
+            'industrial facade' => ['industrial', 'Монтаж фасадных панелей', 'м2', 'envelope', 'structures'],
         ];
     }
 

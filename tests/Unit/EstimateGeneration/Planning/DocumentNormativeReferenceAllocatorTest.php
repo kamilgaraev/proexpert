@@ -114,6 +114,73 @@ final class DocumentNormativeReferenceAllocatorTest extends TestCase
         }
     }
 
+    public function test_engineering_quantity_keys_select_their_real_profile_packages(): void
+    {
+        $planner = new PackagePlannerService;
+        foreach (['house', 'warehouse', 'industrial', 'custom'] as $type) {
+            $analysis = ['object' => ['object_type' => $type], 'document_context' => ['scope_inferences' => array_map(
+                static fn (string $key): array => ['normalized_payload' => ['quantity_key' => $key]],
+                ['sewerage.pipe', 'plumbing.pipe', 'heating.pipe', 'ventilation.air_exchange'],
+            )]];
+            $plan = $planner->plan($planner->profileFromAnalysis($analysis));
+            $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+                'Прокладка труб канализации', 'Прокладка труб водоснабжения',
+                'Прокладка труб отопления', 'Монтаж вентиляционных воздуховодов',
+            ]), $plan->packages);
+            $expected = match ($type) {
+                'house' => ['sewerage', 'plumbing', 'heating', 'ventilation'],
+                'custom' => ['custom-sewerage', 'custom-plumbing', 'custom-heating', 'custom-ventilation'],
+                default => ['water_sewerage', 'heating', 'ventilation'],
+            };
+            self::assertSame($expected, array_keys($allocation['by_package']), $type);
+            self::assertSame([], $allocation['unresolved'], $type);
+            self::assertSame(4, array_sum(array_map('count', $allocation['by_package'])), $type);
+        }
+    }
+
+    public function test_selected_water_supply_does_not_absorb_known_sewerage_or_heating(): void
+    {
+        $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+            'Прокладка труб канализации', 'Прокладка труб отопления',
+        ]), [['key' => 'plumbing', 'scope_type' => 'plumbing']]);
+        self::assertSame([], $allocation['by_package']);
+        self::assertCount(2, $allocation['unresolved']);
+    }
+
+    public function test_unknown_work_is_not_classified_by_unrelated_word_fragments(): void
+    {
+        $planner = new PackagePlannerService;
+        $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => 'house']]))->packages;
+        $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+            'Прокладка неизвестной специальной сети', 'Укладка неизвестного материала', 'Монтаж технологического трубопровода',
+            'Защита существующих конструкций', 'Монтаж испытательного стенда', 'Инвентаризация существующих сетей', 'Устройство кладовой',
+        ]), $packages);
+        self::assertSame([], $allocation['by_package']);
+        self::assertCount(7, $allocation['unresolved']);
+    }
+
+    public function test_routes_facade_to_the_real_warehouse_and_industrial_envelope(): void
+    {
+        $planner = new PackagePlannerService;
+        foreach (['warehouse', 'industrial'] as $type) {
+            $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => $type]]))->packages;
+            $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis(['Монтаж фасадных панелей']), $packages);
+            self::assertSame(['envelope'], array_keys($allocation['by_package']));
+            self::assertSame([], $allocation['unresolved']);
+        }
+    }
+
+    public function test_word_boundaries_preserve_real_shield_wall_and_ventilation_work(): void
+    {
+        $planner = new PackagePlannerService;
+        $packages = $planner->plan($planner->profileFromAnalysis(['object' => ['object_type' => 'house']]))->packages;
+        $allocation = (new DocumentNormativeReferenceAllocator)->allocate($this->analysis([
+            'Монтаж распределительного щита', 'Устройство стеновых панелей', 'Монтаж вентиляционной установки',
+        ]), $packages);
+        self::assertSame(['electrical', 'walls', 'ventilation'], array_keys($allocation['by_package']));
+        self::assertSame([], $allocation['unresolved']);
+    }
+
     private function analysis(array $names): array
     {
         return ['source_documents' => [['id' => 82, 'source_version' => 'v2', 'status' => 'ready', 'quality' => ['level' => 'good'],
