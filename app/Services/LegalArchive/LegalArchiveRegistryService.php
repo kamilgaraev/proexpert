@@ -154,9 +154,9 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             ->paginate(max(10, min($perPage, 100)));
     }
 
-    public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null, bool $requiresUploadPermissions = false): LegalArchiveDocument
+    public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null, bool $requiresUserPermissions = false): LegalArchiveDocument
     {
-        if ($requiresUploadPermissions && $userId === null) {
+        if ($requiresUserPermissions && $userId === null) {
             throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
         }
         $hasSourceIdentity = isset($data['source_type']) || isset($data['source_id']) || isset($data['source_idempotency_key']);
@@ -187,15 +187,15 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $requestFingerprint,
                 $operationKey,
                 $attemptToken,
-                $requiresUploadPermissions,
+                $requiresUserPermissions,
             ): array {
-                if (array_key_exists('primary_project_id', $data) || $requiresUploadPermissions) {
+                if (array_key_exists('primary_project_id', $data) || $requiresUserPermissions) {
                     $projectId = $this->authorizeProjectBinding(
                         $organizationId,
                         $userId,
                         $data['primary_project_id'] ?? null,
-                        'legal_archive.create',
-                        $requiresUploadPermissions && $file instanceof UploadedFile
+                        $requiresUserPermissions ? 'legal_archive.create' : null,
+                        $requiresUserPermissions && $file instanceof UploadedFile
                             ? ['legal_archive.files.upload', 'legal_archive.versions.create'] : [],
                     );
                     if (array_key_exists('primary_project_id', $data)) {
@@ -263,7 +263,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $file,
                 $operationKey,
                 $requestFingerprint,
-                $requiresUploadPermissions,
+                $requiresUserPermissions,
             );
         }
 
@@ -777,7 +777,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         int $organizationId,
         ?int $userId,
         mixed $rawProjectId,
-        string $permission,
+        ?string $permission,
         array $additionalPermissions = [],
         ?LegalArchiveDocument $sourceDocument = null,
     ): ?int {
@@ -815,10 +815,13 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             $this->authorizeActorProject($actor, $project, $organizationId);
         }
         $context = ['organization_id' => $organizationId, ...($projectId === null ? [] : ['project_id' => $projectId])];
-        $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
-        foreach ([$permission, ...$additionalPermissions] as $requiredPermission) {
-            if (! $authorization->can($actor, $requiredPermission, $context)) {
-                throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+        $permissions = $permission === null ? $additionalPermissions : [$permission, ...$additionalPermissions];
+        if ($permissions !== []) {
+            $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+            foreach ($permissions as $requiredPermission) {
+                if (! $authorization->can($actor, $requiredPermission, $context)) {
+                    throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+                }
             }
         }
 
@@ -938,7 +941,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         ?UploadedFile $file,
         ?string $operationKey,
         string $requestFingerprint,
-        bool $requiresUploadPermissions,
+        bool $requiresUserPermissions,
     ): LegalArchiveDocument {
         $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
         if (! in_array($sqlState, ['23000', '23505'], true)) {
@@ -960,7 +963,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             return $this->findForOrganization($organizationId, (int) $canonical->id) ?? $canonical;
         }
 
-        return $this->create($organizationId, $userId, $data, $file, $requiresUploadPermissions);
+        return $this->create($organizationId, $userId, $data, $file, $requiresUserPermissions);
     }
 
     private function assertCreateRecoveryInput(

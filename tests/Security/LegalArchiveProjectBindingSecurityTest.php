@@ -127,10 +127,10 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
         self::assertFalse($authorization->canCurrent($actor, 'legal_archive.create', ['organization_id' => $fixture->organization->id]));
         self::assertTrue(app(UserProjectAccessService::class)->canAccessCurrentOrganizationProject($actor, $deniedProject));
         $service = app(LegalArchiveRegistryService::class);
-        $document = $service->create($fixture->organization->id, $actor->id, $this->input($allowedProject->id));
+        $document = $service->create($fixture->organization->id, $actor->id, $this->input($allowedProject->id), null, true);
         self::assertSame($allowedProject->id, $document->primary_project_id);
         $before = $this->snapshot();
-        $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $this->input($deniedProject->id)));
+        $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $this->input($deniedProject->id), null, true));
         $this->assertDenied(fn () => $service->update($document, $fixture->organization->id, $actor->id, [
             'lock_version' => $document->lock_version, 'primary_project_id' => $deniedProject->id,
         ]));
@@ -182,7 +182,7 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
         $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->sole();
         $role = OrganizationCustomRole::query()->where('slug', $assignment->role_slug)->sole();
         $service = app(LegalArchiveRegistryService::class);
-        $service->create($fixture->organization->id, $actor->id, $this->input($project->id));
+        $service->create($fixture->organization->id, $actor->id, $this->input($project->id), null, true);
         app(AuthorizationService::class)->can($actor, 'legal_archive.create', ['organization_id' => $fixture->organization->id, 'project_id' => $project->id]);
         foreach (['project_assignment', 'archived_project', 'membership', 'user', 'organization', 'role_assignment', 'permission'] as $revocation) {
             $restore = match ($revocation) {
@@ -195,11 +195,11 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
                 'permission' => $this->revoke($role, ['system_permissions' => ['admin.access', 'legal_archive.view', 'legal_archive.update']], ['system_permissions' => ['admin.access', 'legal_archive.create', 'legal_archive.view', 'legal_archive.update']]),
             };
             $before = $this->snapshot();
-            $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $this->input($project->id)));
+            $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $this->input($project->id), null, true));
             self::assertSame($before, $this->snapshot(), $revocation);
             $restore();
         }
-        self::assertSame($project->id, $service->create($fixture->organization->id, $actor->id, $this->input($project->id))->primary_project_id);
+        self::assertSame($project->id, $service->create($fixture->organization->id, $actor->id, $this->input($project->id), null, true)->primary_project_id);
     }
 
     public function test_shared_project_integer_string_replay_and_trusted_system_creation_remain_supported(): void
@@ -295,7 +295,7 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
         self::assertSame($before, $this->snapshot());
         $context = $this->httpContext($fixture, $actor);
         $this->withHeaders($context->authHeaders())->post('/api/v1/admin/legal-archive/documents', [
-            ...$this->input($project->id), 'requires_upload_permissions' => false,
+            ...$this->input($project->id), 'requires_upload_permissions' => false, 'requires_user_permissions' => false,
             'file' => UploadedFile::fake()->createWithContent('forged-mode.pdf', "%PDF-1.7\nforged-mode"),
         ])->assertForbidden();
         self::assertSame($before, $this->snapshot());
@@ -307,6 +307,84 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
         self::assertSame(1, $generated->files()->count());
         self::assertSame(1, $generated->versions()->count());
         self::assertSame('ready', $generated->currentVersion->processing_status);
+    }
+
+    public function test_trusted_document_creator_preserves_contract_roles_without_user_archive_create(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $creator = app(\App\Services\Contract\ContractDossierDocumentCreator::class);
+        self::assertInstanceOf(LegalArchiveRegistryService::class, $creator);
+        foreach (['parent_administrator' => 'contracts.create', 'project_manager' => 'contracts.edit'] as $roleSlug => $permission) {
+            $actor = $this->contractActor($fixture, $project, $roleSlug);
+            $context = ['organization_id' => $fixture->organization->id, 'project_id' => $project->id];
+            self::assertTrue(app(AuthorizationService::class)->canCurrent($actor, $permission, $context));
+            self::assertFalse(app(AuthorizationService::class)->canCurrent($actor, 'legal_archive.create', $context));
+            $document = $creator->create($fixture->organization->id, $actor->id, $this->input($project->id));
+            self::assertSame($project->id, $document->primary_project_id);
+            $before = $this->snapshot();
+            $this->assertDenied(fn () => $creator->create(
+                $fixture->organization->id, $actor->id, $this->input($project->id), null, true,
+            ));
+            self::assertSame($before, $this->snapshot());
+            $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+            $this->assertDenied(fn () => $creator->create($fixture->organization->id, $actor->id, $this->input($project->id)));
+            self::assertSame($before, $this->snapshot());
+        }
+    }
+
+    public function test_contract_http_creation_preserves_contract_permissions_and_manual_archive_restrictions(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $actor = $this->contractActor($fixture, $project, 'parent_administrator');
+        $context = $this->httpContext($fixture, $actor);
+        $external = \App\Models\Contractor::query()->create([
+            'organization_id' => $fixture->organization->id, 'name' => 'External executor',
+            'contact_person' => 'Executor Manager', 'email' => 'executor@example.test',
+            'inn' => '7707083893', 'contractor_type' => \App\Enums\ContractorType::MANUAL->value,
+        ]);
+        $input = [
+            'project_id' => $project->id, 'contract_side_type' => 'subcontract', 'direction' => 'expense',
+            'contractor_id' => $external->id, 'number' => 'ROLE-CONTRACT', 'date' => '2026-09-19',
+            'subject' => 'Работы по договору', 'base_amount' => 1000, 'total_amount' => 1000,
+            'is_fixed_amount' => true, 'status' => 'draft', 'idempotency_key' => 'role-contract-creation',
+        ];
+        $permissions = ['organization_id' => $fixture->organization->id, 'project_id' => $project->id];
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($actor, 'contracts.create', $permissions));
+        self::assertFalse(app(AuthorizationService::class)->canCurrent($actor, 'legal_archive.create', $permissions));
+        $url = '/api/v1/admin/projects/'.$project->id.'/contracts';
+        $response = $this->withHeaders($context->authHeaders())->postJson($url, $input)->assertCreated();
+        $contract = \App\Models\Contract::query()->findOrFail($response->json('data.id'));
+        self::assertNotNull($contract->legal_archive_document_id);
+        $document = LegalArchiveDocument::query()->findOrFail($contract->legal_archive_document_id);
+        self::assertSame($project->id, $document->primary_project_id);
+        $before = $this->snapshot();
+        $this->withHeaders($context->authHeaders())->postJson($url, $input)
+            ->assertOk()->assertJsonPath('data.id', $contract->id);
+        self::assertSame($before, $this->snapshot());
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/legal-archive/documents', $this->input($project->id))
+            ->assertForbidden();
+        self::assertSame($before, $this->snapshot());
+        $manager = $this->contractActor($fixture, $project, 'project_manager');
+        $managerContext = $this->httpContext($fixture, $manager);
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($manager, 'contracts.edit', $permissions));
+        self::assertFalse(app(AuthorizationService::class)->canCurrent($manager, 'legal_archive.create', $permissions));
+        $this->withHeaders($managerContext->authHeaders())->postJson($url.'/'.$contract->id.'/legal-dossier', [
+            'action' => 'create', 'title' => 'Ручное досье', 'idempotency_key' => (string) Str::uuid(),
+        ])->assertForbidden();
+        self::assertSame($before, $this->snapshot());
+    }
+
+    private function contractActor(AssistantRealAuthorizationFixture $fixture, Project $project, string $roleSlug): User
+    {
+        $actor = $fixture->addMember([], ['admin.access']);
+        $actor->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        UserRoleAssignment::assignRole($actor, $roleSlug,
+            AuthorizationContext::getProjectContext($project->id, $fixture->organization->id),
+            UserRoleAssignment::TYPE_SYSTEM);
+
+        return $actor;
     }
 
     private function httpContext(AssistantRealAuthorizationFixture $fixture, User $actor): AdminApiTestContext
