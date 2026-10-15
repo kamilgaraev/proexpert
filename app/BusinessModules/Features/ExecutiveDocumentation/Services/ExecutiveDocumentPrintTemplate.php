@@ -8,8 +8,6 @@ use DomainException;
 
 final class ExecutiveDocumentPrintTemplate
 {
-    private const VERSION = '344-369-v1';
-
     private const TYPES = [
         'hidden_work_act',
         'axis_layout_act',
@@ -20,7 +18,7 @@ final class ExecutiveDocumentPrintTemplate
 
     public function html(array $snapshot, string $templateVersion): string
     {
-        if ($templateVersion !== self::VERSION) {
+        if (! in_array($templateVersion, ExecutiveDocumentRenderService::SUPPORTED_TEMPLATE_VERSIONS, true)) {
             throw new DomainException('unsupported_executive_document_print_template');
         }
 
@@ -31,7 +29,17 @@ final class ExecutiveDocumentPrintTemplate
 
         $profile = (array) ($snapshot['profile_data'] ?? $snapshot['profile'] ?? []);
         $document = (array) ($snapshot['document'] ?? []);
-        $profile = $this->withReferences($profile, (array) ($snapshot['relations'] ?? []));
+        $relations = array_values(array_filter((array) ($snapshot['relations'] ?? []), 'is_array'));
+        if ($templateVersion === '344-369-v2') {
+            $relations = array_map($this->withJournalRequisites(...), $relations);
+            $volume = $profile['actual_volume'] ?? null;
+            if ($type === 'hidden_work_act' && (is_string($volume) || is_int($volume) || is_float($volume)) && trim((string) $volume) !== '') {
+                $works = $profile['presented_works'] ?? null;
+                $works = is_string($works) || is_int($works) || is_float($works) ? (string) $works : '';
+                $profile['presented_works'] = ltrim($works."\n".trans_message('executive_document_print.actual_volume', ['volume' => (string) $volume]));
+            }
+        }
+        $profile = $this->withReferences($profile, $relations);
         $sections = $this->sections($type, $profile);
         $form = self::form($type);
 
@@ -44,7 +52,7 @@ final class ExecutiveDocumentPrintTemplate
             'project' => (array) ($snapshot['project'] ?? []),
             'participants' => array_values(array_filter((array) ($document['participants'] ?? []), 'is_array')),
             'signatories' => array_values(array_filter((array) ($document['signatories'] ?? []), 'is_array')),
-            'relations' => array_values(array_filter((array) ($snapshot['relations'] ?? []), 'is_array')),
+            'relations' => $relations,
             'sections' => $sections,
             'sourceVersionId' => $snapshot['source_version_id'] ?? null,
             'sourceVersionNumber' => $snapshot['source_version_number'] ?? null,
@@ -138,6 +146,27 @@ final class ExecutiveDocumentPrintTemplate
                 ['number' => '', 'key' => 'appendices', 'label' => 'Приложения'],
             ]],
         };
+    }
+
+    private function withJournalRequisites(array $relation): array
+    {
+        $reference = $relation['domain_snapshot'] ?? null;
+        if (($relation['relation_type'] ?? '') !== 'journal_entry' || ! is_array($reference)
+            || ! array_key_exists('entry_number', $reference)) {
+            return $relation;
+        }
+        $journal = implode(' · ', array_unique(array_filter([
+            $reference['journal_number'] ?? null,
+            $reference['journal_name'] ?? null,
+        ], static fn ($value): bool => is_string($value) && trim($value) !== '')));
+        $reference['title'] = $journal !== ''
+            ? trans_message('executive_document_print.journal_entry', ['journal' => $journal])
+            : trans_message('executive_document_print.journal_entry_without_journal');
+        $reference['number'] = $reference['entry_number'];
+        $reference['document_date'] = $reference['entry_date'] ?? null;
+        $relation['domain_snapshot'] = $reference;
+
+        return $relation;
     }
 
     private function withReferences(array $profile, array $relations): array

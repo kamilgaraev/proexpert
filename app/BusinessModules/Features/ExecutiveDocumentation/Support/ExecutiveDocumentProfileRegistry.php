@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ExecutiveDocumentation\Support;
 
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRenderService;
+
 final class ExecutiveDocumentProfileRegistry
 {
     /**
@@ -634,7 +636,7 @@ final class ExecutiveDocumentProfileRegistry
             'category_label' => trans_message("executive_documentation.profile_categories.".($profile['category'] ?? $profile['group'])),
             'profile_revision' => $profile['profile_revision'] ?? '2026-09-20.1',
             'profile_mode' => $profile['profile_mode'] ?? 'prepared',
-            'print_template_version' => $printFields !== [] ? '344-369-v1' : null,
+            'print_template_version' => $printFields !== [] ? ExecutiveDocumentRenderService::TEMPLATE_VERSION : null,
             'legacy_type' => $profile['legacy_type'] ?? null,
             'group' => $profile['group'],
             'group_label' => trans_message("executive_documentation.profile_groups.{$profile['group']}"),

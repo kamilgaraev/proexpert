@@ -12,6 +12,7 @@ use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -60,22 +61,28 @@ final class ExecutiveDocumentRenderTest extends TestCase
         app(ExecutiveDocumentRenderService::class)->snapshot($version->id, $context->user->id);
     }
 
-    public function test_preparation_creates_unsigned_pdf_version_and_replay_keeps_original_bytes(): void
+    #[DataProvider('printTemplateVersions')]
+    public function test_preparation_creates_unsigned_pdf_version_and_replay_keeps_original_bytes(string $templateVersion): void
     {
         [$context, $document] = $this->fixture();
         $service = app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPreparationService::class);
-        $payload = ['version_number' => '1', 'expected_version_id' => 0, 'expected_revision' => 0, 'operation_key' => 'prepare-1', 'template_version' => '344-369-v1'];
+        $payload = ['version_number' => '1', 'expected_version_id' => 0, 'expected_revision' => 0, 'operation_key' => 'prepare-1', 'template_version' => $templateVersion];
         $version = $service->prepare($document->id, $context->user->id, $payload);
         $bytes = Storage::disk('s3')->get($version->file_url);
         self::assertStringStartsWith('%PDF-', $bytes);
         self::assertSame(hash('sha256', $bytes), $version->content_hash);
         self::assertSame('draft', $version->status);
         self::assertSame('generated_preparation', $version->metadata['origin']);
-        self::assertSame('344-369-v1', $version->metadata['template_version']);
+        self::assertSame($templateVersion, $version->metadata['template_version']);
         self::assertIsString($version->metadata['print_snapshot']['document']['document_date']);
         self::assertSame($version->id, $service->prepare($document->id, $context->user->id, $payload)->id);
         self::assertSame(1, $document->versions()->count());
         self::assertSame($bytes, Storage::disk('s3')->get($version->file_url));
+    }
+
+    public static function printTemplateVersions(): array
+    {
+        return ['legacy' => ['344-369-v1'], 'current' => [ExecutiveDocumentRenderService::TEMPLATE_VERSION]];
     }
 
     private function fixture(): array

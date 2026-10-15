@@ -19,6 +19,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\WorkType;
+use App\Services\LegalArchive\CanonicalJson;
 use App\Services\Storage\FileService;
 use Carbon\Carbon;
 use DomainException;
@@ -338,6 +339,11 @@ final class ExecutiveDocumentationService
                 $candidate->profile_data = $requestedProfile ?? $lockedDocument->profile_data;
                 app(ExecutiveMaterialProfileGuard::class)->assertValid($candidate);
                 $basisSnapshot = $this->versionBasis($lockedDocument);
+                $renderedRelations = $prepared ? ($data['metadata']['print_snapshot']['relations'] ?? null) : null;
+                if (is_array($renderedRelations)
+                    && CanonicalJson::fingerprint($renderedRelations) !== CanonicalJson::fingerprint($basisSnapshot['relations'])) {
+                    throw new DomainException(trans_message('executive_documentation.errors.version_conflict'));
+                }
                 foreach ($data['basis_snapshot'] ?? [] as $key => $value) {
                     if (! in_array($key, ['project_id', 'completed_work_id', 'journal_entry_id'], true)
                         || ($value === null ? null : (int) $value) !== ($basisSnapshot[$key] === null ? null : (int) $basisSnapshot[$key])) {

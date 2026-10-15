@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\ExecutiveDocumentation;
 
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\PrepareExecutiveDocumentRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\RenderExecutiveDocumentRequest;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentPrintTemplate;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRenderService;
 use Illuminate\Contracts\Console\Kernel;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -61,7 +64,7 @@ final class ExecutiveDocumentPrintTemplateTest extends TestCase
     public function test_unsupported_template_version_is_rejected(): void
     {
         $this->expectException(\DomainException::class);
-        $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($this->snapshot('hidden_work_act', []), '344-369-v2');
+        $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($this->snapshot('hidden_work_act', []), '344-369-v999');
     }
 
     public function test_responsible_structure_keeps_normative_points_in_source_order(): void
@@ -109,6 +112,94 @@ final class ExecutiveDocumentPrintTemplateTest extends TestCase
         self::assertStringNotContainsString('content_hash', $html);
         self::assertStringNotContainsString('Array', $html);
         self::assertStringContainsString('Представитель лица, осуществляющего строительство, по вопросам строительного контроля', $html);
+    }
+
+    public function test_current_template_prints_frozen_volume_and_journal_entry_requisites(): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', [
+            'presented_works' => 'Подготовка стен',
+            'actual_volume' => 'подготовительные работы: 100.000 м²',
+        ]);
+        $snapshot['relations'] = [[
+            'relation_type' => 'journal_entry', 'target_type' => 'journal_entry', 'label' => null,
+            'domain_snapshot' => [
+                'journal_name' => 'Журнал <script>объекта</script>', 'journal_number' => 'ОЖР-УЧ-102',
+                'entry_number' => 1, 'entry_date' => '2026-10-02',
+            ],
+        ]];
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
+
+        self::assertStringContainsString('Фактический объем работ: подготовительные работы: 100.000 м²', $html);
+        self::assertStringContainsString('ОЖР-УЧ-102', $html);
+        self::assertStringContainsString('запись № 1', $html);
+        self::assertStringContainsString('от 02.10.2026', $html);
+        self::assertStringContainsString('&lt;script&gt;объекта&lt;/script&gt;', $html);
+        self::assertStringNotContainsString('<script>', $html);
+        self::assertSame('подготовительные работы: 100.000 м²', $snapshot['profile_data']['actual_volume']);
+        self::assertArrayNotHasKey('title', $snapshot['relations'][0]['domain_snapshot']);
+    }
+
+    #[DataProvider('numericVolumes')]
+    public function test_current_template_prints_numeric_volume(int|float $volume, string $expected): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => $volume]);
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
+
+        self::assertStringContainsString('Фактический объем работ: '.$expected, $html);
+        self::assertSame($volume, $snapshot['profile_data']['actual_volume']);
+    }
+
+    public static function numericVolumes(): array
+    {
+        return ['integer' => [100, '100'], 'fractional' => [12.5, '12.5'], 'zero' => [0, '0']];
+    }
+
+    #[DataProvider('numericVolumes')]
+    public function test_current_template_preserves_numeric_presented_works(int|float $works, string $expected): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => $works, 'actual_volume' => '5 м²']);
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
+
+        self::assertStringContainsString('>'.$expected.'</p>', $html);
+        self::assertStringContainsString('Фактический объем работ: 5 м²', $html);
+        self::assertSame($works, $snapshot['profile_data']['presented_works']);
+    }
+
+    public function test_legacy_template_keeps_its_original_volume_and_relation_presentation(): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => '100.000 м²']);
+        $snapshot['relations'] = [[
+            'relation_type' => 'journal_entry', 'target_type' => 'journal_entry',
+            'domain_snapshot' => ['journal_number' => 'ОЖР-УЧ-102', 'entry_number' => 1, 'entry_date' => '2026-10-02'],
+        ]];
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, '344-369-v1');
+
+        self::assertStringContainsString('Подготовка стен', $html);
+        self::assertStringContainsString('<p>1. Документ', $html);
+        self::assertStringNotContainsString('100.000 м²', $html);
+        self::assertStringNotContainsString('ОЖР-УЧ-102', $html);
+    }
+
+    public function test_current_template_does_not_invent_an_empty_optional_volume(): void
+    {
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html(
+            $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => '']),
+            ExecutiveDocumentRenderService::TEMPLATE_VERSION,
+        );
+
+        self::assertStringContainsString('Подготовка стен', $html);
+        self::assertStringNotContainsString('Фактический объем работ:', $html);
+    }
+
+    public function test_print_and_preparation_requests_accept_current_and_legacy_templates_only(): void
+    {
+        $payload = ['version_number' => '1', 'expected_version_id' => 0, 'expected_revision' => 0, 'operation_key' => 'print-test'];
+        foreach ([new RenderExecutiveDocumentRequest(), new PrepareExecutiveDocumentRequest()] as $request) {
+            foreach (['344-369-v1', ExecutiveDocumentRenderService::TEMPLATE_VERSION] as $templateVersion) {
+                self::assertFalse($this->app['validator']->make($payload + ['template_version' => $templateVersion], $request->rules())->fails());
+            }
+            self::assertTrue($this->app['validator']->make($payload + ['template_version' => '344-369-v999'], $request->rules())->fails());
+        }
     }
 
     private static function fixtures(): array

@@ -7,6 +7,8 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentInput;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRenderService;
+use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
@@ -18,12 +20,84 @@ use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class ExecutiveDocumentComposeActHttpTest extends TestCase
 {
     use RefreshDatabase;
+
+    #[DataProvider('printVolumes')]
+    public function test_first_composed_pdf_contains_frozen_journal_requisites_and_volume(string|int|float $volume, string $expected, ?int $presentedWorks = null): void
+    {
+        [$context, $set, $payload] = $this->fixture();
+        $payload['profile_data']['actual_volume'] = $volume;
+        if ($presentedWorks !== null) {
+            $payload['profile_data']['presented_works'] = $presentedWorks;
+        }
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$set->id}/compose-act", $payload)->assertCreated();
+        $document = ExecutiveDocument::query()->findOrFail($response->json('data.id'));
+        $version = $document->versions->first();
+        $snapshot = $version->metadata['print_snapshot'];
+        self::assertSame('ОЖР-1', $snapshot['relations'][0]['domain_snapshot']['journal_number'] ?? null);
+        self::assertSame('Общий журнал', $snapshot['relations'][0]['domain_snapshot']['journal_name']);
+        self::assertSame(1, $snapshot['relations'][0]['domain_snapshot']['entry_number']);
+        self::assertSame('2026-10-02', $snapshot['relations'][0]['domain_snapshot']['entry_date']);
+        self::assertSame(ExecutiveDocumentRenderService::TEMPLATE_VERSION, $version->metadata['template_version']);
+        self::assertSame($snapshot['relations'], $version->basis_snapshot['relations']);
+        $bytes = Storage::disk('s3')->get($version->file_url);
+        $text = (new \Smalot\PdfParser\Parser())->parseContent($bytes)->getText();
+        $text = preg_replace('/\s+/u', ' ', $text);
+        self::assertStringContainsString('Фактический объем работ: '.$expected, $text);
+        if ($presentedWorks !== null) {
+            self::assertStringContainsString((string) $presentedWorks.' Фактический объем работ:', $text);
+        }
+        self::assertStringContainsString('ОЖР-1', $text);
+        self::assertStringContainsString('Общий журнал', $text);
+        self::assertStringContainsString('запись № 1', $text);
+        self::assertStringContainsString('02.10.2026', $text);
+        self::assertSame(hash('sha256', $bytes), $version->content_hash);
+    }
+
+    public static function printVolumes(): array
+    {
+        return [
+            'text with unit' => ['100.000 м²', '100.000 м²'],
+            'integer' => [100, '100'],
+            'fractional' => [12.5, '12.5'],
+            'zero' => [0, '0'],
+            'numeric work description' => ['10 м²', '10 м²', 12345],
+        ];
+    }
+
+    public function test_changed_journal_requisites_reject_a_prepared_file_before_upload(): void
+    {
+        [$context, $set, $payload] = $this->fixture();
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/executive-documentation/sets/{$set->id}/compose-act", $payload)->assertCreated();
+        $document = ExecutiveDocument::query()->findOrFail($response->json('data.id'));
+        $version = $document->versions->first();
+        $bytes = Storage::disk('s3')->get($version->file_url);
+        $filesBefore = count(Storage::disk('s3')->allFiles());
+        $journal = ConstructionJournal::query()->findOrFail($document->journalEntry->journal_id);
+        $journal->update(['journal_number' => 'ОЖР-изменен']);
+
+        try {
+            app(ExecutiveDocumentationService::class)->addPreparedVersion($document, $context->user->id, [
+                'version_number' => '2.0', 'expected_version_id' => $version->id,
+                'file' => \Illuminate\Http\UploadedFile::fake()->createWithContent('act.pdf', $bytes),
+                'metadata' => ['template_version' => ExecutiveDocumentRenderService::TEMPLATE_VERSION, 'print_snapshot' => $version->metadata['print_snapshot']],
+            ]);
+            self::fail('Файл со старыми реквизитами не должен получить новый снимок связей.');
+        } catch (\DomainException $exception) {
+            self::assertSame(trans_message('executive_documentation.errors.version_conflict'), $exception->getMessage());
+        }
+        self::assertSame(1, $document->versions()->count());
+        self::assertSame($filesBefore, count(Storage::disk('s3')->allFiles()));
+        self::assertSame($version->content_hash, hash('sha256', Storage::disk('s3')->get($version->file_url)));
+    }
 
     public function test_compose_preserves_cleared_optional_volume_and_generates_a_number(): void
     {

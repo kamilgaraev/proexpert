@@ -82,6 +82,7 @@ final class ExecutiveDocumentProfilesTest extends TestCase
         self::assertSame('generated', $document->metadata['capture_mode']);
         self::assertSame('generated_preparation', $document->versions->first()->metadata['origin']);
         self::assertSame('generated_draft', $document->versions->first()->metadata['file_kind']);
+        self::assertSame(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRenderService::TEMPLATE_VERSION, $document->versions->first()->metadata['template_version']);
         self::assertNotEmpty($document->versions->first()->content_hash);
     }
 

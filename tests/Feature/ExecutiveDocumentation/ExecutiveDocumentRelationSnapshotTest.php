@@ -10,8 +10,12 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRelationSnapshot;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Models\Material;
+use App\Models\ConstructionJournal;
+use App\Models\ConstructionJournalEntry;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -81,6 +85,67 @@ final class ExecutiveDocumentRelationSnapshotTest extends TestCase
 
         self::assertSame($v1->id, $sourceV1->fresh()->basis_snapshot['relations'][0]['target_version']['version_id']);
         self::assertSame('target-hash-1', $sourceV1->fresh()->basis_snapshot['relations'][0]['target_version']['content_hash']);
+    }
+
+    public function test_input_freeze_reads_journal_requisites_without_saving_transient_models(): void
+    {
+        [$context, $set] = $this->contextAndSet();
+        $entry = $this->journalEntry($set->project, $context->user->id);
+        $scope = new ExecutiveDocument(['organization_id' => $set->organization_id, 'project_id' => $set->project_id, 'document_type' => 'hidden_work_act']);
+        $documentsBefore = ExecutiveDocument::query()->count();
+        $relationsBefore = ExecutiveDocumentRelation::query()->count();
+        $snapshot = app(ExecutiveDocumentRelationSnapshot::class)->forInput($scope, [[
+            'relation_type' => 'journal_entry', 'target_type' => 'journal_entry', 'target_id' => $entry->id,
+            'organization_id' => -1, 'domain_snapshot' => ['journal_number' => 'Подмена'],
+        ]]);
+
+        self::assertSame('ОЖР-проверка', $snapshot[0]['domain_snapshot']['journal_number']);
+        self::assertSame('Общий журнал', $snapshot[0]['domain_snapshot']['journal_name']);
+        self::assertSame(1, $snapshot[0]['domain_snapshot']['entry_number']);
+        self::assertSame('2026-10-02', $snapshot[0]['domain_snapshot']['entry_date']);
+        self::assertFalse($scope->exists);
+        self::assertSame($documentsBefore, ExecutiveDocument::query()->count());
+        self::assertSame($relationsBefore, ExecutiveDocumentRelation::query()->count());
+    }
+
+    #[DataProvider('foreignJournalScopes')]
+    public function test_input_freeze_rejects_a_journal_from_another_scope(bool $foreignOrganization): void
+    {
+        [$context, $set] = $this->contextAndSet();
+        $organizationId = $foreignOrganization ? AdminApiTestContext::create()->organization->id : $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $entry = $this->journalEntry($project, $context->user->id);
+        $scope = new ExecutiveDocument(['organization_id' => $set->organization_id, 'project_id' => $set->project_id, 'document_type' => 'hidden_work_act']);
+        $relationsBefore = ExecutiveDocumentRelation::query()->count();
+        try {
+            app(ExecutiveDocumentRelationSnapshot::class)->forInput($scope, [[
+                'relation_type' => 'journal_entry', 'target_type' => 'journal_entry', 'target_id' => $entry->id,
+            ]]);
+            self::fail('Запись чужого проекта или организации не должна попасть в снимок.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('relations', $exception->errors());
+        }
+        self::assertFalse($scope->exists);
+        self::assertSame($relationsBefore, ExecutiveDocumentRelation::query()->count());
+    }
+
+    public static function foreignJournalScopes(): array
+    {
+        return ['other project' => [false], 'other organization' => [true]];
+    }
+
+    private function journalEntry(Project $project, int $userId): ConstructionJournalEntry
+    {
+        $journal = ConstructionJournal::query()->create([
+            'organization_id' => $project->organization_id, 'project_id' => $project->id,
+            'name' => 'Общий журнал', 'journal_number' => 'ОЖР-проверка', 'start_date' => '2026-10-01',
+            'status' => 'active', 'created_by_user_id' => $userId,
+        ]);
+
+        return ConstructionJournalEntry::query()->create([
+            'journal_id' => $journal->id, 'entry_date' => '2026-10-02', 'entry_number' => 1,
+            'work_description' => 'Подготовка основания', 'status' => 'approved', 'created_by_user_id' => $userId,
+        ]);
     }
 
     private function contextAndSet(): array

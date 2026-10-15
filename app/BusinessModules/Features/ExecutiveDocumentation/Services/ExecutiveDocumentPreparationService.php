@@ -83,7 +83,11 @@ final class ExecutiveDocumentPreparationService
             ],
             'project' => $set->project()->firstOrFail()->only(['id', 'name', 'address']),
             'profile_data' => $data['profile_data'],
-            'relations' => $data['relations'] ?? [],
+            'relations' => $this->relations->forInput(new ExecutiveDocument([
+                'organization_id' => $set->organization_id,
+                'project_id' => $set->project_id,
+                'document_type' => $data['document_type'],
+            ]), $data['relations'] ?? []),
             'source_version_number' => '1.0',
         ];
         $pdf = $this->renderer->renderSnapshot($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
