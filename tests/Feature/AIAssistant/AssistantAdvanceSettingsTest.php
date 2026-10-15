@@ -43,13 +43,20 @@ final class AssistantAdvanceSettingsTest extends TestCase
             'notify_user_on_transaction_approval' => true, 'notify_user_on_transaction_rejection' => true, 'send_report_reminder_days_before' => 2]));
         $read = $reader->read($f->owner, $org, ['scope' => 'organization']);
         self::assertTrue($read['data']['stored']);
-        self::assertSame(AdvanceAccountSettingDTO::fromModel($setting->fresh())->toArray(), $read['data']['settings']);
+        $native = AdvanceAccountSettingDTO::fromModel($setting->fresh())->toArray();
+        foreach (['max_single_issue_amount', 'dual_authorization_threshold', 'high_value_notification_threshold'] as $key) { $native[$key] = $setting->getRawOriginal($key); }
+        self::assertSame($native, $read['data']['settings']);
         self::assertSame($org, $read['data']['settings']['organization_id']);
         self::assertNull($read['source_refs'][0]['project_id']);
         self::assertStringContainsString('15000.25', $read['server_formatted_answer']);
         self::assertStringNotContainsString('987654', $read['server_formatted_answer']);
         self::assertStringContainsString('Валюта денежных порогов', $read['server_formatted_answer']);
         self::assertTrue($reader->matchesReference($f->owner, $org, $read['source_refs'][0]));
+        $setting->updateQuietly(['high_value_notification_threshold' => '9999999999999.99']);
+        $precise = $reader->read($f->owner, $org, ['scope' => 'organization']);
+        self::assertSame('9999999999999.99', $precise['data']['settings']['high_value_notification_threshold']);
+        self::assertStringContainsString('9999999999999.99', $precise['server_formatted_answer']);
+        self::assertStringNotContainsString('10000000000000', $precise['server_formatted_answer']);
         $setting->updateQuietly(['report_submission_deadline_days' => 10]);
         self::assertFalse($reader->matchesReference($f->owner, $org, $read['source_refs'][0]));
         $member = $f->addMember(['ai-assistant' => ['ai_assistant.chat'], 'advance-accounting' => ['advance_settings.view']]);

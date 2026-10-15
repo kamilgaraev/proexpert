@@ -35,7 +35,12 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
             || ! $this->access->canCurrentPermission($actor, $organizationId, 'advance_settings.view')
             || ! $this->access->canCurrentPermission($actor, $organizationId, 'finance.view')) { throw new AuthorizationException; }
         $setting = AdvanceAccountSetting::query()->where('organization_id', $organizationId)->first();
-        return ['stored' => $setting !== null, 'settings' => AdvanceAccountSettingDTO::fromModelOrDefaults($setting, $organizationId)->toArray()];
+        $settings = AdvanceAccountSettingDTO::fromModelOrDefaults($setting, $organizationId)->toArray();
+        foreach (['max_single_issue_amount', 'dual_authorization_threshold', 'high_value_notification_threshold'] as $key) {
+            $value = $setting?->getRawOriginal($key);
+            $settings[$key] = $value === null ? null : (string) $value;
+        }
+        return ['stored' => $setting !== null, 'settings' => $settings];
     }
 
     protected function format(array $data): string
