@@ -17,6 +17,7 @@ final class AssistantDailyManagementIntentTest extends TestCase
         $reader = \App\BusinessModules\Features\AIAssistant\Services\AssistantProjectContractRosterReader::class;
         self::assertSame('all', $reader::deadlineFilter('Покажи действующие договоры нашего объекта и ближайшие сроки окончания. Есть ли документы без даты окончания?'));
         self::assertSame('all', $reader::deadlineFilter('Покажи договоры с датами окончания, а без даты выдели отдельно.'));
+        self::assertSame('all', $reader::deadlineFilter('Какие действующие договоры есть у нашего объекта, включая общие с другими организациями? Покажи номера, контрагентов и даты окончания. Договоры без даты окончания выдели отдельно.'));
         self::assertSame('undated', $reader::deadlineFilter('Покажи действующие договоры без даты окончания.'));
         self::assertSame('overdue_or_undated', $reader::deadlineFilter('Покажи просроченные договоры и договоры без даты окончания.'));
     }

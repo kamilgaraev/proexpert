@@ -23,6 +23,9 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             self::assertSame(['name' => 'get_report_subscription_catalog', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
             self::assertContains('get_report_subscription_catalog', AssistantToolSurface::names(['get_report_subscription_catalog'], $plan));
         }
+        $personal = 'Покажи мои подписки на отчёты и доступные форматы рассылки.';
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionCatalogReader::matches($personal));
+        self::assertNull(AssistantOperationalReaderRegistry::intent($personal));
     }
 
     public function test_current_own_roles_with_temporary_assignments_do_not_select_assignable_roles(): void

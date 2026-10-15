@@ -28,6 +28,7 @@ final readonly class AssistantReportSubscriptionCatalogReader extends AssistantO
         return self::hasIntent($query) && ! AssistantMutationIntent::containsRequest($query)
             && ! AssistantMutationIntent::containsFollowUpCommand($query)
             && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1
+            && preg_match('/(?<!\pL)(?:мои|моих)\s+(?:автоматическ[а-яё]*\s+)?(?:подписк|расписан)/iu', $query) !== 1
             && preg_match('/(?:уже|мои|у\s+меня|у\s+нас)[^.!?]*(?:настроен|активн|приостановл|отключен)|следующ[а-яё]*\s+запуск/iu', $query) !== 1;
     }
 
