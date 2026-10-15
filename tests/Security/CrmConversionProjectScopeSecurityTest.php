@@ -167,6 +167,49 @@ final class CrmConversionProjectScopeSecurityTest extends TestCase
         $this->postJson($this->url($deal, 'preview'), $this->reuse($restricted, $restrictedContract), $headers)->assertOk();
     }
 
+    public function test_soft_deleted_related_projects_do_not_turn_a_multi_project_contract_into_projectless(): void
+    {
+        [$fixture, $actor, $allowed, $restricted, $deal] = $this->context();
+        $contract = $this->contract($restricted);
+        $contract->update(['is_multi_project' => true, 'project_id' => null]);
+        $contract->projects()->attach($restricted->id);
+        $headers = $this->headers($actor);
+        $payload = ['project' => ['mode' => 'create'], 'contract' => ['mode' => 'reuse', 'id' => $contract->id]];
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertNotFound();
+        $restricted->delete();
+        self::assertSame(1, $contract->projects()->withTrashed()->count());
+        self::assertSame(0, $contract->projects()->count());
+
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertNotFound();
+        $this->postJson('/api/v1/admin/crm/deals/'.$deal->id.'/links', ['contract_id' => $contract->id], $headers)->assertNotFound();
+        self::assertNull($deal->fresh()->contract_id);
+        $projectless = $this->contract($allowed);
+        $projectless->update(['is_multi_project' => true, 'project_id' => null]);
+        $payload['contract']['id'] = $projectless->id;
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertOk()
+            ->assertJsonPath('data.contract.existing.id', $projectless->id);
+    }
+
+    public function test_multi_project_contract_uses_scalar_scope_only_when_no_pivot_links_exist(): void
+    {
+        [$fixture, $actor, $allowed, $restricted, $deal] = $this->context();
+        $contract = $this->contract($restricted);
+        $contract->update(['is_multi_project' => true]);
+        self::assertSame(0, $contract->projects()->withTrashed()->count());
+        $payload = ['project' => ['mode' => 'create'], 'contract' => ['mode' => 'reuse', 'id' => $contract->id]];
+        $headers = $this->headers($actor);
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertNotFound();
+        $this->postJson('/api/v1/admin/crm/deals/'.$deal->id.'/links', ['contract_id' => $contract->id], $headers)->assertNotFound();
+        self::assertNull($deal->fresh()->contract_id);
+        $contract->update(['project_id' => $allowed->id]);
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertOk()
+            ->assertJsonPath('data.contract.existing.id', $contract->id);
+        $contract->projects()->attach($restricted->id);
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertNotFound();
+        $restricted->delete();
+        $this->postJson($this->url($deal, 'preview'), $payload, $headers)->assertNotFound();
+    }
+
     public function test_warmed_role_or_membership_does_not_authorize_target_access_after_revocation(): void
     {
         [$fixture, $actor, $allowed] = $this->context();

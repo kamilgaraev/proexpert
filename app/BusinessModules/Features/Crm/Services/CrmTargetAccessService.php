@@ -66,8 +66,11 @@ final class CrmTargetAccessService
             $this->notFound();
         }
         $relatedIds = $contract->is_multi_project
-            ? $contract->projects()->useWritePdo()->pluck('projects.id')->all()
-            : ($contract->project_id === null ? [] : [(int) $contract->project_id]);
+            ? DB::table('contract_project')->useWritePdo()->where('contract_id', $contract->id)->pluck('project_id')->all()
+            : [];
+        if ($relatedIds === [] && $contract->project_id !== null) {
+            $relatedIds = [(int) $contract->project_id];
+        }
         if ($relatedIds === []) {
             $this->assertOperation($organizationId, $actor, $permission);
 
