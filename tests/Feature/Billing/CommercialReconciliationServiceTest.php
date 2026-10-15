@@ -51,6 +51,25 @@ final class CommercialReconciliationServiceTest extends TestCase
         $this->assertSame(['payment.reconciliation', 'payment.reconciliation'], $this->processor->events);
     }
 
+    public function test_disabled_provider_skips_payment_and_refund_reconciliation(): void
+    {
+        $this->payment('disabled-payment');
+        $this->refund('disabled-refund');
+        $service = app(CommercialReconciliationService::class);
+        $payment = CommercialPayment::query()->sole();
+
+        foreach ([['tochka', true], ['yookassa', false]] as [$provider, $enabled]) {
+            config(['bank_billing.default_provider' => $provider, 'services.yookassa.payments_enabled' => $enabled]);
+            $this->assertSame(['processed' => 0, 'failed' => 0, 'payments' => 0, 'refunds' => 0], $service->run());
+            $this->assertFalse($service->reconcilePayment((int) $payment->id));
+            $this->assertSame([], $this->processor->events);
+            $this->assertSame(0, $this->gateway->paymentLookups);
+            $this->assertSame(0, $this->gateway->refundLookups);
+            $this->assertNull($payment->refresh()->last_reconciled_at);
+            $this->assertSame('pending', $payment->provider_status);
+        }
+    }
+
     public function test_reconciles_succeeded_refund_and_closes_canceled_refund_idempotently(): void
     {
         $this->refund('refund-success');
@@ -155,17 +174,25 @@ final class CommercialReconciliationServiceTest extends TestCase
 
 final class ReconciliationGatewayFake implements PaymentGatewayInterface
 {
+    public int $paymentLookups = 0;
+
+    public int $refundLookups = 0;
+
     public array $payments = [];
 
     public array $refunds = [];
 
     public function getPayment(string $paymentId): PaymentGatewayResult
     {
+        $this->paymentLookups++;
+
         return $this->payments[$paymentId];
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
     {
+        $this->refundLookups++;
+
         return $this->refunds[$refundId];
     }
 

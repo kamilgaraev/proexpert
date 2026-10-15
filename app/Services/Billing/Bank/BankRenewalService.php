@@ -174,11 +174,15 @@ final class BankRenewalService
     private function hasPendingPurchase(OrganizationCommercialAccount $account): bool
     {
         return CommercialOrder::query()->where('organization_id', $account->organization_id)
-            ->where('commercial_account_id', $account->id)->whereNotIn('kind', ['renewal', 'ai_credits'])
-            ->where(fn ($query) => $query->where(fn ($pending) => $pending->where('status', 'pending_payment')
-                ->whereHas('payments', fn ($payments) => $payments->where('provider', 'tochka')))
-                ->orWhere(fn ($paid) => $paid->where('status', 'paid')->whereIn('id', CommercialBankInvoice::query()
-                    ->select('commercial_order_id')->where('organization_id', $account->organization_id)->whereNull('activated_at'))))->exists();
+            ->where('commercial_account_id', $account->id)->where('kind', '!=', 'ai_credits')
+            ->where(fn ($orders) => $orders->where(fn ($unresolved) => $unresolved->where('status', 'pending_payment')
+                ->whereHas('payments', fn ($payments) => $payments->withUnresolvedFunds()))
+                ->orWhere(fn ($purchases) => $purchases->where('kind', '!=', 'renewal')
+                    ->where(fn ($query) => $query->where(fn ($pending) => $pending->where('status', 'pending_payment')
+                        ->whereHas('payments', fn ($payments) => $payments->where('provider', 'tochka')))
+                        ->orWhere(fn ($paid) => $paid->where('status', 'paid')->whereIn('id', CommercialBankInvoice::query()
+                            ->select('commercial_order_id')->where('organization_id', $account->organization_id)->whereNull('activated_at'))))))
+            ->exists();
     }
 
     private function applyFreeChange(OrganizationCommercialAccount $source, CarbonImmutable $now): bool

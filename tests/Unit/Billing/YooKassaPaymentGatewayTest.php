@@ -25,6 +25,7 @@ class YooKassaPaymentGatewayTest extends TestCase
         parent::setUp();
 
         config()->set('services.yookassa', [
+            'payments_enabled' => true,
             'mode' => 'yookassa_test',
             'shop_id' => 'test-shop',
             'secret_key' => 'test-secret',
@@ -34,6 +35,37 @@ class YooKassaPaymentGatewayTest extends TestCase
             'retry_attempts' => 3,
             'retry_delay_ms' => 0,
         ]);
+    }
+
+    public function test_disabled_provider_blocks_all_transport_operations_before_http(): void
+    {
+        Http::fake();
+        $gateway = app(YooKassaPaymentGateway::class);
+        $operations = [
+            fn () => $gateway->createPayment($this->paymentData('disabled-payment')),
+            fn () => $gateway->createSavedMethodPayment(new CreateSavedMethodPaymentData(
+                idempotenceKey: 'disabled-saved', amountMinor: 1000, currency: 'RUB',
+                paymentMethodId: 'method-id', description: 'Продление', metadata: [],
+            )),
+            fn () => $gateway->getPayment('payment-id'),
+            fn () => $gateway->getRefund('refund-id'),
+            fn () => $gateway->createRefund(new CreateRefundData(
+                idempotenceKey: 'disabled-refund', paymentId: 'payment-id', amountMinor: 1000,
+                currency: 'RUB', description: 'Возврат', metadata: [],
+            )),
+        ];
+
+        foreach ([['tochka', true], ['yookassa', false]] as [$provider, $enabled]) {
+            config(['bank_billing.default_provider' => $provider, 'services.yookassa.payments_enabled' => $enabled]);
+            foreach ($operations as $operation) {
+                try {
+                    $operation();
+                    $this->fail('Disabled YooKassa must never send an API request');
+                } catch (PaymentGatewayConfigurationException) {
+                    Http::assertNothingSent();
+                }
+            }
+        }
     }
 
     public function test_test_mode_rejects_live_provider_object(): void

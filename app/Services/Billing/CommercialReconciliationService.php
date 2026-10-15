@@ -17,10 +17,15 @@ final class CommercialReconciliationService
     public function __construct(
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialWebhookProcessor $webhookProcessor,
+        private readonly CommercialPaymentProviderPolicy $providerPolicy,
     ) {}
 
     public function run(int $limit = 100): array
     {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return ['processed' => 0, 'failed' => 0, 'payments' => 0, 'refunds' => 0];
+        }
+
         $limit = max(1, min($limit, 500));
         $refundLimit = max(1, intdiv($limit, 2));
         $paymentLimit = max(0, $limit - $refundLimit);
@@ -60,6 +65,10 @@ final class CommercialReconciliationService
 
     public function reconcilePayment(int $paymentId): bool
     {
+        if (! $this->providerPolicy->yooKassaEnabled()) {
+            return false;
+        }
+
         return Cache::lock("commercial:reconcile:payment:{$paymentId}", 120)->get(
             fn (): bool => $this->payment($paymentId),
         ) === true;
