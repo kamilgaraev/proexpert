@@ -181,5 +181,8 @@ final class ApprovalWorkflowServiceTest extends TestCase
             'payment_document_id' => $document->id,
             'status' => 'pending',
         ]);
+        $status = app(ApprovalWorkflowService::class)->getApprovalStatus($document->fresh());
+        $this->assertTrue($status['is_fully_approved']);
+        $this->assertSame(1, $document->approvals()->where('decision_comment', PaymentApproval::RETROSPECTIVE_DECISION_COMMENT)->count());
     }
 }

@@ -45,7 +45,8 @@ final class MobilePaymentDocumentService
         ], $user);
 
         return [
-            'items' => collect($page->items())->map(fn (PaymentDocument $document): array => $this->presenter->brief($document, $user))->all(),
+            'items' => collect($page->items())->map(fn (PaymentDocument $document): array =>
+                $this->withMobileActionUrls($this->presenter->brief($document, $user), (int) $document->id))->all(),
             'meta' => [
                 'current_page' => $page->currentPage(),
                 'per_page' => $page->perPage(),
@@ -436,6 +437,7 @@ final class MobilePaymentDocumentService
     /** @return array<string, mixed> */
     private function withCapabilities(array $data, User $user, PaymentDocument $document): array
     {
+        $data = $this->withMobileActionUrls($data, (int) $document->id);
         $context = ['organization_id' => (int) $document->organization_id];
         if ($document->project_id !== null) {
             $context['project_id'] = (int) $document->project_id;
@@ -444,24 +446,6 @@ final class MobilePaymentDocumentService
         $isDraft = $document->status->value === 'draft';
         $data['can_edit'] = $isDraft && $user->can('payments.invoice.edit', $context);
         $primaryAction = $data['action_summary']['primary_action'] ?? null;
-        if (is_array($primaryAction)) {
-            $suffix = match ($primaryAction['key'] ?? null) {
-                'submit_payment_document' => 'submit',
-                'approve_payment_document' => 'approve',
-                'schedule_payment' => 'schedule',
-                'register_payment' => 'payments',
-                default => null,
-            };
-            if ($suffix !== null) {
-                $primaryAction['href'] = "/api/v1/mobile/payments/documents/{$document->id}/{$suffix}";
-                $data['action_summary']['primary_action'] = $primaryAction;
-                foreach ($data['action_summary']['blockers'] ?? [] as $index => $blocker) {
-                    if (($blocker['action']['key'] ?? null) === $primaryAction['key']) {
-                        $data['action_summary']['blockers'][$index]['action'] = $primaryAction;
-                    }
-                }
-            }
-        }
         $data['can_submit'] = ($primaryAction['key'] ?? null) === 'submit_payment_document' && ($primaryAction['is_enabled'] ?? false) === true;
         $data['can_schedule_payment'] = ($primaryAction['key'] ?? null) === 'schedule_payment' && ($primaryAction['is_enabled'] ?? false) === true;
         $data['can_register_payment'] = $document->canBePaid() && $user->can('payments.transaction.register', $context);
@@ -478,6 +462,30 @@ final class MobilePaymentDocumentService
             'can_reject' => $data['can_reject'],
         ];
 
+        return $data;
+    }
+
+    private function withMobileActionUrls(array $data, int $documentId): array
+    {
+        $primaryAction = $data['action_summary']['primary_action'] ?? null;
+        if (is_array($primaryAction)) {
+            $suffix = match ($primaryAction['key'] ?? null) {
+                'submit_payment_document' => 'submit',
+                'approve_payment_document' => 'approve',
+                'schedule_payment' => 'schedule',
+                'register_payment' => 'payments',
+                default => null,
+            };
+            if ($suffix !== null) {
+                $primaryAction['href'] = "/api/v1/mobile/payments/documents/{$documentId}/{$suffix}";
+                $data['action_summary']['primary_action'] = $primaryAction;
+                foreach ($data['action_summary']['blockers'] ?? [] as $index => $blocker) {
+                    if (($blocker['action']['key'] ?? null) === $primaryAction['key']) {
+                        $data['action_summary']['blockers'][$index]['action'] = $primaryAction;
+                    }
+                }
+            }
+        }
         return $data;
     }
 }

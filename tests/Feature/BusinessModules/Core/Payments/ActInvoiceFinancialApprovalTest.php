@@ -219,6 +219,9 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->activatePayments($context);
         $document = $this->createSubmittedActInvoice($context);
         $document->forceFill(['status' => PaymentDocumentStatus::APPROVED, 'approved_at' => now()])->save();
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/payments/approvals/documents/{$document->id}/status")
+            ->assertOk()->assertJsonPath('data.is_fully_approved', false);
+        $this->assertSame(0, $document->approvals()->count());
         $this->assertSame('submit_payment_document', app(PaymentDocumentActionPresenter::class)->present($document->fresh(), $context->user)['primary_action']['key']);
         try {
             app(PaymentDocumentService::class)->schedule($document->fresh(), null, $context->user);
@@ -258,6 +261,43 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_historical_retrospective_record_does_not_replace_the_financial_route(): void
+    {
+        Queue::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $this->activatePayments($context);
+        $document = $this->createSubmittedActInvoice($context);
+        $document->forceFill(['status' => PaymentDocumentStatus::APPROVED, 'approved_at' => now()])->save();
+        $history = PaymentApproval::query()->create([
+            'payment_document_id' => $document->id, 'organization_id' => $context->organization->id,
+            'approval_permission' => 'payments.transaction.approve', 'approver_user_id' => $context->user->id,
+            'approval_level' => 1, 'approval_order' => 1, 'status' => 'approved',
+            'decision_comment' => PaymentApproval::RETROSPECTIVE_DECISION_COMMENT, 'decided_at' => now(),
+        ]);
+        $headers = $context->authHeaders();
+        $this->withHeaders($headers)->getJson("/api/v1/admin/payments/approvals/documents/{$document->id}/status")
+            ->assertOk()->assertJsonPath('data.is_fully_approved', false)->assertJsonPath('data.total', 0);
+        $this->assertFalse($document->fresh()->hasCompletedFinancialApproval());
+        $this->assertTrue($document->fresh()->canRecoverActInvoiceFinancialApproval());
+        $this->withHeaders($headers)->postJson("/api/v1/admin/payments/documents/{$document->id}/schedule", [
+            'scheduled_at' => now()->addDays(5)->toDateString(),
+        ])->assertUnprocessable();
+        $this->withHeaders($headers)->postJson("/api/v1/admin/payments/documents/{$document->id}/submit")->assertOk();
+        $this->assertSame(3, $document->approvals()->count());
+        $this->assertSame(2, $document->approvals()->where('status', 'pending')->count());
+        $this->assertModelExists($history);
+        $workflow = app(ApprovalWorkflowService::class);
+        $workflow->approveByUser($document->fresh(), $context->user->id);
+        $this->assertFalse($document->fresh()->hasCompletedFinancialApproval());
+        $workflow->approveByUser($document->fresh(), $context->user->id);
+        $this->assertTrue($document->fresh()->hasCompletedFinancialApproval());
+        app(PaymentDocumentService::class)->schedule($document->fresh(), null, $context->user);
+        $this->assertSame(PaymentDocumentStatus::SCHEDULED, $document->fresh()->status);
+        $this->assertSame('0.00', $document->fresh()->paid_amount);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_legacy_act_invoice_requires_recovery_instead_of_administrative_approval(): void
     {
         Queue::fake();
@@ -273,6 +313,8 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
             $this->assertSame(trans_message('payments.validation.act_invoice_financial_approval_required'), $exception->getMessage());
         }
         $document->forceFill(['status' => PaymentDocumentStatus::PENDING_APPROVAL])->save();
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/payments/approvals/documents/{$document->id}/status")
+            ->assertOk()->assertJsonPath('data.total', 0)->assertJsonPath('data.is_fully_approved', false);
         $queue = app(ApprovalWorkflowService::class)->getPendingApprovalsForUser($context->user->id, $context->organization->id);
         $this->assertCount(0, $queue);
         $this->assertSame(0, $document->approvals()->count());
@@ -424,17 +466,26 @@ final class ActInvoiceFinancialApprovalTest extends TestCase
         $document = $this->createSubmittedActInvoice($context);
         $url = '/api/v1/mobile/payments/documents/'.$document->id;
         $headers = $context->mobileAuthHeaders();
+        $listUrl = '/api/v1/mobile/payments/documents?project_id='.$document->project_id;
+        $this->withHeaders($headers)->getJson($listUrl)->assertOk()
+            ->assertJsonPath('data.items.0.action_summary.primary_action.href', $url.'/submit');
         $this->withHeaders($headers)->postJson($url.'/schedule', ['scheduled_at' => now()->addDays(5)->toDateString()])->assertStatus(422);
         $this->withHeaders($headers)->postJson($url.'/submit')->assertOk()->assertJsonPath('data.status', 'pending_approval');
+        $this->withHeaders($headers)->getJson($listUrl)->assertOk()
+            ->assertJsonPath('data.items.0.action_summary.primary_action.href', $url.'/approve');
         $this->withHeaders($headers)->postJson($url.'/approve')->assertOk()->assertJsonPath('data.status', 'pending_approval');
         $approved = $this->withHeaders($headers)->postJson($url.'/approve')->assertOk()->assertJsonPath('data.status', 'approved')
             ->assertJsonPath('data.can_schedule_payment', true)
             ->assertJsonPath('data.action_summary.primary_action.href', $url.'/schedule');
+        $this->withHeaders($headers)->getJson($listUrl)->assertOk()
+            ->assertJsonPath('data.items.0.action_summary.primary_action.href', $url.'/schedule');
         $this->withHeaders($headers)->postJson($url.'/schedule', ['scheduled_at' => 'not-a-date'])->assertStatus(422);
         $date = now()->addDays(5)->toDateString();
         $this->withHeaders($headers)->postJson($approved->json('data.action_summary.primary_action.href'), ['scheduled_at' => $date])
             ->assertOk()->assertJsonPath('data.status', 'scheduled')
             ->assertJsonPath('data.action_summary.primary_action.href', $url.'/payments');
+        $this->withHeaders($headers)->getJson($listUrl)->assertOk()
+            ->assertJsonPath('data.items.0.action_summary.primary_action.href', $url.'/payments');
         $this->assertSame($date, $document->fresh()->scheduled_at->toDateString());
         $this->assertSame('0.00', $document->fresh()->paid_amount);
         $this->assertDatabaseCount('payment_transactions', 0);

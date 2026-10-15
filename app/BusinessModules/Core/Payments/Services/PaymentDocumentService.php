@@ -302,7 +302,7 @@ class PaymentDocumentService
                     PaymentDocumentStatus::PARTIALLY_PAID,
                     PaymentDocumentStatus::PAID,
                 ], true)
-                && $document->approvals()->exists()) {
+                && $document->hasFinancialApprovalRoute()) {
                 DB::commit();
 
                 return $document;

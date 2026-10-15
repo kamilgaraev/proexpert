@@ -623,8 +623,16 @@ class PaymentDocument extends Model
 
     public function hasCompletedFinancialApproval(): bool
     {
-        return $this->approvals()->exists()
+        return $this->hasFinancialApprovalRoute()
             && ! $this->approvals()->where('status', '!=', 'approved')->exists();
+    }
+
+    public function hasFinancialApprovalRoute(): bool
+    {
+        return $this->approvals()->where(static function ($query): void {
+            $query->whereNull('decision_comment')
+                ->orWhere('decision_comment', '!=', PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+        })->exists();
     }
 
     public function canRecoverActInvoiceFinancialApproval(): bool
@@ -632,7 +640,7 @@ class PaymentDocument extends Model
         return $this->requiresActInvoiceFinancialApproval()
             && $this->status === PaymentDocumentStatus::APPROVED
             && (float) $this->paid_amount <= 0
-            && ! $this->approvals()->exists()
+            && ! $this->hasFinancialApprovalRoute()
             && ! $this->transactions()->exists();
     }
 

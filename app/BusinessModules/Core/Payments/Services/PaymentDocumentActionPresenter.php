@@ -14,7 +14,7 @@ final class PaymentDocumentActionPresenter
     {
         $needsFinancialRoute = $document->requiresActInvoiceFinancialApproval()
             && ((in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)
-                    && ! $document->approvals()->exists())
+                    && ! $document->hasFinancialApprovalRoute())
                 || $document->canRecoverActInvoiceFinancialApproval());
         $definition = $needsFinancialRoute ? [
             'submit_payment_document',

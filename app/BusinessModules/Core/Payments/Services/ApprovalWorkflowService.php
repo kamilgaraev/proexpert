@@ -41,7 +41,7 @@ class ApprovalWorkflowService
                 ->lockForUpdate()
                 ->findOrFail($document->id);
             $approvals = $document->approvals()->orderBy('approval_level')->orderBy('approval_order')->get();
-            if ($approvals->isNotEmpty()) {
+            if ($document->hasFinancialApprovalRoute()) {
                 if ($document->status === PaymentDocumentStatus::SUBMITTED && $approvals->contains('status', 'pending')) {
                     $this->stateMachine->sendForApproval($document);
                     $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
@@ -777,13 +777,18 @@ class ApprovalWorkflowService
         $document->unsetRelation('approvals');
         $approvals = $this->getApprovalHistory($document);
 
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $approvals = $approvals->reject(static fn (PaymentApproval $approval): bool =>
+                $approval->decision_comment === PaymentApproval::RETROSPECTIVE_DECISION_COMMENT)->values();
+        }
+
         $total = $approvals->count();
         $approved = $approvals->where('status', 'approved')->count();
         $rejected = $approvals->where('status', 'rejected')->count();
         $pending = $approvals->where('status', 'pending')->count();
 
         // Если документ утвержден, но нет записей утверждения - создаем ретроспективную запись
-        if ($document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
+        if (! $document->requiresActInvoiceFinancialApproval() && $document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
             $approvedByUserId = $document->approved_by_user_id;
 
             // Создаем запись для истории (ретроспективно)
@@ -796,7 +801,7 @@ class ApprovalWorkflowService
                 'approval_level' => 1,
                 'approval_order' => 1,
                 'status' => 'approved',
-                'decision_comment' => 'Утверждено (ретроспективная запись)',
+                'decision_comment' => PaymentApproval::RETROSPECTIVE_DECISION_COMMENT,
                 'decided_at' => $document->approved_at ?? now(),
             ]);
 
@@ -807,7 +812,7 @@ class ApprovalWorkflowService
         }
 
         // Если документ на утверждении, но нет записей - создаем дефолтную запись для администраторов
-        if ($document->status === PaymentDocumentStatus::PENDING_APPROVAL && $total === 0) {
+        if (! $document->requiresActInvoiceFinancialApproval() && $document->status === PaymentDocumentStatus::PENDING_APPROVAL && $total === 0) {
             PaymentApproval::create([
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
