@@ -33,7 +33,8 @@ class ScheduleTaskMutationService
             || array_key_exists('completed_quantity', $validatedData);
         $shouldRecalculateProgress =
             array_key_exists('progress_percent', $validatedData)
-            || array_key_exists('completed_quantity', $validatedData);
+            || array_key_exists('completed_quantity', $validatedData)
+            || array_key_exists('status', $validatedData);
 
         DB::transaction(function () use (
             $schedule,
@@ -63,6 +64,8 @@ class ScheduleTaskMutationService
                 $task->recalculateProgressFromQuantity();
                 $task->refresh();
                 $this->autoSchedulingService->rememberTask($task);
+            } elseif (array_key_exists('progress_percent', $validatedData) || array_key_exists('status', $validatedData)) {
+                $task->updateParentProgress();
             }
 
             if (
@@ -107,7 +110,28 @@ class ScheduleTaskMutationService
             ->withCount('completedWorks')
             ->findOrFail($task->id);
 
-        $affectedTaskIds = collect($this->autoSchedulingService->getUpdatedTasks())
+        $updatedTasks = collect($this->autoSchedulingService->getUpdatedTasks());
+
+        if ($shouldRecalculateProgress) {
+            $parentTaskId = $task->parent_task_id;
+            $visitedParentIds = [];
+
+            while ($parentTaskId && ! in_array($parentTaskId, $visitedParentIds, true)) {
+                $parentTask = $schedule->tasks()
+                    ->where('organization_id', $schedule->organization_id)
+                    ->find($parentTaskId);
+
+                if ($parentTask === null) {
+                    break;
+                }
+
+                $updatedTasks->push($parentTask);
+                $visitedParentIds[] = $parentTaskId;
+                $parentTaskId = $parentTask->parent_task_id;
+            }
+        }
+
+        $affectedTaskIds = $updatedTasks
             ->pluck('id')
             ->filter()
             ->unique()
