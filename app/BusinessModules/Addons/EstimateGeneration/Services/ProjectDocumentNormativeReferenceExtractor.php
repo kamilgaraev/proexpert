@@ -10,13 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\EstimateDoc
 final class ProjectDocumentNormativeReferenceExtractor
 {
     public function __construct(
-        private readonly EstimateDocumentRowExtractor $rowExtractor = new EstimateDocumentRowExtractor(),
+        private readonly EstimateDocumentRowExtractor $rowExtractor = new EstimateDocumentRowExtractor,
     ) {}
 
     /**
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
      * @return array<int, array<string, mixed>>
      */
     public function extract(array $analysis, array $localEstimate, array $section): array
@@ -24,34 +24,37 @@ final class ProjectDocumentNormativeReferenceExtractor
         $references = [];
         $seen = [];
 
-        foreach ($analysis['source_documents'] ?? [] as $document) {
-            if (!is_array($document)) {
+        foreach ($analysis['source_documents'] ?? [] as $documentIndex => $document) {
+            if (! is_array($document)) {
                 continue;
             }
 
-            if (!DocumentEvidencePolicy::canScanNormativeReferences($document)) {
+            if (! DocumentEvidencePolicy::canScanNormativeReferences($document)) {
                 continue;
             }
 
-            foreach ($this->lines((string) ($document['text'] ?? '')) as $line) {
+            $text = (string) ($document['text'] ?? '');
+            $documentIdentity = ['id' => $document['id'] ?? ['input_index' => $documentIndex],
+                'version' => $document['source_version'] ?? null, 'text' => hash('sha256', $text)];
+            foreach ($this->lines($text) as $lineIndex => $line) {
                 $reference = $this->referenceFromLine($line, $document, $localEstimate, $section);
 
                 if ($reference === null) {
                     continue;
                 }
 
-                $key = implode('|', [
-                    $reference['normative_rate_code'] ?? '',
-                    $reference['name'] ?? '',
-                    $reference['quantity'] ?? '',
-                    $reference['unit'] ?? '',
-                ]);
+                // Deduplicate delivery of one source observation, never different physical work rows.
+                $key = json_encode([$documentIdentity, $lineIndex], JSON_THROW_ON_ERROR);
 
                 if (isset($seen[$key])) {
                     continue;
                 }
 
                 $seen[$key] = true;
+                $reference['source_refs'][0]['line_number'] = $lineIndex + 1;
+                if (is_string($document['source_version'] ?? null)) {
+                    $reference['source_refs'][0]['source_version'] = $document['source_version'];
+                }
                 $references[] = $reference;
             }
         }
@@ -64,16 +67,16 @@ final class ProjectDocumentNormativeReferenceExtractor
      */
     private function lines(string $text): array
     {
-        return array_values(array_filter(
+        return array_filter(
             array_map(static fn (string $line): string => trim($line), preg_split('/\r\n|\r|\n/u', $text) ?: []),
             static fn (string $line): bool => $line !== ''
-        ));
+        );
     }
 
     /**
-     * @param array<string, mixed> $document
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
+     * @param  array<string, mixed>  $document
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
      * @return array<string, mixed>|null
      */
     private function referenceFromLine(string $line, array $document, array $localEstimate, array $section): ?array
@@ -89,7 +92,7 @@ final class ProjectDocumentNormativeReferenceExtractor
         $scope = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $category = $this->categoryForLine($line, $scope);
 
-        if (!$this->isCompatibleCategory($category, $scope, (string) ($localEstimate['key'] ?? ''))) {
+        if (! $this->isCompatibleCategory($category, $scope, (string) ($localEstimate['key'] ?? ''))) {
             return null;
         }
 
@@ -124,7 +127,7 @@ final class ProjectDocumentNormativeReferenceExtractor
             'work_category' => $category,
             'unit' => (string) $row['unit'],
             'quantity' => (float) $row['quantity'],
-            'quantity_formula' => 'project_document_norm:' . $code,
+            'quantity_formula' => 'project_document_norm:'.$code,
             'quantity_basis' => (string) $row['quantity_basis'],
             'source_refs' => [[
                 'type' => 'project_document_norm_reference',

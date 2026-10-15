@@ -1946,6 +1946,8 @@ final class NormativeWorkItemPlannerService
     private function uniquePricedItems(array $items): array
     {
         $unique = [];
+        $references = [];
+        $referenceGroups = [];
 
         foreach ($items as $item) {
             $semanticIdentity = (string) (
@@ -1960,10 +1962,33 @@ final class NormativeWorkItemPlannerService
                 ?? $item['key']
             );
             $key = $normativeIdentity.'|'.$semanticIdentity;
+            if (($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+                $referenceGroups[$key][] = count($references);
+                $references[] = $item;
+
+                continue;
+            }
             $unique[$key] = $item;
         }
 
-        return array_values($unique);
+        foreach ($referenceGroups as $indexes) {
+            if (count($indexes) < 2) {
+                continue;
+            }
+            foreach ($indexes as $index) {
+                // One norm does not prove that two source rows describe the same physical work.
+                $references[$index]['item_type'] = 'quantity_review';
+                $references[$index]['pricing_status'] = 'not_applicable';
+                $references[$index]['pricing_blocker'] = 'quantity_review_required';
+                $references[$index]['validation_flags'] = array_values(array_unique([
+                    ...($references[$index]['validation_flags'] ?? []), 'quantity_review_required',
+                ]));
+                $references[$index]['metadata']['display_role'] = 'quantity_review';
+                $references[$index]['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
+            }
+        }
+
+        return [...$references, ...array_values($unique)];
     }
 
     /**

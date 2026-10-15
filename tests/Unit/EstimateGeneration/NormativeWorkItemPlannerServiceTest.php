@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
@@ -11,6 +13,42 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerServiceTest extends TestCase
 {
+    public function test_document_rows_with_one_norm_keep_their_quantities_and_require_explicit_review(): void
+    {
+        foreach ([[10, 20], [10, 10]] as $quantities) {
+            $documents = [];
+            foreach ($quantities as $index => $quantity) {
+                $documents[] = ['id' => 82 + $index, 'filename' => 'volumes-'.($index + 1).'.pdf',
+                    'status' => 'ready', 'quality' => ['level' => 'good'],
+                    'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                    'text' => 'ФЕР 08-02-001-01 Кладка стен '.$quantity.' м2'];
+            }
+            $section = ['key' => 'walls-section', 'construction_part' => 'walls'];
+            $items = $this->planner()->build(['key' => 'walls', 'scope_type' => 'walls'], $section,
+                ['source_documents' => $documents]);
+            $references = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference'));
+
+            self::assertCount(2, $references);
+            self::assertSame(array_map('strval', $quantities), array_column($references, 'quantity'));
+            self::assertNotSame($references[0]['key'], $references[1]['key']);
+            foreach ($references as $index => $item) {
+                self::assertSame(82 + $index, $item['source_refs'][0]['document_id']);
+                self::assertSame(1, $item['source_refs'][0]['line_number']);
+                self::assertSame('quantity_review', $item['item_type']);
+                self::assertSame('quantity_review_required', $item['pricing_blocker']);
+                self::assertContains('quantity_review_required', $item['validation_flags']);
+            }
+            $review = (new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter))->projectionForDraft([
+                'local_estimates' => [['key' => 'walls', 'sections' => [
+                    [...$section, 'work_items' => $references],
+                ]]],
+            ]);
+            self::assertCount(2, $review);
+            self::assertSame(['confirm_quantity', 'confirm_quantity'], array_column($review, 'required_action'));
+            self::assertSame(['blocking', 'blocking'], array_column($review, 'severity'));
+        }
+    }
+
     public function test_industrial_scope_without_dimensions_keeps_named_work_and_units_with_unknown_volume(): void
     {
         foreach (['process_pipelines' => 2, 'automation' => 2, 'equipment' => 3, 'commissioning' => 1] as $package => $minimum) {
