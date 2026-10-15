@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\BusinessModules\Core\Payments;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
@@ -20,11 +21,20 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\BudgetingTestEntitlements;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 class PaymentApprovalControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+    use EnablesImmutableAuditWriter;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+    }
 
     public function test_approve_accepts_admin_notes_contract_and_persists_decision_comment(): void
     {
@@ -110,7 +120,7 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
-        $this->activateBudgetingModule($context->organization->id);
+        BudgetingTestEntitlements::activate($context);
         $document = $this->createPendingApprovalDocument($context);
         $budget = $this->createBudgetLine($context->organization->id, 500.0);
         $document->forceFill([
@@ -135,7 +145,7 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
-        $this->activateBudgetingModule($context->organization->id);
+        BudgetingTestEntitlements::activate($context);
         $document = $this->createPendingApprovalDocument($context);
         $budget = $this->createBudgetLine($context->organization->id, 500.0);
         $document->forceFill([
@@ -165,6 +175,39 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
             'payment_document_id' => $document->id,
             'action' => 'budget_limit_override',
         ]);
+    }
+
+    public function test_act_invoice_cannot_start_financial_approval_without_a_required_budget_exception(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        BudgetingTestEntitlements::activate($context);
+        $budget = $this->createBudgetLine($context->organization->id, 500.0);
+        $payee = \App\Models\Organization::factory()->verified()->create();
+        $document = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $payee->id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'invoice_type' => InvoiceType::ACT,
+            'document_number' => 'ACT-LIMIT-'.uniqid(),
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'amount' => 1000, 'paid_amount' => 0, 'remaining_amount' => 1000,
+            'currency' => 'RUB', 'status' => PaymentDocumentStatus::SUBMITTED,
+            'due_date' => now()->toDateString(),
+            'payment_purpose' => 'Оплата работ по акту',
+            'bank_account' => '40702810900000001002', 'bank_bik' => '044525225',
+            'created_by_user_id' => $context->user->id,
+            'budget_article_id' => $budget['article']->id,
+            'responsibility_center_id' => $budget['center']->id,
+        ]);
+        $url = "/api/v1/admin/payments/documents/{$document->id}/submit";
+        $this->withHeaders($context->authHeaders())->postJson($url)->assertStatus(422);
+        $this->assertSame(PaymentDocumentStatus::SUBMITTED, $document->fresh()->status);
+        $this->assertSame(0, $document->approvals()->count());
+        $this->assertSame('0.00', $document->fresh()->paid_amount);
+        $this->assertDatabaseCount('payment_transactions', 0);
     }
 
     private function createPendingApprovalDocument(AdminApiTestContext $context): PaymentDocument
@@ -207,6 +250,7 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
                 'billing_model' => 'free',
                 'category' => 'finance',
                 'permissions' => [
+                    'payments.invoice.issue',
                     'payments.transaction.approve',
                     'payments.transaction.reject',
                     'payments.transaction.view',
@@ -223,44 +267,6 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
-    }
-
-    private function activateBudgetingModule(int $organizationId): void
-    {
-        $account = \App\Models\OrganizationCommercialAccount::query()->create([
-            'organization_id' => $organizationId,
-            'responsible_user_id' => \App\Models\User::query()->where('current_organization_id', $organizationId)->value('id'),
-            'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1,
-            'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth(),
-            'auto_renew_enabled' => false,
-        ]);
-        \App\Models\OrganizationPackageSubscription::query()->create([
-            'organization_id' => $organizationId, 'commercial_account_id' => $account->id,
-            'package_slug' => 'finance-contracts', 'status' => 'active', 'access_source' => 'paid_package',
-            'price_paid' => 39900, 'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth(),
-        ]);
-        $module = Module::query()->firstOrCreate(
-            ['slug' => 'budgeting'],
-            [
-                'name' => 'Budgeting',
-                'version' => '1.0.0',
-                'type' => 'feature',
-                'billing_model' => 'free',
-                'category' => 'finance',
-                'permissions' => ['budgeting.limits.override'],
-                'is_active' => true,
-                'is_system_module' => false,
-            ]
-        );
-
-        OrganizationModuleActivation::query()->create([
-            'organization_id' => $organizationId,
-            'module_id' => $module->id,
-            'status' => 'active',
-            'activated_at' => now(),
-        ]);
-        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
-        self::assertTrue(app(\App\Domain\Authorization\Services\ModulePermissionChecker::class)->isModuleActive('budgeting', $organizationId));
     }
 
     /**

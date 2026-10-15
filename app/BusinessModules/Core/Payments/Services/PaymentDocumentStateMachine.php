@@ -38,6 +38,14 @@ class PaymentDocumentStateMachine
      */
     public function canTransition(PaymentDocument $document, PaymentDocumentStatus $newStatus): bool
     {
+        if ($newStatus === PaymentDocumentStatus::SUBMITTED && $document->canRecoverActInvoiceFinancialApproval()) {
+            return true;
+        }
+        if ($document->requiresActInvoiceFinancialApproval()
+            && $document->status === PaymentDocumentStatus::APPROVED
+            && in_array($newStatus, [PaymentDocumentStatus::PAID, PaymentDocumentStatus::PARTIALLY_PAID], true)) {
+            return false;
+        }
         $currentStatus = $document->status->value;
         $allowedStatuses = self::ALLOWED_TRANSITIONS[$currentStatus] ?? [];
 
@@ -61,6 +69,9 @@ class PaymentDocumentStateMachine
         }
 
         $oldStatus = $document->status;
+        if ($oldStatus === PaymentDocumentStatus::APPROVED && $newStatus === PaymentDocumentStatus::SUBMITTED) {
+            $document->approved_at = null;
+        }
         $document->status = $newStatus;
 
         // Установка timestamp в зависимости от статуса
@@ -114,6 +125,10 @@ class PaymentDocumentStateMachine
      */
     public function approve(PaymentDocument $document, ?int $approvedByUserId = null): PaymentDocument
     {
+        if ($document->requiresActInvoiceFinancialApproval()
+            && ! $document->hasCompletedFinancialApproval()) {
+            throw new \DomainException(trans_message('payments.validation.act_invoice_financial_approval_required'));
+        }
         if ($approvedByUserId) {
             $document->approved_by_user_id = $approvedByUserId;
         }
@@ -144,6 +159,11 @@ class PaymentDocumentStateMachine
      */
     public function schedule(PaymentDocument $document, ?\DateTime $scheduledAt = null): PaymentDocument
     {
+        if ($document->requiresActInvoiceFinancialApproval()
+            && $document->status === PaymentDocumentStatus::APPROVED
+            && ! $document->hasCompletedFinancialApproval()) {
+            throw new \DomainException(trans_message('payments.validation.act_invoice_financial_approval_required'));
+        }
         if ($scheduledAt) {
             $document->scheduled_at = $scheduledAt;
             $document->save();

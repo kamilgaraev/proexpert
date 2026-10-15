@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Payments\Http\Requests\MobileRegisterPaymentDocumen
 use App\BusinessModules\Core\Payments\Http\Requests\MobileRejectPaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileStorePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileSubmitPaymentDocumentRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\MobileSchedulePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileUpdatePaymentDocumentRequest;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -136,6 +137,25 @@ final class MobilePaymentDocumentController extends Controller
             return $this->domainError($exception);
         } catch (Throwable $exception) {
             return $this->failed($request, $exception, 'submit', ['document_id' => $id]);
+        }
+    }
+
+    public function schedule(MobileSchedulePaymentDocumentRequest $request, int $id): JsonResponse
+    {
+        try {
+            return MobileResponse::success($this->payments->schedule(
+                $this->organizationId($request),
+                $this->actor($request),
+                $id,
+                $request->validated('scheduled_at'),
+                $request->validated('budget_override_reason')
+            ));
+        } catch (ModelNotFoundException) {
+            return MobileResponse::error(trans_message('payments.not_found'), 404);
+        } catch (\DomainException $exception) {
+            return $this->domainError($exception);
+        } catch (Throwable $exception) {
+            return $this->failed($request, $exception, 'schedule', ['document_id' => $id]);
         }
     }
 

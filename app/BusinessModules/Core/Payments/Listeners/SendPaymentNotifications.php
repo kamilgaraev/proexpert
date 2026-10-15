@@ -4,29 +4,31 @@ namespace App\BusinessModules\Core\Payments\Listeners;
 
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentApproved;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentRejected;
-use App\BusinessModules\Core\Payments\Events\PaymentDocumentSubmitted;
+use App\BusinessModules\Core\Payments\Events\PaymentApprovalRequested;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovalRequiredNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovedNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentRejectedNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentRequestReceivedNotification;
-use App\Domain\Authorization\Models\AuthorizationContext;
+use App\BusinessModules\Core\Payments\Services\PaymentNotificationRecipients;
 use App\Models\Contractor;
 use App\Models\User;
 use Illuminate\Events\Dispatcher;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class SendPaymentNotifications
 {
+    public function __construct(private readonly PaymentNotificationRecipients $recipients) {}
+
     /**
      * Регистрация listeners
      */
     public function subscribe(Dispatcher $events): void
     {
         $events->listen(
-            PaymentDocumentSubmitted::class,
-            [self::class, 'handleDocumentSubmitted']
+            PaymentApprovalRequested::class,
+            [self::class, 'handleApprovalRequested']
         );
 
         $events->listen(
@@ -48,42 +50,31 @@ class SendPaymentNotifications
     /**
      * Обработка отправки документа на утверждение
      */
-    public function handleDocumentSubmitted(PaymentDocumentSubmitted $event): void
+    public function handleApprovalRequested(PaymentApprovalRequested $event): void
     {
         try {
-            $document = $event->document;
+            $document = $event->document->fresh();
+            if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL) {
+                return;
+            }
 
-            // Находим утверждающих первого уровня
             $approvals = $document->approvals()
-                ->where('approval_level', 1)
+                ->where('organization_id', $document->organization_id)
+                ->where('approval_level', $event->level)
                 ->where('status', 'pending')
+                ->whereNull('notified_at')
                 ->get();
             $notifiedUserIds = [];
 
             foreach ($approvals as $approval) {
-                if ($approval->approver_user_id) {
-                    $user = User::find($approval->approver_user_id);
-                    if ($user) {
-                        $user->notify(new PaymentApprovalRequiredNotification($document));
-                        $approval->markAsNotified();
-                        $notifiedUserIds[] = $user->id;
-                    }
-
-                    continue;
-                }
-
-                if ($approval->approval_permission) {
-                    foreach ($this->usersWithAnyPermission((int) $document->organization_id, [$approval->approval_permission]) as $user) {
-                        if (in_array($user->id, $notifiedUserIds, true)) {
-                            continue;
-                        }
-
+                $recipients = $this->recipients->forApproval($document, $approval);
+                foreach ($recipients as $user) {
+                    if (! in_array($user->id, $notifiedUserIds, true)) {
                         $user->notify(new PaymentApprovalRequiredNotification($document));
                         $notifiedUserIds[] = $user->id;
                     }
-
-                    $approval->markAsNotified();
                 }
+                if ($recipients->isNotEmpty()) $approval->markAsNotified();
             }
 
             Log::info('payment_notifications.document_submitted', [
@@ -105,21 +96,26 @@ class SendPaymentNotifications
     {
         try {
             $document = $event->document;
+            $notifiedCreatorId = null;
 
             // Уведомляем создателя документа
             if ($document->created_by_user_id) {
                 $creator = User::find($document->created_by_user_id);
-                if ($creator) {
+                if ($creator && ($this->recipients->allows($creator, $document, 'payments.invoice.view')
+                    || $this->recipients->allows($creator, $document, 'payments.invoice.create'))) {
                     $creator->notify(new PaymentApprovedNotification($document));
+                    $notifiedCreatorId = $creator->id;
                 }
             }
 
-            $financialUsers = $this->usersWithAnyPermission((int) $document->organization_id, [
+            $financialUsers = $this->recipients->usersWithAnyPermission((int) $document->organization_id, [
                 'payments.transaction.register',
-            ]);
+            ], $document);
 
             foreach ($financialUsers as $user) {
-                $user->notify(new PaymentApprovedNotification($document));
+                if ($user->id !== $notifiedCreatorId) {
+                    $user->notify(new PaymentApprovedNotification($document));
+                }
             }
 
             Log::info('payment_notifications.document_approved', [
@@ -172,7 +168,7 @@ class SendPaymentNotifications
             $request = $event->request;
             $contractor = Contractor::find($event->contractorId);
 
-            $responsibleUsers = $this->usersWithAnyPermission((int) $request->organization_id, [
+            $responsibleUsers = $this->recipients->usersWithAnyPermission((int) $request->organization_id, [
                 'payments.invoice.create',
                 'payments.invoice.issue',
             ]);
@@ -196,30 +192,4 @@ class SendPaymentNotifications
             ]);
         }
     }
-
-    /**
-     * @param array<int, string> $permissions
-     * @return Collection<int, User>
-     */
-    private function usersWithAnyPermission(int $organizationId, array $permissions): Collection
-    {
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-
-        return User::query()
-            ->whereHas('roleAssignments', static function ($query) use ($context): void {
-                $query->where('context_id', $context->id);
-            })
-            ->get()
-            ->filter(static function (User $user) use ($permissions, $organizationId): bool {
-                foreach ($permissions as $permission) {
-                    if ($user->can($permission, ['organization_id' => $organizationId])) {
-                        return true;
-                    }
-                }
-
-                return false;
-            })
-            ->values();
-    }
 }
-

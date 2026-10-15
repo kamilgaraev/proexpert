@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
 use App\Models\Organization;
 use App\Models\User;
 use Brick\Math\BigDecimal;
@@ -462,6 +463,21 @@ class PaymentValidationService
             ->where('document_type', $document->document_type)
             ->where('amount', $document->amount)
             ->where('payee_contractor_id', $document->payee_contractor_id)
+            ->when(
+                $document->requiresActInvoiceFinancialApproval()
+                    && $document->invoiceable_type === ContractPerformanceAct::class
+                    && $document->invoiceable_id !== null,
+                static function (Builder $query) use ($document): void {
+                    $query->where(static function (Builder $similar) use ($document): void {
+                        $similar->whereNull('invoice_type')
+                            ->orWhere('invoice_type', '!=', InvoiceType::ACT->value)
+                            ->orWhereNull('invoiceable_type')
+                            ->orWhere('invoiceable_type', '!=', ContractPerformanceAct::class)
+                            ->orWhereNull('invoiceable_id')
+                            ->orWhere('invoiceable_id', $document->invoiceable_id);
+                    });
+                }
+            )
             ->whereNotIn('status', ['draft', 'cancelled', 'rejected'])
             ->where('created_at', '>=', now()->subDays(30))
             ->get(['id', 'document_number', 'status', 'created_at']);

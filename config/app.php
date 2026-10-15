@@ -237,6 +237,8 @@ return [
 
     'frontend_url' => env('FRONTEND_URL', 'https://lk.1мост.рф'),
 
+    'admin_frontend_url' => env('ADMIN_FRONTEND_URL', 'https://admin.1мост.рф'),
+
     'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.1мост.рф'),
 
 ];

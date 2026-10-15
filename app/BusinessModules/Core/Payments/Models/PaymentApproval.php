@@ -13,6 +13,8 @@ class PaymentApproval extends Model
 {
     use HasFactory;
 
+    public const RETROSPECTIVE_DECISION_COMMENT = 'Утверждено (ретроспективная запись)';
+
     protected $fillable = [
         'payment_document_id',
         'organization_id',

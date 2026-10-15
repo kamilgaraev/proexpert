@@ -45,7 +45,8 @@ final class MobilePaymentDocumentService
         ], $user);
 
         return [
-            'items' => collect($page->items())->map(fn (PaymentDocument $document): array => $this->presenter->brief($document, $user))->all(),
+            'items' => array_map(fn (array $document): array => $this->withMobileActionUrls($document, (int) $document['id']),
+                $this->presenter->collection($page->items(), $user)),
             'meta' => [
                 'current_page' => $page->currentPage(),
                 'per_page' => $page->perPage(),
@@ -208,6 +209,15 @@ final class MobilePaymentDocumentService
         return $this->withCapabilities($this->presenter->detailed($submitted, $user), $user, $submitted);
     }
 
+    public function schedule(int $organizationId, User $user, int $id, ?string $scheduledAt, ?string $budgetOverrideReason): array
+    {
+        $document = $this->queries->findForWorkflow($organizationId, $id, $user, 'payments.schedule.create');
+        $this->assertCanAccessDocument($user, $document, 'payments.schedule.create');
+        $scheduled = $this->workflow->schedule($document, $scheduledAt, $user, $budgetOverrideReason);
+
+        return $this->withCapabilities($this->presenter->detailed($scheduled, $user), $user, $scheduled);
+    }
+
     /** @return array<string, mixed> */
     public function registerPayment(int $organizationId, User $user, int $id, array $data): array
     {
@@ -247,6 +257,9 @@ final class MobilePaymentDocumentService
 
     private function hasPendingApprovalForUser(PaymentDocument $document, User $user, string $decisionPermission): bool
     {
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            return $this->approvals->canDecideCurrentApproval($document, $user, $decisionPermission);
+        }
         $canClaimPermissionApproval = $this->canAccessDocument($user, $document, $decisionPermission);
 
         return PaymentApproval::query()
@@ -424,6 +437,7 @@ final class MobilePaymentDocumentService
     /** @return array<string, mixed> */
     private function withCapabilities(array $data, User $user, PaymentDocument $document): array
     {
+        $data = $this->withMobileActionUrls($data, (int) $document->id);
         $context = ['organization_id' => (int) $document->organization_id];
         if ($document->project_id !== null) {
             $context['project_id'] = (int) $document->project_id;
@@ -431,7 +445,9 @@ final class MobilePaymentDocumentService
         }
         $isDraft = $document->status->value === 'draft';
         $data['can_edit'] = $isDraft && $user->can('payments.invoice.edit', $context);
-        $data['can_submit'] = $isDraft && $user->can('payments.invoice.issue', $context);
+        $primaryAction = $data['action_summary']['primary_action'] ?? null;
+        $data['can_submit'] = ($primaryAction['key'] ?? null) === 'submit_payment_document' && ($primaryAction['is_enabled'] ?? false) === true;
+        $data['can_schedule_payment'] = ($primaryAction['key'] ?? null) === 'schedule_payment' && ($primaryAction['is_enabled'] ?? false) === true;
         $data['can_register_payment'] = $document->canBePaid() && $user->can('payments.transaction.register', $context);
         $data['can_approve'] = $this->canAccessDocument($user, $document, 'payments.transaction.approve')
             && $this->hasPendingApprovalForUser($document, $user, 'payments.transaction.approve');
@@ -440,11 +456,36 @@ final class MobilePaymentDocumentService
         $data['capabilities'] = [
             'can_edit' => $data['can_edit'],
             'can_submit' => $data['can_submit'],
+            'can_schedule_payment' => $data['can_schedule_payment'],
             'can_register_payment' => $data['can_register_payment'],
             'can_approve' => $data['can_approve'],
             'can_reject' => $data['can_reject'],
         ];
 
+        return $data;
+    }
+
+    private function withMobileActionUrls(array $data, int $documentId): array
+    {
+        $primaryAction = $data['action_summary']['primary_action'] ?? null;
+        if (is_array($primaryAction)) {
+            $suffix = match ($primaryAction['key'] ?? null) {
+                'submit_payment_document' => 'submit',
+                'approve_payment_document' => 'approve',
+                'schedule_payment' => 'schedule',
+                'register_payment' => 'payments',
+                default => null,
+            };
+            if ($suffix !== null) {
+                $primaryAction['href'] = "/api/v1/mobile/payments/documents/{$documentId}/{$suffix}";
+                $data['action_summary']['primary_action'] = $primaryAction;
+                foreach ($data['action_summary']['blockers'] ?? [] as $index => $blocker) {
+                    if (($blocker['action']['key'] ?? null) === $primaryAction['key']) {
+                        $data['action_summary']['blockers'][$index]['action'] = $primaryAction;
+                    }
+                }
+            }
+        }
         return $data;
     }
 }

@@ -69,7 +69,7 @@ final class PaymentDocumentQueryService
                 'payeeContractor',
                 'budgetArticle',
                 'responsibilityCenter',
-            ]);
+            ])->withExists('transactions');
 
         if (Schema::hasTable('site_requests') && Schema::hasTable('payment_document_site_requests')) {
             $query->withCount('siteRequests');

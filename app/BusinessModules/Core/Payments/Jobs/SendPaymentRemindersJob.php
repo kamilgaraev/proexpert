@@ -4,7 +4,7 @@ namespace App\BusinessModules\Core\Payments\Jobs;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovalRequiredNotification;
-use App\Models\User;
+use App\BusinessModules\Core\Payments\Services\PaymentNotificationRecipients;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,7 +23,7 @@ class SendPaymentRemindersJob implements ShouldQueue
 
     public function __construct() {}
 
-    public function handle(): void
+    public function handle(PaymentNotificationRecipients $recipients): void
     {
         Log::info('send_payment_reminders.started');
 
@@ -39,21 +39,22 @@ class SendPaymentRemindersJob implements ShouldQueue
 
         foreach ($pendingDocuments as $document) {
             try {
+                $notifiedUserIds = [];
                 foreach ($document->approvals as $approval) {
                     // Проверяем можно ли отправить напоминание
                     if (!$approval->canSendReminder()) {
                         continue;
                     }
 
-                    // Отправляем напоминание утверждающему
-                    if ($approval->approver_user_id) {
-                        $user = User::find($approval->approver_user_id);
-                        if ($user) {
+                    $users = $recipients->forApproval($document, $approval);
+                    foreach ($users as $user) {
+                        if (! in_array($user->id, $notifiedUserIds, true)) {
                             $user->notify(new PaymentApprovalRequiredNotification($document));
-                            $approval->markReminderSent();
+                            $notifiedUserIds[] = $user->id;
                             $sentCount++;
                         }
                     }
+                    if ($users->isNotEmpty()) $approval->markReminderSent();
                 }
             } catch (\Exception $e) {
                 Log::error('send_payment_reminders.document_failed', [

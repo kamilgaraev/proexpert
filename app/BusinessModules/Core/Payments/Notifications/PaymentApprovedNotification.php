@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Notifications;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Support\PaymentDocumentUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -30,8 +31,10 @@ class PaymentApprovedNotification extends Notification implements ShouldQueue
             ->line("Платежный документ №{$this->document->document_number} утвержден.")
             ->line("Сумма: {$this->document->formatted_amount}")
             ->line("Получатель: {$this->document->getPayeeName()}")
-            ->action('Перейти к документу', url("/admin/payments/documents/{$this->document->id}"))
-            ->line('Документ готов к оплате.');
+            ->action('Перейти к документу', PaymentDocumentUrl::forAdmin($this->document->id))
+            ->line($this->document->requiresActInvoiceFinancialApproval()
+                ? 'Финансовое согласование завершено. Запланируйте дату оплаты документа.'
+                : 'Документ готов к оплате.');
     }
 
     public function toArray($notifiable): array
@@ -43,7 +46,7 @@ class PaymentApprovedNotification extends Notification implements ShouldQueue
             'amount' => $this->document->amount,
             'currency' => $this->document->currency,
             'payee_name' => $this->document->getPayeeName(),
-            'url' => url("/admin/payments/documents/{$this->document->id}"),
+            'url' => PaymentDocumentUrl::forAdmin($this->document->id),
         ];
     }
 }

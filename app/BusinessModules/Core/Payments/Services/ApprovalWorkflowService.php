@@ -6,6 +6,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentApprovalRule;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,37 @@ class ApprovalWorkflowService
         PaymentDocument $document,
         ?User $user = null,
         ?string $budgetOverrideReason = null,
+    ): Collection {
+        if (! $document->requiresActInvoiceFinancialApproval()) {
+            return $this->initiateApprovalWorkflow($document, $user, $budgetOverrideReason);
+        }
+
+        return DB::transaction(function () use ($document, $user, $budgetOverrideReason): Collection {
+            $document = PaymentDocument::query()
+                ->where('organization_id', $document->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($document->id);
+            $approvals = $document->approvals()->orderBy('approval_level')->orderBy('approval_order')->get();
+            if ($document->hasFinancialApprovalRoute()) {
+                if ($document->status === PaymentDocumentStatus::SUBMITTED && $approvals->contains('status', 'pending')) {
+                    $this->stateMachine->sendForApproval($document);
+                    $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
+                }
+
+                return $approvals;
+            }
+            if (! in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)) {
+                throw new \DomainException(trans_message('payments.validation.act_invoice_financial_approval_required'));
+            }
+
+            return $this->initiateApprovalWorkflow($document, $user, $budgetOverrideReason);
+        });
+    }
+
+    private function initiateApprovalWorkflow(
+        PaymentDocument $document,
+        ?User $user,
+        ?string $budgetOverrideReason,
     ): Collection {
         if (! $document->requiresApproval()) {
             Log::info('payment_approval.not_required_for_document_type', [
@@ -65,6 +97,10 @@ class ApprovalWorkflowService
 
         // Создаем записи утверждений
         $approvals = $this->createApprovals($document, $rule);
+        if ($approvals->isEmpty()) {
+            throw new \DomainException(trans_message($document->requiresActInvoiceFinancialApproval()
+                ? 'payments.validation.act_invoice_approval_route_missing' : 'payments.validation.approver_unavailable'));
+        }
 
         // Меняем статус документа на "ожидает утверждения"
         $this->stateMachine->sendForApproval($document);
@@ -166,14 +202,39 @@ class ApprovalWorkflowService
     {
         $chain = $rule->getApprovalChain();
         $approvals = collect();
+        $eligibleApprovers = null;
 
         foreach ($chain as $item) {
             $permission = $item['approval_permission'] ?? $item['permission'] ?? null;
             $role = $permission ? null : ($item['role'] ?? null);
             $approverUserId = $item['approver_user_id'] ?? null;
 
-            if (! $permission && $role) {
-                $approverUserId = $this->findApproverByRole($document->organization_id, $role)?->id;
+            if ($approverUserId === null && ! $permission && $role) {
+                $eligibleApprovers ??= app(PaymentNotificationRecipients::class)->usersWithAnyPermission(
+                    (int) $document->organization_id, [self::PAYMENT_APPROVAL_PERMISSION], $document);
+                $approverUserId = $this->findApproverByRole((int) $document->organization_id, $role, $eligibleApprovers)?->id;
+            }
+            if ($approverUserId === null) {
+                $eligibleApprovers ??= app(PaymentNotificationRecipients::class)->usersWithAnyPermission(
+                    (int) $document->organization_id, [self::PAYMENT_APPROVAL_PERMISSION], $document);
+                if ($permission !== self::PAYMENT_APPROVAL_PERMISSION || $eligibleApprovers->isEmpty()) {
+                    throw new \DomainException(trans_message('payments.validation.approver_unavailable'));
+                }
+            }
+
+            if ($approverUserId !== null) {
+                $approver = User::find($approverUserId);
+                if (! $approver || ! $approver->organizations()->whereKey($document->organization_id)->wherePivot('is_active', true)->exists()) {
+                    throw new \DomainException(trans_message('payments.validation.approver_organization_mismatch'));
+                }
+                if ($document->project_id !== null && ! app(\App\Services\Project\UserProjectAccessService::class)
+                    ->queryAccessibleProjects($approver, (int) $document->organization_id, true)->whereKey($document->project_id)->exists()) {
+                    throw new \DomainException(trans_message('payments.validation.approver_project_access_required'));
+                }
+                if (! $this->userHasPermission($approver, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id,
+                    $document->project_id !== null ? (int) $document->project_id : null)) {
+                    throw new \DomainException(trans_message('payments.validation.approver_permission_required'));
+                }
             }
 
             $approval = PaymentApproval::create([
@@ -198,21 +259,23 @@ class ApprovalWorkflowService
     /**
      * Найти утверждающего по роли
      */
-    private function findApproverByRole(int $organizationId, string $role): ?User
+    private function findApproverByRole(int $organizationId, string $role, Collection $eligibleApprovers): ?User
     {
-        // Ищем пользователя с данной ролью в организации через новую систему авторизации
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
 
-        return User::whereHas('roleAssignments', function ($query) use ($context, $role) {
-            $query->where('context_id', $context->id)
-                ->where('role_slug', $role);
-        })->first();
+        return $eligibleApprovers->sortBy('id')->first(fn (User $user): bool => $user->hasRole($role, $context->id));
     }
 
     private function approvalQueryForUser(PaymentDocument $document, int $userId, ?User $user, string $decisionPermission = self::PAYMENT_APPROVAL_PERMISSION)
     {
         $query = PaymentApproval::where('payment_document_id', $document->id)
+            ->where('organization_id', $document->organization_id)
             ->where('status', 'pending');
+
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $query->where('approval_level', $document->approvals()->where('organization_id', $document->organization_id)
+                ->where('status', 'pending')->min('approval_level'));
+        }
 
         return $query->where(function ($scope) use ($document, $userId, $user, $decisionPermission): void {
             $scope->where('approver_user_id', $userId);
@@ -232,8 +295,10 @@ class ApprovalWorkflowService
             return false;
         }
 
-        return $user->can($permission, ['organization_id' => $organizationId])
-            || ($projectId !== null && $user->can($permission, [
+        $authorization = app(AuthorizationService::class);
+
+        return $authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])
+            || ($projectId !== null && $authorization->canCurrent($user, $permission, [
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'strict_project_scope' => true,
@@ -249,6 +314,39 @@ class ApprovalWorkflowService
         return $user->isOrganizationOwner($organizationId) || $user->isSystemAdmin();
     }
 
+    public function canDecideCurrentApproval(PaymentDocument $document, User $user, string $permission = self::PAYMENT_APPROVAL_PERMISSION): bool
+    {
+        return $this->userHasPermission($user, $permission, (int) $document->organization_id, $document->project_id)
+            && $this->isAssignedToCurrentApproval($document, $user);
+    }
+
+    public function isAssignedToCurrentApproval(PaymentDocument $document, User $user, ?array $roleAccess = null): bool
+    {
+        $document->loadMissing('approvals');
+        $pending = $document->approvals->where('organization_id', $document->organization_id)->where('status', 'pending');
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $pending = $pending->where('approval_level', $pending->min('approval_level'));
+        }
+        foreach ($pending as $approval) {
+            if ($approval->approver_user_id !== null) {
+                if ((int) $approval->approver_user_id === (int) $user->id) return true;
+                continue;
+            }
+            if ($approval->approval_permission === self::PAYMENT_APPROVAL_PERMISSION) return true;
+            if ($approval->approval_permission === null && $approval->approval_role) {
+                $key = $document->organization_id.':'.$approval->approval_role;
+                if ($roleAccess !== null) {
+                    if ($roleAccess[$key] ?? false) return true;
+                } else {
+                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $document->organization_id);
+                    if ($user->hasRole($approval->approval_role, $context->id)) return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private function legacyRoleApprovalForUser(PaymentDocument $document, int $userId): ?PaymentApproval
     {
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $document->organization_id);
@@ -259,9 +357,14 @@ class ApprovalWorkflowService
         }
 
         $legacyApprovals = PaymentApproval::where('payment_document_id', $document->id)
+            ->where('organization_id', $document->organization_id)
             ->where('status', 'pending')
             ->whereNull('approval_permission')
             ->whereNotNull('approval_role')
+            ->when($document->requiresActInvoiceFinancialApproval(), fn ($query) => $query->where(
+                fn ($assigned) => $assigned->whereNull('approver_user_id')->orWhere('approver_user_id', $userId)))
+            ->when($document->requiresActInvoiceFinancialApproval(), fn ($query) => $query->where('approval_level',
+                $document->approvals()->where('organization_id', $document->organization_id)->where('status', 'pending')->min('approval_level')))
             ->lockForUpdate()
             ->get();
 
@@ -321,7 +424,7 @@ class ApprovalWorkflowService
             }
 
             // Если нет прямого назначения, но есть права админа/владельца - ищем любое активное утверждение
-            if (! $approval && $isAdmin) {
+            if (! $approval && $isAdmin && ! $document->requiresActInvoiceFinancialApproval()) {
                 // Берем первое попавшееся активное утверждение, чтобы закрыть текущий уровень
                 $approval = PaymentApproval::where('payment_document_id', $document->id)
                     ->where('status', 'pending')
@@ -347,6 +450,12 @@ class ApprovalWorkflowService
                     ->where('status', 'pending')
                     ->count(),
             ]);
+
+            if (! $approval && $document->requiresActInvoiceFinancialApproval()) {
+                throw new \DomainException(trans_message($document->approvals()->exists()
+                    ? 'payments.validation.act_invoice_approval_level_unavailable'
+                    : 'payments.validation.act_invoice_financial_approval_required'));
+            }
 
             if (! $approval) {
                 // Если админ, но нет записей утверждения - проверяем статус документа
@@ -572,23 +681,7 @@ class ApprovalWorkflowService
      */
     private function notifyPendingApprovers(PaymentDocument $document, int $level): void
     {
-        $approvals = PaymentApproval::where('payment_document_id', $document->id)
-            ->where('approval_level', $level)
-            ->where('status', 'pending')
-            ->get();
-
-        foreach ($approvals as $approval) {
-            if ($approval->approver_user_id) {
-                // Отправляем уведомление (будет реализовано позже в notifications)
-                $approval->markAsNotified();
-
-                Log::info('payment_approval.notification_sent', [
-                    'approval_id' => $approval->id,
-                    'user_id' => $approval->approver_user_id,
-                    'role' => $approval->approval_role,
-                ]);
-            }
-        }
+        event(new \App\BusinessModules\Core\Payments\Events\PaymentApprovalRequested($document, $level));
     }
 
     /**
@@ -605,7 +698,7 @@ class ApprovalWorkflowService
                 || $this->access->canOrganization($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION);
         }
 
-        $query = PaymentApproval::with(['paymentDocument', 'organization'])
+        $query = PaymentApproval::with(['paymentDocument.approvals', 'organization'])
             ->where('status', 'pending');
 
         if ($isAdmin && $organizationId) {
@@ -659,7 +752,8 @@ class ApprovalWorkflowService
                         ->lockForUpdate()
                         ->find($doc->id);
 
-                    if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL) {
+                    if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL
+                        || $document->requiresActInvoiceFinancialApproval()) {
                         return;
                     }
                     $this->access->assertDocument($document, $user, self::PAYMENT_APPROVAL_PERMISSION);
@@ -696,7 +790,12 @@ class ApprovalWorkflowService
                 $documents->where('status', PaymentDocumentStatus::PENDING_APPROVAL);
                 $this->access->scope($documents, $organizationId, $user, 'payments.transaction.view');
             })
-            ->get();
+            ->get()->filter(static function (PaymentApproval $approval): bool {
+                $document = $approval->paymentDocument;
+
+                return $document && (! $document->requiresActInvoiceFinancialApproval()
+                    || (int) $approval->approval_level === (int) $document->approvals->where('status', 'pending')->min('approval_level'));
+            })->values();
     }
 
     /**
@@ -720,13 +819,18 @@ class ApprovalWorkflowService
         $document->unsetRelation('approvals');
         $approvals = $this->getApprovalHistory($document);
 
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            $approvals = $approvals->reject(static fn (PaymentApproval $approval): bool =>
+                $approval->decision_comment === PaymentApproval::RETROSPECTIVE_DECISION_COMMENT)->values();
+        }
+
         $total = $approvals->count();
         $approved = $approvals->where('status', 'approved')->count();
         $rejected = $approvals->where('status', 'rejected')->count();
         $pending = $approvals->where('status', 'pending')->count();
 
         // Если документ утвержден, но нет записей утверждения - создаем ретроспективную запись
-        if ($document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
+        if (! $document->requiresActInvoiceFinancialApproval() && $document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
             $approvedByUserId = $document->approved_by_user_id;
 
             // Создаем запись для истории (ретроспективно)
@@ -739,7 +843,7 @@ class ApprovalWorkflowService
                 'approval_level' => 1,
                 'approval_order' => 1,
                 'status' => 'approved',
-                'decision_comment' => 'Утверждено (ретроспективная запись)',
+                'decision_comment' => PaymentApproval::RETROSPECTIVE_DECISION_COMMENT,
                 'decided_at' => $document->approved_at ?? now(),
             ]);
 
@@ -750,7 +854,7 @@ class ApprovalWorkflowService
         }
 
         // Если документ на утверждении, но нет записей - создаем дефолтную запись для администраторов
-        if ($document->status === PaymentDocumentStatus::PENDING_APPROVAL && $total === 0) {
+        if (! $document->requiresActInvoiceFinancialApproval() && $document->status === PaymentDocumentStatus::PENDING_APPROVAL && $total === 0) {
             PaymentApproval::create([
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
@@ -783,7 +887,9 @@ class ApprovalWorkflowService
             $user = User::find($userId);
             if ($user) {
                 // Проверяем админские права
-                if ($this->isPrivilegedApprovalActor($user, (int) $document->organization_id)) {
+                if ($document->requiresActInvoiceFinancialApproval()) {
+                    $canBeApprovedByCurrentUser = $this->canDecideCurrentApproval($document, $user);
+                } elseif ($this->isPrivilegedApprovalActor($user, (int) $document->organization_id)) {
                     $canBeApprovedByCurrentUser = true;
                 } else {
                     // Ищем pending approvals, которые может утвердить этот юзер
@@ -896,6 +1002,9 @@ class ApprovalWorkflowService
      */
     public function skipApproval(PaymentApproval $approval, string $reason): bool
     {
+        if ($approval->paymentDocument->requiresActInvoiceFinancialApproval()) {
+            throw new \DomainException(trans_message('payments.validation.act_invoice_financial_approval_required'));
+        }
         $approval->skip($reason);
 
         Log::info('payment_approval.skipped', [

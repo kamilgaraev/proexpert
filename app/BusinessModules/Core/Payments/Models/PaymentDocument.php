@@ -586,7 +586,8 @@ class PaymentDocument extends Model
      */
     public function canBePaid(): bool
     {
-        return $this->status->canBePaid() && $this->remaining_amount > 0;
+        return ! ($this->requiresActInvoiceFinancialApproval() && $this->status === PaymentDocumentStatus::APPROVED)
+            && $this->status->canBePaid() && $this->remaining_amount > 0;
     }
 
     /**
@@ -610,7 +611,47 @@ class PaymentDocument extends Model
      */
     public function requiresApproval(): bool
     {
-        return $this->document_type->requiresApproval();
+        return $this->requiresActInvoiceFinancialApproval() || $this->document_type->requiresApproval();
+    }
+
+    public function requiresActInvoiceFinancialApproval(): bool
+    {
+        return $this->document_type === PaymentDocumentType::INVOICE
+            && $this->invoice_type === InvoiceType::ACT
+            && $this->direction === InvoiceDirection::OUTGOING;
+    }
+
+    public function hasCompletedFinancialApproval(): bool
+    {
+        if ($this->relationLoaded('approvals')) {
+            $approvals = $this->approvals->where('organization_id', $this->organization_id)
+                ->reject(static fn (PaymentApproval $approval): bool => $approval->decision_comment === PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+            return $approvals->isNotEmpty() && ! $approvals->contains(static fn (PaymentApproval $approval): bool => $approval->status !== 'approved');
+        }
+        return $this->hasFinancialApprovalRoute()
+            && ! $this->approvals()->where('organization_id', $this->organization_id)->where('status', '!=', 'approved')->exists();
+    }
+
+    public function hasFinancialApprovalRoute(): bool
+    {
+        if ($this->relationLoaded('approvals')) {
+            return $this->approvals->where('organization_id', $this->organization_id)
+                ->contains(static fn (PaymentApproval $approval): bool => $approval->decision_comment !== PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+        }
+        return $this->approvals()->where('organization_id', $this->organization_id)->where(static function ($query): void {
+            $query->whereNull('decision_comment')
+                ->orWhere('decision_comment', '!=', PaymentApproval::RETROSPECTIVE_DECISION_COMMENT);
+        })->exists();
+    }
+
+    public function canRecoverActInvoiceFinancialApproval(): bool
+    {
+        return $this->requiresActInvoiceFinancialApproval()
+            && $this->status === PaymentDocumentStatus::APPROVED
+            && (float) $this->paid_amount <= 0
+            && ! $this->hasFinancialApprovalRoute()
+            && ! (array_key_exists('transactions_exists', $this->getAttributes())
+                ? (bool) $this->getAttribute('transactions_exists') : $this->transactions()->exists());
     }
 
     /**
