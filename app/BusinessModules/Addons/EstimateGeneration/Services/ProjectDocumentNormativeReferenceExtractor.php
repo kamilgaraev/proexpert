@@ -142,7 +142,7 @@ final class ProjectDocumentNormativeReferenceExtractor
             'normative_rate_code' => $normativeRateCode,
             'work_category' => $category,
             'unit' => (string) $row['unit'],
-            'quantity' => (float) $row['quantity'],
+            'quantity' => $row['quantity'],
             'quantity_formula' => 'project_document_norm:'.$code,
             'quantity_basis' => (string) $row['quantity_basis'],
             'source_refs' => [[

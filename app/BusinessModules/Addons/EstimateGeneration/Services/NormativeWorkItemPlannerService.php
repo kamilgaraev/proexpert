@@ -73,7 +73,8 @@ final class NormativeWorkItemPlannerService
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey.'-project-ref-'.($index + 1);
 
-        return $this->basePricedWorkItem(
+        $quantity = $reference['quantity'] ?? null;
+        $item = $this->basePricedWorkItem(
             key: $key,
             localEstimate: $localEstimate,
             section: $section,
@@ -81,7 +82,7 @@ final class NormativeWorkItemPlannerService
             searchText: (string) ($reference['normative_search_text'] ?? $reference['name']),
             category: (string) $reference['work_category'],
             unit: (string) $reference['unit'],
-            quantity: (float) $reference['quantity'],
+            quantity: $quantity === null ? null : (float) $quantity,
             quantityFormula: (string) $reference['quantity_formula'],
             quantityBasis: (string) $reference['quantity_basis'],
             sourceRefs: $reference['source_refs'] ?? [],
@@ -91,6 +92,17 @@ final class NormativeWorkItemPlannerService
             normativeRateCode: isset($reference['normative_rate_code']) ? (string) $reference['normative_rate_code'] : null,
             operations: $this->operationBank((string) $reference['work_category'])
         );
+        if ($quantity === null) {
+            $item['item_type'] = 'quantity_review';
+            $item['pricing_status'] = 'not_applicable';
+            $item['pricing_blocker'] = 'quantity_review_required';
+            $item['skip_normative_matching'] = true;
+            $item['validation_flags'] = array_values(array_unique([...$item['validation_flags'], 'quantity_review_required']));
+            $item['metadata']['display_role'] = 'quantity_review';
+            $item['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
+        }
+
+        return $item;
     }
 
     /**
@@ -225,7 +237,7 @@ final class NormativeWorkItemPlannerService
         string $searchText,
         string $category,
         string $unit,
-        float $quantity,
+        ?float $quantity,
         string $quantityFormula,
         string $quantityBasis,
         array $sourceRefs,
@@ -251,14 +263,14 @@ final class NormativeWorkItemPlannerService
             'normative_rate_code' => $normativeRateCode,
             'work_category' => $category,
             'unit' => $unit,
-            'quantity' => $this->canonicalPlannedQuantity($quantity),
+            'quantity' => $quantity === null ? null : $this->canonicalPlannedQuantity($quantity),
             'quantity_formula' => $quantityFormula,
             'quantity_basis' => $quantityBasis,
-            'work_cost' => 0,
-            'materials_cost' => 0,
-            'machinery_cost' => 0,
-            'labor_cost' => 0,
-            'total_cost' => 0,
+            'work_cost' => $quantity === null ? null : 0,
+            'materials_cost' => $quantity === null ? null : 0,
+            'machinery_cost' => $quantity === null ? null : 0,
+            'labor_cost' => $quantity === null ? null : 0,
+            'total_cost' => $quantity === null ? null : 0,
             'materials' => [],
             'labor' => [],
             'machinery' => [],

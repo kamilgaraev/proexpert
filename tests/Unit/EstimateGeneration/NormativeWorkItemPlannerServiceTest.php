@@ -58,6 +58,36 @@ final class NormativeWorkItemPlannerServiceTest extends TestCase
         self::assertSame([], array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'office.ceiling')));
     }
 
+    public function test_source_reference_without_quantity_remains_a_review_item_without_fabricated_cost(): void
+    {
+        foreach (['ФЕР08-02-001-01 Кладка стен', 'ФЕР08-02-001-01 Кладка стен м2'] as $line) {
+            $section = ['key' => 'walls-section', 'construction_part' => 'walls'];
+            $items = $this->planner()->build(['key' => 'walls', 'scope_type' => 'walls'], $section, [
+                'source_documents' => [[
+                    'id' => 82, 'filename' => 'volumes.pdf', 'status' => 'ready',
+                    'quality' => ['level' => 'good'],
+                    'document_understanding' => ['role_for_estimation' => 'quantity_source'], 'text' => $line,
+                ]],
+            ]);
+            $references = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['generation_source'] ?? null) === 'project_document_normative_reference'));
+            self::assertCount(1, $references);
+            $item = $references[0];
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertSame('quantity_review', $item['item_type']);
+            self::assertSame('not_applicable', $item['pricing_status']);
+            self::assertSame('quantity_review_required', $item['pricing_blocker']);
+            self::assertContains('quantity_review_required', $item['validation_flags']);
+            self::assertSame(82, $item['source_refs'][0]['document_id']);
+            self::assertSame($line, $item['source_refs'][0]['excerpt']);
+            $projection = (new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter))->projectionForDraft([
+                'local_estimates' => [['key' => 'walls', 'sections' => [[...$section, 'work_items' => [$item]]]]],
+            ]);
+            self::assertCount(1, $projection);
+            self::assertSame('confirm_quantity', $projection[0]['required_action']);
+        }
+    }
+
     public function test_document_rows_with_one_norm_keep_their_quantities_and_require_explicit_review(): void
     {
         foreach ([[10, 20], [10, 10]] as $quantities) {

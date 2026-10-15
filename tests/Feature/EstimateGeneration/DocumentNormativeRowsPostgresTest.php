@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
@@ -25,6 +27,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsS
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -66,19 +70,38 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         };
         $this->app->instance(RunEstimateComposer::class, new RunEstimateComposer(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-6-luna'));
         $this->app->instance(StageResultFactory::class, new StageResultFactory(new InMemoryPipelineArtifactStore, $graph));
-        $result = app(PlanWorkItemsStage::class)->execute($this->planContext($session, $analysis, $graph));
+        $planContext = $this->planContext($session, $analysis, $graph);
+        $result = app(PlanWorkItemsStage::class)->execute($planContext);
         $references = $this->references($result->transientData);
         self::assertCount(count($quantities), $references);
-        self::assertSame(array_map('strval', $quantities), array_column($references, 'quantity'));
+        self::assertSame(array_map(static fn ($value): ?string => $value === null ? null : (string) $value, $quantities), array_column($references, 'quantity'));
         $packages = array_column($result->transientData['local_estimates'], null, 'key');
         self::assertCount(count($quantities), $this->references(['local_estimates' => [$packages[$package]]]));
-        foreach ($references as $item) {
+        foreach ($references as $index => $item) {
             self::assertSame('quantity_review', $item['item_type']);
             self::assertSame('quantity_review_required', $item['pricing_blocker']);
             self::assertArrayNotHasKey('quantity_evidence', $item);
             self::assertArrayNotHasKey('quantity_evidence_id', $item);
-            self::assertSame(0, $item['total_cost']);
+            self::assertSame($quantities[$index] === null ? null : 0, $item['total_cost']);
             self::assertNotEmpty($item['source_refs'][0]['source_version']);
+        }
+        if (in_array(null, $quantities, true)) {
+            self::assertNotNull($planContext->baseInputVersion);
+            $draft = [...$result->transientData, 'source_input_version' => $planContext->baseInputVersion];
+            app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $draft, $planContext->baseInputVersion);
+            $packageIds = EstimateGenerationPackage::query()->where('session_id', $session->id)->pluck('id');
+            $storedItems = EstimateGenerationPackageItem::query()->whereIn('package_id', $packageIds)->get()->keyBy('logical_key');
+            foreach ($references as $reference) {
+                $stored = $storedItems->get($reference['key']);
+                self::assertInstanceOf(EstimateGenerationPackageItem::class, $stored);
+                if ($reference['quantity'] === null) {
+                    self::assertNull($stored->quantity);
+                    $payload = (new EstimateGenerationPackagePresenter)->item($stored);
+                    self::assertNull($payload['quantity']);
+                    self::assertSame($reference['source_refs'], $payload['source_refs']);
+                    self::assertSame('quantity_review_required', $payload['pricing_blocker']);
+                }
+            }
         }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
@@ -88,6 +111,7 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         return [
             'repeated normative reference' => [[10, 20], 'Кладка стен', 'м2', 'walls'],
             'single normative reference' => [[10], 'Кладка стен', 'м2', 'walls'],
+            'missing and measured quantities' => [[null, 12], 'Кладка стен', 'м2', 'walls'],
             'window reference' => [[10], 'Монтаж окон', 'шт', 'openings'],
         ];
     }
