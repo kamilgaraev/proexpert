@@ -112,6 +112,60 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertNull($result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_name']);
     }
 
+    public function test_legacy_planner_work_key_uses_canonical_metadata_only_for_proposed_context(): void
+    {
+        [$draft, $snapshot] = $this->legacyPlannerFixture();
+        $before = hash('sha256', json_encode($draft, JSON_THROW_ON_ERROR));
+        $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+        $position = $result['scenarios'][0]['positions'][0];
+        self::assertSame('room:1', $position['proposed_entity_context']['entity_id'] ?? null);
+        self::assertSame('proposed', $position['proposed_entity_context']['status']);
+        self::assertSame('Кухня', $position['proposed_entity_context']['entity_name']);
+        self::assertSame('finishing-norm-intent-1', $position['key']);
+        self::assertSame('finishing-norm-intent-1', $position['work_key']);
+        self::assertNull($position['entity_id']);
+        self::assertNull($position['quantity']);
+        self::assertNull($position['price_snapshot']);
+        self::assertNull($position['total_cost']);
+        self::assertFalse($result['can_confirm_for_apply']);
+        self::assertSame($before, hash('sha256', json_encode($draft, JSON_THROW_ON_ERROR)));
+    }
+
+    public function test_legacy_metadata_never_overrides_explicit_work_key_or_unknown_source_contract(): void
+    {
+        [$original, $snapshot] = $this->legacyPlannerFixture();
+        $variants = [
+            ['work_key' => null], ['work_key' => ''], ['work_key' => 'unregistered.custom'], ['work_key' => 'heating.pipe'],
+            ['metadata' => ['composition_work_key' => 'finish.floor']],
+            ['metadata' => ['composition_source' => 'scope_inference', 'composition_work_key' => 'finish.floor']],
+            ['metadata' => ['composition_source' => 'planner_intent', 'composition_work_key' => 'unregistered.custom']],
+            ['metadata' => ['composition_source' => 'planner_intent', 'composition_work_key' => 42]],
+        ];
+        foreach ($variants as $override) {
+            $draft = $original;
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0] = array_replace(
+                $draft['local_estimates'][0]['sections'][0]['work_items'][0], $override);
+            $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+            $position = $result['scenarios'][0]['positions'][0];
+            self::assertArrayNotHasKey('proposed_entity_context', $position);
+            self::assertNull($position['entity_id']);
+            self::assertNull($position['quantity']);
+            self::assertNull($position['price_snapshot']);
+            self::assertFalse($result['can_confirm_for_apply']);
+        }
+    }
+
+    private function legacyPlannerFixture(): array
+    {
+        [$draft, $snapshot] = $this->fixture();
+        $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $item['key'] = 'finishing-norm-intent-1';
+        $item['composition_intent']['candidate_id'] = 'work:'.hash('sha256', "finishing\0finish\0finishing-norm-intent-1");
+        $item['metadata'] = ['composition_source' => 'planner_intent', 'composition_work_key' => 'finish.floor'];
+
+        return [$draft, $snapshot];
+    }
+
     private function manualFixture(string $type, string $work, string $section): array
     {
         [$draft, $snapshot] = $this->fixture();
