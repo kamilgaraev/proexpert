@@ -29,10 +29,13 @@ final class ExecutiveDocumentComposeActHttpTest extends TestCase
     use RefreshDatabase;
 
     #[DataProvider('printVolumes')]
-    public function test_first_composed_pdf_contains_frozen_journal_requisites_and_volume(string|int|float $volume, string $expected): void
+    public function test_first_composed_pdf_contains_frozen_journal_requisites_and_volume(string|int|float $volume, string $expected, ?int $presentedWorks = null): void
     {
         [$context, $set, $payload] = $this->fixture();
         $payload['profile_data']['actual_volume'] = $volume;
+        if ($presentedWorks !== null) {
+            $payload['profile_data']['presented_works'] = $presentedWorks;
+        }
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/executive-documentation/sets/{$set->id}/compose-act", $payload)->assertCreated();
         $document = ExecutiveDocument::query()->findOrFail($response->json('data.id'));
@@ -48,6 +51,9 @@ final class ExecutiveDocumentComposeActHttpTest extends TestCase
         $text = (new \Smalot\PdfParser\Parser())->parseContent($bytes)->getText();
         $text = preg_replace('/\s+/u', ' ', $text);
         self::assertStringContainsString('Фактический объем работ: '.$expected, $text);
+        if ($presentedWorks !== null) {
+            self::assertStringContainsString((string) $presentedWorks.' Фактический объем работ:', $text);
+        }
         self::assertStringContainsString('ОЖР-1', $text);
         self::assertStringContainsString('Общий журнал', $text);
         self::assertStringContainsString('запись № 1', $text);
@@ -62,6 +68,7 @@ final class ExecutiveDocumentComposeActHttpTest extends TestCase
             'integer' => [100, '100'],
             'fractional' => [12.5, '12.5'],
             'zero' => [0, '0'],
+            'numeric work description' => ['10 м²', '10 м²', 12345],
         ];
     }
 

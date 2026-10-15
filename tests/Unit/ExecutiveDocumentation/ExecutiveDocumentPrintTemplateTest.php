@@ -154,6 +154,17 @@ final class ExecutiveDocumentPrintTemplateTest extends TestCase
         return ['integer' => [100, '100'], 'fractional' => [12.5, '12.5'], 'zero' => [0, '0']];
     }
 
+    #[DataProvider('numericVolumes')]
+    public function test_current_template_preserves_numeric_presented_works(int|float $works, string $expected): void
+    {
+        $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => $works, 'actual_volume' => '5 м²']);
+        $html = $this->app->make(ExecutiveDocumentPrintTemplate::class)->html($snapshot, ExecutiveDocumentRenderService::TEMPLATE_VERSION);
+
+        self::assertStringContainsString('>'.$expected.'</p>', $html);
+        self::assertStringContainsString('Фактический объем работ: 5 м²', $html);
+        self::assertSame($works, $snapshot['profile_data']['presented_works']);
+    }
+
     public function test_legacy_template_keeps_its_original_volume_and_relation_presentation(): void
     {
         $snapshot = $this->snapshot('hidden_work_act', ['presented_works' => 'Подготовка стен', 'actual_volume' => '100.000 м²']);
