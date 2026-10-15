@@ -179,15 +179,26 @@ final class CrmConversionProjectScopeSecurityTest extends TestCase
         $access->project($fixture->organization->id, $actor, $allowed->id, 'crm.deals.view');
     }
 
-    public function test_fresh_create_create_does_not_require_assignment_to_the_new_project(): void
+    public function test_create_create_assigns_only_new_project_and_replays_until_assignment_is_revoked(): void
     {
         [$fixture, $actor, $allowed, $restricted, $deal] = $this->context();
-        $response = $this->postJson($this->url($deal, 'convert'), $this->creation($fixture->organization->id), $this->headers($actor));
+        $payload = $this->creation($fixture->organization->id);
+        $headers = $this->headers($actor);
+        $response = $this->postJson($this->url($deal, 'convert'), $payload, $headers);
         $response->assertCreated()->assertJsonPath('data.status', 'converted');
         $project = Project::query()->findOrFail($response->json('data.project.id'));
         self::assertSame($fixture->organization->id, $project->organization_id);
-        self::assertFalse($project->users()->where('users.id', $actor->id)->exists());
+        self::assertTrue($project->users()->where('users.id', $actor->id)->wherePivot('is_active', true)->exists());
+        self::assertTrue($allowed->users()->where('users.id', $actor->id)->wherePivot('is_active', true)->exists());
+        self::assertFalse($restricted->users()->where('users.id', $actor->id)->exists());
         self::assertSame($project->id, $deal->fresh()->project_id);
+        $this->postJson($this->url($deal, 'convert'), $payload, $headers)->assertOk()->assertJsonPath('data.idempotent_replay', true);
+        $newKey = array_replace($payload, ['idempotency_key' => 'crm-created-project-new-key-'.Str::uuid()]);
+        $this->postJson($this->url($deal, 'convert'), $newKey, $headers)->assertOk()->assertJsonPath('data.idempotent_replay', false);
+        $project->users()->updateExistingPivot($actor->id, ['is_active' => false]);
+        $this->postJson($this->url($deal, 'convert'), $payload, $headers)->assertNotFound();
+        $this->postJson($this->url($deal, 'convert'), $newKey, $headers)->assertNotFound();
+        self::assertSame(1, CrmConversionOperation::query()->where('crm_deal_id', $deal->id)->count());
     }
 
     public function test_create_contract_on_reused_accessible_project_still_works(): void

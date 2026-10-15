@@ -297,7 +297,7 @@ final class DealConversionWizardService
 
         $fields = $preview['project']['fields'];
 
-        return $this->projectService->createProject(new ProjectDTO(
+        $project = $this->projectService->createProject(new ProjectDTO(
             name: (string) $fields['name'],
             address: $fields['address'] ?? null,
             latitude: null,
@@ -319,6 +319,14 @@ final class DealConversionWizardService
             accounting_data: null,
             use_in_accounting_reports: false
         ), $request);
+        $project->users()->syncWithoutDetaching([$actor->id => [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_by_user_id' => $actor->id,
+            'assigned_at' => now(),
+        ]]);
+
+        return $project;
     }
 
     private function resolveContractForConvert(
