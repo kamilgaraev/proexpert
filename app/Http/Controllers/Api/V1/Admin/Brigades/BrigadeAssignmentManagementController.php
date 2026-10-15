@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin\Brigades;
 
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeProjectAssignment;
+use App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Brigades\UpdateBrigadeAssignmentStatusRequest;
 use App\Http\Resources\Brigades\BrigadeProjectAssignmentResource;
@@ -14,6 +15,10 @@ use Illuminate\Http\Request;
 
 class BrigadeAssignmentManagementController extends Controller
 {
+    public function __construct(private readonly BrigadeWorkflowService $workflowService)
+    {
+    }
+
     public function index(Request $request): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
@@ -31,11 +36,7 @@ class BrigadeAssignmentManagementController extends Controller
     public function update(UpdateBrigadeAssignmentStatusRequest $request, int $assignmentId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id') ?? $request->user()?->current_organization_id;
-        $assignment = BrigadeProjectAssignment::query()
-            ->where('contractor_organization_id', $organizationId)
-            ->findOrFail($assignmentId);
-
-        $assignment->update($request->validated());
+        $assignment = $this->workflowService->updateAssignment($request->user(), (int) $organizationId, $assignmentId, $request->validated());
 
         return AdminResponse::success(
             new BrigadeProjectAssignmentResource($assignment->load(['brigade.specializations', 'project', 'contractorOrganization'])),

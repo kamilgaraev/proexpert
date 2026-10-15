@@ -13,14 +13,12 @@ use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeRequest;
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeResponse;
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeProjectAssignment;
 use App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeWorkflowService;
-use App\BusinessModules\Contractors\Brigades\Support\BrigadeStatuses;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOffer;
 use App\Exceptions\BusinessLogicException;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Facades\DB;
 
 final class MobileTeamExpansionService
 {
@@ -103,12 +101,7 @@ final class MobileTeamExpansionService
     {
         $this->permittedProjectIds($actor, $organizationId, 'brigades.requests.create', $payload['project_id'] ?? null);
 
-        $model = BrigadeRequest::query()->create([
-            ...$payload,
-            'contractor_organization_id' => $organizationId,
-            'status' => BrigadeStatuses::REQUEST_OPEN,
-            'published_at' => now(),
-        ]);
+        $model = $this->brigadeWorkflow->createRequest($actor, $organizationId, $payload);
 
         return $model->load(['project', 'contractorOrganization']);
     }
@@ -145,29 +138,7 @@ final class MobileTeamExpansionService
     {
         $this->permittedProjectIds($actor, $organizationId, 'brigades.invitations.create', $payload['project_id'] ?? null);
 
-        return DB::transaction(function () use ($organizationId, $payload): BrigadeInvitation {
-            $brigade = BrigadeProfile::query()
-                ->approved()
-                ->lockForUpdate()
-                ->findOrFail((int) $payload['brigade_id']);
-            $existing = BrigadeInvitation::query()
-                ->where('brigade_id', $brigade->id)
-                ->where('project_id', (int) $payload['project_id'])
-                ->where('contractor_organization_id', $organizationId)
-                ->where('status', BrigadeStatuses::INVITATION_PENDING)
-                ->exists();
-            if ($existing) {
-                throw new BusinessLogicException(trans_message('brigades.invitation_already_pending'), 409);
-            }
-
-            $invitation = BrigadeInvitation::query()->create([
-                ...$payload,
-                'contractor_organization_id' => $organizationId,
-                'status' => BrigadeStatuses::INVITATION_PENDING,
-            ]);
-
-            return $invitation->load(['brigade.specializations', 'project', 'contractorOrganization']);
-        });
+        return $this->brigadeWorkflow->createInvitation($actor, $organizationId, $payload, rejectPending: true);
     }
 
     /** @return array{response: BrigadeResponse, assignment: BrigadeProjectAssignment} */
@@ -178,31 +149,9 @@ final class MobileTeamExpansionService
             ->findOrFail($requestId);
         $this->permittedProjectIds($actor, $organizationId, 'brigades.responses.approve', $request->project_id);
 
-        return DB::transaction(function () use ($organizationId, $requestId, $responseId, $request): array {
-            $brigadeRequest = BrigadeRequest::query()
-                ->where('contractor_organization_id', $organizationId)
-                ->where('project_id', $request->project_id)
-                ->whereKey($requestId)
-                ->lockForUpdate()
-                ->firstOrFail();
-            $response = BrigadeResponse::query()
-                ->where('request_id', $brigadeRequest->id)
-                ->whereKey($responseId)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $approval = $this->brigadeWorkflow->approveResponse($actor, $organizationId, $requestId, $responseId);
 
-            if ($brigadeRequest->status !== BrigadeStatuses::REQUEST_OPEN || $response->status !== BrigadeStatuses::RESPONSE_PENDING) {
-                throw new BusinessLogicException(trans_message('brigades.response_invalid_status'), 409);
-            }
-
-            $response->setRelation('request', $brigadeRequest);
-            $response->update(['status' => BrigadeStatuses::RESPONSE_APPROVED]);
-            $brigadeRequest->update(['status' => BrigadeStatuses::REQUEST_IN_REVIEW]);
-            $assignment = $this->brigadeWorkflow->createAssignmentFromResponse($response);
-            $response->load(['request.project', 'request.contractorOrganization', 'brigade.specializations']);
-
-            return ['response' => $response, 'assignment' => $assignment->load(['project', 'contractorOrganization', 'brigade.specializations'])];
-        });
+        return ['response' => $approval->response, 'assignment' => $approval->assignment];
     }
 
     private function assertPermission(User $actor, int $organizationId, string $module, string $permission): void

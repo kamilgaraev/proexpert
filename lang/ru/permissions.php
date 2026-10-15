@@ -104,6 +104,8 @@ return [
         ],
     ],
     'values' => [
+        'brigades.requests.close' => 'Закрытие заявок на бригады',
+        'brigades.responses.approve' => 'Одобрение откликов бригад',
         'workforce.hr.private.read' => 'Просмотр персональных кадровых данных',
         'workforce.hr.private.write' => 'Изменение персональных кадровых данных',
         'workforce.hr.documents.read' => 'Просмотр кадровых документов',
