@@ -28,7 +28,17 @@ final readonly class EvaluationWorkContextProjector
     {
         $intent = $item['composition_intent'] ?? null;
         $key = $item['key'] ?? null;
-        $workKey = $item['work_key'] ?? $key;
+        $workKey = array_key_exists('work_key', $item) ? $item['work_key'] : $key;
+        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+        $plannerIntent = ($metadata['composition_source'] ?? null) === 'planner_intent'
+            || (($metadata['composition_source'] ?? null) === 'fsnb_norm'
+                && in_array($metadata['generation_source'] ?? null, ['normative_intent_catalog', 'scope_inference'], true)
+                && ($item['normative_match']['status'] ?? null) === 'matched');
+        if (! array_key_exists('work_key', $item)
+            && $plannerIntent
+            && is_string($metadata['composition_work_key'] ?? null)) {
+            $workKey = $metadata['composition_work_key'];
+        }
         $ids = is_array($intent) ? ($intent['source_fact_ids'] ?? null) : null;
         if (! is_array($intent) || ($intent['kind'] ?? null) !== 'existing'
             || ! is_string($packageKey) || ! is_string($sectionKey) || ! is_string($key) || ! is_string($workKey)
