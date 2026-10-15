@@ -95,6 +95,11 @@ final class ProjectPortfolioDashboardService
 
         $asOfDate = CarbonImmutable::parse((string) ($input['as_of_date'] ?? $periodEnd))->toDateString();
         $projectManagerId = $this->nullableInt($input['project_manager_id'] ?? null);
+        $budgetVersionUuid = $this->nullableString($input['budget_version_uuid'] ?? null);
+        $scenarioUuid = $this->nullableString($input['scenario_uuid'] ?? null);
+        if (($budgetVersionUuid === null) !== ($scenarioUuid === null)) {
+            throw new InvalidArgumentException(trans_message('budgeting.project_portfolio_dashboard.errors.budget_selection_incomplete'));
+        }
 
         [$responsibilityCenterId, $responsibilityCenterUuid] = $this->resolveResponsibilityCenter($organizationId, $input['responsibility_center_id'] ?? null);
         $limit = max(1, min(100, (int) ($input['limit'] ?? $input['top_n'] ?? self::DEFAULT_LIMIT)));
@@ -113,8 +118,8 @@ final class ProjectPortfolioDashboardService
             currency: $this->nullableCurrency($input['currency'] ?? null),
             limit: $limit,
             topN: $topN,
-            budgetVersionUuid: $this->nullableString($input['budget_version_uuid'] ?? null),
-            scenarioUuid: $this->nullableString($input['scenario_uuid'] ?? null),
+            budgetVersionUuid: $budgetVersionUuid,
+            scenarioUuid: $scenarioUuid,
         );
     }
 

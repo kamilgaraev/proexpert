@@ -15,6 +15,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use Illuminate\Validation\Factory;
 use PHPUnit\Framework\TestCase;
 
 final class ProjectPortfolioDashboardApiContractTest extends TestCase
@@ -139,6 +140,33 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
         $defaultFilters = $method->invoke($service, $input);
         $this->assertArrayNotHasKey('budget_version_uuid', $defaultFilters->planFactInput());
         $this->assertArrayNotHasKey('scenario_uuid', $defaultFilters->planFactInput());
+    }
+
+    public function test_incomplete_budget_selection_is_rejected_at_http_and_service_boundaries(): void
+    {
+        $request = new ProjectPortfolioDashboardRequest();
+        $factory = new Factory(Facade::getFacadeApplication()->make('translator'));
+        $base = ['organization_id' => 42, 'period_start' => '2026-06-01', 'period_end' => '2026-06-30'];
+        $pair = [
+            'budget_version_uuid' => '11111111-1111-4111-8111-111111111111',
+            'scenario_uuid' => '22222222-2222-4222-8222-222222222222',
+        ];
+        $this->assertFalse($factory->make($base, $request->rules(), $request->messages())->fails());
+        $this->assertFalse($factory->make([...$base, ...$pair], $request->rules(), $request->messages())->fails());
+        $service = (new \ReflectionClass(ProjectPortfolioDashboardService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(ProjectPortfolioDashboardService::class, 'resolveFilters');
+        $method->setAccessible(true);
+
+        foreach ($pair as $field => $uuid) {
+            $input = [...$base, $field => $uuid];
+            $this->assertTrue($factory->make($input, $request->rules(), $request->messages())->fails());
+            try {
+                $method->invoke($service, $input);
+                $this->fail('Incomplete budget selection must not produce a report scope.');
+            } catch (\InvalidArgumentException $exception) {
+                $this->assertSame('Выберите версию бюджета и её сценарий вместе.', $exception->getMessage());
+            }
+        }
     }
 
     public function test_payload_contract_contains_portfolio_dashboard_shape(): void
