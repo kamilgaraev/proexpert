@@ -73,6 +73,33 @@ final class AssistantProjectAttentionTest extends TestCase
         self::assertSame('verified', app(AssistantProjectAttentionReader::class)->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['validation_status']);
     }
 
+    public function test_quality_focus_partitions_all_open_defects_before_limiting_examples(): void
+    {
+        $this->defect($this->project, 'Критическое просроченное', 'critical');
+        $this->defect($this->project, 'Другой просроченный дефект', 'major');
+        $this->defect($this->project, 'Без срока', 'minor');
+        $this->defect($this->project, 'Срок сегодня', 'minor');
+        $this->defect($this->project, 'Будущий срок', 'major');
+        $this->defect($this->project, 'Закрытое', 'minor', 'resolved');
+        $this->defect($this->project, 'Отменённое', 'major', 'cancelled');
+        foreach (['Без срока' => null, 'Срок сегодня' => '2026-10-13', 'Будущий срок' => '2026-10-20'] as $title => $date) {
+            QualityDefect::query()->where('project_id', $this->project->id)->where('title', $title)->update(['due_date' => $date]);
+        }
+        $read = app(AssistantProjectAttentionReader::class)->read($this->fixture->owner, $this->fixture->organization->id,
+            ['project_id' => $this->project->id, 'focus' => 'quality', 'limit' => 1]);
+        $groups = array_column($read['data']['groups'], null, 'kind');
+        self::assertSame(1, $groups['critical_quality']['total']);
+        self::assertSame(1, $groups['overdue_quality']['total']);
+        self::assertSame(3, $groups['other_quality']['total']);
+        self::assertCount(1, $groups['other_quality']['items']);
+        self::assertTrue($groups['other_quality']['has_more']);
+        self::assertStringContainsString('Всего незакрытых замечаний качества: 5.', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('Закрытое', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('Отменённое', $read['server_formatted_answer']);
+        self::assertSame('verified', app(AssistantProjectAttentionReader::class)->verifiedAnswer($read,
+            $this->fixture->owner, $this->fixture->organization->id)['validation_status']);
+    }
+
     public function test_receipt_rechecks_assigned_name_deadline_counts_and_current_role(): void
     {
         $task = $this->task($this->schedule, 'Просроченная задача');

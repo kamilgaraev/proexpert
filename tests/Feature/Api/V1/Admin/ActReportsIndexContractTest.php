@@ -65,6 +65,7 @@ class ActReportsIndexContractTest extends TestCase
         $contract = $this->createContract($context->organization, $project, $contractor, 'ACT-1');
 
         $draftAct = $this->createAct($contract, $project, 'KS-2-1', 1000, false);
+        $draftAct->updateQuietly(['currency' => 'USD']);
         $this->createAct($contract, $project, 'KS-2-2', 2500, true);
 
         $foreignOrganization = Organization::factory()->verified()->create();
@@ -82,6 +83,7 @@ class ActReportsIndexContractTest extends TestCase
         $this->assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.0.id', $draftAct->id);
+        $response->assertJsonPath('data.0.currency', 'USD');
         $response->assertJsonPath('meta.current_page', 1);
         $response->assertJsonPath('meta.last_page', 2);
         $response->assertJsonPath('meta.total', 2);

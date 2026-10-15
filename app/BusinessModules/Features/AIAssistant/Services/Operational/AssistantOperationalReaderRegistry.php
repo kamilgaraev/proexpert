@@ -34,6 +34,7 @@ final class AssistantOperationalReaderRegistry
         'get_project_export_history' => AssistantProjectExportHistoryReader::class,
         'get_project_report_catalog' => AssistantProjectReportCatalogReader::class,
         'get_project_site_request_queue' => AssistantProjectSiteRequestReader::class,
+        'get_project_material_request_queue' => AssistantProjectMaterialRequestReader::class,
         'get_project_tender_decisions' => AssistantTenderReader::class,
         'get_project_deliveries' => AssistantProjectDeliveriesReader::class,
         'get_project_daily_staff' => AssistantProjectDailyStaffReader::class,
@@ -80,6 +81,7 @@ final class AssistantOperationalReaderRegistry
 
     public static function intent(string $query): ?array
     {
+        if (AssistantProjectMaterialRequestReader::hasIntent($query) && ! AssistantProjectMaterialRequestReader::matches($query)) { return null; }
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
             return null;
         }
@@ -125,6 +127,8 @@ final class AssistantOperationalReaderRegistry
         if (AssistantOrganizationModulesReader::matches($query)) {
             $financeQuery = preg_replace('/без\s+плат[её]ж[а-яё]*\s+(?:подробност|детал)[а-яё]*/iu', '', $financeQuery) ?? $financeQuery;
         }
+        $financeQuery = AssistantProjectMaterialRequestReader::intentQuery($financeQuery);
+        $financeQuery = AssistantProjectActReader::intentQuery($financeQuery);
         $governance = AssistantOwnAdminPermissionsReader::matches($query) || AssistantOrganizationCreditBalanceReader::matches($query) || AssistantOrganizationPackagesReader::matches($query);
         if ((! $governance && preg_match('/расход|потрач|прибыл|выручк|рентабел|марж|бюджет|затрат|сч[её]т|оплач|оплат|плат[её]ж|смет|табел|техник|при[её]мк/iu', $financeQuery) === 1)
             || (! $ownPermissions && ! $purchaseOrders && ! AssistantProjectDeliveriesReader::matches($query) && preg_match('/поставк|закуп|снабжен|склад/iu', $query) === 1)
@@ -164,6 +168,7 @@ final class AssistantOperationalReaderRegistry
         }
         $matches = [];
         foreach (self::TOOLS as $name => $class) {
+            if ($class === AssistantProjectSiteRequestReader::class && AssistantProjectMaterialRequestReader::matches($query)) { continue; }
             if ($class::matches($query)) {
                 $matches[] = ['name' => $name, 'reader' => $class];
             }

@@ -44,6 +44,7 @@ class ContractPerformanceActResource extends JsonResource
             'period_start' => $this->period_start,
             'period_end' => $this->period_end,
             'amount' => (float) ($this->amount ?? 0),
+            'currency' => $this->currency,
             'description' => $this->description,
             'status' => $this->status ?? ($this->is_approved ? 'approved' : 'draft'),
             'is_approved' => (bool) $this->is_approved,

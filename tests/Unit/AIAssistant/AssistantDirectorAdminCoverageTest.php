@@ -14,6 +14,7 @@ final class AssistantDirectorAdminCoverageTest extends TestCase
     public function test_director_questions_bind_native_tool_and_scope_and_expose_the_tool(): void
     {
         $cases = [
+            ['Какие заявки на материалы нашего объекта просрочены? Заявки на технику сюда не включай.', 'get_project_material_request_queue', 52],
             ['По договорам нашего объекта какие акты сейчас ждут согласования? Сколько таких актов и что проверить перед решением?', 'get_project_act_readiness', 52],
             ['Кто из сотрудников числится на нашем объекте сейчас? Сколько человек, как зовут и кто за что отвечает?', 'get_project_staff_roster', 52],
             ['Посмотри по всей нашей организации: какие тендеры ждут решения руководителя и где рискуем пропустить срок подачи? Сколько таких тендеров?', 'get_project_tender_decisions', null],
