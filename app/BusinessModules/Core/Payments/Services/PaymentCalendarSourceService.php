@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
@@ -20,6 +21,8 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
+use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,7 +44,7 @@ final class PaymentCalendarSourceService
             $scheduleItems,
             $this->collectPaymentDocumentItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
             $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument, $scopeProjects),
-            $this->collectBudgetPlanItems($filters, $scopeProjects),
+            $this->collectBudgetPlanItems($filters, $scopeProjects, $scopeDocument),
         );
 
         return $this->normalizeItems($items, $filters);
@@ -614,7 +617,7 @@ final class PaymentCalendarSourceService
         return $items;
     }
 
-    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeProjects): array
+    private function collectBudgetPlanItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeProjects, ?\Closure $scopeDocument): array
     {
         $amounts = BudgetAmount::query()
             ->with(['line.version', 'line.article'])
@@ -647,16 +650,124 @@ final class PaymentCalendarSourceService
             ->get();
 
         $items = [];
+        $contractIds = [];
 
         foreach ($amounts as $amount) {
             $item = $this->fromBudgetAmount($amount);
 
             if ($item instanceof PaymentCalendarItem) {
                 $items[] = $item;
+                $contractIds[$item->sourceId] = $this->nullableInt($amount->line?->contract_id);
             }
         }
 
+        return $this->netBudgetPlanItems($items, $contractIds, $filters, $scopeDocument, $scopeProjects);
+    }
+
+    private function netBudgetPlanItems(array $items, array $planContractIds, PaymentCalendarSourceFilters $filters,
+        ?\Closure $scopeDocument, ?\Closure $scopeProjects): array
+    {
+        $candidates = [];
+        foreach ($items as $index => $item) {
+            if ($item->direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
+                $key = $this->budgetPlanMatchKey($item, $planContractIds[$item->sourceId] ?? null);
+                $candidates[$key][] = $index;
+            }
+        }
+        if ($candidates === []) {
+            return $items;
+        }
+
+        $start = CarbonImmutable::parse($filters->periodStart)->startOfMonth()->toDateString();
+        $end = CarbonImmutable::parse($filters->periodEnd)->startOfMonth()->addMonth()->toDateString();
+        $documents = PaymentDocument::query()
+            ->where('organization_id', $filters->organizationId)
+            ->where('document_type', PaymentDocumentType::INVOICE->value)
+            ->whereNull('schedule_source')
+            ->whereIn('status', [...$this->activeDocumentStatuses(), PaymentDocumentStatus::PAID->value])
+            ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
+            ->where(function (Builder $query) use ($start, $end): void {
+                $query->where(fn (Builder $scope) => $scope->where('scheduled_at', '>=', $start)->where('scheduled_at', '<', $end))
+                    ->orWhere(fn (Builder $scope) => $scope->where('due_date', '>=', $start)->where('due_date', '<', $end))
+                    ->orWhere(fn (Builder $scope) => $scope->whereNull('scheduled_at')->whereNull('due_date')
+                        ->where('document_date', '>=', $start)->where('document_date', '<', $end));
+            })->get();
+        $documentContractIds = $this->calendarDocumentContractIds($documents, $filters->organizationId, $scopeProjects);
+        $consumed = [];
+        foreach ($documents as $document) {
+            $date = $this->effectiveDocumentDate($document);
+            if ($date === null || $this->paymentDocumentDirection($document) !== PaymentCalendarItem::DIRECTION_OUTFLOW) {
+                continue;
+            }
+            $dimensions = [
+                $document->project_id,
+                $this->paymentDocumentCounterpartyId($document, PaymentCalendarItem::DIRECTION_OUTFLOW),
+                $document->budget_article_id,
+                $document->responsibility_center_id,
+                $documentContractIds[$document->id] ?? null,
+            ];
+            $matches = [[]];
+            foreach ($dimensions as $dimension) {
+                $expanded = [];
+                foreach ($matches as $match) {
+                    $expanded[] = [...$match, (string) $dimension];
+                    if ($dimension !== null) $expanded[] = [...$match, ''];
+                }
+                $matches = $expanded;
+            }
+            $indices = [];
+            foreach ($matches as $match) {
+                $key = implode('|', [$filters->organizationId, substr($date, 0, 7), $this->currency($document->currency), ...$match]);
+                foreach ($candidates[$key] ?? [] as $index) $indices[$index] = true;
+            }
+            if (count($indices) !== 1) continue;
+            $index = array_key_first($indices);
+            $consumed[$index] = PortfolioDecimal::add($consumed[$index] ?? '0.00', $this->positive((string) $document->amount));
+        }
+        foreach ($consumed as $index => $amount) {
+            $items[$index] = $items[$index]->withRemainingAmount($this->positive(
+                PortfolioDecimal::subtract($items[$index]->remainingAmount, $amount),
+            ));
+        }
+
         return $items;
+    }
+
+    private function budgetPlanMatchKey(PaymentCalendarItem $item, ?int $contractId): string
+    {
+        return implode('|', [$item->organizationId, substr($item->date, 0, 7), $item->currency,
+            (string) $item->projectId, (string) $item->counterpartyId, (string) $item->budgetArticleId,
+            (string) $item->responsibilityCenterId, (string) $contractId]);
+    }
+
+    private function calendarDocumentContractIds(iterable $documents, int $organizationId, ?\Closure $scopeProjects): array
+    {
+        $documents = collect($documents);
+        $actIds = $documents->where('invoiceable_type', ContractPerformanceAct::class)->pluck('invoiceable_id')->filter()->all();
+        $acts = $actIds === [] ? collect() : ContractPerformanceAct::query()->whereKey($actIds)
+            ->whereHas('contract', function (Builder $query) use ($organizationId, $scopeProjects): void {
+                $query->where('organization_id', $organizationId)
+                    ->when($scopeProjects !== null, fn (Builder $scope) => $scopeProjects($scope));
+            })->pluck('contract_id', 'id');
+        $ids = $documents->where('invoiceable_type', Contract::class)->pluck('invoiceable_id')
+            ->merge($documents->where('source_type', Contract::class)->pluck('source_id'))->merge($acts->values())->filter()->unique()->all();
+        if ($ids === []) return [];
+        $contracts = Contract::query()->where('organization_id', $organizationId)->whereKey($ids)
+            ->when($scopeProjects !== null, fn (Builder $query) => $scopeProjects($query))->get(['id', 'project_id'])->keyBy('id');
+        $result = [];
+        foreach ($documents as $document) {
+            $id = match ($document->invoiceable_type) {
+                Contract::class => $document->invoiceable_id,
+                ContractPerformanceAct::class => $acts[$document->invoiceable_id] ?? null,
+                default => $document->source_type === Contract::class ? $document->source_id : null,
+            };
+            $contract = $id === null ? null : $contracts->get($id);
+            if ($contract !== null && $this->nullableInt($contract->project_id) === $this->nullableInt($document->project_id)) {
+                $result[$document->id] = (int) $contract->id;
+            }
+        }
+
+        return $result;
     }
 
     private function activeDocumentStatuses(): array
