@@ -24,6 +24,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
     {
         $query = preg_replace('/ничего\s+не\s+меняй(?:те)?/iu', '', $query) ?? $query;
         return self::hasIntent($query)
+            && preg_match('/(?:каки[её]|покажи(?:те)?|перечисли(?:те)?)\s+авансов[а-яё]*\s+отч[её]т|авансов[а-яё]*\s+отч[её]т[а-яё]*\s+(?:просроч|задерж)/iu', $query) !== 1
             && preg_match('/что\s+(?:делать|будет|произойд[её]т)|каков[а-яё]*\s+последств|что\s+если/iu', $query) !== 1
             && preg_match('/^\s*(?:пожалуйста[,\s]+|а\s+)?(?:каки[её]|какой|какая|какое|каков[а-яё]*|сколько|что|покажи(?:те)?|назови(?:те)?|расскажи(?:те)?|перечисли(?:те)?|подскажи(?:те)?|посмотри(?:те)?|проверь(?:те)?)(?!\pL)/iu', $query) === 1
             && ! AssistantMutationIntent::containsRequest($query)

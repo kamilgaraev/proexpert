@@ -19,7 +19,8 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 
         self::assertSame('summarize', $result->primaryIntent);
         self::assertSame('read_only', $result->actionPolicy);
-        foreach (['Сделай список договоров проекта', 'Сделай подборку просроченных задач'] as $query) {
+        foreach (['Сделай список договоров проекта', 'Сделай подборку просроченных задач',
+            'Сделай таблицу договоров проекта', 'Сделай перечень договоров', 'Сделай выборку просроченных задач'] as $query) {
             self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy);
         }
     }
