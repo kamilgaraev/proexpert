@@ -30,16 +30,20 @@ use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function test_actual_plan_stage_keeps_observed_amounts_for_review_without_accepting_quantity_evidence(): void
+    #[DataProvider('observedDocumentRows')]
+    public function test_actual_plan_stage_keeps_observed_amounts_for_review_without_accepting_quantity_evidence(array $quantities, string $name, string $unit, string $package): void
     {
         [$context, $session] = $this->fixture();
-        foreach ([10, 20] as $quantity) {
-            $this->document($session, 'ФЕР 08-02-001-01 Кладка стен '.$quantity.' м2');
+        $session->input_payload = [...$session->input_payload, 'object_type' => 'house', 'description' => 'Строительство жилого дома'];
+        $session->save();
+        foreach ($quantities as $quantity) {
+            $this->document($session, 'ФЕР 08-02-001-01 '.$name.' '.$quantity.' '.$unit);
         }
         $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
         $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
@@ -63,8 +67,10 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         $this->app->instance(StageResultFactory::class, new StageResultFactory(new InMemoryPipelineArtifactStore, $graph));
         $result = app(PlanWorkItemsStage::class)->execute($this->planContext($session, $analysis, $graph));
         $references = $this->references($result->transientData);
-        self::assertCount(2, $references);
-        self::assertSame(['10', '20'], array_column($references, 'quantity'));
+        self::assertCount(count($quantities), $references);
+        self::assertSame(array_map('strval', $quantities), array_column($references, 'quantity'));
+        $packages = array_column($result->transientData['local_estimates'], null, 'key');
+        self::assertCount(count($quantities), $this->references(['local_estimates' => [$packages[$package]]]));
         foreach ($references as $item) {
             self::assertSame('quantity_review', $item['item_type']);
             self::assertSame('quantity_review_required', $item['pricing_blocker']);
@@ -74,6 +80,15 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
             self::assertNotEmpty($item['source_refs'][0]['source_version']);
         }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public static function observedDocumentRows(): array
+    {
+        return [
+            'repeated normative reference' => [[10, 20], 'Кладка стен', 'м2', 'walls'],
+            'single normative reference' => [[10], 'Кладка стен', 'м2', 'walls'],
+            'window reference' => [[10], 'Монтаж окон', 'шт', 'openings'],
+        ];
     }
 
     public function test_real_source_observation_is_included_once_across_compatible_house_packages(): void

@@ -13,6 +13,25 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerServiceTest extends TestCase
 {
+    public function test_explicit_source_backed_suspended_ceiling_is_kept_in_both_finishing_packages(): void
+    {
+        foreach (['finish_finishing', 'office_finishing'] as $package) {
+            $items = $this->planner()->build(['key' => $package, 'scope_type' => 'finishing'],
+                ['key' => 'finish', 'construction_part' => 'finishing'], [
+                    'object' => ['object_type' => 'office'], 'evaluation_policy' => ['mode' => 'universal'],
+                    'document_context' => ['quantity_takeoffs' => [[
+                        'scope_key' => 'ceiling_finish_area', 'name' => 'Подвесной потолок', 'quantity' => 20, 'unit' => 'м2',
+                        'source_refs' => [['document_id' => 42, 'page_number' => 1]],
+                        'normalized_payload' => ['quantity_key' => 'office.ceiling'],
+                    ]]],
+                ]);
+            $ceilings = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'office.ceiling'));
+            self::assertCount(1, $ceilings, $package);
+            self::assertSame('20', $ceilings[0]['quantity']);
+            self::assertSame(42, $ceilings[0]['source_refs'][0]['document_id']);
+        }
+    }
+
     public function test_office_floor_area_does_not_accept_a_suspended_ceiling_technology(): void
     {
         $section = ['key' => 'finish', 'construction_part' => 'finishing'];
@@ -24,6 +43,19 @@ final class NormativeWorkItemPlannerServiceTest extends TestCase
         ]);
         $ceilings = array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'office.ceiling'));
         self::assertSame([], $ceilings, 'The room type and floor area do not select a suspended-ceiling technology.');
+    }
+
+    public function test_ceiling_takeoff_without_source_is_not_treated_as_an_explicit_technology(): void
+    {
+        $items = $this->planner()->build(['key' => 'office_finishing', 'scope_type' => 'finishing'],
+            ['key' => 'finish', 'construction_part' => 'finishing'], [
+                'object' => ['object_type' => 'office'], 'evaluation_policy' => ['mode' => 'universal'],
+                'document_context' => ['quantity_takeoffs' => [[
+                    'scope_key' => 'ceiling_finish_area', 'name' => 'Подвесной потолок', 'quantity' => 20, 'unit' => 'м2',
+                    'source_refs' => [], 'normalized_payload' => ['quantity_key' => 'office.ceiling'],
+                ]]],
+            ]);
+        self::assertSame([], array_values(array_filter($items, static fn (array $item): bool => ($item['metadata']['quantity_key'] ?? null) === 'office.ceiling')));
     }
 
     public function test_document_rows_with_one_norm_keep_their_quantities_and_require_explicit_review(): void

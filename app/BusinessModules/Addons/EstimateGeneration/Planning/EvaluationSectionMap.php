@@ -18,7 +18,7 @@ final class EvaluationSectionMap
 
         return match ($package) {
             'rough_finishing', 'finish_finishing', 'office_finishing' => 'finishing',
-            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates' => 'structures',
+            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates', 'openings' => 'structures',
             'roof' => 'roofing', 'earthworks' => 'earthworks',
             'electrical', 'power_supply', 'lighting', 'low_current', 'server_room' => 'electricity',
             'plumbing', 'water_sewerage' => 'water_supply', 'heating' => 'heating', 'ventilation' => 'ventilation',

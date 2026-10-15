@@ -44,6 +44,7 @@ final readonly class DocumentNormativeReferenceAllocator
             is_string($quantityKey) && str_starts_with($quantityKey, 'earth.') => ['earthworks'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'rough.') => ['rough_finishing'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'finish.') => ['finish_finishing'],
+            is_string($quantityKey) && str_starts_with($quantityKey, 'openings.') => ['openings'],
             $quantityKey === 'warehouse.lighting' || str_contains($text, 'освещ') => ['lighting'],
             $quantityKey === 'office.ceiling' => ['finish_finishing', 'office_finishing'],
             is_string($quantityKey) && str_starts_with($quantityKey, 'electrical.') => ['electrical'],

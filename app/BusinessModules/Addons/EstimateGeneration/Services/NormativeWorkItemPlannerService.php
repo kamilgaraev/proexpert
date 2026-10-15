@@ -108,6 +108,10 @@ final class NormativeWorkItemPlannerService
         array $quantityModel,
         int $index
     ): ?array {
+        if (($definition['quantity_key'] ?? null) === 'office.ceiling'
+            && ! isset($quantityModel['explicit_quantity_keys']['office.ceiling'])) {
+            return null;
+        }
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         if (! $this->allowsRoofCompositionPricing($definition, $analysis)) {
             return null;
@@ -1144,6 +1148,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
                 $this->definition('Окраска потолка', 'finishing', 'окраска потолка водно-дисперсионными составами', 'finish.ceiling'),
                 $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
+                $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'office_finishing' => [
                 $this->definition('Черновая подготовка пола', 'finishing', 'устройство черновой подготовки пола', 'rough.floor'),
@@ -1151,6 +1156,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
                 $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
+                $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'process_pipelines' => [
                 $this->industrialDefinition('Монтаж технологического трубопровода по спецификации', 'engineering', 'process_pipelines.length', 'm', 'installation'),
@@ -1367,25 +1373,31 @@ final class NormativeWorkItemPlannerService
 
     /**
      * @param  array<string, mixed>  $analysis
-     * @return array{quantities: array<string, array<string, mixed>>, features: array<string, mixed>}
+     * @return array{quantities: array<string, array<string, mixed>>, explicit_quantity_keys: array<string, true>, features: array<string, mixed>}
      */
     private function documentQuantityModel(array $analysis): array
     {
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $quantities = $this->quantitiesFromFactsSummary($documentContext);
+        $explicitQuantityKeys = [];
 
         foreach ($this->quantitiesFromTakeoffs($documentContext) as $key => $quantity) {
             $quantities[$key] = $quantity;
+            if (($quantity['source_refs'] ?? []) !== []) {
+                $explicitQuantityKeys[$key] = true;
+            }
         }
 
         foreach ($this->quantitiesFromCanonicalBuildingQuantities($documentContext) as $key => $quantity) {
             $quantities[$key] = $quantity;
+            $explicitQuantityKeys[$key] = true;
         }
 
         $quantities = $this->withQuantityLearningHints($quantities, $documentContext);
 
         return [
             'quantities' => $quantities,
+            'explicit_quantity_keys' => $explicitQuantityKeys,
             'features' => [
                 'roof_type' => $this->roofTypeFromDocumentContext($analysis, $documentContext),
             ],

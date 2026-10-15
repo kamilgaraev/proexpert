@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Planning\DocumentNormativeReferenceAllocator;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\EvaluationSectionMap;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
@@ -32,6 +33,18 @@ final class DocumentNormativeReferenceAllocatorTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('estimate_work_items_exceed_approved_plan');
         (new DocumentNormativeReferenceAllocator)->allocate($this->analysis(['Кладка стен', 'Кладка стен', 'Монтаж светильников']), $this->packages(), 2);
+    }
+
+    public function test_routes_explicit_window_quantity_to_openings(): void
+    {
+        self::assertSame('structures', EvaluationSectionMap::forPackage('openings'));
+        $analysis = $this->analysis([]);
+        $analysis['source_documents'][0]['text'] = 'ФЕР 08-02-001-01 Монтаж окон 10 шт';
+        $allocation = (new DocumentNormativeReferenceAllocator)->allocate($analysis, [['key' => 'openings', 'scope_type' => 'openings']]);
+        self::assertSame([], $allocation['unresolved']);
+        self::assertCount(1, $allocation['by_package']['openings']);
+        self::assertSame(10.0, $allocation['by_package']['openings'][0]['quantity']);
+        self::assertSame('шт', $allocation['by_package']['openings'][0]['unit']);
     }
 
     public function test_does_not_relabel_work_when_its_package_is_outside_the_chosen_scope(): void

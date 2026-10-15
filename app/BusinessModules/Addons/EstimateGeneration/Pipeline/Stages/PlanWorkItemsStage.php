@@ -305,8 +305,15 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ?WorkItemQuantityResolver $quantityResolver = null,
         array $generationIdentity = [],
     ): array {
-        if (($workItem['metadata']['generation_source'] ?? null) === 'project_document_normative_reference'
-            && in_array($workItem['item_type'] ?? null, ['quantity_review', 'review_note'], true)) {
+        if (($workItem['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+            if (($workItem['item_type'] ?? null) === 'priced_work') {
+                $workItem['item_type'] = 'quantity_review';
+                $workItem['pricing_status'] = 'not_applicable';
+                $workItem['pricing_blocker'] = 'quantity_review_required';
+                $workItem['validation_flags'] = array_values(array_unique([...($workItem['validation_flags'] ?? []), 'quantity_review_required']));
+                $workItem['metadata']['display_role'] = 'quantity_review';
+                $workItem['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
+            }
             // Keep the observed amount visible for review, never publish it as accepted quantity evidence.
             unset($workItem['quantity_evidence'], $workItem['quantity_evidence_id'], $workItem['quantity_evidence_fingerprint'], $workItem['quantity_evidence_source_version']);
 
