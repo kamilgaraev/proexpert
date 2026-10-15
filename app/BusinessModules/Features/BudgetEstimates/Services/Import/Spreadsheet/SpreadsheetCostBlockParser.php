@@ -335,14 +335,16 @@ final class SpreadsheetCostBlockParser
             $sp = $position['profit'] !== null ? round($position['profit'] * $index, 2) : null;
             $overhead += $oh ?? 0;
             $profit += $sp ?? 0;
+            $priceDerivedFromTotal = $index != 1 && $total !== null && ($position['quantity'] ?? 0) != 0;
             $result[$rowNumber] = [
                 'total' => $total,
                 'overhead' => $oh,
                 'profit' => $sp,
                 'base_price' => $position['base_price'],
                 'index' => $index,
-                'current_price' => $index != 1 && $total !== null && ($position['quantity'] ?? 0) != 0
+                'current_price' => $priceDerivedFromTotal
                     ? ($total - ($oh ?? 0) - ($sp ?? 0)) / $position['quantity'] : $position['base_price'],
+                'current_price_derived_from_total' => $priceDerivedFromTotal,
             ];
         }
 

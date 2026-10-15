@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSm
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\SemanticMatchingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\StagingAreaService;
 use App\Jobs\ProcessEstimateImportJob;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -41,6 +42,14 @@ final class EstimateImportGrandSmetaModernPersistenceTest extends TestCase
         $preview = $service->preview($session->id, null, $context->access());
         self::assertTrue($preview->validationSummary['is_valid']);
         self::assertEquals(500, $preview->totals['total_amount']);
+        $staging = app(StagingAreaService::class)->buildPreview($session->id, $context->organization->id, $context->access());
+        $stagedWork = collect($staging['rows'])->firstWhere('item_name', 'Работа');
+        self::assertFalse($stagedWork['has_math_mismatch']);
+        self::assertSame(440.0, $stagedWork['math_expected_amount']);
+        self::assertSame('quantity_price_with_charges', $stagedWork['math_comparison_basis']);
+        $stagedLabor = collect($stagedWork['sub_items'])->firstWhere('item_name', 'ОТ');
+        self::assertTrue($stagedLabor['is_informative']);
+        self::assertFalse($stagedLabor['has_math_mismatch']);
         $estimate = $this->executeImport($service, $context, $session);
         $this->assertPreservedSource($estimate, 0);
 

@@ -6,6 +6,7 @@ namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\CustomExcelHandler;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\FormulaAwarenessService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportRowPolicy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetCostBlockParser;
@@ -93,6 +94,19 @@ final class CustomExcelNumericImportTest extends TestCase
         self::assertSame(2454.62, $items[0]->profitAmount);
         self::assertSame(6.23, $items[0]->priceIndex);
         self::assertSame(9408.65, $items[0]->baseUnitPrice);
+        self::assertFalse($items[0]->hasMathMismatch);
+        self::assertSame([], $items[0]->warnings);
+        $rows = [$items[0]->toArray()];
+        (new FormulaAwarenessService)->annotate($rows);
+        self::assertFalse($rows[0]['has_math_mismatch']);
+        self::assertEqualsWithDelta(123273.0, $rows[0]['math_expected_amount'], 0.000001);
+    }
+
+    public function test_ordinary_arithmetic_errors_are_still_reported(): void
+    {
+        $items = $this->rows([1 => ['1', 'MAT-1', 'Материал', null, null, 2, 100, null, 250]]);
+        self::assertTrue($items[0]->hasMathMismatch);
+        self::assertStringContainsString('200,00', $items[0]->warnings[0]);
     }
 
     public function test_general_footer_does_not_replace_the_last_position_total(): void

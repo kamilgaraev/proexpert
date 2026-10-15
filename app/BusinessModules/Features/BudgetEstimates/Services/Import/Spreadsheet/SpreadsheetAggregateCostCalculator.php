@@ -72,6 +72,7 @@ final class SpreadsheetAggregateCostCalculator
                 'base_price' => $position['base_price'],
                 'index' => $index,
                 'current_price' => $quantity != 0 ? $direct->dividedBy((string) $quantity, 8, RoundingMode::HalfUp)->toFloat() : $position['base_price'],
+                'current_price_derived_from_total' => $quantity != 0,
             ];
         }
 

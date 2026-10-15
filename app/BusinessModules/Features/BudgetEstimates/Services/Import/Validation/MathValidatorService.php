@@ -10,10 +10,15 @@ class MathValidatorService
 {
     private const TOLERANCE = 0.01;
 
+    public function calculateTotal(?float $quantity, ?float $unitPrice, float $additionalAmount = 0.0): ?float
+    {
+        return $quantity === null || $unitPrice === null ? null : $quantity * $unitPrice + $additionalAmount;
+    }
+
     /**
      * @return array<int, string>
      */
-    public function validateRow(?float $quantity, ?float $unitPrice, ?float $totalAmount): array
+    public function validateRow(?float $quantity, ?float $unitPrice, ?float $totalAmount, float $additionalAmount = 0.0): array
     {
         $warnings = [];
 
@@ -21,7 +26,7 @@ class MathValidatorService
             return $warnings;
         }
 
-        if (($quantity == 0 || $unitPrice == 0) && abs($totalAmount) > self::TOLERANCE) {
+        if ($additionalAmount === 0.0 && ($quantity == 0 || $unitPrice == 0) && abs($totalAmount) > self::TOLERANCE) {
             return [
                 trans_message('estimate.import_math_zero_total_mismatch', [
                     'quantity' => $this->formatNumber($quantity),
@@ -31,11 +36,11 @@ class MathValidatorService
             ];
         }
 
-        $calculatedTotal = $quantity * $unitPrice;
+        $calculatedTotal = $this->calculateTotal($quantity, $unitPrice, $additionalAmount);
         $diff = abs($calculatedTotal - $totalAmount);
 
         if ($diff > self::TOLERANCE) {
-            $warnings[] = trans_message('estimate.import_math_total_mismatch', [
+            $warnings[] = trans_message($additionalAmount === 0.0 ? 'estimate.import_math_total_mismatch' : 'estimate.import_math_total_with_charges_mismatch', [
                 'quantity' => $this->formatNumber($quantity),
                 'unit_price' => $this->formatNumber($unitPrice),
                 'calculated' => $this->formatNumber($calculatedTotal),
@@ -50,7 +55,7 @@ class MathValidatorService
     /**
      * @return array<int, string>
      */
-    public function validateCoefficients(?float $basePrice, ?float $coefficient, ?float $currentPrice): array
+    public function validateCoefficients(?float $basePrice, ?float $coefficient, ?float $currentPrice, float $tolerance = self::TOLERANCE * 5): array
     {
         $warnings = [];
 
@@ -65,7 +70,7 @@ class MathValidatorService
         $calculated = $basePrice * $coefficient;
         $diff = abs($calculated - $currentPrice);
 
-        if ($diff > self::TOLERANCE * 5) {
+        if ($diff > $tolerance) {
             $warnings[] = trans_message('estimate.import_math_coefficient_mismatch', [
                 'base' => $this->formatNumber($basePrice),
                 'coefficient' => $this->formatNumber($coefficient),

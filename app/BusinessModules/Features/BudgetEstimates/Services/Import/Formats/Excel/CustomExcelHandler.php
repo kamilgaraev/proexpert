@@ -332,13 +332,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 $unit = trim($unitMatch[1]);
             }
 
-            $mathWarnings = (new FormulaAwarenessService)->validate([
-                'quantity' => $quantity,
-                'unit_price' => $unitPrice,
-                'current_total_amount' => $total,
-            ]);
-
-            yield new EstimateImportRowDTO(
+            $dto = new EstimateImportRowDTO(
                 rowNumber: (int) $rowNumber,
                 sectionNumber: $positionNumber !== '' ? $positionNumber : null,
                 itemName: $name !== '' ? $name : $code,
@@ -356,11 +350,13 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 currentUnitPrice: $costs['current_price'] ?? $unitPrice,
                 overheadAmount: $costs['overhead'] ?? null,
                 profitAmount: $costs['profit'] ?? null,
-                warnings: $mathWarnings,
-                hasMathMismatch: $mathWarnings !== [],
                 worksheetIndex: $structure->metadata['worksheet_index'] ?? null,
                 worksheetName: $structure->metadata['worksheet_name'] ?? null,
+                mathPriceDerivedFromTotal: $costs['current_price_derived_from_total'] ?? false,
             );
+            $dto->warnings = (new FormulaAwarenessService)->validate($dto->toArray());
+            $dto->hasMathMismatch = $dto->warnings !== [];
+            yield $dto;
         }
     }
 
