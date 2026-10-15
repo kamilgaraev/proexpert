@@ -23,7 +23,7 @@ final readonly class AssistantProjectContractRosterReader
         $terminalStatuses = '(?:заверш[её]н|расторгнут|приостановл|чернов|архив|закрыт)[а-яё]*';
         $statusQuery = preg_replace('/(?<!\pL)не\s*'.$terminalStatuses.'(?!\pL)/iu', '', $query) ?? $query;
         $hasActiveStatus = preg_match('/(?<!\pL)(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) === 1;
-        $hasEndDate = preg_match('/договор[а-яё]*[\s\S]*(?:срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1;
+        $hasEndDate = preg_match('/(?:срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1;
         $hasPluralContracts = preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)|(?:действующие|активные|какие)\s+договора(?!\pL)/iu', $query) === 1;
         return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
