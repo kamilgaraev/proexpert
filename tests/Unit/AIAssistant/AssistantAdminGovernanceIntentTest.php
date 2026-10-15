@@ -12,6 +12,8 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantAdminGovernanceIntentTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_subscription_capabilities_use_catalog_instead_of_personal_schedules_or_project_search(): void
     {
         foreach ([
@@ -22,6 +24,11 @@ final class AssistantAdminGovernanceIntentTest extends TestCase
             $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
             self::assertSame(['name' => 'get_report_subscription_catalog', 'arguments' => ['scope' => 'organization']], AssistantRequiredProjectRead::fromPlan($plan), $query);
             self::assertContains('get_report_subscription_catalog', AssistantToolSurface::names(['get_report_subscription_catalog'], $plan));
+            $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query, []);
+            $eligibility = new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+            self::assertTrue($eligibility->isReadOnlyTool('get_report_subscription_catalog'));
+            self::assertTrue($eligibility->canExposeTool('get_report_subscription_catalog', $understanding, false)->allowed);
+            self::assertTrue($eligibility->canExecuteTool('get_report_subscription_catalog', $understanding, false, ['scope' => 'organization'])->allowed);
         }
         $personal = 'Покажи мои подписки на отчёты и доступные форматы рассылки.';
         self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionCatalogReader::matches($personal));

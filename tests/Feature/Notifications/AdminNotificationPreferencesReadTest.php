@@ -8,12 +8,43 @@ use App\BusinessModules\Features\Notifications\Models\NotificationPreference;
 use App\BusinessModules\Features\Notifications\Services\LandingNotificationPreferencesService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class AdminNotificationPreferencesReadTest extends TestCase
 {
+    public function test_unexpected_read_error_returns_safe_admin_response_and_logs_only_safe_context(): void
+    {
+        Queue::fake(); Notification::fake(); config(['cache.default' => 'array']);
+        $context = Model::withoutEvents(fn () => AdminApiTestContext::create());
+        $logged = [];
+        Log::listen(static function ($event) use (&$logged): void {
+            if ($event->level === 'error' && $event->message === 'Admin notification preferences load failed') {
+                $logged[] = $event->context;
+            }
+        });
+        $failRead = true;
+        DB::listen(static function ($query) use (&$failRead): void {
+            if ($failRead && str_starts_with(strtolower($query->sql), 'select') && str_contains($query->sql, 'notification_preferences')) {
+                $failRead = false;
+                throw new \RuntimeException('private-notification-diagnostic335');
+            }
+        });
+        $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/notifications/preferences');
+        $response->assertStatus(500)->assertJsonPath('success', false)
+            ->assertJsonPath('message', trans_message('notification_preferences.load_error'));
+        self::assertFalse($failRead);
+        self::assertStringNotContainsString('private-notification-diagnostic335', $response->getContent());
+        self::assertCount(1, $logged);
+        self::assertSame($context->user->id, $logged[0]['user_id']);
+        self::assertSame($context->organization->id, $logged[0]['organization_id']);
+        self::assertIsString($logged[0]['exception_class']);
+        self::assertStringNotContainsString('private-notification-diagnostic335', json_encode($logged));
+    }
+
     public function test_admin_origin_reads_only_own_current_organization_preferences_without_writes(): void
     {
         Queue::fake(); Notification::fake(); config(['cache.default' => 'array']);
