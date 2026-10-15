@@ -75,6 +75,7 @@ final class ContractDocumentExporter
             .'@page{margin:20mm}body{font-family:"DejaVu Sans",sans-serif;font-size:10pt;line-height:1.4;color:#172033}'
             .'p{margin:0 0 8pt}h1,h2,h3,h4,h5,h6{page-break-after:avoid}h1{font-size:18pt}h2{font-size:15pt}'
             .'table{width:100%;border-collapse:collapse;margin:8pt 0}td{border:0.5pt solid #aab3bf;padding:5pt;vertical-align:top;overflow-wrap:break-word}'
+            .'.contract-work-specification{table-layout:fixed}.contract-specification-money{white-space:normal;overflow-wrap:break-word;font-size:9pt}'
             .'.contract-clause-number{font-weight:bold;page-break-after:avoid}a{color:#174c78}li{margin-bottom:4pt}'
             .'</style></head><body>'.$html.'</body></html>', 'UTF-8');
         $pdf->render();
