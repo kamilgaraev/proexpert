@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationCsvExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackageSummaryQuery;
 use App\Http\Controllers\Controller;
@@ -29,7 +29,7 @@ final class EstimateGenerationPackageController extends Controller
 {
     public function __construct(
         private readonly EstimateGenerationExporter $exporter,
-        private readonly EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
+        private readonly EstimateGenerationCsvExporter $csvExporter,
         private readonly EstimateGenerationPackagePresenter $presenter,
         private readonly EstimateGenerationPackageSummaryQuery $summaryQuery,
     ) {}
@@ -132,19 +132,7 @@ final class EstimateGenerationPackageController extends Controller
             $format = (string) $request->query('format', 'excel');
             if ($format === 'csv') {
                 return response()->streamDownload(function () use ($draft): void {
-                    $handle = fopen('php://output', 'w');
-                    fputcsv($handle, ['Локальная смета', 'Раздел', 'Работа', 'Ед.', 'Кол-во', 'Итого', 'Основание']);
-                    foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-                        foreach (is_array($localEstimate) ? ($localEstimate['sections'] ?? []) : [] as $section) {
-                            foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $workItem) {
-                                if (! is_array($workItem) || ! $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
-                                    continue;
-                                }
-                                fputcsv($handle, [$localEstimate['title'] ?? '', $section['title'] ?? '', $workItem['name'] ?? '', $workItem['unit'] ?? '', $workItem['quantity'] ?? '', $workItem['total_cost'] ?? '', $workItem['quantity_basis'] ?? '']);
-                            }
-                        }
-                    }
-                    fclose($handle);
+                    $this->csvExporter->stream($draft);
                 }, 'estimate-generation-draft-'.$session->id.'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
             }
             if ($format === 'json') {

@@ -5,6 +5,8 @@ namespace App\Services\EstimatePositionCatalog;
 use App\Models\EstimatePositionCatalog;
 use App\Models\MeasurementUnit;
 use App\Models\WorkType;
+use App\Services\Export\CsvExportValue;
+use App\Services\Export\ExportValueBinder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -135,7 +137,7 @@ class ImportExportService
     {
         $positions = $this->getPositionsForExport($organizationId, $filters);
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
         $sheet = $spreadsheet->getActiveSheet();
 
         // Заголовки
@@ -192,7 +194,7 @@ class ImportExportService
     {
         $positions = $this->getPositionsForExport($organizationId, $filters);
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
         $sheet = $spreadsheet->getActiveSheet();
 
         // Заголовки
@@ -203,7 +205,7 @@ class ImportExportService
         // Данные
         $row = 2;
         foreach ($positions as $position) {
-            $sheet->fromArray([[
+            $sheet->fromArray([CsvExportValue::row([
                 $position->code,
                 $position->name,
                 $position->description,
@@ -213,7 +215,7 @@ class ImportExportService
                 $position->direct_costs,
                 $position->overhead_percent,
                 $position->profit_percent,
-            ]], null, 'A' . $row);
+            ])], null, 'A' . $row);
             $row++;
         }
 
