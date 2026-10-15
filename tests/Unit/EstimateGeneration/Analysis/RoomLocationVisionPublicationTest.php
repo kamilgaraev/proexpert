@@ -31,9 +31,35 @@ final class RoomLocationVisionPublicationTest extends TestCase
         }
     }
 
+    public function test_surrounding_whitespace_does_not_split_the_same_literal_observation(): void
+    {
+        $matcher = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
+        foreach (['room_number' => '001', 'room_floor' => '-1', 'room_zone' => 'A'] as $type => $value) {
+            $canonical = ['entity_key' => 'room:office', 'fact_type' => $type,
+                'value' => ['type' => 'string', 'data' => $value], 'unit' => null];
+            $spaced = [...$canonical, 'value' => ['type' => 'string', 'data' => ' '.$value.' ']];
+            self::assertSame($matcher->keyForCanonical($canonical), $matcher->keyForCanonical($spaced));
+        }
+    }
+
+    public function test_per_fact_polygon_is_transformed_to_original_source_and_native_reference_is_preserved(): void
+    {
+        $transform = new \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData(
+            [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+            [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 1.0]], 4.0, 2.0);
+        $claims = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', transform: $transform);
+        self::assertEquals(['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1',
+            'value' => [[0.05, 0.05], [0.2, 0.05], [0.2, 0.1], [0.05, 0.1]]], $claims[1]->locator['fact_source']);
+        $original = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64),
+            'floor_plan', variant: 'already_source', transform: $transform);
+        self::assertEquals([[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]], $original[1]->locator['fact_source']['value']);
+        $native = RoomLocationVisionFixture::claims([7, 9, 11], 13, 'sha256:'.str_repeat('a', 64), 'floor_plan', variant: 'native');
+        self::assertSame(['kind' => 'native', 'coordinate_space' => 'native', 'value' => 'pdf:page:1/text'], $native[1]->locator['fact_source']);
+    }
+
     public function test_real_vision_contract_publishes_independent_floor_and_zone_proof_for_number_links(): void
     {
-        foreach (['valid', 'missing', 'other_room', 'implicit', 'candidate', 'other_page', 'conflict', 'mismatch'] as $variant) {
+        foreach (['valid', 'missing', 'other_room', 'implicit', 'candidate', 'other_page', 'conflict', 'mismatch', 'missing_exact_source'] as $variant) {
             $models = new InMemoryProjectModelRepository;
             $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
             foreach ([13 => 'floor_plan', 14 => 'explication'] as $document => $role) {
@@ -50,6 +76,12 @@ final class RoomLocationVisionPublicationTest extends TestCase
                         $claims[$index] = $claim = new ObservationClaim($claim->id, $claim->observerRole, $claim->entityKey,
                             $claim->factType, $claim->value, null, $claim->evidenceRef, true, 7, 9, 11, $claim->sourceVersion,
                             [...$claim->locator, 'page' => 2]);
+                    }
+                    if ($document === 14 && $variant === 'missing_exact_source' && $claim->factType === 'room_floor') {
+                        $locator = $claim->locator;
+                        unset($locator['fact_source']);
+                        $claims[$index] = $claim = new ObservationClaim($claim->id, $claim->observerRole, $claim->entityKey,
+                            $claim->factType, $claim->value, null, $claim->evidenceRef, true, 7, 9, 11, $claim->sourceVersion, $locator);
                     }
                     $decisions[] = new ArbitrationDecision($claim->id,
                         $document === 14 && $variant === 'candidate' && $claim->factType === 'room_floor' ? 'candidate' : 'accepted',

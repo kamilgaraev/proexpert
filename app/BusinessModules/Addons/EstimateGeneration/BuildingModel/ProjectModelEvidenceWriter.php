@@ -22,6 +22,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\LiteralFactEvidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
@@ -168,8 +169,8 @@ final readonly class ProjectModelEvidenceWriter
                     $entityIdentity .= '|room-location:'.$claim->factType.'|document:'.$documentId.'|page:'.$pageNumber;
                 }
                 if ($locationClaims !== []) {
-                    $entityIdentity .= '|room-location-proof:v1:'.hash('sha256', json_encode(array_map(
-                        static fn (ObservationClaim $source): array => [$source->id, $source->factType, $source->value], $locationClaims), JSON_THROW_ON_ERROR));
+                    $entityIdentity .= '|room-location-proof:v2:'.hash('sha256', json_encode(array_map(
+                        static fn (ObservationClaim $source): array => [$source->id, $source->factType, $source->value, $source->locator['fact_source'] ?? null], $locationClaims), JSON_THROW_ON_ERROR));
                 }
                 $nativeNamedRoom = isset($nativeRoomIdentities[$claim->entityKey.(new ClaimSemanticMatcher)->entityScope($claim)]);
                 if ($nativeNamedRoom) {
@@ -495,10 +496,16 @@ final readonly class ProjectModelEvidenceWriter
             'page' => $pageNumber,
             'element_key' => 'element:'.$hash,
         ];
-        foreach (['unit_type', 'unit_index', 'sheet', 'region_key', 'bbox', 'source_key', 'native_reference'] as $field) {
+        foreach (['unit_type', 'unit_index', 'sheet', 'region_key', 'bbox', 'source_key', 'native_reference', 'fact_source'] as $field) {
             if (array_key_exists($field, $claim->locator)) {
                 $locator[$field] = $claim->locator[$field];
             }
+        }
+        $source = FactSourceLocator::fromLocator($locator);
+        if (($source?->value['kind'] ?? null) === 'polygon') {
+            $points = $source->value['value'];
+            $locator['bbox'] = [min(array_column($points, 0)), min(array_column($points, 1)),
+                max(array_column($points, 0)), max(array_column($points, 1))];
         }
         $documentRole = SourceDocumentRole::normalize($claim->locator['document_role'] ?? null);
         if ($documentRole !== null) {
@@ -544,7 +551,8 @@ final readonly class ProjectModelEvidenceWriter
         foreach ($decisions as $decision) {
             $claim = $claims[$decision->claimId];
             $value = (new RoomLocationObservation)->label($claim);
-            if ($decision->status !== 'accepted' || $value === null || ! $this->isExactLiteralSource($claim, $documentId, $page)) {
+            if ($decision->status !== 'accepted' || $value === null || FactSourceLocator::fromLocator($claim->locator) === null
+                || ! $this->isExactLiteralSource($claim, $documentId, $page)) {
                 continue;
             }
             $supported = false;
@@ -827,6 +835,7 @@ final readonly class ProjectModelEvidenceWriter
             fingerprint: $node->fingerprint,
             documentRole: SourceDocumentRole::normalize($node->locator['document_role'] ?? null),
             literalFact: $node->type === EvidenceType::SourceFact ? LiteralFactEvidence::fromSourceFactValue($node->value) : null,
+            factSource: FactSourceLocator::fromLocator($node->locator),
         );
     }
 }

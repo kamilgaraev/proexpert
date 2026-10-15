@@ -77,6 +77,10 @@ final class NativeNumericFactFactory
                     $locationValue = $locationCell['raw_value'] ?? $locationCell['value'] ?? null;
                     $literal = (is_string($locationValue) || is_int($locationValue)
                         || (is_float($locationValue) && is_finite($locationValue))) ? trim((string) $locationValue) : '';
+                    if ($field === 'zone_id' && ($locationCell['formula'] ?? null) === null
+                        && ($locationValue === null || (is_string($locationValue) && trim($locationValue) === ''))) {
+                        continue;
+                    }
                     $literal = RoomLocationObservation::identifier($literal);
                     if (($locationCell['formula'] ?? null) !== null || $literal === null) {
                         $locationRequiresConfirmation = true;

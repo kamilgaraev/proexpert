@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Targ
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\LiteralFactEvidence;
 use PHPUnit\Framework\TestCase;
 
@@ -103,7 +104,8 @@ final class RoomNumberSourceLinksTest extends TestCase
                 $evidence[] = new Evidence($id, 1, 2, 3, $version, 'document:'.$index, 'document', 1,
                     sourceReference: 'document:'.$index, documentRole: $role,
                     literalFact: new LiteralFactEvidence('room_'.$type,
-                        hash('sha256', $index === 2 && $variant === 'wrong_floor_proof' && $type === 'floor' ? '9' : $location[$attribute])));
+                        hash('sha256', $index === 2 && $variant === 'wrong_floor_proof' && $type === 'floor' ? '9' : $location[$attribute])),
+                    factSource: new FactSourceLocator(['kind' => 'native', 'coordinate_space' => 'native', 'value' => 'pdf:page:1/'.$type]));
             }
         }
 

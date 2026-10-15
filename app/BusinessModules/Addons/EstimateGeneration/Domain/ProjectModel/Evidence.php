@@ -25,6 +25,7 @@ final readonly class Evidence
         public ?string $fingerprint = null,
         public ?string $documentRole = null,
         public ?LiteralFactEvidence $literalFact = null,
+        public ?FactSourceLocator $factSource = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Evidence');

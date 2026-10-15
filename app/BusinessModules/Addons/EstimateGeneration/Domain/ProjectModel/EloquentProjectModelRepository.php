@@ -310,6 +310,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     (string) $row->fingerprint,
                     SourceDocumentRole::normalize($locator['document_role'] ?? null),
                     $row->type === 'source_fact' ? LiteralFactEvidence::fromSourceFactValue($value) : null,
+                    FactSourceLocator::fromLocator($locator),
                 );
             }
         }

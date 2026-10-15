@@ -17,7 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\RoleVisionResponseCanon
 /** Recorded provider observations through the real observer contract, without HTTP or paid calls. */
 final class RoomLocationVisionFixture
 {
-    public static function claims(array $scope, int $documentId, string $version, string $sheetType, ?string $floor = '-1', string $variant = 'valid'): array
+    public static function claims(array $scope, int $documentId, string $version, string $sheetType, ?string $floor = '-1', string $variant = 'valid', ?\App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData $transform = null): array
     {
         [$organization, $project, $session] = $scope;
         $image = imagecreatetruecolor(2, 2);
@@ -29,7 +29,7 @@ final class RoomLocationVisionFixture
             new AiOperationContext(AiOperationContext::deterministicId('room-location:correlation'),
                 AiOperationContext::deterministicId('room-location:'.$documentId),
                 $organization, $project, $session, 'understand_documents', 'vision', 1, $documentId, 17, 19),
-            (new ProjectiveTransformFactory)->identity());
+            $transform ?? (new ProjectiveTransformFactory)->identity(), nativeReferences: ['pdf:page:1/text']);
         $input = (new ObserverInputBuilder)->build($source, ObserverProfile::Literal, static function (): void {});
         $facts = $evidence = [];
         foreach (['room_number' => '001', 'room_floor' => $floor, 'room_zone' => 'A'] as $type => $value) {
@@ -41,7 +41,7 @@ final class RoomLocationVisionFixture
             $facts[] = ['entityKey' => $type === 'room_floor' && $variant === 'other_room' ? 'room:other' : 'room:office',
                 'factType' => $type, 'value' => ['type' => 'string', 'data' => $value], 'unit' => null,
                 'evidenceRef' => $type,
-                'sourcePolygonOrNativeRef' => $type === 'room_floor' && $variant === 'implicit' ? null : [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]],
+                'sourcePolygonOrNativeRef' => $variant === 'native' ? 'pdf:page:1/text' : ($type === 'room_floor' && $variant === 'implicit' ? null : [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]]),
                 'confidence' => 0.9, 'contractVersion' => 'sheet-analysis:v3'];
         }
         $payload = (new RoleVisionResponseCanonicalizer)->canonicalize([
@@ -51,13 +51,15 @@ final class RoomLocationVisionFixture
                 'role' => $sheetType === 'floor_plan' ? 'plan' : 'explication', 'facts' => $facts],
         ], $input)->payload;
         $analysis = VisionAnalysisData::fromProviderArray($payload, 'timeweb', 'openai/gpt-6-luna',
-            'openai/gpt-6-luna', 'recorded-luna-v1', 'measured', 10, 10, 100);
+            'openai/gpt-6-luna', 'recorded-luna-v1', 'measured', 10, 10, 100, nativeReferences: $input->nativeReferences);
         $runs = ['observer_literal' => new AiRoleRunResult([
             'schema_version' => 3, 'role' => 'observer_literal',
             'source' => ['document_id' => $documentId, 'page_id' => 17, 'page_number' => 1, 'source_version' => $version],
             'observation' => ['sheet_type' => $analysis->sheetType],
             'claims' => $analysis->projectSheetAnalysis->facts,
-            'evidence' => array_map(static fn ($proof): array => $proof->toArray(), $analysis->evidence),
+            'evidence' => array_map(static fn ($proof): array => $variant === 'already_source'
+                ? [...$proof->toArray(), 'locator' => [...$proof->locator, 'coordinate_space' => 'normalized_source_v1']]
+                : $proof->toArray(), $analysis->evidence),
         ], AiOperationContext::deterministicId('room-location:physical:'.$documentId))];
 
         return (new ArbitrationInputBuilder)->claimBatch($source, $runs)->claims;

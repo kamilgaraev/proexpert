@@ -72,7 +72,14 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             self::assertSame(['room_number', 'room_floor', 'room_zone'], array_map(
                 static fn (string $id): string => $evidence[$id]->literalFact->factKey, $number->evidenceIds));
             self::assertSame(hash('sha256', '-1'), $evidence[$number->evidenceIds[1]]->literalFact->valueHash);
+            self::assertEquals(['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1',
+                'value' => [[0.1, 0.1], [0.4, 0.1], [0.4, 0.2], [0.1, 0.2]]], $evidence[$number->evidenceIds[1]]->factSource?->value);
         }
+        $source = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvidenceSources::class)
+            ->handle($actor, $scope[1], $scope[2], [$numbers[0]->evidenceIds[1]])['sources'][0];
+        self::assertSame('available', $source['status']);
+        self::assertSame('page', $source['target']['representation_kind']);
+        self::assertEqualsWithDelta(['x' => 0.1, 'y' => 0.1, 'width' => 0.3, 'height' => 0.1], $source['target']['region'], 0.000001);
         $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
         self::assertCount(1, $run->links);
         self::assertSame(0, $run->providerCalls);
@@ -81,7 +88,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
         self::assertTrue($models->replaceUnderstanding(...[...$scope, $run->links[0]['source_version'], $fingerprint, $capture['token'],
             $run->links, $run->conflicts, $run->questions, $run->limitations, 0]));
         self::assertNotNull($models->replayUnderstanding(...[...$scope, $run->links[0]['source_version'], $fingerprint, $capture['token']]));
-        foreach (['000200_allow_room_number_evidence', '000300_allow_room_location_evidence'] as $name) {
+        foreach (['000200_allow_room_number_evidence', '000300_allow_room_location_evidence', '000400_preserve_fact_source_locators'] as $name) {
             $migration = require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_10_15_'.$name.'.php');
             $migration->up();
             $migration->up();
@@ -106,6 +113,26 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
                 self::assertStringContainsString('room_location_evidence_invalid', $error->getMessage());
             }
         }
+        foreach ([['kind' => null, 'coordinate_space' => 'normalized_source_v1', 'value' => [[0, 0], [1, 1]]],
+            ['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => [[0, 0], [2, 1]]],
+            ['kind' => 'polygon', 'coordinate_space' => 'normalized_source_v1', 'value' => [[0, 0], [0, 0]]],
+            ['kind' => 'native', 'coordinate_space' => 'native', 'value' => 'pdf:page:1/\\secret']] as $invalidSource) {
+            self::assertFalse((bool) DB::scalar('SELECT eg_fact_source_locator_valid(?::jsonb)', [json_encode($invalidSource, JSON_THROW_ON_ERROR)]));
+            $invalid = (array) $floorRow;
+            unset($invalid['id']);
+            $invalid['fingerprint'] = hash('sha256', json_encode($invalidSource, JSON_THROW_ON_ERROR));
+            $locator = json_decode($invalid['locator'], true, flags: JSON_THROW_ON_ERROR);
+            $locator['fact_source'] = $invalidSource;
+            $invalid['locator'] = json_encode($locator, JSON_THROW_ON_ERROR);
+            try {
+                DB::transaction(static fn () => DB::table('estimate_generation_evidence')->insert($invalid));
+                self::fail('Invalid per-fact source was accepted by SQL.');
+            } catch (\Illuminate\Database\QueryException $error) {
+                self::assertStringContainsString('fact_source_locator_invalid', $error->getMessage());
+            }
+        }
+        self::assertTrue((bool) DB::scalar('SELECT eg_fact_source_locator_valid(?::jsonb)',
+            [json_encode(['kind' => 'native', 'coordinate_space' => 'native', 'value' => 'pdf:page:1/text'], JSON_THROW_ON_ERROR)]));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
     }
 
@@ -119,11 +146,11 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
                 'project_id' => $scope[1], 'user_id' => $actor->id, 'filename' => 'rooms.xlsx', 'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 'status' => 'ready', 'source_version' => $version, 'checksum_sha256' => str_repeat((string) ($index + 1), 64)]);
             $headers = $cells = [];
-            foreach (['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role'] as $column => $value) {
+            foreach (['entity_key', 'parameter', 'value', 'unit', 'floor', 'document_role', 'zone'] as $column => $value) {
                 $headers[] = ['address' => chr(65 + $column).'1', 'value' => $value];
             }
-            foreach ([['room:office', 'room_number', '001', '', '1', $role],
-                ['room:office', 'length', '5', 'м', '1', $role]] as $row => $values) {
+            foreach ([['room:office', 'room_number', '001', '', '1', $role, ''],
+                ['room:office', 'length', '5', 'м', '1', $role, '']] as $row => $values) {
                 foreach ($values as $column => $value) {
                     if ($row === 0 && $column === 4 && $index >= 3) {
                         $value = $index === 3 ? '-' : 'unknown';
@@ -197,7 +224,13 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             self::assertCount(2, $numbers);
             self::assertNotSame($numbers[0]->entityId, $numbers[1]->entityId);
             self::assertSame(['confirmed'], array_values(array_unique(array_column($numbers, 'status'))));
-            self::assertSame(['001', $secondNumber], array_column($numbers, 'value'));
+            $proofs = array_column($snapshot->evidence, null, 'id');
+            $numbersByPage = [];
+            foreach ($numbers as $number) {
+                $numbersByPage[$proofs[$number->evidenceIds[0]]->page] = $number->value;
+            }
+            ksort($numbersByPage);
+            self::assertSame([1 => '001', 2 => $secondNumber], $numbersByPage);
             foreach ($numbers as $number) {
                 $names = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->entityId === $number->entityId && $fact->type === 'room_name'));
                 self::assertSame([], $names);

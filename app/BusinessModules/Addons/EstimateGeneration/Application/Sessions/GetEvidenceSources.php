@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\User;
@@ -91,7 +92,12 @@ final readonly class GetEvidenceSources
             $page = (int) $match[1];
         }
         $page = is_int($page) && $page > 0 && ($pageCount < 1 || $page <= $pageCount) ? $page : null;
-        $native = $locator['native_reference'] ?? $locator['handle'] ?? $locator['element_key'] ?? null;
+        $factSource = FactSourceLocator::fromLocator($locator);
+        $native = match ($factSource?->value['kind'] ?? null) {
+            'native' => $factSource->value['value'],
+            'polygon' => null,
+            default => $locator['native_reference'] ?? $locator['handle'] ?? $locator['element_key'] ?? null,
+        };
         $native = is_string($native) && trim($native) !== '' && strlen($native) <= 500 ? $native : null;
         $sheet = $locator['sheet'] ?? null;
         if ($sheet === null && $native !== null && preg_match('/\Axlsx:sheet:(.+)![A-Z]+[1-9]\d*\z/', $native, $match) === 1) {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use InvalidArgumentException;
 
 final readonly class ObservationClaim
@@ -69,6 +70,14 @@ final readonly class ObservationClaim
             throw new InvalidArgumentException('observation_claim_value_invalid');
         }
         $native = $claim['sourcePolygonOrNativeRef'] ?? null;
+        // Never inherit a provider-supplied per-fact locator from page evidence.
+        unset($locator['fact_source']);
+        $exact = is_array($native)
+            ? ['kind' => 'polygon', 'coordinate_space' => $locator['coordinate_space'] ?? null, 'value' => $native]
+            : ['kind' => 'native', 'coordinate_space' => 'native', 'value' => $native];
+        if (FactSourceLocator::valid($exact)) {
+            $locator['fact_source'] = $exact;
+        }
 
         return new self(
             str_replace('observer_', '', $role).':'.($index + 1),

@@ -49,6 +49,9 @@ final readonly class RoomNumberSourceDescriptor
             if ($expected === null || ! hash_equals($evidence->literalFact->valueHash, hash('sha256', $expected))) {
                 return null;
             }
+            if (in_array($evidence->literalFact->factKey, ['room_floor', 'room_zone'], true) && $evidence->factSource === null) {
+                return null;
+            }
             $numberProof = $numberProof || $evidence->literalFact->factKey === 'room_number';
             $floorProof = $floorProof || $evidence->literalFact->factKey === 'room_floor';
             $zoneProof = $zoneProof || $evidence->literalFact->factKey === 'room_zone';

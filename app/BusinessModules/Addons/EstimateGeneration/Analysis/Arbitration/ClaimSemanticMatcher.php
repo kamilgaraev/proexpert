@@ -97,7 +97,7 @@ final class ClaimSemanticMatcher
         }
         $valueType = $this->concept((string) ($value['type'] ?? ''));
         $normalizedValue = in_array($canonical['fact_type'] ?? null, ['room_number', 'room_floor', 'room_zone'], true)
-            ? hash('sha256', $encoded) : $this->concept($encoded);
+            ? hash('sha256', trim($encoded)) : $this->concept($encoded);
         if ($valueType === 'number' || ($factType === 'elevation' && $this->decimal($encoded) !== null)) {
             $valueType = 'number';
             $normalizedValue = $this->decimal($encoded) ?? $normalizedValue;

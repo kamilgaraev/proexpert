@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Evidence;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactSourceLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\SourceDocumentRole;
 use App\Enums\CurrencyCode;
 use InvalidArgumentException;
@@ -17,7 +18,7 @@ final class EvidenceSchema
                 'document_id' => 'positive_int', 'unit_type' => 'unit_type', 'unit_index' => 'positive_int',
                 'page' => 'positive_int', 'sheet' => 'positive_int', 'region_key' => 'region_ref', 'element_key' => 'element_ref',
                 'bbox' => 'bbox', 'source_key' => 'source_ref', 'native_reference' => 'native_reference',
-                'document_role' => 'document_role',
+                'document_role' => 'document_role', 'fact_source' => 'fact_source',
             ],
             EvidenceType::Inferred => ['inference_key' => 'inference_ref', 'item_key' => 'item_ref'],
             EvidenceType::WorkItem, EvidenceType::NormativeMatch, EvidenceType::Price => ['item_key' => 'item_ref'],
@@ -115,6 +116,7 @@ final class EvidenceSchema
                 || (is_string($value) && (self::validDomainCode($value) || CanonicalSourceDecimal::isNonNegative($value))),
             'signed_source_decimal' => CanonicalSourceDecimal::isValid($value),
             'bbox' => self::validBbox($value),
+            'fact_source' => FactSourceLocator::valid($value),
             default => false,
         };
         if (! $valid) {

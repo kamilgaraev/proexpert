@@ -30,8 +30,25 @@ final class NativeNumericFactFactoryTest extends TestCase
             $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $sheet);
             self::assertArrayNotHasKey('floor_id', $publication->claims[0]->locator);
             self::assertArrayNotHasKey('zone_id', $publication->claims[0]->locator);
-            self::assertSame('candidate', $publication->decisions[0]->status);
-            self::assertSame('native_location_requires_confirmation', $publication->decisions[0]->reasonCode);
+            $decision = array_column($publication->decisions, null, 'claimId')[$publication->claims[0]->id];
+            self::assertSame('candidate', $decision->status);
+            self::assertSame('native_location_requires_confirmation', $decision->reasonCode);
+        }
+    }
+
+    public function test_empty_optional_zone_does_not_block_a_room_with_an_explicit_floor(): void
+    {
+        foreach ([null, '', '   '] as $value) {
+            $sheet = $this->roomSheet('001');
+            $sheet['cells'][1]['value'] = 'room_number';
+            $sheet['header_cells'][] = ['address' => 'F1', 'value' => 'zone'];
+            if ($value !== null) {
+                $sheet['cells'][] = ['address' => 'F2', 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+            $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), $sheet);
+            self::assertSame('accepted', $publication->decisions[0]->status);
+            self::assertSame('1', $publication->claims[0]->locator['floor_id']);
+            self::assertArrayNotHasKey('zone_id', $publication->claims[0]->locator);
         }
     }
 
