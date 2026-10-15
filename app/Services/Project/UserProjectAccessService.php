@@ -15,6 +15,7 @@ class UserProjectAccessService
     public function modeFor(User $user, int $organizationId): UserProjectAccessMode
     {
         $mode = DB::table('organization_user')
+            ->useWritePdo()
             ->where('user_id', $user->id)
             ->where('organization_id', $organizationId)
             ->where('is_active', true)

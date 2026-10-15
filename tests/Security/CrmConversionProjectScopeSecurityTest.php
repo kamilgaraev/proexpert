@@ -13,13 +13,20 @@ use App\BusinessModules\Features\Crm\Models\CrmLead;
 use App\BusinessModules\Features\Crm\Services\CrmTargetAccessService;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Enums\AuthSessionStatus;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\UserAuthSession;
 use App\Services\Auth\WebAuthTokenService;
+use App\Services\Project\UserProjectAccessService;
+use Illuminate\Database\PostgresConnection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Mockery;
+use PDO;
+use PDOStatement;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
@@ -248,6 +255,40 @@ final class CrmConversionProjectScopeSecurityTest extends TestCase
             'company' => ['name' => 'Converted company'], 'deal' => ['title' => 'Converted deal'],
         ], $this->headers($actor))->assertOk()->assertJsonPath('data.deal.title', 'Converted deal');
         self::assertSame('converted', $lead->fresh()->status);
+    }
+
+    public function test_stale_replica_mode_cannot_reopen_an_unassigned_project_after_mode_revocation(): void
+    {
+        [$fixture, $actor, $allowed, $restricted] = $this->context();
+        $originalDefault = DB::getDefaultConnection();
+        $primary = DB::connection();
+        $fixture->organization->users()->updateExistingPivot($actor->id, ['project_access_mode' => 'all_projects']);
+        $statement = Mockery::mock(PDOStatement::class);
+        $statement->shouldReceive('setFetchMode', 'bindValue', 'execute')->andReturn(true);
+        $statement->shouldReceive('fetchAll')->andReturn([(object) ['project_access_mode' => 'all_projects']]);
+        $staleReader = Mockery::mock(PDO::class);
+        $staleReader->shouldReceive('prepare')->andReturn($statement);
+        $name = 'crm_security_mode_replica';
+        $connectionConfig = array_replace($primary->getConfig(), ['name' => $name, 'sticky' => false]);
+        $connection = new PostgresConnection($primary->getPdo(), $primary->getDatabaseName(), $primary->getTablePrefix(), $connectionConfig);
+        $connection->setReadPdo($staleReader);
+        config(['database.connections.'.$name => $connectionConfig]);
+        DB::extend($name, static fn () => $connection);
+
+        try {
+            DB::setDefaultConnection($name);
+            self::assertSame(0, DB::connection()->transactionLevel());
+            $primary->table('organization_user')->where('organization_id', $fixture->organization->id)
+                ->where('user_id', $actor->id)->update(['project_access_mode' => 'assigned_projects']);
+            self::assertSame('all_projects', DB::table('organization_user')->where('user_id', $actor->id)->value('project_access_mode'));
+            self::assertSame(UserProjectAccessMode::ASSIGNED_PROJECTS, app(UserProjectAccessService::class)->modeFor($actor, $fixture->organization->id));
+            $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+            app(CrmTargetAccessService::class)->project($fixture->organization->id, $actor, $restricted->id, 'crm.deals.view');
+        } finally {
+            DB::setDefaultConnection($originalDefault);
+            DB::purge($name);
+            DB::forgetExtension($name);
+        }
     }
 
     private function context(array $permissions = ['crm.deals.view', 'crm.deals.link']): array
