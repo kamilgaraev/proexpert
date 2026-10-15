@@ -67,9 +67,24 @@ final readonly class EvaluationWorkContextProjector
             return null;
         }
         $entity = $this->entities[$binding['entity_id']];
+        $entityType = $entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type;
         $name = $entity->attributes['name'] ?? $entity->attributes['identity']['label'] ?? null;
+        $identityNames = [];
+        foreach ($binding['basis_fact_ids'] as $id) {
+            $fact = $this->facts[$id];
+            if ($fact->type === 'entity_identity' && $fact->entityId === $entity->id && is_array($fact->value)
+                && (! isset($fact->value['entity_id']) || $fact->value['entity_id'] === $entity->id)
+                && (! isset($fact->value['entity_type']) || $fact->value['entity_type'] === $entityType)
+                && is_string($fact->value['name'] ?? null) && trim($fact->value['name']) !== '') {
+                $identityNames[] = trim($fact->value['name']);
+            }
+        }
+        $identityNames = array_values(array_unique($identityNames));
+        if ($identityNames !== []) {
+            $name = count($identityNames) === 1 ? $identityNames[0] : null;
+        }
 
-        return ['status' => 'proposed', 'entity_id' => $entity->id, 'entity_type' => $entity->type,
+        return ['status' => 'proposed', 'entity_id' => $entity->id, 'entity_type' => $entityType,
             'entity_name' => is_string($name) && trim($name) !== '' ? mb_substr(trim($name), 0, 160) : null,
             'section' => $section, 'basis_fact_ids' => $binding['basis_fact_ids']];
     }

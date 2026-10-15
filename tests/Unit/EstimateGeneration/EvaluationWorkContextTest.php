@@ -86,6 +86,53 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertArrayNotHasKey('proposed_entity_context', $result['scenarios'][0]['positions'][0]);
     }
 
+    public function test_manual_name_is_read_from_the_confirmed_identity_fact(): void
+    {
+        [$draft, $snapshot] = $this->manualFixture('room', 'finish.floor', 'finishing');
+        $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+        self::assertSame('Кухня', $result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_name']);
+    }
+
+    public function test_semantic_roof_type_is_preserved_instead_of_its_storage_type(): void
+    {
+        [$draft, $snapshot] = $this->manualFixture('roof', 'roof_covering', 'roofing');
+        $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+        self::assertSame('roof', $result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_type']);
+    }
+
+    public function test_conflicting_identity_names_are_not_selected_arbitrarily(): void
+    {
+        [$draft, $snapshot] = $this->manualFixture('room', 'finish.floor', 'finishing');
+        $fact = $snapshot->facts[0];
+        $other = new Fact('fact:other-name', 1, 2, 3, $fact->sourceVersion, $fact->entityId, 'entity_identity',
+            [...$fact->value, 'name' => 'Спальня'], null, 0, 'user_input', 'confirmed', $fact->evidenceIds);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['composition_intent']['source_fact_ids'][] = $other->id;
+        $result = (new UniversalEvaluationBuilder)->build($draft,
+            new ProjectModelSnapshot($snapshot->entities, [$fact, $other], $snapshot->evidence, []));
+        self::assertNull($result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_name']);
+    }
+
+    private function manualFixture(string $type, string $work, string $section): array
+    {
+        [$draft, $snapshot] = $this->fixture();
+        $version = $snapshot->facts[0]->sourceVersion;
+        $entity = new Entity('manual:1', 1, 2, 3, $version, $type === 'room' ? 'room' : 'quantity', 'manual:1',
+            ['semantic_type' => $type, 'identity' => ['manual_key' => 'first']]);
+        $proof = new Evidence('evidence:manual', 1, 2, 3, $version, 'input:3', 'user_input', null, null,
+            'input_payload.manual_facts', 'user_input_normalizer');
+        $fact = new Fact('fact:manual', 1, 2, 3, $version, $entity->id, 'entity_identity',
+            ['answer_kind' => 'entity_identity', 'entity_id' => $entity->id, 'entity_type' => $type, 'name' => 'Кухня', 'identity_confirmed' => true],
+            null, 0, 'user_input', 'confirmed', [$proof->id]);
+        $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $item['key'] = $work;
+        $item['composition_intent']['source_fact_ids'] = [$fact->id];
+        $item['composition_intent']['candidate_id'] = 'work:'.hash('sha256', $section."\0finish\0".$work);
+        $draft['local_estimates'][0]['key'] = $section;
+        $draft['evaluation_policy']['selected_sections'] = [$section];
+
+        return [$draft, new ProjectModelSnapshot([$entity], [$fact], [$proof], [])];
+    }
+
     private function fixture(): array
     {
         $version = 'sha256:'.str_repeat('a', 64);

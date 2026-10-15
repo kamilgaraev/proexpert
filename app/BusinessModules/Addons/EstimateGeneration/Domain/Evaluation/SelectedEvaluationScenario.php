@@ -28,10 +28,15 @@ final readonly class SelectedEvaluationScenario
             throw new InvalidArgumentException('selected_scenario_quantities_prices_or_currency_unresolved');
         }
         $scenario = $selected['scenarios'][0];
+        $semanticScenario = $scenario;
+        foreach ($semanticScenario['positions'] as &$position) {
+            unset($position['proposed_entity_context']);
+        }
+        unset($position);
 
         return ['scenario_id' => $scenarioId, 'selected_scope' => $result['selected_scope'],
             'profile_version' => $result['profile_version'], 'scenario' => $scenario,
-            'scenario_hash' => hash('sha256', CanonicalPipelineJson::encode($scenario)),
+            'scenario_hash' => hash('sha256', CanonicalPipelineJson::encode($semanticScenario)),
             'total_by_currency' => $scenario['total_by_currency'],
             'assumptions' => $scenario['assumptions'], 'quantity_status_preserved' => true];
     }
