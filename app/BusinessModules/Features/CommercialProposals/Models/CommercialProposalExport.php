@@ -26,6 +26,7 @@ final class CommercialProposalExport extends CommercialProposalModel
 
     protected $casts = [
         'options' => 'array',
+        'amounts_visible' => 'boolean',
         'generated_at' => 'datetime',
     ];
 
