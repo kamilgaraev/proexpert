@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
+use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
 use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
 use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
@@ -18,6 +19,8 @@ use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
+use DomainException;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class PlanFactReportProjectScopePostgresTest extends TestCase
 {
@@ -88,6 +91,73 @@ final class PlanFactReportProjectScopePostgresTest extends TestCase
         self::assertSame([$fixture['firstTransactionId'], $fixture['secondTransactionId']], array_column($legacyDrill['items'], 'source_id'));
         self::assertSame([], $empty['rows']);
         self::assertSame([], $emptyDrill['items']);
+    }
+
+    public function test_portfolio_uses_an_explicit_non_default_budget_without_narrowing_the_project_scope(): void
+    {
+        $fixture = $this->fixture();
+        $fixture['scenario']->update(['is_default' => false]);
+        $filters = $this->portfolioFilters($fixture);
+
+        $report = (new PlanFactReportService(new PlanFactCalculator()))->report([
+            ...$filters->planFactInput(),
+            '_skip_data_mart_meta' => true,
+        ]);
+
+        $plans = array_column($report['rows'], 'plan_amount');
+        sort($plans);
+        self::assertSame([100.0, 200.0], $plans);
+        self::assertSame(300.0, array_sum($plans));
+        self::assertFalse($fixture['scenario']->fresh()->is_default);
+    }
+
+    #[DataProvider('invalidPortfolioSelections')]
+    public function test_portfolio_selection_keeps_organization_period_and_scenario_guards(string $case, string $messageKey): void
+    {
+        $fixture = $this->fixture();
+        $input = $this->portfolioFilters($fixture)->planFactInput();
+        if ($case === 'organization') {
+            $input['organization_id'] = Organization::factory()->create()->id;
+            unset($input['scenario_uuid']);
+        } elseif ($case === 'period') {
+            $input['period_start'] = '2026-02-01';
+            $input['period_end'] = '2026-02-28';
+        } else {
+            $scenario = BudgetScenario::query()->create([
+                'organization_id' => $fixture['organization']->id,
+                'code' => 'PF-OTHER-'.uniqid(),
+                'name' => 'Other scenario',
+                'scenario_type' => 'base',
+                'is_default' => false,
+                'is_active' => true,
+            ]);
+            $input['scenario_uuid'] = $scenario->uuid;
+        }
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(trans_message($messageKey));
+        (new PlanFactReportService(new PlanFactCalculator()))->report([...$input, '_skip_data_mart_meta' => true]);
+    }
+
+    public static function invalidPortfolioSelections(): array
+    {
+        return [
+            'foreign organization' => ['organization', 'budgeting.versions.not_found'],
+            'outside budget period' => ['period', 'budgeting.plan_fact.errors.version_period_mismatch'],
+            'different scenario' => ['scenario', 'budgeting.plan_fact.errors.scenario_mismatch'],
+        ];
+    }
+
+    private function portfolioFilters(array $fixture): ProjectPortfolioDashboardFilters
+    {
+        return new ProjectPortfolioDashboardFilters(
+            organizationId: $fixture['organization']->id,
+            periodStart: '2026-01-01',
+            periodEnd: '2026-01-31',
+            asOfDate: '2026-01-31',
+            budgetVersionUuid: $fixture['version']->uuid,
+            scenarioUuid: $fixture['scenario']->uuid,
+        );
     }
 
     private function fixture(): array

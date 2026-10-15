@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\Http\Requests\ProjectPortfolioDashboardRequest;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
@@ -66,6 +67,8 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
             'currency',
             'limit',
             'top_n',
+            'budget_version_uuid',
+            'scenario_uuid',
         ] as $filter) {
             $this->assertArrayHasKey($filter, $rules);
         }
@@ -89,6 +92,53 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
 
         $this->assertInstanceOf(ProjectPortfolioDashboardFilters::class, $filters);
         $this->assertSame(143, $filters->projectManagerId);
+    }
+
+    public function test_selected_budget_is_preserved_in_plan_fact_links_and_freshness_without_affecting_other_components(): void
+    {
+        $versionUuid = '11111111-1111-4111-8111-111111111111';
+        $scenarioUuid = '22222222-2222-4222-8222-222222222222';
+        $input = [
+            'organization_id' => 42,
+            'period_start' => '2026-06-01',
+            'period_end' => '2026-06-30',
+            'budget_version_uuid' => $versionUuid,
+            'scenario_uuid' => $scenarioUuid,
+        ];
+        $service = (new \ReflectionClass(ProjectPortfolioDashboardService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(ProjectPortfolioDashboardService::class, 'resolveFilters');
+        $method->setAccessible(true);
+        $filters = $method->invoke($service, $input);
+
+        $this->assertSame($versionUuid, $filters->planFactInput()['budget_version_uuid'] ?? null);
+        $this->assertSame($scenarioUuid, $filters->planFactInput()['scenario_uuid'] ?? null);
+        $this->assertArrayNotHasKey('project_id', $filters->planFactInput());
+        $this->assertArrayNotHasKey('budget_version_uuid', $filters->marginInput());
+        $this->assertArrayNotHasKey('scenario_uuid', $filters->wipForecastInput());
+
+        $payload = $this->builder()->build($filters, $this->projects(), $this->components(), '2026-06-09T10:00:00+03:00');
+        $this->assertSame($versionUuid, $payload['filters']['budget_version_uuid']);
+        $this->assertSame($scenarioUuid, $payload['filters']['scenario_uuid']);
+        foreach (['href', 'api_href'] as $link) {
+            parse_str((string) parse_url($payload['projects'][0]['drill_down']['plan_fact'][$link], PHP_URL_QUERY), $query);
+            $this->assertSame($versionUuid, $query['budget_version_uuid']);
+            $this->assertSame($scenarioUuid, $query['scenario_uuid']);
+            $this->assertSame('7', $query['project_id']);
+            $this->assertStringNotContainsString('budget_version_uuid', $payload['projects'][0]['drill_down']['margin'][$link]);
+            $this->assertStringNotContainsString('scenario_uuid', $payload['projects'][0]['drill_down']['cash_gap'][$link]);
+        }
+
+        $scope = EpmDataMartScope::fromInput(EpmDataMartScope::PROJECT_PORTFOLIO_DASHBOARD, $filters->toArray());
+        $this->assertSame($versionUuid, $scope->reportInput()['budget_version_uuid']);
+        $this->assertSame($scenarioUuid, $scope->reportInput()['scenario_uuid']);
+        $otherFilters = $method->invoke($service, [...$input, 'budget_version_uuid' => '33333333-3333-4333-8333-333333333333']);
+        $otherScope = EpmDataMartScope::fromInput(EpmDataMartScope::PROJECT_PORTFOLIO_DASHBOARD, $otherFilters->toArray());
+        $this->assertNotSame($scope->scopeHash(), $otherScope->scopeHash());
+
+        unset($input['budget_version_uuid'], $input['scenario_uuid']);
+        $defaultFilters = $method->invoke($service, $input);
+        $this->assertArrayNotHasKey('budget_version_uuid', $defaultFilters->planFactInput());
+        $this->assertArrayNotHasKey('scenario_uuid', $defaultFilters->planFactInput());
     }
 
     public function test_payload_contract_contains_portfolio_dashboard_shape(): void

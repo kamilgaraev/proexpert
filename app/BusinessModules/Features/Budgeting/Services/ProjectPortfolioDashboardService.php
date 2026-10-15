@@ -113,6 +113,8 @@ final class ProjectPortfolioDashboardService
             currency: $this->nullableCurrency($input['currency'] ?? null),
             limit: $limit,
             topN: $topN,
+            budgetVersionUuid: $this->nullableString($input['budget_version_uuid'] ?? null),
+            scenarioUuid: $this->nullableString($input['scenario_uuid'] ?? null),
         );
     }
 

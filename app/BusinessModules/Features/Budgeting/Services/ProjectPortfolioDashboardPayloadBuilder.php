@@ -644,10 +644,17 @@ final class ProjectPortfolioDashboardPayloadBuilder
             'currency' => $currency,
         ];
         $wipQuery = array_merge($query, ['as_of_date' => $filters->asOfDate]);
+        $planFactQuery = $query;
+        if ($filters->budgetVersionUuid !== null) {
+            $planFactQuery['budget_version_uuid'] = $filters->budgetVersionUuid;
+        }
+        if ($filters->scenarioUuid !== null) {
+            $planFactQuery['scenario_uuid'] = $filters->scenarioUuid;
+        }
 
         return [
             'margin' => $this->drill('/budgeting/project-margin', '/api/v1/admin/budgeting/project-margin', 'budgeting.project_margin', $query),
-            'plan_fact' => $this->drill('/budgeting/plan-fact', '/api/v1/admin/budgeting/plan-fact', 'budgeting.plan_fact', $query),
+            'plan_fact' => $this->drill('/budgeting/plan-fact', '/api/v1/admin/budgeting/plan-fact', 'budgeting.plan_fact', $planFactQuery),
             'wip_forecast' => $this->drill('/budgeting/wip-forecast', '/api/v1/admin/budgeting/wip-forecast', 'budgeting.wip_forecast', $wipQuery),
             'cash_gap' => $this->drill('/budgeting/cfo-command-center', '/api/v1/admin/budgeting/cfo-command-center', 'budgeting.cfo_command_center', $query),
         ];
