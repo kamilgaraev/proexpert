@@ -308,6 +308,39 @@ final class CrmDealConversionWorkflowTest extends TestCase
         $this->assertSame(1, Contract::query()->where('organization_id', $context->organization->id)->count());
     }
 
+    public function test_new_key_replay_keeps_original_sources_when_payload_selects_another_chain(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowModuleAccess();
+        $this->allowAdminAccess();
+        $this->allowContractorSharing();
+        $source = $this->createConversionSource($context);
+        $payload = $this->validatedPayload($context, $source, 'crm-source-original-key');
+        $url = "/api/v1/admin/crm/deals/{$source['deal_id']}/conversion/convert";
+        $first = $this->withHeaders($context->authHeaders())->postJson($url, $payload);
+        $first->assertCreated();
+        $otherTenderId = $this->createTender($context->organization->id, $this->createTenderSource($context->organization->id));
+        $other = [
+            'tender_id' => $otherTenderId,
+            'proposal_id' => $this->createCommercialProposal($context->organization->id, ['tender_id' => $otherTenderId]),
+        ];
+
+        $this->withHeaders($context->authHeaders())->postJson($url, array_merge($payload, [
+            'idempotency_key' => 'crm-source-another-key',
+            'tender_id' => $other['tender_id'],
+            'commercial_proposal_id' => $other['proposal_id'],
+        ]))->assertOk()->assertJsonPath('data.idempotent_replay', false)
+            ->assertJsonPath('data.source_links', $first->json('data.source_links'))
+            ->assertJsonPath('data.deal', $first->json('data.deal'))
+            ->assertJsonPath('data.project.id', $first->json('data.project.id'))
+            ->assertJsonPath('data.contract.id', $first->json('data.contract.id'));
+
+        $this->assertDatabaseHas('tenders', ['id' => $other['tender_id'], 'project_id' => null, 'contract_id' => null]);
+        $this->assertDatabaseHas('commercial_proposals', ['id' => $other['proposal_id'], 'project_id' => null, 'contract_id' => null]);
+        self::assertSame(1, Project::query()->where('organization_id', $context->organization->id)->count());
+        self::assertSame(1, Contract::query()->where('organization_id', $context->organization->id)->count());
+    }
+
     public function test_convert_rolls_back_project_and_links_when_contract_creation_fails(): void
     {
         $context = AdminApiTestContext::create();

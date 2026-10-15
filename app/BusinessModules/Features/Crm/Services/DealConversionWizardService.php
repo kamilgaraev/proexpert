@@ -1056,8 +1056,23 @@ final class DealConversionWizardService
         $project = $this->targetAccess->project($organizationId, $actor, $operation->project_id, 'crm.deals.link');
         $contract = $this->targetAccess->contract($organizationId, $actor, $operation->contract_id, 'crm.deals.link');
         $result = $this->buildConvertResult($operation->id, $context, $project, $contract, $operation->result_snapshot['warnings'] ?? []);
+        $snapshot = $operation->result_snapshot ?? [];
 
-        return array_merge($result, ['status' => 'already_converted', 'idempotent_replay' => $sameKey]);
+        return array_replace($snapshot, [
+            'status' => 'already_converted',
+            'idempotent_replay' => $sameKey,
+            'conversion_id' => $operation->id,
+            'project' => $result['project'],
+            'contract' => $result['contract'],
+            'deal' => array_replace($snapshot['deal'] ?? $result['deal'], [
+                'id' => $operation->crm_deal_id, 'project_id' => $project->id, 'contract_id' => $contract->id,
+            ]),
+            'source_links' => [
+                'tender_id' => $operation->tender_id,
+                'commercial_proposal_id' => $operation->commercial_proposal_id,
+            ],
+            'next_actions' => $result['next_actions'],
+        ]);
     }
 
     private function dealSummary(CrmDeal $deal): array
