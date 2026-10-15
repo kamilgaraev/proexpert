@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Models\UserAuthSession;
 use App\Services\Auth\WebAuthTokenService;
 use App\Services\User\UserService;
+use App\Services\User\AdminUserRolePolicy;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -307,6 +308,120 @@ final class LegacyAdminPanelSecurityRegressionTest extends TestCase
     public static function implicitAdminRoleStates(): array
     {
         return ['current' => [false], 'legacy' => [true]];
+    }
+
+    #[DataProvider('foreignMobileAccess')]
+    public function test_lk_manager_cannot_delegate_mobile_access_in_any_legacy_entry_point(bool $foreignMobile): void
+    {
+        [$context, $actorRole] = $this->lkManager();
+        $authorizationContext = AuthorizationContext::getOrganizationContext($context->organization->id);
+        $mobileRole = $this->customRole($context, 'mobile-role', ['organization.view']);
+        $mobileRole->update(['interface_access' => ['lk', 'mobile']]);
+        $memberRole = $this->customRole($context, 'lk-only-member', ['organization.view']);
+        $memberRole->update(['interface_access' => ['lk']]);
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        UserRoleAssignment::assignRole($member, $memberRole->slug, $authorizationContext, UserRoleAssignment::TYPE_CUSTOM);
+        if ($foreignMobile) {
+            $other = Organization::factory()->create();
+            $context->user->organizations()->attach($other->id, ['is_active' => true]);
+            UserRoleAssignment::assignRole($context->user, 'organization_owner', AuthorizationContext::getOrganizationContext($other->id));
+        }
+        Cache::flush();
+        self::assertFalse(app(AuthorizationService::class)->forCurrentChecks(true)
+            ->canAccessInterface($context->user, 'mobile', $authorizationContext));
+        $service = app(UserService::class);
+        $this->deny(fn () => $service->createAdminPanelUser([
+            'name' => 'Mobile grant', 'email' => 'forbidden-mobile@example.com', 'password' => 'Password123!',
+        ], $mobileRole->slug, $this->request($context)), 422);
+        $this->deny(fn () => $service->updateAdminPanelUser($member->id,
+            ['role_slugs' => [$mobileRole->slug]], $this->request($context)), 422);
+        $this->deny(fn () => $service->syncAdminPanelUserRoles(
+            $member, $context->organization->id, [$mobileRole->slug], $context->user,
+        ), 422);
+        $this->deny(fn () => $service->updateAdminPanelUser($context->user->id,
+            ['role_slugs' => [$actorRole->slug, $mobileRole->slug]], $this->request($context)), 422);
+        $this->assertDatabaseMissing('users', ['email' => 'forbidden-mobile@example.com']);
+        $this->assertDatabaseMissing('user_role_assignments', [
+            'context_id' => $authorizationContext->id, 'role_slug' => $mobileRole->slug,
+        ]);
+        $this->assertAssignment($member, $context, $memberRole->slug, true);
+
+        $actorRole->update(['interface_access' => ['lk', 'mobile']]);
+        $allowed = $service->createAdminPanelUser([
+            'name' => 'Allowed mobile', 'email' => 'allowed-mobile@example.com', 'password' => 'Password123!',
+        ], $mobileRole->slug, $this->request($context));
+        $this->assertAssignment($allowed, $context, $mobileRole->slug, true);
+    }
+
+    public static function foreignMobileAccess(): array
+    {
+        return ['no foreign role' => [false], 'mobile only in another organization' => [true]];
+    }
+
+    public function test_lk_manager_cannot_reset_a_mobile_users_password(): void
+    {
+        [$context] = $this->lkManager();
+        $role = $this->customRole($context, 'protected-mobile-user', ['organization.view']);
+        $role->update(['interface_access' => ['lk', 'mobile']]);
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        UserRoleAssignment::assignRole($member, $role->slug,
+            AuthorizationContext::getOrganizationContext($context->organization->id), UserRoleAssignment::TYPE_CUSTOM);
+        $password = $member->getRawOriginal('password');
+        $this->deny(fn () => app(UserService::class)->updateAdminPanelUser(
+            $member->id, ['password' => 'MobileTakeover123!'], $this->request($context),
+        ), 403);
+        self::assertSame($password, $member->fresh()->getRawOriginal('password'));
+    }
+
+    public function test_system_role_options_respect_the_managers_actual_interfaces(): void
+    {
+        [$context] = $this->lkManager(['users.roles']);
+        self::assertNotContains('foreman', app(AdminUserRolePolicy::class)
+            ->assignableRoleSlugsFor($context->user, $context->organization->id));
+        $this->deny(fn () => app(AdminUserRolePolicy::class)->assertCanAssign(
+            $context->user, $context->organization->id, 'foreman',
+        ), 422);
+    }
+
+    public function test_system_administrator_keeps_cross_interface_management_until_the_role_is_revoked(): void
+    {
+        [$context] = $this->lkManager();
+        $role = $this->customRole($context, 'mobile-root-revocation', ['organization.view']);
+        $role->update(['interface_access' => ['lk', 'mobile']]);
+        $member = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $member->organizations()->attach($context->organization->id, ['is_active' => true]);
+        UserRoleAssignment::assignRole($member, $role->slug,
+            AuthorizationContext::getOrganizationContext($context->organization->id), UserRoleAssignment::TYPE_CUSTOM);
+        $password = $member->getRawOriginal('password');
+        $assignment = UserRoleAssignment::assignRole($context->user, 'system_admin', AuthorizationContext::getSystemContext());
+        self::assertTrue($context->user->isSystemAdmin());
+        self::assertContains('supplier', app(AdminUserRolePolicy::class)
+            ->assignableRoleSlugsFor($context->user, $context->organization->id));
+
+        DB::table('user_role_assignments')->where('id', $assignment->id)->update(['is_active' => false]);
+        self::assertNotContains('supplier', app(AdminUserRolePolicy::class)
+            ->assignableRoleSlugsFor($context->user, $context->organization->id));
+        $this->deny(fn () => app(UserService::class)->updateAdminPanelUser(
+            $member->id, ['password' => 'RevokedRootPassword123!'], $this->request($context),
+        ), 403);
+        self::assertSame($password, $member->fresh()->getRawOriginal('password'));
+    }
+
+    private function lkManager(array $permissions = []): array
+    {
+        $context = $this->actor();
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->update(['is_active' => false]);
+        $role = $this->customRole($context, 'lk-manager-only', [
+            'organization.manage', 'users.manage_admin', 'organization.view', ...$permissions,
+        ]);
+        $role->update(['interface_access' => ['lk']]);
+        UserRoleAssignment::assignRole($context->user, $role->slug,
+            AuthorizationContext::getOrganizationContext($context->organization->id), UserRoleAssignment::TYPE_CUSTOM);
+        Cache::flush();
+
+        return [$context, $role];
     }
 
     private function actor(): AdminApiTestContext

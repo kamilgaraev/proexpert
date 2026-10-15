@@ -29,7 +29,7 @@ final class AdminUserRolePolicy
     {
         $managerRoleSlugs = $this->managerRoleSlugs($actor, $organizationId);
 
-        return $this->roleScanner->getAllRoles()
+        $roles = $this->roleScanner->getAllRoles()
             ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
             ->filter(
                 fn (array $role, string $roleSlug): bool => collect($managerRoleSlugs)
@@ -37,7 +37,16 @@ final class AdminUserRolePolicy
                         $managerRoleSlug,
                         $roleSlug
                     ))
-            )
+            );
+        $interfaces = $roles->keys()->flatMap(
+            fn (string $roleSlug): array => $this->roleScanner->getInterfaceAccess($roleSlug)
+        )->unique()->values()->all();
+        $actorInterfaces = $this->delegableInterfaces($actor, $organizationId, $interfaces);
+
+        return $roles
+            ->filter(fn (array $role, string $roleSlug): bool => array_diff(
+                $this->roleScanner->getInterfaceAccess($roleSlug), $actorInterfaces
+            ) === [])
             ->map(fn (array $role, string $roleSlug): array => [
                 'slug' => $roleSlug,
                 'name' => $this->rolePayloadFormatter->translatedRoleName($roleSlug, $role),
@@ -69,6 +78,11 @@ final class AdminUserRolePolicy
                 throw new BusinessLogicException(trans_message('user.role_assignment_forbidden'), 422);
             }
 
+            $interfaces = $role->interface_access ?? [];
+            if (array_diff($interfaces, $this->delegableInterfaces($actor, $organizationId, $interfaces)) !== []) {
+                throw new BusinessLogicException(trans_message('user.role_assignment_forbidden'), 422);
+            }
+
             $authorization = $this->authorizationService->forCurrentChecks(true);
             $resolver = app(PermissionResolver::class)->forCurrentChecks();
             foreach ($resolver->getCustomRolePermissions($roleSlug, $organizationId) as $permission) {
@@ -87,7 +101,7 @@ final class AdminUserRolePolicy
 
     public function assertCanManageUser(User $actor, User $target, int $organizationId, bool $changesGlobalIdentity = false): void
     {
-        if ((int) $actor->id === (int) $target->id || $actor->isSystemAdmin()) {
+        if ((int) $actor->id === (int) $target->id || $this->isSystemAdministrator($actor)) {
             return;
         }
 
@@ -122,6 +136,11 @@ final class AdminUserRolePolicy
 
             if ($assignment->role_type !== UserRoleAssignment::TYPE_CUSTOM || ! $assignment->customRole) {
                 continue;
+            }
+
+            $interfaces = $assignment->customRole->interface_access ?? [];
+            if (array_diff($interfaces, $this->delegableInterfaces($actor, $organizationId, $interfaces)) !== []) {
+                throw new BusinessLogicException(trans_message('user.user_management_forbidden'), 403);
             }
 
             foreach ($resolver->getCustomRolePermissions($assignment->role_slug, $organizationId) as $permission) {
@@ -170,10 +189,37 @@ final class AdminUserRolePolicy
             $roleSlugs[] = 'organization_admin';
         }
 
-        if ($actor->isSystemAdmin()) {
+        if ($this->isSystemAdministrator($actor)) {
             $roleSlugs[] = 'super_admin';
         }
 
         return array_values(array_unique(array_filter($roleSlugs, 'is_string')));
+    }
+
+    private function delegableInterfaces(User $actor, int $organizationId, array $interfaces): array
+    {
+        if ($this->isSystemAdministrator($actor)) {
+            return $interfaces;
+        }
+
+        $context = AuthorizationContext::findOrganizationContext($organizationId);
+        if (! $context) {
+            return [];
+        }
+        $authorization = $this->authorizationService->forCurrentChecks(true);
+
+        return collect($interfaces)->unique()->filter(
+            static fn ($interface): bool => is_string($interface)
+                && $authorization->canAccessInterface($actor, $interface, $context)
+        )->values()->all();
+    }
+
+    private function isSystemAdministrator(User $actor): bool
+    {
+        $authorization = $this->authorizationService->forCurrentChecks(true);
+        $context = AuthorizationContext::getSystemContext();
+
+        return $authorization->hasRole($actor, 'super_admin', $context->id)
+            || $authorization->hasRole($actor, 'system_admin', $context->id);
     }
 }
