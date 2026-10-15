@@ -33,6 +33,9 @@ final class BudgetImportService
         $version = $this->versionService->findVersion($user, $versionUuid);
         $this->lineService->assertEditable($version, BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT);
         $parsed = $this->fileReader->readUploaded($file);
+        if ($parsed['rows'] === []) {
+            throw new \DomainException(trans_message('budgeting.import.empty_rows'));
+        }
         $context = $this->validationContext($version, (string) ($input['mapping_mode'] ?? 'by_code'), $parsed['rows']);
         $preview = $this->validator->validate($parsed['rows'], $context);
 
@@ -95,6 +98,15 @@ final class BudgetImportService
             ->filter(fn (array $row): bool => $row !== [])
             ->values()
             ->all();
+
+        if ($rows === []) {
+            BudgetImportBatch::query()
+                ->whereKey($batch->id)
+                ->where('status', 'previewed')
+                ->update(['status' => 'preview_failed']);
+
+            throw new \DomainException(trans_message('budgeting.import.empty_rows'));
+        }
 
         DB::transaction(function () use ($version, $batch, $rows, $mode, $user): void {
             $this->lineService->writeNormalizedRows(
