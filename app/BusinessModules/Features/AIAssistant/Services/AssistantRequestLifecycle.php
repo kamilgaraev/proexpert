@@ -15,6 +15,7 @@ use App\Models\Credits\AICreditReservation;
 use App\Models\Credits\AICreditQuote;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Credits\AICreditCommercialService;
 use App\Services\Credits\AICreditService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -96,6 +97,8 @@ final class AssistantRequestLifecycle
             $payload = app(AssistantChatAttachmentService::class)->prepareRequest($payload, $actor, (int) $organization->id);
         }
         $requestHash = $this->credits->canonicalAssistantRequest($payload);
+        // Reconcile before taking organization/request/wallet locks: billing locks account, then wallet.
+        app(AICreditCommercialService::class)->reconcileCurrentPaidPeriod($organization);
         $phaseDurations = [];
         if ($authorizationDurationMs !== null) {
             $phaseDurations['authorization_conversation'] = $authorizationDurationMs;

@@ -308,6 +308,37 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(2, AICreditLot::query()->count());
     }
 
+    public function test_assistant_wallet_read_lazily_issues_each_month_of_an_annual_subscription_once(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($start);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        $order = $this->order('purchase', 43092000, [], $start, $end);
+        $order->forceFill(['commercial_account_id' => $account->id, 'billing_period' => '12_months'])->save();
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-assistant')->andReturn(true);
+        $this->app->instance(OrganizationEntitlementService::class, $entitlements);
+        $this->mock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)
+            ->shouldReceive('canUseAssistant')->with($this->user, $this->organization->id)->andReturn(true);
+        $request = \Illuminate\Http\Request::create('/api/v1/landing/ai-assistant/credits');
+        $request->setUserResolver(fn () => $this->user);
+        $this->mock(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->shouldReceive('canCurrent')->with($this->user, 'billing.manage', ['organization_id' => $this->organization->id])->andReturn(false);
+        $controller = new \App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController($this->credits);
+        $this->assertSame(500000, $controller->balance($request)->getData(true)['data']['included_minor']);
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $controller->balance($request);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+        $this->travelTo($start->addMonthsNoOverflow(2));
+        $controller->balance($request);
+        $controller->balance($request);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(3, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
     public function test_annual_subscription_issues_one_included_credit_grant_each_month(): void
     {
         $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');

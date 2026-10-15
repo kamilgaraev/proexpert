@@ -94,7 +94,16 @@ final class AssistantRequestLifecycleTest extends TestCase
         Schema::create('organization_user', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(false); $table->timestamps();
         });
-        Schema::create('commercial_orders', function (Blueprint $table): void { $table->id(); $table->string('kind')->default('purchase'); });
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->id(); $table->foreignId('organization_id'); $table->string('status'); $table->string('billing_period')->default('30_days');
+            $table->timestampTz('current_period_start_at')->nullable(); $table->timestampTz('current_period_end_at')->nullable(); $table->timestamps();
+        });
+        Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->id(); $table->uuid('public_id'); $table->foreignId('organization_id'); $table->foreignId('commercial_account_id');
+            $table->foreignId('user_id'); $table->string('kind')->default('purchase'); $table->string('status');
+            $table->string('billing_period')->default('30_days'); $table->bigInteger('amount_minor');
+            $table->timestampTz('period_start_at'); $table->timestampTz('period_end_at'); $table->timestamps();
+        });
         Schema::create('ai_conversations', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id')->constrained(); $table->foreignId('user_id')->constrained(); $table->string('title')->nullable(); $table->jsonb('context')->nullable(); $table->timestamp('last_activity_at')->nullable(); $table->unsignedInteger('context_version')->default(1); $table->timestamps();
         });
@@ -142,6 +151,27 @@ final class AssistantRequestLifecycleTest extends TestCase
             DB::connection($this->connectionName);
         }
         parent::tearDown();
+    }
+
+    public function test_first_assistant_request_in_next_paid_month_reconciles_included_credits_before_reservation(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-01-31 09:00:00', 'UTC');
+        $end = $start->addMonthsNoOverflow(12);
+        $this->travelTo($start);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        \App\Models\CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id, 'user_id' => $this->actor->id, 'kind' => 'purchase', 'status' => 'paid',
+            'billing_period' => '12_months', 'amount_minor' => 43092000, 'period_start_at' => $start, 'period_end_at' => $end]);
+        $this->app->make(OrganizationEntitlementService::class)->shouldReceive('hasModuleAccess')
+            ->with($this->organization->id, 'ai-assistant')->andReturn(true);
+        app(\App\Services\Credits\AICreditCommercialService::class)->reconcileCurrentPaidPeriod($this->organization);
+        $this->travelTo($start->addMonthsNoOverflow(1));
+        $started = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote());
+        $reservation = AICreditReservation::query()->findOrFail($started['request']->reservation_id);
+        $this->assertGreaterThan(0, $reservation->reserved_minor);
+        $this->assertSame(500000 - (int) $reservation->reserved_minor, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->where('idempotency_key', 'like', 'paid-period:%')->count());
     }
 
     public function test_completed_request_replays_same_response_and_charges_actual_calls_once(): void
@@ -1620,7 +1650,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'users', 'organizations'];
+        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
