@@ -256,6 +256,9 @@ final class MobilePaymentDocumentService
 
     private function hasPendingApprovalForUser(PaymentDocument $document, User $user, string $decisionPermission): bool
     {
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            return $this->approvals->canDecideCurrentApproval($document, $user, $decisionPermission);
+        }
         $canClaimPermissionApproval = $this->canAccessDocument($user, $document, $decisionPermission);
 
         return PaymentApproval::query()
@@ -440,7 +443,27 @@ final class MobilePaymentDocumentService
         }
         $isDraft = $document->status->value === 'draft';
         $data['can_edit'] = $isDraft && $user->can('payments.invoice.edit', $context);
-        $data['can_submit'] = $isDraft && $user->can('payments.invoice.issue', $context);
+        $primaryAction = $data['action_summary']['primary_action'] ?? null;
+        if (is_array($primaryAction)) {
+            $suffix = match ($primaryAction['key'] ?? null) {
+                'submit_payment_document' => 'submit',
+                'approve_payment_document' => 'approve',
+                'schedule_payment' => 'schedule',
+                'register_payment' => 'payments',
+                default => null,
+            };
+            if ($suffix !== null) {
+                $primaryAction['href'] = "/api/v1/mobile/payments/documents/{$document->id}/{$suffix}";
+                $data['action_summary']['primary_action'] = $primaryAction;
+                foreach ($data['action_summary']['blockers'] ?? [] as $index => $blocker) {
+                    if (($blocker['action']['key'] ?? null) === $primaryAction['key']) {
+                        $data['action_summary']['blockers'][$index]['action'] = $primaryAction;
+                    }
+                }
+            }
+        }
+        $data['can_submit'] = ($primaryAction['key'] ?? null) === 'submit_payment_document' && ($primaryAction['is_enabled'] ?? false) === true;
+        $data['can_schedule_payment'] = ($primaryAction['key'] ?? null) === 'schedule_payment' && ($primaryAction['is_enabled'] ?? false) === true;
         $data['can_register_payment'] = $document->canBePaid() && $user->can('payments.transaction.register', $context);
         $data['can_approve'] = $this->canAccessDocument($user, $document, 'payments.transaction.approve')
             && $this->hasPendingApprovalForUser($document, $user, 'payments.transaction.approve');
@@ -449,6 +472,7 @@ final class MobilePaymentDocumentService
         $data['capabilities'] = [
             'can_edit' => $data['can_edit'],
             'can_submit' => $data['can_submit'],
+            'can_schedule_payment' => $data['can_schedule_payment'],
             'can_register_payment' => $data['can_register_payment'],
             'can_approve' => $data['can_approve'],
             'can_reject' => $data['can_reject'],

@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Notifications;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Support\PaymentDocumentUrl;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -30,7 +31,7 @@ class PaymentApprovalRequiredNotification extends Notification implements Should
             ->line("Сумма: {$this->document->formatted_amount}")
             ->line("Получатель: {$this->document->getPayeeName()}")
             ->line("Назначение: {$this->document->payment_purpose}")
-            ->action('Перейти к утверждению', url("/admin/payments/documents/{$this->document->id}"))
+            ->action('Перейти к утверждению', PaymentDocumentUrl::forAdmin($this->document->id))
             ->line('Пожалуйста, рассмотрите документ в ближайшее время.');
     }
 
@@ -44,7 +45,7 @@ class PaymentApprovalRequiredNotification extends Notification implements Should
             'amount' => $this->document->amount,
             'currency' => $this->document->currency,
             'payee_name' => $this->document->getPayeeName(),
-            'url' => url("/admin/payments/documents/{$this->document->id}"),
+            'url' => PaymentDocumentUrl::forAdmin($this->document->id),
         ];
     }
 }

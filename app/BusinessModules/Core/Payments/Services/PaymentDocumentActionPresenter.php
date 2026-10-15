@@ -54,10 +54,18 @@ final class PaymentDocumentActionPresenter
             ? (float) $document->remaining_amount
             : max((float) $document->amount - (float) $document->paid_amount, 0.0);
         $primaryAction = null;
+        $blockerKey = 'permission_required';
 
         if ($definition !== null && $remainingAmount > 0.0001) {
             [$key, $href, $permission] = $definition;
-            $isEnabled = $user?->can($permission, ['organization_id' => (int) $document->organization_id]) ?? false;
+            $hasPermission = $user !== null && app(PaymentDocumentAccessService::class)
+                ->query((int) $document->organization_id, $user, $permission)->whereKey($document->id)->exists();
+            $waitingForApprovalLevel = $key === 'approve_payment_document' && $document->requiresActInvoiceFinancialApproval()
+                && $user !== null && ! app(ApprovalWorkflowService::class)->canDecideCurrentApproval($document, $user);
+            $isEnabled = $hasPermission && ! $waitingForApprovalLevel;
+            if ($hasPermission && $waitingForApprovalLevel) {
+                $blockerKey = 'approval_level_unavailable';
+            }
             $primaryAction = [
                 'key' => $key,
                 'label' => $needsFinancialRoute
@@ -69,7 +77,8 @@ final class PaymentDocumentActionPresenter
                 'permission' => $permission,
                 'is_enabled' => $isEnabled,
                 'disabled' => ! $isEnabled,
-                'disabled_reason' => $isEnabled ? null : trans_message('payments.blockers.permission_required'),
+                'disabled_reason' => $isEnabled ? null : trans_message($hasPermission && $waitingForApprovalLevel
+                    ? 'payments.validation.act_invoice_approval_level_unavailable' : 'payments.blockers.permission_required'),
                 'scope' => 'payment_document',
                 'priority' => 'primary',
             ];
@@ -80,8 +89,8 @@ final class PaymentDocumentActionPresenter
             'secondary_actions' => [],
             'menu_actions' => [],
             'blockers' => $primaryAction && ! $primaryAction['is_enabled'] ? [[
-                'key' => 'permission_required',
-                'message' => trans_message('payments.blockers.permission_required'),
+                'key' => $blockerKey,
+                'message' => $primaryAction['disabled_reason'],
                 'severity' => 'warning',
                 'entity_type' => 'payment_document',
                 'entity_id' => $document->id,
