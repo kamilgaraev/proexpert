@@ -647,6 +647,20 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.payment_status', 'canceled');
     }
 
+    public function test_removal_from_an_annual_subscription_preserves_the_paid_year(): void
+    {
+        $start = CarbonImmutable::parse('2026-10-15 12:00:00', 'UTC');
+        $this->travelTo($start->addDay());
+        $end = $start->addMonthsNoOverflow(12);
+        $account = $this->commercialAccount();
+        $account->forceFill(['billing_period' => '12_months', 'current_period_start_at' => $start, 'current_period_end_at' => $end, 'billing_anchor_at' => $end])->save();
+        $this->package($account, 'working-entry', $end);
+        $removed = $this->package($account, 'supply-warehouse', $end);
+        $this->authenticatedAs($this->owner)->postJson('/api/v1/landing/billing/commercial/contour/schedule', ['target_package_slugs' => ['working-entry'], 'full_suite' => false, 'quote_version' => 4, 'client_idempotency_key' => fake()->uuid()])->assertCreated()->assertJsonPath('data.apply_at', $end->toJSON());
+        $this->assertTrue($removed->fresh()->isActive());
+        $this->assertTrue($end->equalTo($removed->fresh()->current_period_end_at));
+    }
+
     public function test_removal_is_scheduled_idempotently_for_fixed_anchor_without_revoking_current_access(): void
     {
         CarbonImmutable::setTestNow('2026-07-14 12:00:00');

@@ -79,6 +79,7 @@ final class AICreditWalletTest extends TestCase
             $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->string('billing_period')->default('30_days');
             $table->id();
             $table->uuid('public_id');
             $table->foreignId('organization_id');
@@ -94,6 +95,7 @@ final class AICreditWalletTest extends TestCase
             $table->timestamps();
         });
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->string('billing_period')->default('30_days');
             $table->id();
             $table->foreignId('organization_id');
             $table->string('status');
@@ -304,6 +306,48 @@ final class AICreditWalletTest extends TestCase
         $this->credits->grant($this->organization, 1000, 'purchase', null, 'competing-pack');
         $this->assertSame(2000, $this->credits->balance($this->organization)['total_minor']);
         $this->assertSame(2, AICreditLot::query()->count());
+    }
+
+    public function test_annual_subscription_issues_one_included_credit_grant_each_month(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start);
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $order = $this->order('purchase', 43092000, [], $start, $start->addMonthsNoOverflow(12));
+        $order->forceFill(['billing_period' => '12_months'])->save();
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertTrue($start->addMonth()->equalTo(AICreditLot::query()->sole()->expires_at));
+        $this->travelTo($start->addMonth());
+        $commercial->settlePaidOrder($order);
+        $commercial->settlePaidOrder($order);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_prepaid_future_period_keeps_current_month_credit_reconciliation_available(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start->addDay());
+        $oldEnd = $start->addDays(30);
+        $newEnd = $oldEnd->addMonthsNoOverflow(6);
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id, 'status' => 'active', 'billing_period' => '6_months', 'current_period_start_at' => $oldEnd, 'current_period_end_at' => $newEnd]);
+        $old = $this->order('purchase', 3990000, [], $start, $oldEnd);
+        $old->forceFill(['commercial_account_id' => $account->id])->save();
+        $next = $this->order('purchase', 22743000, [], $oldEnd, $newEnd);
+        $next->forceFill(['commercial_account_id' => $account->id, 'billing_period' => '6_months'])->save();
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->travelTo($oldEnd);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'grant')->count());
     }
 
     public function test_paid_period_grants_once_and_paid_pack_refund_is_cumulative_and_idempotent(): void

@@ -620,6 +620,14 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame('12_months', CommercialOrder::query()->sole()->billing_period);
     }
 
+    public function test_pending_annual_order_conflicts_with_a_monthly_default_retry(): void
+    {
+        $key = fake()->uuid();
+        $this->checkoutPayload(['billing_period' => '12_months', 'client_idempotency_key' => $key]);
+        $this->expectException(CommercialCheckoutConflictException::class);
+        $this->checkoutPayload(['client_idempotency_key' => $key]);
+    }
+
     private function checkout(array $targets): array
     {
         return $this->checkoutPayload([

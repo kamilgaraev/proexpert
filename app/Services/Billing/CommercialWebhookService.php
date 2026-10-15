@@ -143,17 +143,27 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             $fullRefund = $refundedAmount >= $payment->amount_minor;
             if ($fullRefund) {
                 $order->forceFill(['status' => 'refunded'])->save();
-                OrganizationPackageSubscription::query()
+                $sourceRows = OrganizationPackageSubscription::query()
                     ->where('organization_id', $order->organization_id)
                     ->where('source_order_id', $order->id)
                     ->lockForUpdate()
-                    ->get()
-                    ->each(static fn (OrganizationPackageSubscription $row) => $row->forceFill([
+                    ->get();
+                $restored = false;
+                if ($order->renew_subscription) {
+                    $account = OrganizationCommercialAccount::query()
+                        ->whereKey($order->commercial_account_id)
+                        ->where('organization_id', $order->organization_id)
+                        ->lockForUpdate()->firstOrFail();
+                    $restored = app(CommercialPaidPeriodService::class)->restoreAfterRefund($order, $account, $sourceRows);
+                }
+                if (! $restored) {
+                    $sourceRows->each(static fn (OrganizationPackageSubscription $row) => $row->forceFill([
                         'status' => 'expired',
                         'current_period_end_at' => now(),
                         'cancel_at' => null,
                         'canceled_at' => now(),
                     ])->save());
+                }
             }
 
             $this->notify(

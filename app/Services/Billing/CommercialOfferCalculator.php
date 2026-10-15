@@ -56,10 +56,10 @@ class CommercialOfferCalculator
         );
 
         $periodTotal = $term->amountMinor($monthlyTotal);
+        if ($renewSubscription && (! $hasCurrentPeriod || $target !== $current || $target === [])) {
+            throw new InvalidArgumentException('Renewal requires an active unchanged paid package composition.');
+        }
         if ($hasCurrentPeriod && $renewSubscription) {
-            if ($target !== $current || $target === []) {
-                throw new InvalidArgumentException('Renewal requires the unchanged paid package composition.');
-            }
             $periodStart = $periodEnd;
             $periodEnd = $term->endAt($periodStart);
             $amountDueNow = $periodTotal;

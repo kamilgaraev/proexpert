@@ -47,6 +47,7 @@ class CommercialCheckoutService
                 ->first();
 
             $this->selfServiceGuard->assertCanMutate($account);
+            $input['billing_period'] = $input['billing_period'] ?? $account?->billing_period ?? '30_days';
             $useBalance = (bool) $input['use_balance'];
             if (! $useBalance) {
                 $this->providerPolicy->assertCanCharge((int) $organization->getKey());
@@ -97,7 +98,7 @@ class CommercialCheckoutService
                 calculatedAt: $calculatedAt,
                 currentPeriodStartAt: $account?->current_period_start_at,
                 currentPeriodEndAt: $account?->current_period_end_at,
-                billingPeriod: $input['billing_period'] ?? $account?->billing_period ?? '30_days',
+                billingPeriod: $input['billing_period'],
                 currentBillingPeriod: $account?->billing_period ?? '30_days',
                 renewSubscription: (bool) ($input['renew_subscription'] ?? false),
             );
@@ -298,7 +299,7 @@ class CommercialCheckoutService
             || ! $sameCurrent
             || ! $sameResources
             || ($order->offer_type->value === 'full_suite') !== $requestedFullSuite
-            || ($order->billing_period ?? '30_days') !== ($input['billing_period'] ?? $order->billing_period ?? '30_days')
+            || ($order->billing_period ?? '30_days') !== $input['billing_period']
             || (bool) $order->renew_subscription !== (bool) ($input['renew_subscription'] ?? false)
             || $order->quote_version !== (int) $input['quote_version']
             || $order->auto_renew_consent !== (bool) $input['auto_renew_consent']

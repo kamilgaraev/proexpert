@@ -285,6 +285,19 @@ class CommercialOfferCalculatorTest extends TestCase
         $this->assertSame('1800.00', $resourceQuote['amount']);
     }
 
+    public function test_renewal_of_a_free_organization_is_rejected_before_payment(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry'], billingPeriod: '12_months', renewSubscription: true);
+    }
+
+    public function test_renewal_of_an_expired_paid_period_is_rejected_before_payment(): void
+    {
+        $start = CarbonImmutable::parse('2026-01-01', 'UTC');
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(['working-entry'], ['working-entry'], calculatedAt: $start->addDays(31), currentPeriodStartAt: $start, currentPeriodEndAt: $start->addDays(30), billingPeriod: '12_months', renewSubscription: true);
+    }
+
     private function calculator(): CommercialOfferCalculator
     {
         return app(CommercialOfferCalculator::class);

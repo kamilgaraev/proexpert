@@ -225,6 +225,27 @@ final class CommercialRefundServiceTest extends TestCase
         }
     }
 
+    public function test_balance_refund_of_prepaid_renewal_preserves_the_previous_paid_period(): void
+    {
+        $start = \Carbon\CarbonImmutable::parse('2026-10-15 09:00:00', 'UTC');
+        $this->travelTo($start);
+        [$order] = $this->paidOrder('balance');
+        $oldEnd = $start->addDays(30);
+        $newEnd = $oldEnd->addMonthsNoOverflow(12);
+        $previous = $order->replicate();
+        $previous->forceFill(['public_id' => fake()->uuid(), 'client_idempotency_key' => fake()->uuid(), 'period_start_at' => $start, 'period_end_at' => $oldEnd])->save();
+        $order->forceFill(['billing_period' => '12_months', 'renew_subscription' => true, 'period_start_at' => $oldEnd, 'period_end_at' => $newEnd, 'paid_period_snapshot' => ['start_at' => $start->toJSON(), 'end_at' => $oldEnd->toJSON(), 'billing_period' => '30_days', 'package_order_ids' => ['machinery' => $previous->id]]])->save();
+        $account = new \App\Models\OrganizationCommercialAccount(['organization_id' => 42, 'status' => 'active', 'billing_period' => '12_months', 'current_period_start_at' => $oldEnd, 'current_period_end_at' => $newEnd]);
+        $account->forceFill(['id' => $order->commercial_account_id])->save();
+        DB::table('organization_package_subscriptions')->where('source_order_id', $order->id)->update(['package_slug' => 'machinery', 'current_period_start_at' => $oldEnd, 'current_period_end_at' => $newEnd]);
+        OrganizationBalance::query()->create(['organization_id' => 42, 'balance' => 0, 'currency' => 'RUB']);
+        app(CommercialRefundService::class)->create($order->public_id, 10000, 'RUB', 'Возврат предварительного продления', 'annual-balance-refund');
+        $this->assertSame('refunded', $order->fresh()->status->value);
+        $this->assertTrue($oldEnd->equalTo($account->fresh()->current_period_end_at));
+        $this->assertDatabaseHas('organization_package_subscriptions', ['source_order_id' => $previous->id, 'status' => 'active']);
+        $this->assertSame(10000, OrganizationBalance::query()->sole()->balance);
+    }
+
     private function paidOrder(string $provider = 'yookassa'): array
     {
         $order = CommercialOrder::query()->create([
@@ -272,6 +293,28 @@ final class CommercialRefundServiceTest extends TestCase
         foreach (['activity_events', 'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'users', 'notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
+        Schema::dropIfExists('organization_commercial_accounts');
+        Schema::create('organization_commercial_accounts', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('organization_id');
+            $t->string('status');
+            $t->string('billing_period')->default('30_days');
+            $t->timestamp('current_period_start_at');
+            $t->timestamp('current_period_end_at');
+            $t->timestamp('billing_anchor_at')->nullable();
+            $t->boolean('auto_renew_enabled')->default(false);
+            $t->boolean('saved_payment_method_active')->default(false);
+            $t->timestamps();
+        });
+        Schema::dropIfExists('commercial_contour_changes');
+        Schema::create('commercial_contour_changes', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('organization_id');
+            $t->foreignId('commercial_account_id');
+            $t->string('status');
+            $t->timestamp('apply_at');
+            $t->timestamps();
+        });
         Schema::create('users', function (Blueprint $table): void { $table->id(); $table->softDeletes(); });
         Schema::create('organizations', function (Blueprint $t): void {
             $t->id();
@@ -308,6 +351,9 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $t): void {
+            $t->string('billing_period')->default('30_days');
+            $t->boolean('renew_subscription')->default(false);
+            $t->jsonb('paid_period_snapshot')->nullable();
             $t->id();
             $t->uuid('public_id')->unique();
             $t->unsignedBigInteger('organization_id');
@@ -362,6 +408,8 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $t): void {
+            $t->string('package_slug')->nullable();
+            $t->timestamp('current_period_start_at')->nullable();
             $t->id();
             $t->unsignedBigInteger('source_order_id');
             $t->unsignedBigInteger('organization_id');
