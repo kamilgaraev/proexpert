@@ -363,7 +363,7 @@ class PermissionResolver
             $interfaceAccess = [];
 
             if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-                if ($this->readCache === null) {
+                if ($this->readCache === null || $this->roleScanner::class !== RoleScanner::class) {
                     $perms = $this->roleScanner->getSystemPermissions($assignment->role_slug);
                     $interfaceAccess = $this->roleScanner->getInterfaceAccess($assignment->role_slug);
                 } else {
@@ -400,7 +400,7 @@ class PermissionResolver
             }
 
             return $assignment->role_type === UserRoleAssignment::TYPE_SYSTEM
-                ? RolePermissionNormalizer::normalizeModulePermissions($this->readCache === null
+                ? RolePermissionNormalizer::normalizeModulePermissions($this->readCache === null || $this->roleScanner::class !== RoleScanner::class
                     ? $this->roleScanner->getModulePermissions($assignment->role_slug)
                     : ($this->systemRoleDefinition($assignment->role_slug, $roleRevision)['module_permissions'] ?? []))
                 : [];

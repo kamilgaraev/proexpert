@@ -124,36 +124,33 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
 
     public function testSystemRoleDefinitionIsSharedOnlyInsideOneReadScope(): void
     {
-        $reads = 0;
+        $catalog = $this->countingRoleCatalog();
         $definition = ['system_permissions' => ['reports.view'], 'interface_access' => ['admin'],
             'module_permissions' => ['ai_assistant' => ['chat']]];
-        $scanner = Mockery::mock(RoleScanner::class)->makePartial();
-        $scanner->shouldReceive('getRole')->with('unit-fence-role')->andReturnUsing(function () use (&$reads, &$definition): array {
-            $reads++;
-
-            return $definition;
-        });
+        $catalog->put('authorization_roles:v2', collect(['unit-fence-role' => $definition]));
+        $scanner = new RoleScanner;
         $resolver = new PermissionResolver($scanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)), Mockery::mock(LoggingService::class));
         $scope = $resolver->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()));
         self::assertSame(['reports.view', 'admin.access', 'admin.view', 'dashboard.view'], $scope->getSystemPermissions(self::assignment()));
         self::assertSame(['ai_assistant' => ['chat']], $scope->getModulePermissions(self::assignment()));
-        self::assertSame(1, $reads);
+        self::assertSame(1, $catalog->catalogReads);
 
         $definition = ['system_permissions' => [], 'interface_access' => [], 'module_permissions' => []];
-        $this->cache->put('authorization_roles_revision', 1);
+        $catalog->put('authorization_roles:v2', collect(['unit-fence-role' => $definition]));
+        $catalog->put('authorization_roles_revision', 1);
         $next = $scope->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()));
         self::assertSame([], $next->getSystemPermissions(self::assignment()));
         self::assertSame([], $next->getModulePermissions(self::assignment()));
-        self::assertSame(2, $reads);
+        self::assertSame(2, $catalog->catalogReads);
     }
 
     public function testSystemRoleDefinitionsKeepSlugsAndMissingRolesSeparate(): void
     {
-        $scanner = Mockery::mock(RoleScanner::class)->makePartial();
-        $scanner->shouldReceive('getRole')->once()->with('unit-fence-role')->andReturn([
+        $catalog = $this->countingRoleCatalog();
+        $catalog->put('authorization_roles:v2', collect(['unit-fence-role' => [
             'system_permissions' => ['reports.view'], 'interface_access' => [], 'module_permissions' => ['ai_assistant' => ['chat']],
-        ]);
-        $scanner->shouldReceive('getRole')->once()->with('missing')->andReturnNull();
+        ]]));
+        $scanner = new RoleScanner;
         $resolver = (new PermissionResolver($scanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)), Mockery::mock(LoggingService::class)))
             ->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()));
         $missing = self::assignment();
@@ -162,13 +159,44 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertSame(['ai_assistant' => ['chat']], $resolver->getModulePermissions(self::assignment()));
         self::assertSame([], $resolver->getSystemPermissions($missing));
         self::assertSame([], $resolver->getModulePermissions($missing));
+        self::assertSame(2, $catalog->catalogReads);
+    }
+
+    public function testReadScopePreservesInjectedRoleScannerHelpers(): void
+    {
+        $scanner = Mockery::mock(RoleScanner::class);
+        $scanner->shouldNotReceive('getRole');
+        $scanner->shouldReceive('getSystemPermissions')->once()->with('unit-fence-role')->andReturn(['reports.view']);
+        $scanner->shouldReceive('getInterfaceAccess')->once()->with('unit-fence-role')->andReturn(['admin']);
+        $scanner->shouldReceive('getModulePermissions')->once()->with('unit-fence-role')->andReturn(['ai_assistant' => ['chat']]);
+        $resolver = (new PermissionResolver($scanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)), Mockery::mock(LoggingService::class)))
+            ->forReadScope(new Repository(new ArrayStore()));
+        self::assertSame(['reports.view', 'admin.access', 'admin.view', 'dashboard.view'], $resolver->getSystemPermissions(self::assignment()));
+        self::assertSame(['ai_assistant' => ['chat']], $resolver->getModulePermissions(self::assignment()));
+    }
+
+    private function countingRoleCatalog(): Repository
+    {
+        $catalog = new class(new ArrayStore) extends Repository {
+            public int $catalogReads = 0;
+
+            public function get($key, $default = null): mixed
+            {
+                if ($key === 'authorization_roles:v2') { $this->catalogReads++; }
+
+                return parent::get($key, $default);
+            }
+        };
+        $this->application->instance('cache', $catalog);
+        \Illuminate\Support\Facades\Cache::swap($catalog);
+
+        return $catalog;
     }
 
     private function resolver(?ModulePermissionChecker $checker = null): PermissionResolver
     {
         $scanner = Mockery::mock(RoleScanner::class);
         $scanner->shouldReceive('getModulePermissions')->with('unit-fence-role')->andReturn(['ai_assistant' => ['chat']]);
-        $scanner->shouldReceive('getRole')->with('unit-fence-role')->andReturn(['module_permissions' => ['ai_assistant' => ['chat']]]);
         $logging = Mockery::mock(LoggingService::class);
         $logging->shouldReceive('technical')->andReturnNull();
 
