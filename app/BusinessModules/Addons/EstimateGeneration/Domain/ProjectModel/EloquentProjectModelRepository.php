@@ -151,6 +151,10 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             $inputFingerprint,
             $planningRunId,
         ): bool {
+            $session = $this->technologySessionForUpdate($decision);
+            if ($session === null) {
+                return false;
+            }
             $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
             $run = $this->database->table('estimate_generation_technology_planning_runs')
                 ->where('id', $planningRunId)
@@ -171,6 +175,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 return false;
             }
             $this->applyDecision($decision, $selectedFact);
+            $this->projectTechnologySelection($session, $decision, $selectedFact);
 
             return true;
         }, 3);
@@ -180,14 +185,51 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
         string $expectedDecisionId, string $inputFingerprint): bool
     {
         return $this->database->connection()->transaction(function () use ($decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint): bool {
+            $session = $this->technologySessionForUpdate($decision);
+            if ($session === null) {
+                return false;
+            }
             $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
             if (! (new TechnologyReselectionInvariant)->matches($this, $decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
                 return false;
             }
             $this->applyDecision($decision, $selectedFact);
+            $this->projectTechnologySelection($session, $decision, $selectedFact);
 
             return true;
         }, 3);
+    }
+
+    private function technologySessionForUpdate(Decision $decision): ?object
+    {
+        return $this->database->table('estimate_generation_sessions')
+            ->where('organization_id', $decision->organizationId)->where('project_id', $decision->projectId)
+            ->where('id', $decision->sessionId)->lockForUpdate()->first(['input_payload']);
+    }
+
+    private function projectTechnologySelection(object $session, Decision $decision, Fact $fact): void
+    {
+        if (! is_array($fact->value) || ! str_starts_with((string) ($fact->value['decision_key'] ?? ''), 'roof_covering_system.')
+            || ! in_array($fact->value['kind'] ?? null, ['catalog_system', 'other'], true)) {
+            return;
+        }
+        $payload = $this->decodedJson($session->input_payload) ?? [];
+        if (! is_array($payload)) {
+            throw new InvalidArgumentException('Technology selection session payload is invalid.');
+        }
+        if ($fact->value['kind'] === 'catalog_system') {
+            if (! is_string($fact->value['system_id'] ?? null) || $fact->value['system_id'] === '') {
+                throw new InvalidArgumentException('Technology selection system identity is invalid.');
+            }
+            $payload['technology_selections']['roofing'][$fact->entityId] = $fact->value['system_id'];
+        } else {
+            unset($payload['technology_selections']['roofing'][$fact->entityId]);
+        }
+        $payload['technology_selection_revision'] = ($payload['technology_selection_revision'] ?? 0) + 1;
+        unset($payload['confirmed_evaluation']);
+        $this->database->table('estimate_generation_sessions')
+            ->where('organization_id', $decision->organizationId)->where('project_id', $decision->projectId)
+            ->where('id', $decision->sessionId)->update(['input_payload' => $this->json($payload), 'updated_at' => now()]);
     }
 
     public function applyCompletenessExclusionDecision(

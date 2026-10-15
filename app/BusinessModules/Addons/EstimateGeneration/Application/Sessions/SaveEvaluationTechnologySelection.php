@@ -89,9 +89,7 @@ final readonly class SaveEvaluationTechnologySelection
             if ($decision === null || $decision->selectedFactId === null) {
                 throw ValidationException::withMessages(['technology' => trans_message('estimate_evaluation.technology_changed')]);
             }
-            $payload['technology_selections']['roofing'][$target->entityId] = $input['system_id'];
-            $payload['technology_selection_revision'] = ($payload['technology_selection_revision'] ?? 0) + 1;
-            unset($payload['confirmed_evaluation']);
+            $payload = $session->fresh()->input_payload;
             $result = ['operation_id' => $input['request_id'], 'state_version' => $session->state_version + 1, 'cost_units' => '0',
                 'fact_id' => $decision->selectedFactId, 'decision_id' => $decision->id, 'recalculation_required' => true,
                 'composition_refresh_required' => true, 'section' => 'roofing', 'entity_id' => $target->entityId, 'system_id' => $input['system_id']];
