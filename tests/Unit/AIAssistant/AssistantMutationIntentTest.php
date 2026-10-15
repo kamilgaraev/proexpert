@@ -23,7 +23,9 @@ final class AssistantMutationIntentTest extends TestCase
             self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
         }
         foreach (['Сделай сводку по проектам и поставь лимит 10000',
-            'Сделай сводку и сделай лимит подотчётных средств 10000'] as $query) {
+            'Сделай сводку и сделай лимит подотчётных средств 10000',
+            'Покажи настройки подотчётных средств и поставь новый лимит 10000',
+            'Покажи настройки и сделай нам новый максимальный лимит 10000'] as $query) {
             self::assertTrue(AssistantMutationIntent::containsRequest($query), $query);
         }
     }
