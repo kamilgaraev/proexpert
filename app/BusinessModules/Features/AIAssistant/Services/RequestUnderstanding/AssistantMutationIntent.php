@@ -59,7 +59,7 @@ final class AssistantMutationIntent
     {
         $normalized = self::normalize($message);
 
-        return preg_replace('/(?<![\pL\pN])(?:сделай|сделайте|сделать)\s+(?:(?:кратк|подробн|общ)[а-я]*\s+)?(?:сводк|обзор)[а-я]*(?![\pL\pN])/u', 'сводка', $normalized) ?? $normalized;
+        return preg_replace('/(?<![\pL\pN])(?:сделай|сделайте|сделать)\s+(?:(?:кратк|подробн|общ)[а-я]*\s+)?(?:сводк|обзор|список|подборк)[а-я]*(?![\pL\pN])/u', 'сводка', $normalized) ?? $normalized;
     }
 
     private static function normalize(string $message): string

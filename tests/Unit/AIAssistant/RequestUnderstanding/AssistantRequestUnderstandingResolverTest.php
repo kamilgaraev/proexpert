@@ -19,6 +19,9 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
 
         self::assertSame('summarize', $result->primaryIntent);
         self::assertSame('read_only', $result->actionPolicy);
+        foreach (['Сделай список договоров проекта', 'Сделай подборку просроченных задач'] as $query) {
+            self::assertSame('read_only', (new AssistantRequestUnderstandingResolver)->resolve($query)->actionPolicy);
+        }
     }
 
     public function test_mutation_commands_share_classification_with_project_read_guards(): void

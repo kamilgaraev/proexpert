@@ -12,7 +12,8 @@ final class AssistantMutationIntentTest extends TestCase
     public function test_make_summary_is_read_only_without_hiding_a_second_mutation(): void
     {
         foreach (['Сделай сводку по проектам', 'Пожалуйста, сделайте краткую сводку по проектам',
-            'Нужно сделать сводку по проектам', 'Сделай обзор по проектам'] as $query) {
+            'Нужно сделать сводку по проектам', 'Сделай обзор по проектам',
+            'Сделай список договоров проекта', 'Сделай подборку просроченных задач'] as $query) {
             self::assertNull(AssistantMutationIntent::type($query), $query);
             self::assertFalse(AssistantMutationIntent::containsRequest($query), $query);
         }

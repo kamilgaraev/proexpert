@@ -102,6 +102,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Какие договоры нашего объекта просрочили выполнение обязательств?',
             'Какие активные договоры нашего объекта просрочили выполнение обязательств?',
             'Покажи не активные договоры нашего объекта по дате окончания.',
+            'Продли срок окончания действующего договора нашего объекта',
+            'Перенеси срок окончания действующего договора нашего объекта',
             'Какие просроченные договоры нашего объекта и сколько по ним оплатить?'] as $mixed) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
