@@ -34,8 +34,11 @@ return [
     'required_with' => 'Заполните поле «:attribute».',
     'required_without' => 'Заполните поле «:attribute».',
     'string' => 'Поле «:attribute» должно быть строкой.',
+    'uuid' => 'Выберите корректное значение поля «:attribute».',
 
     'attributes' => [
+        'budget_version_uuid' => 'версия бюджета',
+        'scenario_uuid' => 'сценарий бюджета',
         'retention_policy' => 'правило хранения',
         'retention_basis' => 'основание хранения',
         'retention_started_at' => 'начало хранения',

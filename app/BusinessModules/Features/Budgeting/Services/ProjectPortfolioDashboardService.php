@@ -95,6 +95,11 @@ final class ProjectPortfolioDashboardService
 
         $asOfDate = CarbonImmutable::parse((string) ($input['as_of_date'] ?? $periodEnd))->toDateString();
         $projectManagerId = $this->nullableInt($input['project_manager_id'] ?? null);
+        $budgetVersionUuid = $this->nullableString($input['budget_version_uuid'] ?? null);
+        $scenarioUuid = $this->nullableString($input['scenario_uuid'] ?? null);
+        if (($budgetVersionUuid === null) !== ($scenarioUuid === null)) {
+            throw new InvalidArgumentException(trans_message('budgeting.project_portfolio_dashboard.errors.budget_selection_incomplete'));
+        }
 
         [$responsibilityCenterId, $responsibilityCenterUuid] = $this->resolveResponsibilityCenter($organizationId, $input['responsibility_center_id'] ?? null);
         $limit = max(1, min(100, (int) ($input['limit'] ?? $input['top_n'] ?? self::DEFAULT_LIMIT)));
@@ -113,6 +118,8 @@ final class ProjectPortfolioDashboardService
             currency: $this->nullableCurrency($input['currency'] ?? null),
             limit: $limit,
             topN: $topN,
+            budgetVersionUuid: $budgetVersionUuid,
+            scenarioUuid: $scenarioUuid,
         );
     }
 
@@ -194,6 +201,7 @@ final class ProjectPortfolioDashboardService
                 'generated_at' => $report['meta']['generated_at'] ?? null,
                 'source_rows_count' => count($report['rows'] ?? []),
             ],
+            rejectDomainErrors: $filters->budgetVersionUuid !== null,
         );
     }
 
@@ -237,8 +245,12 @@ final class ProjectPortfolioDashboardService
         return $input;
     }
 
-    private function reportComponent(string $component, callable $callback, callable $freshness): array
-    {
+    private function reportComponent(
+        string $component,
+        callable $callback,
+        callable $freshness,
+        bool $rejectDomainErrors = false,
+    ): array {
         try {
             $report = $callback();
 
@@ -248,6 +260,10 @@ final class ProjectPortfolioDashboardService
                 'freshness' => $freshness($report),
             ];
         } catch (DomainException|InvalidArgumentException $exception) {
+            if ($rejectDomainErrors) {
+                throw $exception;
+            }
+
             return $this->unavailableComponent($component, $exception->getMessage());
         } catch (Throwable $exception) {
             Log::error('budgeting.project_portfolio_dashboard.component_failed', [

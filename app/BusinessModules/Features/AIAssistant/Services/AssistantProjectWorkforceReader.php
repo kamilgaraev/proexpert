@@ -56,11 +56,14 @@ final readonly class AssistantProjectWorkforceReader
                     ->where('is_active', true)->get(['id', 'name'])->keyBy('id');
                 $employees = $this->access->entityQuery($actor, $organizationId, 'workforce_employee')?->whereKey(array_filter(array_column($entryRows, 'employee_id')))
                     ->get(['id', 'last_name', 'first_name', 'middle_name'])->keyBy('id');
-                $hours = BigDecimal::zero(); $workers = []; $valid = true;
+                $hours = BigDecimal::zero(); $statusHours = []; $workers = []; $valid = true;
                 foreach ($entryRows as &$row) {
                     $value = $row[$type === 'time_entry' ? 'hours_worked' : 'hours'];
                     if (! is_string($value) || preg_match('/^\d+(?:\.\d{1,2})?$/D', $value) !== 1) { $valid = false; break; }
                     $hours = $hours->plus($value);
+                    if ($type === 'time_entry') {
+                        $statusHours[$row['status']] = ($statusHours[$row['status']] ?? BigDecimal::zero())->plus($value);
+                    }
                     $name = trim((string) ($row['worker_name'] ?? '')) ?: (string) ($owners->get($row['user_id'] ?? null)?->name
                         ?? $employees?->get($row['employee_id'] ?? null)?->full_name ?? '');
                     $row['display_name'] = $name;
@@ -72,7 +75,9 @@ final readonly class AssistantProjectWorkforceReader
                 $names = array_keys($workers); sort($names, SORT_STRING);
                 $sections[$type] = ['available' => true, 'record_count' => count($rows), 'entry_count' => count($entryRows),
                     'unidentified_entries' => count(array_filter($entryRows, static fn (array $row): bool => $row['display_name'] === '')),
-                    'hours_total' => (string) $hours->toScale(2), 'by_status' => $byStatus, 'worker_names_count' => count($names), 'worker_names' => array_slice($names, 0, 20)];
+                    'hours_total' => (string) $hours->toScale(2), 'by_status' => $byStatus,
+                    'hours_by_status' => array_map(static fn (BigDecimal $value): string => (string) $value->toScale(2), $statusHours),
+                    'worker_names_count' => count($names), 'worker_names' => array_slice($names, 0, 20)];
                 $sourceRows[$type] = [$rows, $entryRows];
             }
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'period_start' => $from, 'period_end' => $to, 'sections' => $sections];
@@ -112,7 +117,12 @@ final readonly class AssistantProjectWorkforceReader
             $lines[] = trans_message('ai_assistant_decisions.workforce_names', ['shown' => count($section['worker_names']), 'total' => $section['worker_names_count'],
                 'names' => implode(', ', array_map(self::text(...), $section['worker_names'])) ?: '—']);
             if ($section['unidentified_entries'] > 0) { $lines[] = trans_message('ai_assistant_decisions.workforce_unidentified', ['count' => $section['unidentified_entries']]); }
-            if ($type === 'time_entry') { $lines[] = trans_message('ai_assistant_decisions.time_pending', ['count' => $section['by_status']['submitted'] ?? 0]); }
+            if ($type === 'time_entry') {
+                $lines[] = trans_message('ai_assistant_decisions.time_approved', ['count' => $section['by_status']['approved'] ?? 0,
+                    'hours' => $section['hours_by_status']['approved'] ?? '0.00']);
+                $lines[] = trans_message('ai_assistant_decisions.time_pending', ['count' => $section['by_status']['submitted'] ?? 0,
+                    'hours' => $section['hours_by_status']['submitted'] ?? '0.00']);
+            }
             else { $lines[] = trans_message('ai_assistant_decisions.labor_submitted', ['count' => $section['by_status']['submitted'] ?? 0]); }
         }
         $lines[] = trans_message('ai_assistant_decisions.workforce_basis');

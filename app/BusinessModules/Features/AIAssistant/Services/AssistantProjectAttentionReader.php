@@ -31,6 +31,7 @@ final readonly class AssistantProjectAttentionReader
             $groups = [];
             $coverage = [];
             foreach (self::definitions() as $kind => $definition) {
+                if ($kind === 'other_quality' && $focus !== 'quality') { continue; }
                 if ($focus !== 'all' && $definition['domain'] !== $focus && ! ($focus === 'procurement' && in_array($kind, ['open_deliveries', 'pending_site_requests'], true))) { continue; }
                 $query = $this->query($actor, $organizationId, $projectId, $kind, $definition);
                 $coverage[$kind] = ['available' => $query !== null, 'label' => trans_message('ai_assistant_attention.'.$kind)];
@@ -78,6 +79,7 @@ final readonly class AssistantProjectAttentionReader
             'critical_quality' => ['domain' => 'quality', 'type' => 'quality_defect', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'due_date', 'extra' => ['severity', 'due_date']],
             'overdue_schedule' => ['domain' => 'schedule', 'type' => 'schedule_task', 'title' => 'name', 'owner' => 'assigned_user_id', 'deadline' => 'planned_end_date', 'extra' => ['planned_end_date', 'progress_percent']],
             'overdue_quality' => ['domain' => 'quality', 'type' => 'quality_defect', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'due_date', 'extra' => ['severity', 'due_date']],
+            'other_quality' => ['domain' => 'quality', 'type' => 'quality_defect', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'due_date', 'extra' => ['severity', 'due_date']],
             'open_deliveries' => ['domain' => 'warehouse', 'type' => 'project_material_delivery', 'title' => 'name', 'owner' => 'responsible_user_id', 'deadline' => 'planned_delivery_date', 'extra' => ['material_id', 'planned_delivery_date']],
             'pending_site_requests' => ['domain' => 'site_requests', 'type' => 'site_request', 'title' => 'title', 'owner' => 'assigned_to', 'deadline' => 'required_date', 'extra' => ['required_date']],
             'pending_procurement' => ['domain' => 'procurement', 'type' => 'purchase_request', 'title' => 'request_number', 'owner' => 'assigned_to', 'deadline' => null, 'extra' => ['site_request_id']],
@@ -107,7 +109,11 @@ final readonly class AssistantProjectAttentionReader
         } else {
             $query->where($table.'.project_id', $projectId)->whereNotIn($table.'.status', ['resolved', 'cancelled']);
             if ($kind === 'critical_quality') { $query->where($table.'.severity', 'critical'); }
-            else { $query->where($table.'.severity', '!=', 'critical')->whereDate($table.'.due_date', '<', today()); }
+            elseif ($kind === 'overdue_quality') { $query->where($table.'.severity', '!=', 'critical')->whereDate($table.'.due_date', '<', today()); }
+            else {
+                $query->where($table.'.severity', '!=', 'critical')->where(static fn (Builder $query): Builder => $query
+                    ->whereNull($table.'.due_date')->orWhereDate($table.'.due_date', '>=', today()));
+            }
         }
         return $query;
     }
@@ -139,6 +145,9 @@ final readonly class AssistantProjectAttentionReader
         $lines = [trans_message('ai_assistant_attention.scope', ['project' => self::text($payload['project']['name']), 'date' => $payload['as_of_date']])];
         $checked = array_column(array_values(array_filter($payload['coverage'], static fn (array $entry): bool => $entry['available'])), 'label');
         if ($checked !== []) { $lines[] = trans_message('ai_assistant_attention.checked', ['sections' => implode(', ', $checked)]); }
+        if ($focus === 'quality' && array_filter($payload['coverage'], static fn (array $entry): bool => ! $entry['available']) === []) {
+            $lines[] = trans_message('ai_assistant_attention.quality_total', ['total' => array_sum(array_column($payload['coverage'], 'total'))]);
+        }
         $groups = $focus === 'all' ? array_slice($payload['groups'], 0, 3) : $payload['groups'];
         foreach ($groups as $index => $group) {
             $lines[] = "\n".($index + 1).'. **'.$group['title'].'** — '.$group['total'];

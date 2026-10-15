@@ -8,7 +8,7 @@ use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class AssistantProjectSiteRequestReader extends AssistantProjectOperationalReader
+readonly class AssistantProjectSiteRequestReader extends AssistantProjectOperationalReader
 {
     public const TYPE = 'live_project_site_request_queue_projection';
 
@@ -20,11 +20,13 @@ final readonly class AssistantProjectSiteRequestReader extends AssistantProjectO
     }
 
     protected function domain(): string { return 'site_requests'; }
+    protected function requestTypes(): ?array { return null; }
 
     protected function collect(User $actor, int $organizationId, int $projectId): array
     {
         $query = $this->projectQuery($actor, $organizationId, $projectId, 'site_request');
         if ($query === null) { throw new AuthorizationException; }
+        if ($this->requestTypes() !== null) { $query->whereIn('request_type', $this->requestTypes()); }
         $active = (clone $query)->whereNotIn('status', ['completed', 'cancelled', 'rejected']);
         $date = today()->toDateString();
         $overdue = (clone $active)->whereNotNull('required_date')->whereDate('required_date', '<', $date)->count();
@@ -44,6 +46,7 @@ final readonly class AssistantProjectSiteRequestReader extends AssistantProjectO
     {
         $lines = [trans_message('ai_assistant_operational.site_scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']]),
             trans_message('ai_assistant_operational.site_counts', ['active' => $data['active'], 'overdue' => $data['overdue'], 'unassigned' => $data['unassigned'], 'attention' => $data['attention']])];
+        if ($this->requestTypes() !== null) { array_splice($lines, 1, 0, [trans_message('ai_assistant_operational.site_material_scope')]); }
         foreach ($data['examples'] as $row) {
             $owner = $row['unassigned'] ? trans_message('ai_assistant_operational.owner_unknown') : ($row['owner'] ?? trans_message('ai_assistant_operational.not_recorded'));
             $lines[] = '- #'.$row['id'].' '.self::text($row['title']).'; '.trans_message('ai_assistant_operational.site_entry', [
