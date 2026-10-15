@@ -46,6 +46,9 @@ class PaymentDocumentService
         $budgetOverrideReason = $data['budget_override_reason'] ?? null;
         unset($data['budget_override_reason']);
         $requestedData = $data;
+        $createdBy = isset($data['created_by_user_id'])
+            ? User::find((int) $data['created_by_user_id'])
+            : null;
 
         $attempts = 0;
         $maxAttempts = 3;
@@ -68,6 +71,10 @@ class PaymentDocumentService
                         ->first();
 
                     if ($existingDocument instanceof PaymentDocument) {
+                        if ($existingDocument->requiresActInvoiceFinancialApproval()
+                            && $existingDocument->status === PaymentDocumentStatus::SUBMITTED) {
+                            $existingDocument = $this->submit($existingDocument, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
+                        }
                         DB::commit();
 
                         return $existingDocument;
@@ -99,9 +106,6 @@ class PaymentDocumentService
                 // Автоматически определяем и кэшируем получателя-организацию
                 $this->detectAndSetRecipientOrganization($document);
 
-                $createdBy = isset($data['created_by_user_id'])
-                    ? User::find((int) $data['created_by_user_id'])
-                    : null;
                 $this->budgetLimitService->assertAllowed(
                     $document,
                     PaymentBudgetLimitService::OPERATION_CREATE,
@@ -131,6 +135,10 @@ class PaymentDocumentService
                     event(new PaymentRequestReceived($document, $document->payee_contractor_id));
                 }
 
+                if ($document->requiresActInvoiceFinancialApproval()
+                    && $document->status === PaymentDocumentStatus::SUBMITTED) {
+                    $document = $this->submit($document, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
+                }
                 DB::commit();
 
                 return $document;
@@ -152,6 +160,11 @@ class PaymentDocumentService
                     if ($existingDocument instanceof PaymentDocument
                         && BigDecimal::of((string) $existingDocument->amount)
                             ->isEqualTo(BigDecimal::of((string) $data['amount']))) {
+                        if ($existingDocument->requiresActInvoiceFinancialApproval()
+                            && $existingDocument->status === PaymentDocumentStatus::SUBMITTED) {
+                            return $this->submit($existingDocument, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
+                        }
+
                         return $existingDocument;
                     }
 
@@ -267,12 +280,29 @@ class PaymentDocumentService
      */
     public function submit(PaymentDocument $document, ?User $user = null, ?string $overrideReason = null): PaymentDocument
     {
-        $effectiveOverrideReason = $overrideReason
-            ?? (is_string($document->budget_limit_override_reason) ? $document->budget_limit_override_reason : null);
-
         DB::beginTransaction();
 
         try {
+            $document = PaymentDocument::query()
+                ->where('organization_id', $document->organization_id)
+                ->lockForUpdate()
+                ->findOrFail($document->id);
+            if ($document->requiresActInvoiceFinancialApproval()
+                && in_array($document->status, [
+                    PaymentDocumentStatus::PENDING_APPROVAL,
+                    PaymentDocumentStatus::APPROVED,
+                    PaymentDocumentStatus::SCHEDULED,
+                    PaymentDocumentStatus::PARTIALLY_PAID,
+                    PaymentDocumentStatus::PAID,
+                ], true)
+                && $document->approvals()->exists()) {
+                DB::commit();
+
+                return $document;
+            }
+            $effectiveOverrideReason = $overrideReason
+                ?? (is_string($document->budget_limit_override_reason) ? $document->budget_limit_override_reason : null);
+
             // Финальная валидация перед отправкой
             $this->validator->validateBeforeSubmission($document);
             $this->budgetLimitService->assertAllowed(
@@ -329,6 +359,15 @@ class PaymentDocumentService
         ?int $approvedByUserId = null,
         ?string $budgetOverrideReason = null
     ): PaymentDocument {
+        if ($document->requiresActInvoiceFinancialApproval()) {
+            if ($approvedByUserId === null) {
+                throw new \DomainException(trans_message('payments.validation.act_invoice_financial_approval_required'));
+            }
+            $this->approvalWorkflow->approveByUser($document, $approvedByUserId, null, $budgetOverrideReason);
+
+            return $document->fresh();
+        }
+
         DB::beginTransaction();
 
         try {
@@ -381,30 +420,20 @@ class PaymentDocumentService
         ?User $user = null,
         ?string $overrideReason = null
     ): PaymentDocument {
-        $oldScheduledAt = $document->scheduled_at?->format('Y-m-d');
-
-        if (! in_array($document->status, [
-            PaymentDocumentStatus::APPROVED,
-            PaymentDocumentStatus::SCHEDULED,
-            PaymentDocumentStatus::PARTIALLY_PAID,
-        ], true)) {
-            throw new \DomainException(trans_message('payments.validation.schedule_only_approved'));
-        }
-
-        $scheduledCarbon = $scheduledAt !== null
-            ? \Illuminate\Support\Carbon::instance($scheduledAt)
-            : null;
-
-        $this->budgetLimitService->assertAllowed(
-            $document,
-            PaymentBudgetLimitService::OPERATION_SCHEDULE,
-            (string) $document->remaining_amount,
-            $user,
-            $overrideReason,
-            $scheduledCarbon
-        );
-
-        return DB::transaction(function () use ($document, $scheduledAt, $user, $overrideReason, $oldScheduledAt): PaymentDocument {
+        return DB::transaction(function () use ($document, $scheduledAt, $user, $overrideReason): PaymentDocument {
+            $document = PaymentDocument::query()->where('organization_id', $document->organization_id)
+                ->lockForUpdate()->findOrFail($document->id);
+            $oldScheduledAt = $document->scheduled_at?->format('Y-m-d');
+            if (! in_array($document->status, [
+                PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::SCHEDULED, PaymentDocumentStatus::PARTIALLY_PAID,
+            ], true)) {
+                throw new \DomainException(trans_message('payments.validation.schedule_only_approved'));
+            }
+            $scheduledCarbon = $scheduledAt !== null ? \Illuminate\Support\Carbon::instance($scheduledAt) : null;
+            $this->budgetLimitService->assertAllowed(
+                $document, PaymentBudgetLimitService::OPERATION_SCHEDULE, (string) $document->remaining_amount,
+                $user, $overrideReason, $scheduledCarbon
+            );
             $this->stateMachine->schedule($document, $scheduledAt);
             $freshDocument = $document->fresh();
             $this->budgetLimitService->syncReservation($freshDocument, $user, $overrideReason);
@@ -503,6 +532,9 @@ class PaymentDocumentService
                 }
             }
 
+            if ($document->requiresActInvoiceFinancialApproval() && $document->status === PaymentDocumentStatus::APPROVED) {
+                throw new \DomainException(trans_message('payments.validation.act_invoice_payment_planning_required'));
+            }
             if (! $document->canBePaid()) {
                 throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
             }

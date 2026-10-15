@@ -16,9 +16,11 @@ return [
         'currency' => 'валюта',
     ],
     'actions' => [
+        'submit_act_invoice_for_financial_approval' => 'На финансовое согласование',
         'submit_payment_document' => 'Передать на согласование',
         'approve_payment_document' => 'Согласовать оплату',
         'register_payment' => 'Зарегистрировать оплату',
+        'schedule_payment' => 'Запланировать оплату',
     ],
     'blockers' => [
         'payment_approval_required' => 'Оплата ожидает согласования.',
@@ -26,6 +28,10 @@ return [
         'permission_required' => 'Недостаточно прав для выполнения следующего шага.',
     ],
     'validation' => [
+        'approver_organization_mismatch' => 'Утверждающий должен быть участником организации, которой принадлежит платёжный документ.',
+        'act_invoice_financial_approval_required' => 'Сначала передайте счёт по акту на финансовое согласование и завершите все его этапы.',
+        'act_invoice_payment_planning_required' => 'Сначала запланируйте оплату счёта по акту, затем зарегистрируйте фактический платёж.',
+        'act_invoice_approval_route_missing' => 'Для счёта по акту не удалось создать маршрут финансового согласования. Проверьте правило согласования.',
         'errors_prefix' => 'Ошибки валидации: %s',
         'required_field' => 'Поле "%s" обязательно.',
         'request_required_field' => 'Поле "%s" обязательно для платежного требования.',

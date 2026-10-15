@@ -12,7 +12,15 @@ final class PaymentDocumentActionPresenter
 {
     public function present(PaymentDocument $document, ?User $user): array
     {
-        $definition = match ($document->status) {
+        $needsFinancialRoute = $document->requiresActInvoiceFinancialApproval()
+            && ((in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL], true)
+                    && ! $document->approvals()->exists())
+                || $document->canRecoverActInvoiceFinancialApproval());
+        $definition = $needsFinancialRoute ? [
+            'submit_payment_document',
+            "/api/v1/admin/payments/documents/{$document->id}/submit",
+            'payments.invoice.issue',
+        ] : match ($document->status) {
             PaymentDocumentStatus::DRAFT => [
                 'submit_payment_document',
                 "/api/v1/admin/payments/documents/{$document->id}/submit",
@@ -24,7 +32,15 @@ final class PaymentDocumentActionPresenter
                 "/api/v1/admin/payments/approvals/documents/{$document->id}/approve",
                 'payments.transaction.approve',
             ],
-            PaymentDocumentStatus::APPROVED,
+            PaymentDocumentStatus::APPROVED => $document->requiresActInvoiceFinancialApproval() ? [
+                'schedule_payment',
+                "/api/v1/admin/payments/documents/{$document->id}/schedule",
+                'payments.schedule.create',
+            ] : [
+                'register_payment',
+                "/api/v1/admin/payments/documents/{$document->id}/register-payment",
+                'payments.transaction.register',
+            ],
             PaymentDocumentStatus::SCHEDULED,
             PaymentDocumentStatus::PARTIALLY_PAID => [
                 'register_payment',
@@ -44,7 +60,9 @@ final class PaymentDocumentActionPresenter
             $isEnabled = $user?->can($permission, ['organization_id' => (int) $document->organization_id]) ?? false;
             $primaryAction = [
                 'key' => $key,
-                'label' => trans_message("payments.actions.{$key}"),
+                'label' => $needsFinancialRoute
+                    ? trans_message('payments.actions.submit_act_invoice_for_financial_approval')
+                    : trans_message("payments.actions.{$key}"),
                 'href' => $href,
                 'method' => 'POST',
                 'required_permission' => $permission,

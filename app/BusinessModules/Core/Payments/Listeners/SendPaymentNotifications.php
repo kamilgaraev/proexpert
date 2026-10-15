@@ -4,7 +4,8 @@ namespace App\BusinessModules\Core\Payments\Listeners;
 
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentApproved;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentRejected;
-use App\BusinessModules\Core\Payments\Events\PaymentDocumentSubmitted;
+use App\BusinessModules\Core\Payments\Events\PaymentApprovalRequested;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovalRequiredNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovedNotification;
@@ -25,8 +26,8 @@ class SendPaymentNotifications
     public function subscribe(Dispatcher $events): void
     {
         $events->listen(
-            PaymentDocumentSubmitted::class,
-            [self::class, 'handleDocumentSubmitted']
+            PaymentApprovalRequested::class,
+            [self::class, 'handleApprovalRequested']
         );
 
         $events->listen(
@@ -48,32 +49,39 @@ class SendPaymentNotifications
     /**
      * Обработка отправки документа на утверждение
      */
-    public function handleDocumentSubmitted(PaymentDocumentSubmitted $event): void
+    public function handleApprovalRequested(PaymentApprovalRequested $event): void
     {
         try {
-            $document = $event->document;
+            $document = $event->document->fresh();
+            if (! $document || $document->status !== PaymentDocumentStatus::PENDING_APPROVAL) {
+                return;
+            }
 
-            // Находим утверждающих первого уровня
             $approvals = $document->approvals()
-                ->where('approval_level', 1)
+                ->where('organization_id', $document->organization_id)
+                ->where('approval_level', $event->level)
                 ->where('status', 'pending')
+                ->whereNull('notified_at')
                 ->get();
             $notifiedUserIds = [];
 
             foreach ($approvals as $approval) {
                 if ($approval->approver_user_id) {
                     $user = User::find($approval->approver_user_id);
-                    if ($user) {
-                        $user->notify(new PaymentApprovalRequiredNotification($document));
+                    if ($user && $user->organizations()->whereKey($document->organization_id)->exists()) {
+                        if (! in_array($user->id, $notifiedUserIds, true)) {
+                            $user->notify(new PaymentApprovalRequiredNotification($document));
+                            $notifiedUserIds[] = $user->id;
+                        }
                         $approval->markAsNotified();
-                        $notifiedUserIds[] = $user->id;
                     }
 
                     continue;
                 }
 
                 if ($approval->approval_permission) {
-                    foreach ($this->usersWithAnyPermission((int) $document->organization_id, [$approval->approval_permission]) as $user) {
+                    $recipients = $this->usersWithAnyPermission((int) $document->organization_id, [$approval->approval_permission]);
+                    foreach ($recipients as $user) {
                         if (in_array($user->id, $notifiedUserIds, true)) {
                             continue;
                         }
@@ -82,7 +90,9 @@ class SendPaymentNotifications
                         $notifiedUserIds[] = $user->id;
                     }
 
-                    $approval->markAsNotified();
+                    if ($recipients->isNotEmpty()) {
+                        $approval->markAsNotified();
+                    }
                 }
             }
 

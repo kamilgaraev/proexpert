@@ -84,6 +84,10 @@ final class PaymentDocumentPresenter
         }
 
         $contractId = null;
+        if ($document->requiresActInvoiceFinancialApproval()
+            && ! $document->approvals()->where('status', 'pending')->exists()) {
+            $canApprove = false;
+        }
         if ($document->invoiceable_type === 'App\\Models\\Contract' && $document->invoiceable_id) {
             $contractId = $document->invoiceable_id;
         }

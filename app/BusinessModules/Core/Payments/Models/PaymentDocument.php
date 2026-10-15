@@ -586,7 +586,8 @@ class PaymentDocument extends Model
      */
     public function canBePaid(): bool
     {
-        return $this->status->canBePaid() && $this->remaining_amount > 0;
+        return ! ($this->requiresActInvoiceFinancialApproval() && $this->status === PaymentDocumentStatus::APPROVED)
+            && $this->status->canBePaid() && $this->remaining_amount > 0;
     }
 
     /**
@@ -610,7 +611,29 @@ class PaymentDocument extends Model
      */
     public function requiresApproval(): bool
     {
-        return $this->document_type->requiresApproval();
+        return $this->requiresActInvoiceFinancialApproval() || $this->document_type->requiresApproval();
+    }
+
+    public function requiresActInvoiceFinancialApproval(): bool
+    {
+        return $this->document_type === PaymentDocumentType::INVOICE
+            && $this->invoice_type === InvoiceType::ACT
+            && $this->direction === InvoiceDirection::OUTGOING;
+    }
+
+    public function hasCompletedFinancialApproval(): bool
+    {
+        return $this->approvals()->exists()
+            && ! $this->approvals()->where('status', '!=', 'approved')->exists();
+    }
+
+    public function canRecoverActInvoiceFinancialApproval(): bool
+    {
+        return $this->requiresActInvoiceFinancialApproval()
+            && $this->status === PaymentDocumentStatus::APPROVED
+            && (float) $this->paid_amount <= 0
+            && ! $this->approvals()->exists()
+            && ! $this->transactions()->exists();
     }
 
     /**

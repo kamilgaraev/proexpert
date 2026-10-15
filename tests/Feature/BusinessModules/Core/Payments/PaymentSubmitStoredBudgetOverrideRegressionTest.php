@@ -25,15 +25,25 @@ use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\BudgetingTestEntitlements;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 final class PaymentSubmitStoredBudgetOverrideRegressionTest extends TestCase
 {
     use RefreshDatabase;
+    use EnablesImmutableAuditWriter;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->enableImmutableAuditWriter();
+    }
 
     public function test_submit_preserves_budget_override_context_during_approval_initialization(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        BudgetingTestEntitlements::activate($context);
         $this->activateModule($context->organization->id, 'payments', [
             'payments.invoice.issue',
             'payments.invoice.edit',
