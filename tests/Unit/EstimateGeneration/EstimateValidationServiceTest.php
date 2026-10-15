@@ -338,6 +338,7 @@ final class EstimateValidationServiceTest extends TestCase
     public function test_duplicate_priced_work_items_require_manual_review(): void
     {
         $workItem = [
+            'metadata' => ['scope_entity_id' => 'entity:foundation', 'composition_work_key' => 'foundation.concrete'],
             'item_type' => 'priced_work',
             'name' => 'Concrete works',
             'normative_search_text' => 'concrete works',
@@ -377,6 +378,7 @@ final class EstimateValidationServiceTest extends TestCase
     public function test_duplicate_priced_work_items_from_different_sources_require_manual_review(): void
     {
         $workItem = [
+            'metadata' => ['scope_entity_id' => 'entity:room', 'composition_work_key' => 'finish.paint'],
             'item_type' => 'priced_work',
             'name' => 'Окраска стен',
             'normative_search_text' => 'окраска стен водно-дисперсионной краской',
@@ -449,12 +451,14 @@ final class EstimateValidationServiceTest extends TestCase
                 'name' => 'Пароизоляция скатной кровли',
                 'quantity_formula' => 'roof.vapor_barrier',
                 ...$workItem,
+                'metadata' => ['scope_entity_id' => 'entity:roof', 'composition_work_key' => 'roof.vapor_barrier'],
             ],
             [
                 'key' => 'roof-diffusion-membrane',
                 'name' => 'Укладка подкровельной диффузионной мембраны',
                 'quantity_formula' => 'roof.membrane',
                 ...$workItem,
+                'metadata' => ['scope_entity_id' => 'entity:roof', 'composition_work_key' => 'roof.membrane'],
             ],
         ]));
 

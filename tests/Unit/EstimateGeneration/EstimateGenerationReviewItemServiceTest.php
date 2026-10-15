@@ -447,7 +447,8 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertTrue($group['can_resolve']);
         $works[1]['metadata']['scope_entity_id'] = 'entity:102';
         $result = $this->service()->forSession(new EstimateGenerationSession(['draft_payload' => $this->draft($works)]), ['search' => 'work-1']);
-        self::assertFalse($result['items'][0]['duplicate_group']['can_resolve']);
+        self::assertNull($result['items'][0]['duplicate_group']);
+        self::assertFalse(\App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemPhysicalIdentity::canResolveGroup([$works[0], $works[1]]));
     }
 
     public function test_large_duplicate_groups_are_bounded_and_group_deletion_is_unavailable(): void

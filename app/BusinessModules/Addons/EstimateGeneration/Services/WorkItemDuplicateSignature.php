@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use Brick\Math\BigDecimal;
+
 final readonly class WorkItemDuplicateSignature
 {
     private function __construct(public string $value) {}
@@ -13,49 +16,44 @@ final readonly class WorkItemDuplicateSignature
     {
         $name = self::normalize((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
         $unit = self::normalize((string) ($workItem['unit'] ?? ''));
-        $quantity = round((float) ($workItem['quantity'] ?? 0), 4);
+        $quantity = self::quantity($workItem['quantity'] ?? null);
+        $physicalIdentity = WorkItemPhysicalIdentity::fromWorkItem($workItem);
 
-        if ($name === '' || $unit === '' || $quantity <= 0) {
+        if ($name === '' || $unit === '' || $quantity === null || $physicalIdentity === null) {
             return null;
         }
 
-        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
         $normativeIdentity = self::normalize((string) (
             $workItem['normative_rate_code']
             ?? $workItem['normative_search_key']
             ?? ''
         ));
-        $technologicalIdentity = self::firstNormalizedIdentity([
-            $metadata['material_scenario_work_key'] ?? null,
-            $metadata['composition_work_key'] ?? null,
-            $metadata['quantity_key'] ?? null,
-            $workItem['quantity_formula'] ?? null,
-        ]);
 
-        return new self(hash('sha256', implode('|', [
+        return new self(hash('sha256', CanonicalPipelineJson::encode([
             $name,
             $unit,
-            (string) $quantity,
+            $quantity,
             $normativeIdentity,
-            $technologicalIdentity,
+            $physicalIdentity,
         ])));
     }
 
-    /** @param list<mixed> $values */
-    private static function firstNormalizedIdentity(array $values): string
+    private static function quantity(mixed $value): ?string
     {
-        foreach ($values as $value) {
-            if (! is_scalar($value) && $value !== null) {
-                continue;
-            }
-
-            $identity = self::normalize((string) $value);
-            if ($identity !== '') {
-                return $identity;
-            }
+        if ((! is_string($value) && ! is_int($value) && ! is_float($value))
+            || (is_float($value) && ! is_finite($value)) || strlen((string) $value) > 128
+            || (is_string($value) && preg_match('/^\+?(?:\d+(?:\.\d*)?|\.\d+)$/D', $value) !== 1)) {
+            return null;
         }
 
-        return '';
+        try {
+            $decimal = is_float($value) ? json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR) : (string) $value;
+            $quantity = BigDecimal::of($decimal);
+
+            return $quantity->isPositive() ? (string) $quantity->strippedOfTrailingZeros() : null;
+        } catch (\Brick\Math\Exception\MathException) {
+            return null;
+        }
     }
 
     private static function normalize(string $value): string

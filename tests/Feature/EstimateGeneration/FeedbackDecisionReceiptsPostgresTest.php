@@ -173,6 +173,44 @@ final class FeedbackDecisionReceiptsPostgresTest extends EstimateGenerationCanon
         self::assertSame(1, EstimateGenerationFeedback::query()->where('session_id', $session->id)->count());
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('differentPhysicalIdentities')]
+    public function test_similar_rows_from_different_or_conflicting_physical_identities_are_not_grouped_or_removed(array $metadata): void
+    {
+        [$rights, $session, $input] = $this->fixture(true);
+        $draft = $session->draft_payload;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][1]['metadata'] = [
+            ...$draft['local_estimates'][0]['sections'][0]['work_items'][1]['metadata'], ...$metadata,
+        ];
+        $draft = app(UniversalReviewSummaryProjector::class)->project($draft);
+        $session->forceFill(['draft_payload' => $draft])->save();
+        $queue = app(EstimateGenerationReviewItemService::class)->forSession($session, ['per_page' => 1, 'search' => 'work-2']);
+        self::assertCount(1, $queue['items']);
+        self::assertNull($queue['items'][0]['duplicate_group']);
+        $before = $session->fresh()->getRawOriginal();
+        foreach (['keep_item', 'merge_with_existing'] as $action) {
+            $input['payload'] = ['action' => $action, 'target_work_item_key' => 'work-1'];
+            try {
+                $this->record($rights->member, $session, $input);
+                self::fail('A similar row with another physical identity was removed: '.$action);
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('work_item_key', $exception->errors());
+            }
+            self::assertSame($before, $session->fresh()->getRawOriginal());
+            self::assertSame(0, EstimateGenerationFeedback::query()->where('session_id', $session->id)->count());
+        }
+        self::assertSame(['work-1', 'work-2'], array_column($session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'], 'key'));
+    }
+
+    public static function differentPhysicalIdentities(): array
+    {
+        return [
+            'entity' => [['scope_entity_id' => 'entity:102']],
+            'technology package' => [['technology_package_id' => 'package:other']],
+            'technology formula' => [['technology_formula_id' => 'formula:other']],
+            'conflicting work keys' => [['material_scenario_work_key' => 'foundation.reinforcement']],
+        ];
+    }
+
     public function test_two_different_feedback_receipts_preserve_actual_package_input_version(): void
     {
         [$rights, $session, $input] = $this->fixture(false, 3);

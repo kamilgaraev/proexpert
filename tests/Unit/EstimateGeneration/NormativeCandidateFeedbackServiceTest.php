@@ -16,7 +16,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     public function test_group_resolution_requires_the_same_explicit_entity_and_technological_work(): void
     {
         foreach (['keep_item', 'merge_with_existing'] as $action) {
-            foreach (['different_entity', 'missing_entity', 'missing_work_identity', 'quantity_only', 'different_technology', 'invalid_technology'] as $variant) {
+            foreach (['different_entity', 'missing_entity', 'missing_work_identity', 'quantity_only', 'different_technology', 'different_formula', 'conflicting_work_keys', 'invalid_technology'] as $variant) {
                 $item = ['item_type' => 'priced_work', 'name' => 'Окраска стен', 'unit' => 'm2', 'quantity' => 20,
                     'normative_search_key' => 'finish.paint', 'validation_flags' => ['requires_duplicate_review'],
                     'metadata' => ['scope_entity_id' => 'entity:room-a', 'composition_work_key' => 'finish.paint']];
@@ -30,6 +30,11 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
                     $other['metadata']['technology_package_id'] = 'technology:b';
                 } elseif ($variant === 'invalid_technology') {
                     $item['metadata']['technology_package_id'] = $other['metadata']['technology_package_id'] = ['not' => 'a package'];
+                } elseif ($variant === 'different_formula') {
+                    $item['metadata']['technology_formula_id'] = 'formula:a';
+                    $other['metadata']['technology_formula_id'] = 'formula:b';
+                } elseif ($variant === 'conflicting_work_keys') {
+                    $item['metadata']['material_scenario_work_key'] = $other['metadata']['material_scenario_work_key'] = 'finish.primer';
                 } else {
                     unset($item['metadata']['composition_work_key'], $other['metadata']['composition_work_key']);
                     if ($variant === 'quantity_only') {
@@ -344,6 +349,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     public function test_removes_duplicate_work_item_from_draft(): void
     {
         $duplicateWorkItem = [
+            'metadata' => ['scope_entity_id' => 'entity:foundation', 'composition_work_key' => 'foundation.concrete'],
             'item_type' => 'priced_work',
             'name' => 'Concrete works',
             'normative_search_text' => 'concrete works',
@@ -386,6 +392,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     public function test_duplicate_resolution_preserves_other_duplicate_groups(): void
     {
         $concreteWorkItem = [
+            'metadata' => ['scope_entity_id' => 'entity:foundation', 'composition_work_key' => 'foundation.concrete'],
             'item_type' => 'priced_work',
             'name' => 'Concrete works',
             'normative_search_text' => 'concrete works',
@@ -407,6 +414,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         ];
         $paintWorkItem = [
             ...$concreteWorkItem,
+            'metadata' => ['scope_entity_id' => 'entity:room', 'composition_work_key' => 'finish.paint'],
             'name' => 'Wall painting',
             'normative_search_text' => 'wall painting',
             'normative_search_key' => 'finishing|paint|m2',

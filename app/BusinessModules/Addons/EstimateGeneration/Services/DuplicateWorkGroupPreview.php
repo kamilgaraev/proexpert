@@ -51,6 +51,9 @@ final class DuplicateWorkGroupPreview
             if (! isset($previews[$localKey][$sectionKey][$signature])) {
                 $peers = $groups[$localKey][$sectionKey][$signature];
                 $count = count($peers);
+                if ($count < 2) {
+                    continue;
+                }
                 $previews[$localKey][$sectionKey][$signature] = [
                     'count' => $count, 'complete' => $count <= WorkItemPhysicalIdentity::MAX_GROUP_ITEMS,
                     'can_resolve' => $count > 1 && WorkItemPhysicalIdentity::canResolveGroup($peers),
