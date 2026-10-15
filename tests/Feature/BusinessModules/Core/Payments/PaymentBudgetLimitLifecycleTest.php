@@ -21,20 +21,27 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\ContractPerformanceAct;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 final class PaymentBudgetLimitLifecycleTest extends TestCase
 {
+    use EnablesImmutableAuditWriter;
     use RefreshDatabase;
 
     public function test_contract_advance_runs_real_approval_and_payment_lifecycle_once(): void
     {
+        $this->enableImmutableAuditWriter();
         \Illuminate\Support\Facades\Notification::fake();
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activateBudgetingModule($context->organization->id);
@@ -50,6 +57,8 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'date' => now()->toDateString(),
             'status' => 'draft',
             'base_amount' => 10000,
+            'total_amount' => 10000,
+            'planned_advance_amount' => 5000,
         ]);
         $service = app(\App\Services\Contract\ContractPaymentDocumentService::class);
         $data = [
@@ -102,6 +111,97 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertSame('available', $check['status']);
         $this->assertSame('allow', $check['decision']);
         $this->assertSame('600.00', $check['summary']['available_after_request']);
+    }
+
+    public function test_act_invoice_uses_its_contract_scoped_approved_budget(): void
+    {
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $act = $this->createApprovedAct($context);
+        $contract = $act->contract;
+        $project = $contract->project;
+        $contractor = $contract->contractor;
+        $budget['line']->forceFill(['project_id' => $project->id, 'contract_id' => $contract->id])->save();
+        $budget['line']->version->forceFill(['status' => 'approved', 'activated_at' => null])->save();
+        $payload = [
+            'document_type' => 'invoice',
+            'document_date' => now()->toDateString(),
+            'due_date' => now()->toDateString(),
+            'amount' => 100000,
+            'currency' => 'RUB',
+            'project_id' => $project->id,
+            'payee_contractor_id' => $contractor->id,
+            'payer_organization_id' => $context->organization->id,
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'invoice_type' => 'act',
+            'direction' => 'outgoing',
+            'budget_article_id' => $budget['article']->id,
+            'responsibility_center_id' => $budget['center']->id,
+            'idempotency_key' => 'act-contract-budget-scope-regression',
+        ];
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload);
+
+        $response->assertCreated();
+        $document = PaymentDocument::query()->findOrFail($response->json('data.id'));
+        $this->assertSame($act->id, (int) $document->invoiceable_id);
+        $check = $this->service()->check($document->fresh(), $context->user);
+        $this->assertContains($check['decision'], ['allow', 'warn']);
+        $this->assertTrue($check['limit']['has_approved_budget']);
+        $this->assertSame('100000.00', $check['sources']['approved_budget']);
+        $this->assertDatabaseHas('budget_limit_checks', ['payment_document_id' => $document->id, 'contract_id' => $contract->id, 'accepted' => true]);
+        $repeat = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload);
+        $repeat->assertCreated()->assertJsonPath('data.id', $document->id);
+        $this->assertDatabaseCount('payment_documents', 1);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_act_budget_limit_does_not_use_a_different_contracts_line(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $act = $this->createApprovedAct($context);
+        $otherAct = $this->createApprovedAct($context, $act->project_id);
+        $budget['line']->forceFill(['project_id' => $act->project_id, 'contract_id' => $act->contract_id])->save();
+        $document = $this->createDocument($context, $budget, 400.0);
+        $document->forceFill([
+            'project_id' => $act->project_id,
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $otherAct->id,
+            'metadata' => ['contract_id' => $act->contract_id],
+        ])->save();
+
+        $this->assertSame('block', $this->service()->check($document->fresh(), $context->user)['decision']);
+    }
+
+    public function test_act_contract_lookup_keeps_organization_and_project_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $act = $this->createApprovedAct($context);
+        $budget['line']->forceFill(['contract_id' => $act->contract_id])->save();
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignAct = $this->createApprovedAct($foreignContext);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $document = $this->createDocument($context, $budget, 400.0);
+
+        foreach ([[$foreignAct, $act->project_id], [$act, $otherProject->id]] as [$basis, $projectId]) {
+            $document->forceFill([
+                'project_id' => $projectId,
+                'invoiceable_type' => ContractPerformanceAct::class,
+                'invoiceable_id' => $basis->id,
+                'metadata' => ['contract_id' => $act->contract_id],
+            ])->save();
+            $this->assertSame('block', $this->service()->check($document->fresh(), $context->user)['decision']);
+        }
     }
 
     public function test_payment_registration_preview_uses_selected_month_without_writes(): void
@@ -339,6 +439,35 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseMissing('budget_limit_checks', [
             'payment_document_id' => $document->id,
         ]);
+    }
+
+    private function createApprovedAct(AdminApiTestContext $context, ?int $projectId = null): ContractPerformanceAct
+    {
+        $projectId ??= Project::factory()->create(['organization_id' => $context->organization->id])->id;
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Учебный подрядчик по акту',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $projectId,
+            'contractor_id' => $contractor->id,
+            'number' => 'ACT-BUDGET-'.uniqid(),
+            'date' => now()->toDateString(),
+            'status' => 'active',
+            'total_amount' => 100000,
+        ]);
+
+        return ContractPerformanceAct::withoutEvents(static fn () => ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id,
+            'project_id' => $projectId,
+            'act_document_number' => 'ACT-BUDGET-'.uniqid(),
+            'act_date' => now()->toDateString(),
+            'amount' => '100000.00',
+            'currency' => 'RUB',
+            'status' => ContractPerformanceAct::STATUS_APPROVED,
+            'is_approved' => true,
+        ]));
     }
 
     private function service(): PaymentBudgetLimitService

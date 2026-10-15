@@ -24,6 +24,7 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetLimitCheckService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\User;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -887,6 +888,16 @@ final class PaymentBudgetLimitService
     {
         if ($document->invoiceable_type === Contract::class && $document->invoiceable_id) {
             return (int) $document->invoiceable_id;
+        }
+
+        if ($document->invoiceable_type === ContractPerformanceAct::class && $document->invoiceable_id) {
+            $contractId = ContractPerformanceAct::query()
+                ->whereKey((int) $document->invoiceable_id)
+                ->whereHas('contract', fn (Builder $query) => $query->where('organization_id', $document->organization_id))
+                ->when($document->project_id !== null, fn (Builder $query) => $query->where('project_id', $document->project_id))
+                ->value('contract_id');
+
+            return $contractId !== null ? (int) $contractId : null;
         }
 
         if ($document->source_type === Contract::class && $document->source_id) {
