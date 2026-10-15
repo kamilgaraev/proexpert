@@ -24,7 +24,7 @@ final readonly class AssistantProjectContractRosterReader
         $statusQuery = preg_replace('/(?<!\pL)не\s*'.$terminalStatuses.'(?!\pL)/iu', '', $query) ?? $query;
         $detailQuery = preg_replace('/(?:по\s+состоянию\s+)?на\s+сегодня(?:шний\s+день)?/iu', '', $query) ?? $query;
         $hasActiveStatus = preg_match('/(?<!\pL)(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) === 1;
-        $hasEndDate = preg_match('/(?:срок[а-яё]*\s+окончан|без\s+срок|дат[а-яё]*\s+окончан)/iu', $query) === 1;
+        $hasEndDate = preg_match('/(?:срок[а-яё]*\s+окончан|без\s+срока\s+(?:окончан|действи)[а-яё]*|без\s+срока(?=\s*(?:$|[.!?;,]))|дат[а-яё]*\s+окончан)/iu', $query) === 1;
         $hasPluralContracts = preg_match('/(?<!\pL)договор(?:ы|ов|ам|ами|ах)(?!\pL)|(?:действующие|активные|какие)\s+договора(?!\pL)/iu', $query) === 1;
         return $hasPluralContracts && ($hasActiveStatus || $hasEndDate)
             && preg_match('/№|#|(?<!\pL)(?:id|номер)(?!\pL)/iu', $query) !== 1
@@ -35,7 +35,7 @@ final readonly class AssistantProjectContractRosterReader
             && ! AssistantTemporalIntent::hasExplicitWindow($query)
             && preg_match('/(?:позже|раньше)\s+вс(?:его|ех)|сам[а-яё]*\s+(?:поздн|ранн|дальн|дал[её]к|близк)|отсортир|по\s+убыван|в\s+обратн|максимальн|минимальн/iu', $query) !== 1
             && preg_match('/(?<!\pL)не\s*(?:действующ[а-яё]*|действу(?:ют|ет)|активн[а-яё]*)(?!\pL)/iu', $query) !== 1
-            && preg_match('/начал|написан|содержани|текст|услови|пункт/iu', $query) !== 1
+            && preg_match('/гаранти|начал|написан|содержани|текст|услови|пункт/iu', $query) !== 1
             && preg_match('/исполнени[ея]|выполнени[ея]|обязательств/iu', $query) !== 1
             && preg_match('/(?<!\pL)'.$terminalStatuses.'(?!\pL)/iu', $statusQuery) !== 1
             && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $detailQuery) !== 1;
