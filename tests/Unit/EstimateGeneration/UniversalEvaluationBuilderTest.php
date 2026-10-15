@@ -12,6 +12,22 @@ use PHPUnit\Framework\TestCase;
 
 final class UniversalEvaluationBuilderTest extends TestCase
 {
+    public function test_unresolved_source_rows_are_visible_without_becoming_positions_or_changing_selected_scope(): void
+    {
+        $draft = ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],
+            'local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [['key' => 'floor', 'name' => 'Пол', 'quantity' => null, 'unit' => 'm2']]]]]]];
+        $snapshot = new ProjectModelSnapshot([], [], [], []);
+        $builder = new UniversalEvaluationBuilder;
+        $baseline = $builder->build($draft, $snapshot);
+        $draft['local_estimates'][] = ['key' => 'document_review', 'coverage_warnings' => [[
+            'quantity_key' => 'document_source:row-1', 'reason' => 'work_scope_review_required', 'message' => 'Неопределённая работа: ведомость.pdf, строка 7; не включена в стоимость.',
+        ]], 'sections' => [['work_items' => [['key' => 'unknown-row', 'item_type' => 'review_note', 'quantity' => '10']]]]];
+        $actual = $builder->build($draft, $snapshot);
+        self::assertSame([['key' => 'document_source:row-1', 'message' => $draft['local_estimates'][1]['coverage_warnings'][0]['message']]], $actual['scope_exclusions']);
+        unset($actual['scope_exclusions']);
+        self::assertSame($baseline, $actual);
+    }
+
     public function test_unconfirmed_source_does_not_disappear_from_scope_checks_or_become_a_priced_position(): void
     {
         $draft = ['evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['finishing']],

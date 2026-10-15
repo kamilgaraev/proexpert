@@ -135,7 +135,7 @@ final class QuantityStatementLineParser
             $this->containsAny($normalized, ['решетк', 'диффузор']) => 'ventilation.distribution_devices',
             $this->containsAny($normalized, ['воздуховод', 'вентиляц']) => 'ventilation.air_exchange',
             $this->containsAny($normalized, ['ворот']) => 'openings.gates',
-            $this->containsAny($normalized, ['окн']) => 'openings.windows',
+            $this->containsAny($normalized, ['окн', 'окон']) => 'openings.windows',
             $this->containsAny($normalized, ['двер']) => 'openings.doors',
             default => null,
         };

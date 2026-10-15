@@ -124,6 +124,17 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                 BenchmarkSourceType::Spreadsheet, 'dimensions.xlsx', hash_file('sha256', $input), ['native_xlsx_joined_regression'], []), 300000);
             self::assertSame('success', $result->status);
             $session = EstimateGenerationSession::query()->findOrFail($adapter->lastRun['session_id']);
+            $automaticSuspendedCeilings = [];
+            foreach ($session->draft_payload['local_estimates'] as $estimate) {
+                foreach ($estimate['sections'] as $section) {
+                    foreach ($section['work_items'] as $item) {
+                        if (($item['metadata']['quantity_key'] ?? null) === 'office.ceiling') {
+                            $automaticSuspendedCeilings[] = $item;
+                        }
+                    }
+                }
+            }
+            self::assertSame([], $automaticSuspendedCeilings, 'An office label and floor dimensions do not choose a suspended ceiling.');
             self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->draft_payload));
             self::assertCount(count(ProcessingStage::cases()), $adapter->lastRun['completed_stages']);
             self::assertSame(6, $adapter->lastRun['provider_requests']);

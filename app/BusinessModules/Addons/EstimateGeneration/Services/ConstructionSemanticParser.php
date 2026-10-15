@@ -28,6 +28,7 @@ class ConstructionSemanticParser
 
             return [
                 'id' => $document['id'] ?? null,
+                ...(is_string($document['source_version'] ?? null) ? ['source_version' => $document['source_version']] : []),
                 'filename' => $document['filename'] ?? 'document',
                 'status' => $document['status'] ?? null,
                 'text' => $text,

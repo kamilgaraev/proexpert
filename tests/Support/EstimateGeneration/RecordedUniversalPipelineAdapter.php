@@ -195,6 +195,21 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             throw new BenchmarkContractException('recorded_replay_pipeline_failure:'.json_encode([
                 'cause_class' => $error::class,
                 'attempt_status' => $error instanceof \App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException ? $error->attemptStatus : null,
+                'composer_candidate_shapes' => array_values(array_filter(array_map(static function (array $exchange): ?array {
+                    $body = json_decode((string) $exchange['request']->getBody(), true, 128, JSON_THROW_ON_ERROR);
+                    foreach ($body['messages'] ?? [] as $message) {
+                        if (($message['role'] ?? null) === 'user' && is_string($message['content'] ?? null)) {
+                            $project = json_decode($message['content'], true, 128, JSON_THROW_ON_ERROR)['project'] ?? null;
+                            if (is_array($project) && is_array($project['candidates'] ?? null)) {
+                                return ['count' => count($project['candidates']), 'items' => array_map(static fn (array $item): array => [
+                                    'key' => $item['work_key'], 'name' => $item['name'], 'unit' => $item['unit'], 'quantity' => $item['quantity'],
+                                ], array_slice($project['candidates'], 0, 64))];
+                            }
+                        }
+                    }
+
+                    return null;
+                }, array_slice($this->history, $historyStart)))),
                 'audit_request_shapes' => array_values(array_filter(array_map(static function (array $exchange): ?array {
                     $body = json_decode((string) $exchange['request']->getBody(), true, 128, JSON_THROW_ON_ERROR);
                     foreach ($body['messages'] ?? [] as $message) {

@@ -98,7 +98,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 'source_version' => $stage6Context['source_version'] ?? null,
             ],
         ];
-        $payload = $this->compiler->compile($analysis, null, true);
+        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
+        $payload = $this->compiler->compile($analysis, null, true, $workLimit);
         $this->logProgress($context, 'baseline_compiled');
         $this->renewAfterProgress($heartbeat);
         $stageFiveItems = $this->technologyWorkItems->planPackages(
@@ -119,6 +120,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $this->logProgress($context, 'deterministic_candidates_planned');
         $this->renewAfterProgress($heartbeat);
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -141,8 +143,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $this->logProgress($context, 'quantity_evidence_materialized');
         $this->renewAfterProgress($heartbeat);
-        $workLimit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation($context->organizationId, $context->projectId, $context->sessionId, $context->creditOperationId);
-        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);
         $candidates = $this->compositionProjector->candidates($payload['local_estimates']);
         $composerInput = $this->composerInputs->capture(
             $context->organizationId,
@@ -305,6 +305,20 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ?WorkItemQuantityResolver $quantityResolver = null,
         array $generationIdentity = [],
     ): array {
+        if (($workItem['metadata']['generation_source'] ?? null) === 'project_document_normative_reference') {
+            if (($workItem['item_type'] ?? null) === 'priced_work') {
+                $workItem['item_type'] = 'quantity_review';
+                $workItem['pricing_status'] = 'not_applicable';
+                $workItem['pricing_blocker'] = 'quantity_review_required';
+                $workItem['validation_flags'] = array_values(array_unique([...($workItem['validation_flags'] ?? []), 'quantity_review_required']));
+                $workItem['metadata']['display_role'] = 'quantity_review';
+                $workItem['metadata']['normative_grounding_policy'] = 'quantity_confirmation_required';
+            }
+            // Keep the observed amount visible for review, never publish it as accepted quantity evidence.
+            unset($workItem['quantity_evidence'], $workItem['quantity_evidence_id'], $workItem['quantity_evidence_fingerprint'], $workItem['quantity_evidence_source_version']);
+
+            return $workItem;
+        }
         $quantity = ($quantityResolver ?? new WorkItemQuantityResolver)
             ->resolve($workItem, $quantities, $generationIdentity)?->toArray();
         if (! is_array($quantity)) {

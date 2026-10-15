@@ -52,15 +52,25 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
         $session = $this->session($context);
         $documents = [];
         $bytes = 0;
-        foreach ($this->documentQuery($context)->select([
-            'id', 'checksum_sha256', 'source_version', 'status', 'facts_summary',
+        $columns = [
+            'id', 'filename', 'checksum_sha256', 'source_version', 'status', 'facts_summary',
             'quality_score', 'quality_level', 'quality_flags',
-        ])->limit(self::MAX_DOCUMENTS + 1)->cursor() as $row) {
-            if (count($documents) >= self::MAX_DOCUMENTS) {
+        ];
+        $selectedDocuments = $this->documentQuery($context)->select([...$columns, 'extracted_text'])
+            ->limit(self::MAX_DOCUMENTS + 1);
+        // Keep oversized TOAST text in PostgreSQL rather than materializing an unbounded source in PHP.
+        $textBytes = "SUM(octet_length(COALESCE(extracted_text, ''))) OVER ()";
+        $documentSource = $this->database->connection()->query()->fromSub($selectedDocuments, 'source_documents')
+            ->select($columns)->selectRaw('CASE WHEN '.$textBytes.' <= ? THEN extracted_text ELSE NULL END AS extracted_text', [self::MAX_SOURCE_BYTES])
+            ->selectRaw($textBytes.' AS extracted_text_bytes')->orderBy('id');
+        foreach ($documentSource->cursor() as $row) {
+            if (count($documents) >= self::MAX_DOCUMENTS || (int) $row->extracted_text_bytes > self::MAX_SOURCE_BYTES) {
                 $this->tooLarge();
             }
             $document = [
                 'id' => (int) $row->id,
+                'filename' => (string) $row->filename,
+                'extracted_text' => $row->extracted_text,
                 'source_version' => $this->sourceVersion($row),
                 'status' => (string) $row->status,
                 'facts_summary' => $this->json($row->facts_summary),
