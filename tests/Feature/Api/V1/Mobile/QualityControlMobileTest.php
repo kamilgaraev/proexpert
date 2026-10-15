@@ -632,6 +632,7 @@ final class QualityControlMobileTest extends TestCase
         foreach ([
             's3://org-999999/hr/private.pdf',
             "org-{$context->organization->id}/quality-control/defects/999999/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
+            "ORG-{$context->organization->id}/quality-control/defects/{$defect->id}/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
         ] as $reference) {
             $photo = ['type' => 'after', 'url' => $reference, 'metadata' => ['storage_identity_verified' => true]];
             $this->withHeaders($context->mobileAuthHeaders())->postJson('/api/v1/mobile/quality-control/defects', [

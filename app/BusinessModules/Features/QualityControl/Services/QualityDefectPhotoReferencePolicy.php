@@ -40,9 +40,10 @@ final class QualityDefectPhotoReferencePolicy
         }
 
         $path = strncasecmp($reference, 's3://', 5) === 0 ? substr($reference, 5) : ltrim($reference, '/');
-        $qualityPrefix = preg_quote("org-{$defect->organization_id}/quality-control/defects/{$defect->id}/", '~');
+        $qualityPrefix = "org-{$defect->organization_id}/quality-control/defects/{$defect->id}/";
         $uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-        if (preg_match('~\A'.$qualityPrefix.$uuid.'\.[a-z0-9_-]*\z~i', $path) === 1) {
+        if (str_starts_with($path, $qualityPrefix)
+            && preg_match('~\A'.$uuid.'\.[a-z0-9_-]*\z~i', substr($path, strlen($qualityPrefix))) === 1) {
             return $path;
         }
 

@@ -439,6 +439,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
             'org-999999/quality-control/defects/1/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg',
             "org-{$context->organization->id}/quality-control/defects/999999/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
             "s3://org-{$context->organization->id}/hr/private.pdf",
+            "ORG-{$context->organization->id}/quality-control/defects/{$defect->id}/e021fe55-8d05-4c35-83c5-5c0ba24ad7c4.jpg",
         ];
         foreach ($references as $reference) {
             $photo = ['type' => 'after', 'url' => $reference, 'metadata' => ['storage_identity_verified' => true]];
