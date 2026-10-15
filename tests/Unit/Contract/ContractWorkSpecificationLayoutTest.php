@@ -5,12 +5,24 @@ declare(strict_types=1);
 namespace Tests\Unit\Contract;
 
 use App\Services\Contract\ContractDocumentExporter;
+use App\Services\Contract\ContractDocumentFonts;
+use App\Services\Contract\ContractWorkSpecificationMoney;
+use Smalot\PdfParser\Config;
+use Smalot\PdfParser\Document;
 use Smalot\PdfParser\Parser;
 use Tests\TestCase;
 use ZipArchive;
 
 final class ContractWorkSpecificationLayoutTest extends TestCase
 {
+    public function test_money_formatting_preserves_decimal_precision_and_rounding(): void
+    {
+        self::assertSame("99\u{00A0}999\u{00A0}999\u{00A0}999\u{00A0}900\u{00A0}000\u{00A0}000,0000", ContractWorkSpecificationMoney::format('99999999999900000000.0000', 4));
+        self::assertSame("1\u{00A0}000,00", ContractWorkSpecificationMoney::format('999.995'));
+        self::assertSame("-1\u{00A0}234,5679", ContractWorkSpecificationMoney::format('-1234.56785', 4));
+        self::assertSame('0,00', ContractWorkSpecificationMoney::format('0'));
+    }
+
     public function test_pdf_keeps_project_amounts_on_single_lines(): void
     {
         $text = $this->pdfText($this->specification(), 'project-102');
@@ -82,7 +94,51 @@ final class ContractWorkSpecificationLayoutTest extends TestCase
         }
     }
 
+    public function test_tiny_quantity_keeps_the_exact_unit_price_inside_its_column(): void
+    {
+        $data = $this->specification();
+        $data['contract']['amount'] = '999999999999.00';
+        $data['rows'] = [array_replace($data['rows'][0], [
+            'quantity' => '0.00000001',
+            'unit_price_without_vat' => '99999999999900000000.0000',
+            'amount_without_vat' => '999999999999.00',
+            'amount_with_vat' => '999999999999.00',
+        ])];
+        $data['totals'] = ['amount_without_vat' => '999999999999.00', 'vat_amount' => '0.00', 'amount_with_vat' => '999999999999.00'];
+        $document = $this->pdfDocument($data, 'tiny-quantity');
+        $page = $document->getPages()[0];
+        $fragments = $page->getDataTm();
+        $priceLeft = $costLeft = null;
+        foreach ($fragments as [$matrix, $text]) {
+            if (str_contains($text, 'Расчётная')) $priceLeft = (float) $matrix[4];
+            if (str_contains($text, 'Стоимость')) $costLeft = (float) $matrix[4];
+        }
+        self::assertNotNull($priceLeft);
+        self::assertNotNull($costLeft);
+        $priceText = '';
+        $lines = [];
+        $metrics = ContractDocumentFonts::pdf()->getFontMetrics();
+        $font = $metrics->getFont('DejaVu Sans', 'normal');
+        self::assertNotNull($font);
+        foreach ($fragments as $fragment) {
+            [$matrix, $text, , $fontSize] = $fragment;
+            if ((float) $fontSize !== 9.0 || (float) $matrix[4] < $priceLeft - 0.5 || (float) $matrix[4] >= $costLeft - 5) continue;
+            $width = $metrics->getTextWidth($text, $font, (float) $fontSize);
+            self::assertLessThanOrEqual($costLeft - 5, (float) $matrix[4] + $width, 'The unit price must not overlap the next column.');
+            $priceText .= $text;
+            $lines[(string) $matrix[5]] = true;
+        }
+        self::assertGreaterThan(1, count($lines), 'An oversized price should wrap inside its cell.');
+        self::assertSame('99999999999900000000,0000', preg_replace('/[\s\x{00A0}\x{202F}]+/u', '', $priceText));
+        self::assertStringContainsString('0,00000001 м²', preg_replace('/\s+/u', ' ', $this->normalize($document->getText())) ?? '');
+    }
+
     private function pdfText(array $specification, string $name): string
+    {
+        return $this->normalize($this->pdfDocument($specification, $name)->getText());
+    }
+
+    private function pdfDocument(array $specification, string $name): Document
     {
         $bytes = (new ContractDocumentExporter)->render(view('contracts.work-specification', compact('specification'))->render(), 'pdf');
         $artifactDirectory = getenv('MOST_SPECIFICATION_QA_DIR');
@@ -90,10 +146,12 @@ final class ContractWorkSpecificationLayoutTest extends TestCase
             file_put_contents($artifactDirectory.'/specification-layout-'.$name.'.pdf', $bytes);
         }
 
-        $document = (new Parser)->parseContent($bytes);
+        $config = new Config;
+        $config->setDataTmFontInfoHasToBeIncluded(true);
+        $document = (new Parser([], $config))->parseContent($bytes);
         self::assertCount(1, $document->getPages(), 'Each representative specification should fit on one A4 page.');
 
-        return $this->normalize($document->getText());
+        return $document;
     }
 
     private function normalize(string $text): string
@@ -109,7 +167,7 @@ final class ContractWorkSpecificationLayoutTest extends TestCase
         foreach ($names as $index => $name) {
             $rows[] = [
                 'position_number' => (string) ($index + 1), 'name' => $name, 'estimate_number' => 'СМ-2026-0017',
-                'quantity' => '100', 'unit' => 'м²', 'unit_price_without_vat' => $amounts[$index] / 100,
+                'quantity' => '100', 'unit' => 'м²', 'unit_price_without_vat' => (string) ($amounts[$index] / 100),
                 'amount_without_vat' => $amounts[$index], 'amount_with_vat' => $amounts[$index],
                 'vat_mode' => 'none', 'vat_rate' => null, 'currency' => 'RUB', 'composition_confirmed' => true,
             ];

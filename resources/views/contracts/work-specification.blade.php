@@ -5,7 +5,7 @@
     @endif
     <p>Валюта: {{ $specification['contract']['currency'] }}. Состав и стоимость приведены по текущим привязкам работ.</p>
     @if($specification['contract']['amount'] !== null)
-        <p>Сумма договора: <span class="contract-specification-money">{{ number_format((float) $specification['contract']['amount'], 2, ',', "\u{00A0}") }}</span>. Условия НДС указаны в строках.</p>
+        <p>Сумма договора: <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($specification['contract']['amount']) }}</span>. Условия НДС указаны в строках.</p>
     @endif
     <table class="contract-work-specification">
         <tr>
@@ -24,7 +24,7 @@
                     @if($row['unit_price_without_vat'] === null)
                         {{ trans_message('estimate_finance.specification_price_undetermined') }}
                     @else
-                        <span class="contract-specification-money">{{ number_format((float) $row['unit_price_without_vat'], 4, ',', "\u{00A0}") }}</span>
+                        <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($row['unit_price_without_vat'], 4) }}</span>
                     @endif
                 </p></td>
                 <td>
@@ -32,7 +32,7 @@
                         @if($row['amount_without_vat'] === null)
                             {{ trans_message('estimate_finance.specification_unpriced') }}
                         @else
-                            <span class="contract-specification-money">{{ number_format((float) $row['amount_without_vat'], 2, ',', "\u{00A0}") }}</span>
+                            <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($row['amount_without_vat']) }}</span>
                         @endif
                     </p>
                     <p>НДС: {{ $row['vat_mode'] === 'none' ? trans_message('estimate_finance.specification_vat_none') : ($row['vat_rate'] === null ? trans_message('estimate_finance.specification_vat_unspecified') : rtrim(rtrim(number_format((float) $row['vat_rate'], 4, ',', ' '), '0'), ',').' %') }}</p>
@@ -40,7 +40,7 @@
                         @if($row['amount_with_vat'] === null)
                             {{ trans_message('estimate_finance.specification_undetermined') }}
                         @else
-                            <span class="contract-specification-money">{{ number_format((float) $row['amount_with_vat'], 2, ',', "\u{00A0}") }}</span>
+                            <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($row['amount_with_vat']) }}</span>
                         @endif
                         {{ $row['currency'] }}
                     </p>
@@ -54,7 +54,7 @@
         @if($specification['totals']['amount_without_vat'] === null)
             {{ trans_message('estimate_finance.specification_undetermined') }}
         @else
-            <span class="contract-specification-money">{{ number_format((float) $specification['totals']['amount_without_vat'], 2, ',', "\u{00A0}") }}</span>
+            <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($specification['totals']['amount_without_vat']) }}</span>
         @endif
         {{ $specification['contract']['currency'] }}
     </p>
@@ -62,7 +62,7 @@
         @if($specification['totals']['vat_amount'] === null)
             {{ trans_message('estimate_finance.specification_vat_undetermined') }}
         @else
-            <span class="contract-specification-money">{{ number_format((float) $specification['totals']['vat_amount'], 2, ',', "\u{00A0}") }}</span>
+            <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($specification['totals']['vat_amount']) }}</span>
         @endif
         {{ $specification['contract']['currency'] }}
     </p>
@@ -70,7 +70,7 @@
         @if($specification['totals']['amount_with_vat'] === null)
             {{ trans_message('estimate_finance.specification_undetermined') }}
         @else
-            <span class="contract-specification-money">{{ number_format((float) $specification['totals']['amount_with_vat'], 2, ',', "\u{00A0}") }}</span>
+            <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($specification['totals']['amount_with_vat']) }}</span>
         @endif
         {{ $specification['contract']['currency'] }}
     </p>
