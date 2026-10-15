@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use App\Services\Export\CsvExportValue;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -140,7 +141,7 @@ final class EstimateGenerationPackageController extends Controller
                                 if (! is_array($workItem) || ! $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
                                     continue;
                                 }
-                                fputcsv($handle, [$localEstimate['title'] ?? '', $section['title'] ?? '', $workItem['name'] ?? '', $workItem['unit'] ?? '', $workItem['quantity'] ?? '', $workItem['total_cost'] ?? '', $workItem['quantity_basis'] ?? '']);
+                                fputcsv($handle, CsvExportValue::row([$localEstimate['title'] ?? '', $section['title'] ?? '', $workItem['name'] ?? '', $workItem['unit'] ?? '', $workItem['quantity'] ?? '', $workItem['total_cost'] ?? '', $workItem['quantity_basis'] ?? '']), escape: '');
                             }
                         }
                     }

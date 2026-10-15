@@ -3,12 +3,12 @@
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 
 use App\Models\Estimate;
+use App\Services\Export\ExportValueBinder;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Font;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class ExcelEstimateBuilder
@@ -23,7 +23,7 @@ class ExcelEstimateBuilder
      */
     public function build(Estimate $estimate, array $data, array $options): array
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
 
         // Create main estimate sheet
         $mainSheet = $spreadsheet->getActiveSheet();

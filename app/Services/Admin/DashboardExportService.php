@@ -14,6 +14,8 @@ use App\Models\Project;
 use App\Models\Material;
 use App\Models\CompletedWork;
 use App\Services\Storage\FileService;
+use App\Services\Export\CsvExportValue;
+use App\Services\Export\ExportValueBinder;
 use Carbon\Carbon;
 use Illuminate\Support\Str;
 
@@ -300,7 +302,7 @@ class DashboardExportService
         fputcsv($handle, ['ID', 'Name', 'Address', 'Budget', 'Status', 'Start date', 'End date', 'Latitude', 'Longitude'], ';');
 
         foreach ($projects as $project) {
-            fputcsv($handle, $this->mapProjectExportRow($project), ';');
+            fputcsv($handle, CsvExportValue::row($this->mapProjectExportRow($project)), ';', escape: '');
         }
 
         rewind($handle);
@@ -312,7 +314,7 @@ class DashboardExportService
 
     private function buildProjectsXlsx($projects): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Projects');
         $sheet->fromArray([['ID', 'Name', 'Address', 'Budget', 'Status', 'Start date', 'End date', 'Latitude', 'Longitude']], null, 'A1');
