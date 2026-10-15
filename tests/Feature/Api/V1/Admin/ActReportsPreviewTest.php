@@ -1486,6 +1486,145 @@ class ActReportsPreviewTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_legacy_official_exports_read_storage_objects_and_keep_safe_download_names(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('УЧ-ПТО-102/2026');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $disk = \Illuminate\Support\Facades\Storage::fake('legacy-act-export');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+        });
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'АВР-УЧ-102/01', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+
+        foreach (['xlsx', 'pdf'] as $format) {
+            foreach (['ks2', 'ks3', 'ks-both'] as $form) {
+                $response = $this->actingAs($user, 'api_admin')
+                    ->get("/api/v1/admin/estimates/export/{$form}/{$act->id}?format={$format}");
+                $response->assertOk();
+                self::assertInstanceOf(\Symfony\Component\HttpFoundation\BinaryFileResponse::class, $response->baseResponse);
+                $localFile = $response->baseResponse->getFile()->getPathname();
+                $disposition = rawurldecode((string) $response->headers->get('Content-Disposition'));
+                self::assertStringNotContainsString('/2026', $disposition);
+                self::assertStringNotContainsString('/01', $disposition);
+                self::assertStringContainsString('_2026', $disposition);
+                ob_start();
+                try {
+                    $response->baseResponse->sendContent();
+                    $bytes = ob_get_contents();
+                } finally {
+                    ob_end_clean();
+                }
+                self::assertIsString($bytes);
+                self::assertFileDoesNotExist($localFile, 'Local download files must be deleted after the response.');
+                if ($form !== 'ks-both' && $format === 'pdf') {
+                    self::assertStringStartsWith('%PDF-', $bytes);
+                    $text = (new \Smalot\PdfParser\Parser)->parseContent($bytes)->getText();
+                    self::assertStringContainsString('УЧ-ПТО-102/2026', preg_replace('/\s+/u', '', $text) ?? '');
+                } else {
+                    $path = tempnam(sys_get_temp_dir(), 'most-legacy-export-test-');
+                    self::assertIsString($path);
+                    try {
+                        file_put_contents($path, $bytes);
+                        $zip = new \ZipArchive;
+                        self::assertTrue($zip->open($path));
+                        if ($form === 'ks-both') {
+                            self::assertSame(2, $zip->numFiles);
+                            foreach (['KS-2', 'KS-3'] as $index => $prefix) {
+                                $entry = $zip->getNameIndex($index);
+                                self::assertIsString($entry);
+                                self::assertStringStartsWith($prefix.'_', $entry);
+                                self::assertStringNotContainsString('/', $entry);
+                                self::assertStringNotContainsString('\\', $entry);
+                                $content = $zip->getFromIndex($index);
+                                self::assertIsString($content);
+                                self::assertStringStartsWith($format === 'pdf' ? '%PDF-' : 'PK', $content);
+                            }
+                        } else {
+                            self::assertIsString($zip->getFromName('xl/worksheets/sheet1.xml'));
+                        }
+                        $zip->close();
+                    } finally {
+                        unlink($path);
+                    }
+                }
+            }
+        }
+        self::assertCount(4, $disk->allFiles(), 'Existing official S3 exports must remain available to their temporary links.');
+    }
+
+    public function test_legacy_official_exports_require_exact_permission_before_generation(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('LEGACY-RBAC');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'LEGACY-RBAC', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        $this->mock(\App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService::class, function ($mock): void {
+            foreach (['exportKS2ToExcel', 'exportKS3ToExcel', 'exportKS2ToPdf', 'exportKS3ToPdf'] as $method) {
+                $mock->shouldNotReceive($method);
+            }
+        });
+        $deniedPermission = '';
+        $this->mock(AuthorizationService::class, function ($mock) use (&$deniedPermission): void {
+            $mock->shouldReceive('can')->andReturnUsing(static function (User $user, string $permission) use (&$deniedPermission): bool {
+                return $permission !== $deniedPermission;
+            });
+        });
+        foreach (['xlsx' => 'act_reports.export.excel', 'pdf' => 'act_reports.export.pdf'] as $format => $permission) {
+            $deniedPermission = $permission;
+            foreach (['ks2', 'ks3', 'ks-both'] as $form) {
+                $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/estimates/export/{$form}/{$act->id}?format={$format}")
+                    ->assertForbidden()->assertJsonPath('message', trans_message('act_reports.access_denied'));
+            }
+        }
+    }
+
+    public function test_legacy_official_exports_reject_drafts_and_foreign_organizations(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('LEGACY-DRAFT');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'LEGACY-DRAFT', 1);
+        [, $otherUser] = $this->createContractFixture('LEGACY-OTHER');
+        foreach (['xlsx', 'pdf'] as $format) {
+            foreach (['ks2', 'ks3', 'ks-both'] as $form) {
+                $url = "/api/v1/admin/estimates/export/{$form}/{$act->id}?format={$format}";
+                $this->actingAs($otherUser, 'api_admin')->getJson($url)->assertNotFound();
+                $this->actingAs($user, 'api_admin')->getJson($url)->assertUnprocessable()
+                    ->assertJsonPath('message', trans_message('act_reports.official_export_requires_approved_act'));
+            }
+        }
+        self::assertSame('draft', $act->fresh()->status);
+        self::assertFalse($act->fresh()->is_approved);
+        self::assertSame('1000.00', (string) $act->fresh()->amount);
+    }
+
+    public function test_legacy_zip_failure_cleans_local_files_without_removing_existing_s3_exports(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('LEGACY-FAILURE');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'LEGACY-FAILURE', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        $disk = \Illuminate\Support\Facades\Storage::fake('legacy-act-export-failure');
+        $key = 'org-'.$organization->id.'/exports/acts/ks2/existing.xlsx';
+        $disk->put($key, 'existing export');
+        $this->mock(\App\Services\Storage\FileService::class, function ($mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk);
+        });
+        $this->mock(\App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService::class, function ($mock) use ($key): void {
+            $mock->shouldReceive('exportKS2ToExcel')->once()->andReturn($key);
+            $mock->shouldReceive('exportKS3ToExcel')->once()->andThrow(new \RuntimeException('Storage unavailable'));
+        });
+        $before = glob(sys_get_temp_dir().'/most-act-export-*') ?: [];
+        $this->actingAs($user, 'api_admin')->getJson("/api/v1/admin/estimates/export/ks-both/{$act->id}?format=xlsx")
+            ->assertStatus(500)->assertJsonPath('message', trans_message('act_reports.export_failed'));
+        self::assertSame([], array_values(array_diff(glob(sys_get_temp_dir().'/most-act-export-*') ?: [], $before)));
+        self::assertSame('existing export', $disk->get($key));
+    }
+
     public function test_pto_draft_official_pdf_exports_report_a_validation_error(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('PTO-OFFICIAL');

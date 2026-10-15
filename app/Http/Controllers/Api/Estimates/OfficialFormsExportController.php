@@ -1,147 +1,71 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Api\Estimates;
 
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
-use App\Models\Contract;
-use App\Models\ContractPerformanceAct;
-use App\Services\Contract\ContractAccessService;
-use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use App\Http\Requests\Api\Estimates\OfficialFormsExportRequest;
+use App\Http\Responses\AdminResponse;
+use App\Models\User;
+use App\Services\ActReport\ActReportAccessService;
+use App\Services\ActReport\OfficialFormsDownloadService;
+use Illuminate\Http\JsonResponse;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Throwable;
 
 class OfficialFormsExportController extends Controller
 {
     public function __construct(
-        protected OfficialFormsExportService $exportService,
-        protected ContractAccessService $contractAccessService
+        private readonly OfficialFormsDownloadService $downloads,
+        private readonly ActReportAccessService $access,
     ) {}
 
-    public function exportKS2(Request $request, int $actId): Response
+    public function exportKS2(OfficialFormsExportRequest $request, int $actId): BinaryFileResponse|JsonResponse
     {
-        $request->validate([
-            'format' => 'required|in:xlsx,pdf',
-        ]);
-
-        $act = $this->resolveAccessibleAct($request, $actId, [
-            'completedWorks.workType.measurementUnit',
-        ]);
-        $contract = $act->contract;
-
-        $format = $request->input('format', 'xlsx');
-
-        $filePath = $format === 'pdf'
-            ? $this->exportService->exportKS2ToPdf($act, $contract)
-            : $this->exportService->exportKS2ToExcel($act, $contract);
-
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        $mimeType = $format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-        return response($content)
-            ->header('Content-Type', $mimeType)
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        return $this->download($request, $actId, 'ks2');
     }
 
-    public function exportKS3(Request $request, int $actId): Response
+    public function exportKS3(OfficialFormsExportRequest $request, int $actId): BinaryFileResponse|JsonResponse
     {
-        $request->validate([
-            'format' => 'required|in:xlsx,pdf',
-        ]);
-
-        $act = $this->resolveAccessibleAct($request, $actId, [
-            'contract.estimate',
-        ]);
-        $contract = $act->contract;
-
-        $format = $request->input('format', 'xlsx');
-
-        $filePath = $format === 'pdf'
-            ? $this->exportService->exportKS3ToPdf($act, $contract)
-            : $this->exportService->exportKS3ToExcel($act, $contract);
-
-        $filename = basename($filePath);
-        $content = file_get_contents($filePath);
-        
-        unlink($filePath);
-
-        $mimeType = $format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-        return response($content)
-            ->header('Content-Type', $mimeType)
-            ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        return $this->download($request, $actId, 'ks3');
     }
 
-    public function exportBothForms(Request $request, int $actId): Response
+    public function exportBothForms(OfficialFormsExportRequest $request, int $actId): BinaryFileResponse|JsonResponse
     {
-        $request->validate([
-            'format' => 'required|in:xlsx,pdf',
-        ]);
+        return $this->download($request, $actId, 'ks-both');
+    }
 
-        $act = $this->resolveAccessibleAct($request, $actId, [
-            'contract.estimate',
-            'completedWorks.workType.measurementUnit',
-        ]);
-        $contract = $act->contract;
+    private function download(OfficialFormsExportRequest $request, int $actId, string $form): BinaryFileResponse|JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            if (! $actor instanceof User) throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
 
-        $format = $request->input('format', 'xlsx');
+            $file = $this->downloads->download($actor, $this->access->currentOrganizationId($request), $actId, $form, (string) $request->validated('format'));
+            try {
+                clearstatcache(true, $file->path);
+                $response = response()->download($file->path, $file->filename, ['Content-Type' => $file->mimeType])->deleteFileAfterSend(true);
+                $response->setPrivate();
+                $response->headers->addCacheControlDirective('no-store');
 
-        $ks2Path = $format === 'pdf'
-            ? $this->exportService->exportKS2ToPdf($act, $contract)
-            : $this->exportService->exportKS2ToExcel($act, $contract);
+                return $response;
+            } catch (Throwable $exception) {
+                $file->cleanup();
 
-        $ks3Path = $format === 'pdf'
-            ? $this->exportService->exportKS3ToPdf($act, $contract)
-            : $this->exportService->exportKS3ToExcel($act, $contract);
+                throw $exception;
+            }
+        } catch (BusinessLogicException $exception) {
+            $messageKey = match ($exception->getMessage()) {
+                trans_message('act_reports.access_denied') => 'act_reports.access_denied',
+                trans_message('act_reports.organization_not_found') => 'act_reports.organization_not_found',
+                trans_message('act_reports.official_export_requires_approved_act') => 'act_reports.official_export_requires_approved_act',
+                default => 'act_reports.export_failed',
+            };
+            $status = $exception->getCode();
 
-        $actNumber = $act->act_document_number ?? $act->id;
-        $zipFilename = "KS-2-3_{$actNumber}_{$contract->number}.zip";
-        $zipPath = storage_path("app/temp/{$zipFilename}");
-
-        $zip = new \ZipArchive();
-        if ($zip->open($zipPath, \ZipArchive::CREATE) === TRUE) {
-            $zip->addFile($ks2Path, basename($ks2Path));
-            $zip->addFile($ks3Path, basename($ks3Path));
-            $zip->close();
+            return AdminResponse::error(trans_message($messageKey), $status >= 400 && $status < 600 ? $status : 500);
         }
-
-        $content = file_get_contents($zipPath);
-        
-        unlink($ks2Path);
-        unlink($ks3Path);
-        unlink($zipPath);
-
-        return response($content)
-            ->header('Content-Type', 'application/zip')
-            ->header('Content-Disposition', "attachment; filename=\"{$zipFilename}\"");
-    }
-
-    private function resolveAccessibleAct(Request $request, int $actId, array $relations = []): ContractPerformanceAct
-    {
-        $act = ContractPerformanceAct::with(array_merge([
-            'contract.contractor',
-            'contract.project.organization',
-            'contract.organization',
-        ], $relations))->findOrFail($actId);
-
-        $organizationId = $this->getOrganizationId($request);
-
-        if (!$organizationId || !$act->contract || !$this->contractAccessService->canAccess($act->contract, $organizationId)) {
-            abort(404);
-        }
-
-        return $act;
-    }
-
-    private function getOrganizationId(Request $request): ?int
-    {
-        $organization = $request->attributes->get('current_organization');
-
-        return $organization?->id
-            ?? $request->user()?->organization_id
-            ?? $request->user()?->current_organization_id;
     }
 }
