@@ -20,7 +20,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandid
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
@@ -50,12 +52,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFac
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandDocumentsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
@@ -68,6 +73,7 @@ use DateTimeImmutable;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
@@ -534,10 +540,19 @@ final class PipelineStageFunctionalTest extends TestCase
     }
 
     #[Test]
-    public function nine_real_stage_boundaries_consume_exact_typed_dependencies(): void
+    #[DataProvider('pinnedPriceCases')]
+    public function nine_real_stage_boundaries_consume_exact_typed_dependencies(bool $knownPricedPart): void
     {
-        $gateway = new class implements GenerationPipelineDataGateway
+        $regional = $knownPricedPart ? [
+            'normative_dataset_id' => 77, 'normative_dataset_version' => 'synthetic-2026.1',
+            'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'estimate_regional_price_version_id' => 11, 'price_version' => 'synthetic-prices-2026.07',
+            'business_date' => '2026-07-13',
+        ] : [];
+        $gateway = new class($regional, $knownPricedPart) implements GenerationPipelineDataGateway
         {
+            public function __construct(private array $regional, private bool $knownPricedPart) {}
+
             public function manifest(PipelineContext $context): array
             {
                 return ['base_input_version' => (string) $context->baseInputVersion, 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null];
@@ -546,9 +561,12 @@ final class PipelineStageFunctionalTest extends TestCase
             public function source(PipelineContext $context): array
             {
                 return ['input' => [
-                    'description' => 'Полное строительство одноэтажного жилого дома под ключ, включая отопление и канализацию',
+                    'description' => $this->knownPricedPart
+                        ? 'Отделка комнаты: монтаж плинтусов. Состав остальных работ не определён.'
+                        : 'Полное строительство одноэтажного жилого дома под ключ, включая отопление и канализацию',
                     'area' => 80,
                     'generation_mode' => 'ai_assisted',
+                    'regional_context' => $this->regional,
                 ], 'documents' => [], 'user_id' => 7, 'document_total_area' => [
                     'amount' => '80.000000',
                     'evidence_id' => 701,
@@ -557,8 +575,40 @@ final class PipelineStageFunctionalTest extends TestCase
                 ]];
             }
         };
-        $matcher = $this->createMock(ResourceAssemblyService::class);
-        $matcher->method('enrich')->willReturnCallback(static fn (array $items): array => $items);
+        $matcher = new ResourceAssemblyService(
+            $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+        );
+        $pinSource = new class implements NormativeContextPinSource
+        {
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+            {
+                $catalog = [[
+                    'candidate_id' => '101', 'normative_id' => 101, 'dataset_id' => 77,
+                    'dataset_version' => 'synthetic-2026.1', 'dataset_status' => 'parsed', 'code' => '11-01-999-01',
+                    'name' => 'Монтаж плинтусов', 'unit' => '100 m',
+                    'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+                    'section' => ['code' => '11', 'name' => 'Полы'], 'work_composition' => ['Монтаж плинтусов'],
+                    'resources' => ['materials' => [], 'labor' => [[
+                        'code' => 'labor-1', 'name' => 'Рабочие', 'unit' => 'person_hour', 'quantity' => 100,
+                        'price_id' => 9001, 'price_source' => 'regional_catalog', 'linked_resource_id' => 501,
+                        'norm_resource_id' => 7001,
+                    ]], 'machinery' => [], 'other' => []],
+                ]];
+                $links = [];
+                foreach ($intents as $intent) {
+                    $links[$intent['work_item_key']] = ['101'];
+                }
+
+                return new NormativeContextPinData(
+                    $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
+                    $requested->regionId, $requested->priceZoneId, $requested->periodId,
+                    $requested->regionalPriceVersionId, $requested->priceVersion,
+                    $catalog, hash('sha256', json_encode($catalog, JSON_THROW_ON_ERROR)), [], $links,
+                );
+            }
+        };
         $source = new class implements NormativeCandidateSource
         {
             public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
@@ -590,7 +640,7 @@ final class PipelineStageFunctionalTest extends TestCase
             'evidence:room:width', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:width', 'native_numeric_parser',
             fingerprint: hash('sha256', 'room:width'),
         );
-        $projectModels->saveSourceModel([$room], [
+        $nativeFacts = [
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
                 'fact:room:length', 1, 2, 3, $base, $room->id, 'length', '10', 'm', 1.0,
                 'document', 'confirmed', [$lengthEvidence->id],
@@ -603,7 +653,18 @@ final class PipelineStageFunctionalTest extends TestCase
                 nativeNumericProofs: [$widthEvidence->id => ['entity_id' => $room->id, 'source_version' => $base,
                     'parameter' => 'width', 'measurement' => 'm:8', 'evidence_fingerprint' => $widthEvidence->fingerprint]],
             ),
-        ], [$lengthEvidence, $widthEvidence]);
+        ];
+        $projectModels->saveSourceModel([$room], $knownPricedPart ? [$nativeFacts[0]] : $nativeFacts,
+            $knownPricedPart ? [$lengthEvidence] : [$lengthEvidence, $widthEvidence]);
+        $selectedSystem = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
+            'fact:selected-floor-system', 1, 2, 3, $base, $room->id, 'selected_floor_system',
+            ['kind' => 'catalog_system', 'system_id' => 'synthetic-baseboard', 'catalog_version' => 'technology:v1', 'catalog_hash' => str_repeat('c', 64)],
+            null, 1.0, 'user_assumption', 'confirmed', [],
+        );
+        $projectModels->applyDecision(new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision(
+            'decision:floor-system', 1, 2, 3, $base, 'fact', $selectedSystem->id, $selectedSystem->id,
+            'user', 'actor:7', 'Выбран способ монтажа плинтуса в синтетическом тесте', 1,
+        ), $selectedSystem);
         $snapshotToken = $projectModels->snapshotForPlanning(1, 2, 3, 100)['token'];
         self::assertTrue($projectModels->replaceTechnologyRecommendations(
             1, 2, 3, $base, $snapshotToken, 'technology:v1', str_repeat('c', 64), [], [],
@@ -612,13 +673,13 @@ final class PipelineStageFunctionalTest extends TestCase
             'package:floor',
             [[
                 'id' => 'work:floor',
-                'label' => 'Устройство пола',
+                'label' => 'Монтаж плинтусов',
                 'quantity_formula_id' => 'formula:floor',
                 'norm_intent_id' => 'intent:floor',
             ]],
             [],
             [],
-            [['id' => 'intent:floor', 'candidate_refs' => ['floor_installation']]],
+            [['id' => 'intent:floor', 'candidate_refs' => ['baseboard_installation']]],
             [[
                 'id' => 'formula:floor',
                 'unit' => 'm',
@@ -646,6 +707,19 @@ final class PipelineStageFunctionalTest extends TestCase
             $projectModels,
             new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory,
         );
+        $auditor = new class implements EstimateAuditModel
+        {
+            public int $calls = 0;
+
+            public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
+            {
+                $this->calls++;
+                $onAttemptStarted('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+
+                return ['accepted' => true, 'findings' => []];
+            }
+        };
+        $quantityEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
         $stages = [
             new UnderstandDocumentsStage($gateway, $results),
             new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
@@ -655,9 +729,9 @@ final class PipelineStageFunctionalTest extends TestCase
                 $canonicalQuantities,
             ),
             new PlanWorkItemsStage(
-                new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver),
+                new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver($pinSource)),
                 $results,
-                new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer(new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository),
+                new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer($quantityEvidence),
                 new RunEstimateComposer(
                     new InMemoryAiRoleRunRepository,
                     new class implements EstimateComposerModel
@@ -687,7 +761,10 @@ final class PipelineStageFunctionalTest extends TestCase
             ),
             new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
-            new ResolvePricesStage(new EstimatePricingService, $results),
+            new ResolvePricesStage(new EstimatePricingService(new ResolveRegionalPrice(static fn (int $id): array => [
+                'id' => $id, 'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+                'regional_price_version_id' => 11, 'base_price' => '3.50', 'source_type' => 'regional_catalog',
+            ]), acceptedEvidence: new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier($quantityEvidence)), $results),
             new BuildDraftStage($results),
             new ValidateDraftStage(
                 new EstimateValidationService,
@@ -695,15 +772,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 $results,
                 new ApplyComposerCorrectionCycle(new RunEstimateAudit(
                     new InMemoryAiRoleRunRepository,
-                    new class implements EstimateAuditModel
-                    {
-                        public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
-                        {
-                            $onAttemptStarted('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
-
-                            return ['accepted' => true, 'findings' => []];
-                        }
-                    },
+                    $auditor,
                     'test-model',
                 ), new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection(
                     new InMemoryAiRoleRunRepository,
@@ -722,7 +791,7 @@ final class PipelineStageFunctionalTest extends TestCase
                 )),
                 new EstimateAuditInputFactory(
                     $projectModels,
-                    new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+                    $quantityEvidence,
                     10000,
                 ),
             ),
@@ -765,6 +834,21 @@ final class PipelineStageFunctionalTest extends TestCase
                 self::assertNotNull($projectModels->currentTechnologyRecommendations(1, 2, 3), 'technology stale before stage 6');
                 self::assertNotNull($projectModels->currentCompleteness(1, 2, 3), 'completeness stale before stage 6');
             }
+            if ($context->stage === ProcessingStage::ValidateDraft && $knownPricedPart) {
+                $build = $state->priorOutputs($seed)->payload(ProcessingStage::BuildDraft)['draft'];
+                $acceptedCount = 0;
+                foreach ($build['local_estimates'] as $estimate) {
+                    foreach ($estimate['sections'] as $section) {
+                        $acceptedCount += count($section['work_items']);
+                    }
+                }
+                self::assertSame(1, $acceptedCount);
+                $validated = (new DraftReadinessProjector)->project((new EstimateValidationService)->validate($build));
+                $auditInput = (new EstimateAuditInputFactory($projectModels, $quantityEvidence, 10000))->capture(1, 2, 3, $validated);
+                $wire = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['audit_input' => $auditInput->canonicalPayload()]);
+                self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextPayloadBudget)->fits($wire),
+                    'Bytes: '.strlen($wire).'; tokens: '.(new \App\Support\AI\TokenCounter)->text($wire));
+            }
             $result = $runner->runNext($context);
             if ($context->stage === ProcessingStage::ExtractQuantities) {
                 self::assertNotEmpty($result?->transientData['stage6_generation_context']['work_packages'] ?? []);
@@ -786,7 +870,7 @@ final class PipelineStageFunctionalTest extends TestCase
         }
         $floorPackageQuantity = 'quantity:technology_work_package:package:floor:formula:floor';
         self::assertArrayHasKey($floorPackageQuantity, $plannedItems);
-        self::assertSame('Устройство пола', $plannedItems[$floorPackageQuantity]['name']);
+        self::assertSame('Монтаж плинтусов', $plannedItems[$floorPackageQuantity]['name']);
         self::assertSame('m', $plannedItems[$floorPackageQuantity]['unit']);
         self::assertSame('package:floor', $plannedItems[$floorPackageQuantity]['metadata']['technology_package_id']);
         self::assertSame('intent:floor', $plannedItems[$floorPackageQuantity]['metadata']['normative_intent']['id']);
@@ -817,13 +901,45 @@ final class PipelineStageFunctionalTest extends TestCase
             $extracted['building_quantities']['quantities'] ?? [],
             static fn (mixed $quantity): bool => is_array($quantity) && ($quantity['key'] ?? null) === 'floor_area',
         ));
-        self::assertNotEmpty($floorAreaRows);
-        self::assertSame('80', $floorAreaRows[0]['amount']);
+        if ($knownPricedPart) {
+            self::assertSame([], $floorAreaRows);
+        } else {
+            self::assertNotEmpty($floorAreaRows);
+            self::assertSame('80', $floorAreaRows[0]['amount']);
+        }
 
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);
-        self::assertSame('accepted', $payload['draft']['independent_audit']['status']);
-        self::assertSame(0, $payload['draft']['independent_audit']['correction_cycles']);
-        self::assertSame([], $payload['draft']['audit_review_items']);
+        self::assertSame($builtDraft['stage6_candidate_rows'], $payload['draft']['stage6_candidate_rows']);
+        self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->verifyArtifact($payload['draft']));
+        $accepted = [];
+        foreach ($payload['draft']['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                array_push($accepted, ...$section['work_items']);
+            }
+        }
+        if ($knownPricedPart) {
+            self::assertCount(1, $accepted);
+            self::assertSame('Монтаж плинтусов', $accepted[0]['name']);
+            self::assertSame('10', (string) $accepted[0]['quantity']);
+            self::assertSame('35', $accepted[0]['total_cost']);
+            self::assertSame('accepted', $payload['draft']['independent_audit']['status']);
+            self::assertSame(0, $payload['draft']['independent_audit']['correction_cycles']);
+            self::assertSame(1, $auditor->calls);
+            self::assertNotSame('full_confirmed_scope', $payload['draft']['completeness']['status']);
+        } else {
+            self::assertNotEmpty($payload['draft']['stage6_candidate_rows']);
+            self::assertSame('review_required', $payload['draft']['stage6_status']);
+            self::assertFalse($payload['draft']['is_complete']);
+            self::assertTrue($payload['requires_review']);
+            self::assertSame([], $accepted);
+            self::assertArrayNotHasKey('independent_audit', $payload['draft']);
+            self::assertSame(0, $auditor->calls);
+        }
+    }
+
+    public static function pinnedPriceCases(): array
+    {
+        return ['candidate_only' => [false], 'known_priced_part' => [true]];
     }
 }

@@ -48,6 +48,14 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
         }
         $draft = $this->validation->validate($input['draft']);
         $draft = $this->readiness->project($draft);
+        if (BuildMostEstimateDraft::isCandidateOnly($draft)) {
+            unset($draft['independent_audit']);
+            $draft['is_complete'] = false;
+            $draft['stage6_status'] = 'review_required';
+            $draft = $this->artifacts->seal($this->readiness->project($draft));
+
+            return $this->results->make($context, $this->stage(), ['draft' => $draft, 'requires_review' => true]);
+        }
         $audit = $this->auditCycles->apply($this->auditInputs->capture(
             $context->organizationId,
             $context->projectId,

@@ -27,6 +27,23 @@ final class BuildMostEstimateDraft
 
     public function __construct(private readonly ?Closure $translate = null) {}
 
+    public static function isCandidateOnly(array $draft): bool
+    {
+        if (($draft['generation_contract'] ?? null) !== self::CONTRACT
+            || ! is_array($draft['stage6_candidate_rows'] ?? null) || $draft['stage6_candidate_rows'] === []) {
+            return false;
+        }
+        foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            foreach ($estimate['sections'] ?? [] as $section) {
+                if (($section['work_items'] ?? []) !== []) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     /** @param array<string, mixed> $draft @return array<string, mixed> */
     public function build(array $draft): array
     {

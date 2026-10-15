@@ -46,4 +46,14 @@ final class EstimateAuditBatchPlannerTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         (new EstimateAuditBatchPlanner)->plan(['local_estimates' => [['sections' => [['work_items' => [['key' => 'same'], ['key' => 'same']]]]]]]);
     }
+
+    public function test_candidate_rows_do_not_make_an_empty_accepted_composition_auditable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('estimate_audit_partition_limit');
+        (new EstimateAuditBatchPlanner)->plan([
+            'local_estimates' => [['sections' => [['work_items' => []]]]],
+            'stage6_candidate_rows' => [['key' => 'unaccepted-work']],
+        ]);
+    }
 }
