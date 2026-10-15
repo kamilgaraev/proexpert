@@ -199,7 +199,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && $request['response_format'] === ['type' => 'json_object']
                 && str_contains($system, 'schema_version must equal integer 3')
                 && str_contains($system, 'visual_attributes')
-                && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown')
+                && str_contains($system, 'floor_plan, elevation, section, detail, site_plan, schedule, room_schedule, explication, sketch, photo, unknown')
                 && str_contains($system, 'preliminary hint')
                 && str_contains($system, 'entityKey, factType, value, unit, evidenceRef, sourcePolygonOrNativeRef, confidence, contractVersion')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
