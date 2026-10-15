@@ -51,6 +51,7 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
     private static function hasUnsupportedSubjectScope(string $query): bool
     {
         $scopeQuery = preg_replace('/(?:обязательно|требуется|нужен|нужно|надо)\s+ли\s+(?:(?:указывать|указать|привязывать|привязать)\s+)?проект(?!\pL)/iu', '', $query) ?? $query;
+        $scopeQuery = preg_replace('/для\s+(?:сдачи|предоставления|представления|подачи)\s+авансов[а-яё]*\s+отч[её]т[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
         $scopeQuery = preg_replace('/(?<!\pL)(?:нашей|текущей|этой)\s+организац[а-яё]*|(?:для|у|в)\s+(?:(?:нашей|текущей|этой)\s+организац[а-яё]*|организац[а-яё]*(?!\pL)(?=\s*(?:$|[.!?;,])))|у\s+нас(?!\pL)|(?:для|у)\s+подотч[её]т[а-яё]*(?:\s+(?:средств|расход[а-яё]*|операц[а-яё]*))?|для\s+(?:одн[а-яё]*|кажд[а-яё]*|разов[а-яё]*)\s+выдач[а-яё]*/iu', '', $scopeQuery) ?? $scopeQuery;
 
         return preg_match('/организац|проект|объект|сотрудник|работник|пользоват|контрагент|подрядчик|(?<!\pL)(?:для|у)\s+\pL/iu', $scopeQuery) === 1;
@@ -75,8 +76,11 @@ final readonly class AssistantAdvanceSettingsReader extends AssistantOrganizatio
 
     private static function asksAboutUnsupportedNotificationEvent(string $query): bool
     {
-        if (preg_match('/уведомл|уведомля/iu', $query) !== 1
-            || preg_match_all('/(?<!\pL)(?:о|об|обо)\s+([^.!?;]+)/iu', $query, $events) < 1) {
+        if (preg_match('/уведомл[а-яё]*|уведомля[а-яё]*/iu', $query, $notification, PREG_OFFSET_CAPTURE) !== 1) {
+            return false;
+        }
+        $eventQuery = substr($query, $notification[0][1] + strlen($notification[0][0]));
+        if (preg_match_all('/(?<!\pL)(?:о|об|обо)\s+([^.!?;]+)/iu', $eventQuery, $events) < 1) {
             return false;
         }
         foreach ($events[1] as $event) {
