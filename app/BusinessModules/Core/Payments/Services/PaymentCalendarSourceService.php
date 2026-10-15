@@ -26,24 +26,24 @@ use Illuminate\Database\Eloquent\Builder;
 
 final class PaymentCalendarSourceService
 {
-    public function collect(PaymentCalendarSourceFilters $filters, ?DateTimeInterface $today = null): array
+    public function collect(PaymentCalendarSourceFilters $filters, ?DateTimeInterface $today = null, ?\Closure $scopeDocument = null): array
     {
-        $items = $this->collectPaymentTransactionItems($filters);
+        $items = $this->collectPaymentTransactionItems($filters, $scopeDocument);
 
-        [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($filters, $today);
+        [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($filters, $today, $scopeDocument);
 
         $items = array_merge(
             $items,
             $scheduleItems,
-            $this->collectPaymentDocumentItems($filters, $today, $scheduledDocumentIds),
-            $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds),
+            $this->collectPaymentDocumentItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
+            $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument),
             $this->collectBudgetPlanItems($filters),
         );
 
         return $this->normalizeItems($items, $filters);
     }
 
-    public function collectUndated(PaymentCalendarSourceFilters $filters): array
+    public function collectUndated(PaymentCalendarSourceFilters $filters, ?\Closure $scopeDocument = null): array
     {
         $schedules = PaymentSchedule::query()
             ->with('paymentDocument')
@@ -52,9 +52,10 @@ final class PaymentCalendarSourceService
             ->where(function (Builder $query): void {
                 $query->whereNull('paid_amount')->orWhereColumn('amount', '>', 'paid_amount');
             })
-            ->whereHas('paymentDocument', function (Builder $query) use ($filters): void {
+            ->whereHas('paymentDocument', function (Builder $query) use ($filters, $scopeDocument): void {
                 $query->where('organization_id', $filters->organizationId)
                     ->whereIn('status', $this->activeDocumentStatuses());
+                $scopeDocument?->__invoke($query);
             })
             ->orderBy('id')
             ->get();
@@ -450,12 +451,17 @@ final class PaymentCalendarSourceService
         );
     }
 
-    private function collectPaymentTransactionItems(PaymentCalendarSourceFilters $filters): array
+    private function collectPaymentTransactionItems(PaymentCalendarSourceFilters $filters, ?\Closure $scopeDocument): array
     {
         $transactions = PaymentTransaction::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
             ->where('status', PaymentTransactionStatus::COMPLETED->value)
+            ->when($scopeDocument !== null, function (Builder $query) use ($scopeDocument): void {
+                $query->where(function (Builder $scope) use ($scopeDocument): void {
+                    $scope->whereNull('payment_document_id')->orWhereHas('paymentDocument', $scopeDocument);
+                });
+            })
             ->where(function (Builder $query) use ($filters): void {
                 $query
                     ->whereBetween('value_date', [$filters->periodStart, $filters->periodEnd])
@@ -483,13 +489,15 @@ final class PaymentCalendarSourceService
     private function collectPaymentScheduleItems(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
+        ?\Closure $scopeDocument,
     ): array {
         $schedules = PaymentSchedule::query()
             ->with('paymentDocument')
             ->where('status', 'pending')
             ->where('due_date', '<=', $filters->periodEnd)
-            ->whereHas('paymentDocument', function (Builder $query) use ($filters): void {
+            ->whereHas('paymentDocument', function (Builder $query) use ($filters, $scopeDocument): void {
                 $query->where('organization_id', $filters->organizationId);
+                $scopeDocument?->__invoke($query);
             })
             ->get();
 
@@ -517,9 +525,11 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
+        ?\Closure $scopeDocument,
     ): array {
         $documents = PaymentDocument::query()
             ->where('organization_id', $filters->organizationId)
+            ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
             ->whereIn('status', $this->activeDocumentStatuses())
             ->when($excludedDocumentIds !== [], function (Builder $query) use ($excludedDocumentIds): void {
                 $query->whereNotIn('id', $excludedDocumentIds);
@@ -563,11 +573,17 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
+        ?\Closure $scopeDocument,
     ): array {
         $reservations = BudgetLimitReservation::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
             ->where('status', BudgetLimitReservation::STATUS_RESERVED)
+            ->when($scopeDocument !== null, function (Builder $query) use ($scopeDocument): void {
+                $query->where(function (Builder $scope) use ($scopeDocument): void {
+                    $scope->whereNull('payment_document_id')->orWhereHas('paymentDocument', $scopeDocument);
+                });
+            })
             ->where('period_month', '<=', $filters->periodEndMonth())
             ->when($excludedDocumentIds !== [], function (Builder $query) use ($excludedDocumentIds): void {
                 $query->where(function (Builder $scope) use ($excludedDocumentIds): void {

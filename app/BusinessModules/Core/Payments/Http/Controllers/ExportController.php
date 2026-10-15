@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use App\BusinessModules\Core\Payments\Services\PaymentExportService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,7 +20,8 @@ use function trans_message;
 class ExportController extends Controller
 {
     public function __construct(
-        private readonly PaymentExportService $exportService
+        private readonly PaymentExportService $exportService,
+        private readonly PaymentDocumentAccessService $access
     ) {}
 
     public function excel(Request $request): \Symfony\Component\HttpFoundation\Response
@@ -27,6 +29,10 @@ class ExportController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $this->removeEmptyFilterValues($request);
+            $projectId = filter_var($request->input('filters.project_id'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if ($projectId !== false) {
+                $this->access->assertProject($organizationId, $this->actor($request), $projectId, 'payments.reports.export');
+            }
             $validated = $request->validate([
                 'filters' => ['sometimes', 'array'],
                 'filters.status' => ['sometimes', 'string'],
@@ -45,7 +51,7 @@ class ExportController extends Controller
                 ],
             ]);
             $filters = $validated['filters'] ?? [];
-            $query = PaymentDocument::query()->where('organization_id', $organizationId);
+            $query = $this->access->query($organizationId, $this->actor($request), 'payments.reports.export');
 
             if (isset($filters['status'])) {
                 $query->where('status', $filters['status']);
@@ -84,6 +90,8 @@ class ExportController extends Controller
             return response()->download($filePath, basename($filePath), [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])->deleteFileAfterSend(true);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
@@ -101,8 +109,7 @@ class ExportController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
 
-            $document = PaymentDocument::query()
-                ->where('organization_id', $organizationId)
+            $document = $this->access->query($organizationId, $this->actor($request), 'payments.reports.export')
                 ->with(['payerContractor', 'payeeContractor', 'payerOrganization', 'payeeOrganization', 'project'])
                 ->findOrFail($documentId);
 
@@ -127,6 +134,7 @@ class ExportController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
+            $this->guardSelection($organizationId, $this->actor($request), $request->input('document_ids'));
             $validated = $request->validate([
                 'document_ids' => ['required', 'array', 'min:1'],
                 'document_ids.*' => [
@@ -137,8 +145,7 @@ class ExportController extends Controller
             ]);
             $documentIds = $validated['document_ids'];
 
-            $documents = PaymentDocument::query()
-                ->where('organization_id', $organizationId)
+            $documents = $this->access->query($organizationId, $this->actor($request), 'payments.reports.export')
                 ->whereIn('id', $documentIds)
                 ->with(['payerContractor', 'payeeContractor', 'payerOrganization', 'payeeOrganization', 'project'])
                 ->get();
@@ -152,6 +159,8 @@ class ExportController extends Controller
             return response()->download($filePath, basename($filePath), [
                 'Content-Type' => 'text/plain; charset=windows-1251',
             ])->deleteFileAfterSend(true);
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Exception $e) {
@@ -160,6 +169,34 @@ class ExportController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('payments.export.onec_error'), 500);
+        }
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new ModelNotFoundException;
+        }
+
+        return $actor;
+    }
+
+    private function guardSelection(int $organizationId, User $actor, mixed $ids): void
+    {
+        if (! is_array($ids)) {
+            return;
+        }
+        $validIds = [];
+        foreach ($ids as $id) {
+            $validId = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if ($validId !== false) {
+                $validIds[$validId] = $validId;
+            }
+        }
+        if ($validIds !== [] && $this->access->query($organizationId, $actor, 'payments.reports.export')
+            ->whereKey(array_values($validIds))->count() !== count($validIds)) {
+            throw new ModelNotFoundException;
         }
     }
 

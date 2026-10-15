@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Relations\Relation;
@@ -21,6 +22,10 @@ use Throwable;
 
 final class PaymentDocumentQueryService
 {
+    public function __construct(private readonly PaymentDocumentAccessService $access)
+    {
+    }
+
     private const DETAIL_RELATIONS = [
         'project',
         'payerOrganization',
@@ -53,9 +58,9 @@ final class PaymentDocumentQueryService
      * @param  array<string, mixed>  $filters
      * @return Collection<int, PaymentDocument>
      */
-    public function listForOrganization(int $organizationId, array $filters): LengthAwarePaginator
+    public function listForOrganization(int $organizationId, array $filters, User $actor): LengthAwarePaginator
     {
-        $query = PaymentDocument::forOrganization($organizationId)
+        $query = $this->access->query($organizationId, $actor, 'payments.invoice.view')
             ->with([
                 'project',
                 'payerOrganization',
@@ -102,14 +107,14 @@ final class PaymentDocumentQueryService
         );
     }
 
-    public function findDetailed(int $organizationId, int|string $id): PaymentDocument
+    public function findDetailed(int $organizationId, int|string $id, User $actor, string $permission = 'payments.invoice.view'): PaymentDocument
     {
         try {
-            $document = PaymentDocument::forOrganization($organizationId)
+            $document = $this->access->query($organizationId, $actor, $permission)
                 ->with(self::DETAIL_RELATIONS)
                 ->findOrFail($id);
         } catch (\Error) {
-            $document = PaymentDocument::forOrganization($organizationId)
+            $document = $this->access->query($organizationId, $actor, $permission)
                 ->with(self::FALLBACK_DETAIL_RELATIONS)
                 ->where(function (Builder $query): void {
                     $query->whereNull('invoiceable_type')
@@ -125,14 +130,14 @@ final class PaymentDocumentQueryService
         return $document;
     }
 
-    public function findForWorkflow(int $organizationId, int|string $id): PaymentDocument
+    public function findForWorkflow(int $organizationId, int|string $id, User $actor, string $permission): PaymentDocument
     {
-        return PaymentDocument::forOrganization($organizationId)->findOrFail($id);
+        return $this->access->find($organizationId, $actor, $id, $permission);
     }
 
-    public function findForPrintOrder(int $organizationId, int|string $id): PaymentDocument
+    public function findForPrintOrder(int $organizationId, int|string $id, User $actor): PaymentDocument
     {
-        return PaymentDocument::forOrganization($organizationId)
+        return $this->access->query($organizationId, $actor, 'payments.invoice.export')
             ->with(['payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor'])
             ->findOrFail($id);
     }
@@ -140,9 +145,9 @@ final class PaymentDocumentQueryService
     /**
      * @return Collection<int, PaymentDocument>
      */
-    public function overdue(int $organizationId): Collection
+    public function overdue(int $organizationId, User $actor): Collection
     {
-        return PaymentDocument::forOrganization($organizationId)
+        return $this->access->query($organizationId, $actor, 'payments.invoice.view')
             ->overdue()
             ->with(['project', 'payeeContractor'])
             ->orderBy('due_date')
@@ -152,9 +157,9 @@ final class PaymentDocumentQueryService
     /**
      * @return Collection<int, PaymentDocument>
      */
-    public function upcoming(int $organizationId, int $days): Collection
+    public function upcoming(int $organizationId, int $days, User $actor): Collection
     {
-        return PaymentDocument::forOrganization($organizationId)
+        return $this->access->query($organizationId, $actor, 'payments.invoice.view')
             ->upcoming($days)
             ->with(['project', 'payeeContractor'])
             ->orderBy('due_date')
@@ -164,9 +169,9 @@ final class PaymentDocumentQueryService
     /**
      * @return array<string, mixed>
      */
-    public function statistics(int $organizationId): array
+    public function statistics(int $organizationId, User $actor): array
     {
-        $documents = PaymentDocument::forOrganization($organizationId)->get();
+        $documents = $this->access->query($organizationId, $actor, 'payments.invoice.view')->get();
 
         return [
             'total_count' => $documents->count(),

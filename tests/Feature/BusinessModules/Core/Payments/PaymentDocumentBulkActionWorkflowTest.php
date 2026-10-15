@@ -8,9 +8,12 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Models\Contract;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -114,6 +117,90 @@ class PaymentDocumentBulkActionWorkflowTest extends TestCase
             'amount' => '1000.00',
             'status' => 'completed',
         ]);
+    }
+
+    public function test_bulk_payment_locks_all_contracts_in_id_order_before_documents(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contracts = [];
+        foreach (['LOW', 'HIGH'] as $number) {
+            $contracts[] = Contract::query()->create([
+                'organization_id' => $context->organization->id, 'number' => 'BULK-'.$number,
+                'date' => now()->toDateString(), 'subject' => 'Lock order', 'total_amount' => 5000, 'status' => 'active',
+            ]);
+        }
+        $documents = [];
+        foreach (array_reverse($contracts) as $contract) {
+            $documents[] = $this->createDocument($context, [
+                'source_type' => Contract::class, 'source_id' => $contract->id,
+                'status' => PaymentDocumentStatus::PAID, 'paid_amount' => 1000, 'remaining_amount' => 0,
+            ]);
+        }
+        $locks = [];
+        DB::listen(static function (QueryExecuted $query) use (&$locks): void {
+            if (str_contains(strtolower($query->sql), 'for update')
+                && (str_contains($query->sql, '"contracts"') || str_contains($query->sql, '"payment_documents"'))) {
+                $locks[] = $query->sql;
+            }
+        });
+
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents/bulk', [
+            'ids' => array_map(static fn (PaymentDocument $document): int => $document->id, $documents), 'action' => 'pay',
+        ])->assertOk()->assertJsonPath('data.success', 0)->assertJsonPath('data.failed', 2);
+
+        self::assertGreaterThanOrEqual(2, count($locks));
+        self::assertStringContainsString('"contracts"', $locks[0]);
+        self::assertMatchesRegularExpression('/order by.*"id" asc/i', $locks[0]);
+        self::assertStringContainsString('"payment_documents"', $locks[1]);
+        self::assertSame(0, \App\BusinessModules\Core\Payments\Models\PaymentTransaction::query()->count());
+        foreach ($documents as $document) {
+            self::assertSame(PaymentDocumentStatus::PAID, $document->fresh()->status);
+        }
+    }
+
+    public function test_payment_registration_aborts_if_contract_reference_changes_before_document_lock(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contracts = [];
+        foreach (['INITIAL', 'CHANGED'] as $number) {
+            $contracts[] = Contract::query()->create([
+                'organization_id' => $context->organization->id, 'number' => 'RACE-'.$number,
+                'date' => now()->toDateString(), 'subject' => 'Reference race', 'total_amount' => 5000, 'status' => 'active',
+            ]);
+        }
+        $activeDocumentId = null;
+        $changed = false;
+        DB::listen(static function (QueryExecuted $query) use (&$activeDocumentId, &$changed, $contracts): void {
+            if ($activeDocumentId === null || $changed || ! str_contains(strtolower($query->sql), 'for update')
+                || ! str_contains($query->sql, '"contracts"')) {
+                return;
+            }
+            $changed = true;
+            PaymentDocument::query()->whereKey($activeDocumentId)->update(['source_id' => $contracts[1]->id]);
+        });
+        foreach (['single', 'bulk'] as $operation) {
+            $document = $this->createDocument($context, [
+                'source_type' => Contract::class, 'source_id' => $contracts[0]->id,
+            ]);
+            $before = $document->fresh()->getAttributes();
+            $activeDocumentId = $document->id;
+            $changed = false;
+            $url = $operation === 'bulk'
+                ? '/api/v1/admin/payments/documents/bulk'
+                : '/api/v1/admin/payments/documents/'.$document->id.'/register-payment';
+            $payload = $operation === 'bulk'
+                ? ['ids' => [$document->id], 'action' => 'pay']
+                : ['amount' => 1000, 'payment_method' => 'bank_transfer'];
+            $this->withHeaders($context->authHeaders())
+                ->withHeader('Idempotency-Key', 'contract-reference-race-'.$operation.'-'.$document->id)
+                ->postJson($url, $payload)->assertNotFound();
+            self::assertTrue($changed);
+            self::assertSame($before, $document->fresh()->getAttributes());
+            self::assertSame(0, $document->transactions()->count());
+            $activeDocumentId = null;
+        }
     }
 
     public function test_register_payment_preserves_cents_for_large_decimal_amount(): void
