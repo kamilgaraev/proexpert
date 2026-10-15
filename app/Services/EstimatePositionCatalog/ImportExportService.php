@@ -7,12 +7,12 @@ use App\Models\MeasurementUnit;
 use App\Models\WorkType;
 use App\Services\Export\CsvExportValue;
 use App\Services\Export\ExportValueBinder;
+use App\Services\Import\BoundedSpreadsheetReader;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Writer\Csv as CsvWriter;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class ImportExportService
 {
@@ -22,9 +22,9 @@ class ImportExportService
     public function importFromExcel(int $organizationId, UploadedFile $file, int $userId): array
     {
         try {
-            $spreadsheet = IOFactory::load($file->getPathname());
-            $worksheet = $spreadsheet->getActiveSheet();
-            $rows = $worksheet->toArray();
+            $rows = (new BoundedSpreadsheetReader)->read(
+                $file->getPathname(), $file->getClientOriginalExtension(), 'catalog'
+            );
 
             // Пропустить заголовок
             array_shift($rows);

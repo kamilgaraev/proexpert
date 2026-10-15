@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
-use PhpOffice\PhpSpreadsheet\IOFactory;
+use App\Services\Import\BoundedSpreadsheetReader;
+use App\Services\Import\SpreadsheetImportException;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Illuminate\Support\Facades\DB;
 use function trans_message;
@@ -373,7 +374,6 @@ class MaterialService
         $imported = 0;
         $updated = 0;
         $errors = [];
-        $rows = [];
         $ext = strtolower($file->getClientOriginalExtension());
         
         // BUSINESS: Начало импорта материалов - критическая функция управления складом
@@ -387,15 +387,18 @@ class MaterialService
             'user_id' => null
         ]);
         try {
-            if (in_array($ext, ['xlsx', 'xls'])) {
-                $spreadsheet = IOFactory::load($file->getPathname());
-                $sheet = $spreadsheet->getActiveSheet();
-                $rows = $sheet->toArray(null, true, true, true);
-            } elseif ($ext === 'csv') {
-                $rows = array_map('str_getcsv', file($file->getPathname()));
-            } else {
-                throw new BusinessLogicException(trans_message('catalog.import.unsupported_file_format'), 400);
-            }
+            $rows = (new BoundedSpreadsheetReader)->read($file->getPathname(), $ext, 'materials');
+        } catch (SpreadsheetImportException) {
+            $message = trans_message('catalog.import.file_rejected');
+
+            return [
+                'success' => false,
+                'code' => 422,
+                'message' => $message,
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => [$message],
+            ];
         } catch (\Throwable $e) {
             Log::error('Ошибка чтения файла импорта материалов', ['error' => $e->getMessage()]);
             return [
@@ -515,7 +518,7 @@ class MaterialService
                         $material->update($materialData);
                         $updated++;
                     } else {
-                        $created = $this->materialRepository->create($materialData);
+                        $this->materialRepository->create($materialData);
                         $imported++;
                     }
                 } catch (\Throwable $e) {

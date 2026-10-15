@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\EstimatePositionCatalog\ImportExportService;
+use App\Services\Import\SpreadsheetImportException;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\ImportPositionsRequest;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
@@ -60,6 +61,8 @@ class EstimatePositionImportExportController extends Controller
             $statusCode = $result['skipped'] > 0 ? Response::HTTP_MULTI_STATUS : Response::HTTP_OK;
 
             return AdminResponse::success($result, $message, $statusCode);
+        } catch (SpreadsheetImportException) {
+            return AdminResponse::error(trans_message('catalog.import.file_rejected'), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
             Log::error('estimate_position_import.import.error', [
                 'error' => $e->getMessage(),
