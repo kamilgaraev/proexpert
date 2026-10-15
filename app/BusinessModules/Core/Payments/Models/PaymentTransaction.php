@@ -146,10 +146,11 @@ class PaymentTransaction extends Model
         return $query->where('payment_method', $method);
     }
 
-    public function scopeWithRefundAvailability($query)
+    public function scopeWithRefundAvailability($query, ?int $organizationId = null)
     {
         return $query->withSum([
             'refunds as refunded_amount' => static fn ($refunds) => $refunds
+                ->when($organizationId !== null, static fn ($query) => $query->where('organization_id', $organizationId))
                 ->where('status', PaymentTransactionStatus::COMPLETED->value),
         ], 'amount');
     }
@@ -190,8 +191,9 @@ class PaymentTransaction extends Model
         }
 
         $refundedAmount = $this->getAttribute('refunded_amount');
-        if ($refundedAmount === null) {
+        if (! array_key_exists('refunded_amount', $this->getAttributes())) {
             $refundedAmount = $this->refunds()
+                ->where('organization_id', $this->organization_id)
                 ->where('status', PaymentTransactionStatus::COMPLETED->value)
                 ->sum('amount');
         }
