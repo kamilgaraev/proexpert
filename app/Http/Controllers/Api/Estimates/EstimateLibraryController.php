@@ -7,9 +7,6 @@ namespace App\Http\Controllers\Api\Estimates;
 use App\BusinessModules\Features\BudgetEstimates\Services\Library\EstimateLibraryService;
 use App\Http\Controllers\Controller;
 use App\Models\Estimate;
-use App\Models\EstimateLibrary;
-use App\Models\EstimateLibraryItem;
-use App\Repositories\EstimateLibraryRepository;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,13 +16,10 @@ class EstimateLibraryController extends Controller
 {
     public function __construct(
         protected EstimateLibraryService $libraryService,
-        protected EstimateLibraryRepository $repository
     ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $organizationId = $this->currentOrganizationId($request);
-
         $filters = [
             'category' => $request->input('category'),
             'access_level' => $request->input('access_level'),
@@ -33,11 +27,7 @@ class EstimateLibraryController extends Controller
             'per_page' => $request->input('per_page', 20),
         ];
 
-        $accessible = $request->input('accessible', true);
-
-        $libraries = $accessible
-            ? $this->repository->getAccessible($organizationId, $filters)
-            : $this->repository->getByOrganization($organizationId, $filters);
+        $libraries = $this->libraryService->getLibraries($request->user(), $filters, (bool) $request->input('accessible', true));
 
         return \App\Http\Responses\AdminResponse::fromPayload($libraries);
     }
@@ -53,8 +43,7 @@ class EstimateLibraryController extends Controller
         ]);
 
         $library = $this->libraryService->createLibrary(
-            $this->currentOrganizationId($request),
-            (int) $request->user()->id,
+            $request->user(),
             $request->all()
         );
 
@@ -63,7 +52,7 @@ class EstimateLibraryController extends Controller
 
     public function show(Request $request, int $id): JsonResponse
     {
-        $library = $this->accessibleLibraryOrFail($id, $this->currentOrganizationId($request));
+        $library = $this->libraryService->getLibrary($id, $request->user());
 
         return \App\Http\Responses\AdminResponse::fromPayload($library);
     }
@@ -79,27 +68,21 @@ class EstimateLibraryController extends Controller
             'is_active' => 'nullable|boolean',
         ]);
 
-        $library = $this->ownedLibraryOrFail($id, $this->currentOrganizationId($request));
-        $library = $this->libraryService->updateLibrary($library, $request->all());
+        $library = $this->libraryService->updateLibrary($id, $request->user(), $request->all());
 
         return \App\Http\Responses\AdminResponse::fromPayload($library);
     }
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $library = $this->ownedLibraryOrFail($id, $this->currentOrganizationId($request));
-
-        $this->libraryService->deleteLibrary($library);
+        $this->libraryService->deleteLibrary($id, $request->user());
 
         return \App\Http\Responses\AdminResponse::fromPayload(['message' => 'Библиотека удалена'], 200);
     }
 
     public function items(Request $request, int $libraryId): JsonResponse
     {
-        $items = $this->repository->getItemsByAccessibleLibrary(
-            $libraryId,
-            $this->currentOrganizationId($request)
-        );
+        $items = $this->libraryService->getLibraryItems($libraryId, $request->user());
 
         return \App\Http\Responses\AdminResponse::fromPayload($items);
     }
@@ -118,8 +101,7 @@ class EstimateLibraryController extends Controller
             'positions.*.default_quantity' => 'nullable|numeric',
         ]);
 
-        $library = $this->ownedLibraryOrFail($libraryId, $this->currentOrganizationId($request));
-        $item = $this->libraryService->createLibraryItem($library, $request->all());
+        $item = $this->libraryService->createLibraryItem($libraryId, $request->user(), $request->all());
 
         return \App\Http\Responses\AdminResponse::fromPayload($item, 201);
     }
@@ -149,7 +131,7 @@ class EstimateLibraryController extends Controller
             'parameters' => 'nullable|array',
         ]);
 
-        $item = $this->accessibleItemOrFail($itemId, $organizationId);
+        $item = $this->libraryService->getLibraryItem($itemId, $request->user());
         $estimate = Estimate::where('organization_id', $organizationId)->findOrFail($estimateId);
 
         try {
@@ -173,8 +155,7 @@ class EstimateLibraryController extends Controller
 
     public function itemStatistics(Request $request, int $itemId): JsonResponse
     {
-        $item = $this->ownedItemOrFail($itemId, $this->currentOrganizationId($request));
-        $statistics = $this->libraryService->getUsageStatistics($item, 30);
+        $statistics = $this->libraryService->getUsageStatistics($itemId, $request->user(), 30);
 
         return \App\Http\Responses\AdminResponse::fromPayload($statistics);
     }
@@ -185,11 +166,10 @@ class EstimateLibraryController extends Controller
             'access_level' => 'required|in:private,organization,public',
         ]);
 
-        $library = $this->ownedLibraryOrFail($id, $this->currentOrganizationId($request));
-
         try {
             $library = $this->libraryService->shareLibrary(
-                $library,
+                $id,
+                $request->user(),
                 $request->input('access_level')
             );
 
@@ -208,13 +188,9 @@ class EstimateLibraryController extends Controller
             'name' => 'nullable|string|max:255',
         ]);
 
-        $organizationId = $this->currentOrganizationId($request);
-        $library = $this->accessibleLibraryOrFail($id, $organizationId);
-
         $newLibrary = $this->libraryService->duplicateLibrary(
-            $library,
-            $organizationId,
-            (int) $request->user()->id,
+            $id,
+            $request->user(),
             $request->input('name')
         );
 
@@ -228,41 +204,5 @@ class EstimateLibraryController extends Controller
         abort_if($organizationId === null, 403);
 
         return (int) $organizationId;
-    }
-
-    private function accessibleLibraryOrFail(int $id, int $organizationId): EstimateLibrary
-    {
-        $library = $this->repository->findAccessible($id, $organizationId);
-
-        abort_if($library === null, 404);
-
-        return $library;
-    }
-
-    private function ownedLibraryOrFail(int $id, int $organizationId): EstimateLibrary
-    {
-        $library = $this->repository->findOwned($id, $organizationId);
-
-        abort_if($library === null, 404);
-
-        return $library;
-    }
-
-    private function accessibleItemOrFail(int $id, int $organizationId): EstimateLibraryItem
-    {
-        $item = $this->repository->findAccessibleItem($id, $organizationId);
-
-        abort_if($item === null, 404);
-
-        return $item;
-    }
-
-    private function ownedItemOrFail(int $id, int $organizationId): EstimateLibraryItem
-    {
-        $item = $this->repository->findOwnedItem($id, $organizationId);
-
-        abort_if($item === null, 404);
-
-        return $item;
     }
 }
