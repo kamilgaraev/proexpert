@@ -13,13 +13,13 @@ final class VisionOutputTokenPolicy
 {
     public static function ceiling(): int
     {
-        return max(8_192, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
+        return max(8_192, self::configuredCeiling());
     }
 
     public static function forOperation(AiOperationContext $context): int
     {
         if ($context->creditOperationId === null) {
-            return self::ceiling();
+            return self::configuredCeiling();
         }
         $operation = DB::table('estimate_generation_credit_operations')->where('organization_id', $context->organizationId)
             ->where('project_id', $context->projectId)->where('session_id', $context->sessionId)
@@ -37,5 +37,10 @@ final class VisionOutputTokenPolicy
         }
 
         return $ceiling;
+    }
+
+    private static function configuredCeiling(): int
+    {
+        return max(256, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
     }
 }

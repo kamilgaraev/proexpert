@@ -1866,10 +1866,12 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     {
         config()->set('estimate-generation.vision.primary_max_output_tokens', $configured);
         Http::fake(fn () => Http::response($this->response()));
-        $input = $this->input();
+        $operationId = '22222222-2222-5222-8222-222222222222';
+        $input = $this->input(creditOperationId: $operationId);
         $tariff = $this->priceResolver->resolve($input->operationContext, 'timeweb', 'openai/gpt-6-luna');
         $plan = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorProcessingPlan)
             ->build('documents', 1, 32, false, $tariff);
+        $this->mockApprovedVisionPlan($operationId, $plan, 1);
 
         $this->provider()->analyze($input);
 
@@ -1892,14 +1894,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     {
         $operationId = '22222222-2222-5222-8222-222222222222';
         $plan = ['roles' => ['vision' => ['output_ceiling' => $ceiling]]];
-        $encoded = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($plan);
-        $query = \Mockery::mock(\Illuminate\Database\Query\Builder::class);
-        DB::shouldReceive('table')->twice()->with('estimate_generation_credit_operations')->andReturn($query);
-        foreach (['organization_id' => 7, 'project_id' => 9, 'session_id' => 11, 'operation_id' => $operationId] as $key => $value) {
-            $query->shouldReceive('where')->twice()->with($key, $value)->andReturnSelf();
-        }
-        $query->shouldReceive('first')->twice()->with(['processing_plan', 'plan_hash'])
-            ->andReturn((object) ['processing_plan' => $encoded, 'plan_hash' => hash('sha256', $encoded)]);
+        $this->mockApprovedVisionPlan($operationId, $plan, 2);
         Http::fake(fn () => Http::response($this->response()));
         $input = $this->input(creditOperationId: $operationId);
 
@@ -1918,6 +1913,37 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     public static function approvedVisionCeilings(): array
     {
         return ['historical 4096' => [4096], 'historical 6144' => [6144], 'current 8192' => [8192]];
+    }
+
+    #[Test]
+    #[DataProvider('approvedVisionCeilings')]
+    public function legacy_attempt_without_wallet_keeps_its_configured_payload_and_replay(int $ceiling): void
+    {
+        config()->set('estimate-generation.vision.primary_max_output_tokens', $ceiling);
+        self::assertGreaterThanOrEqual(8192, \App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy::ceiling());
+        Http::fake(fn () => Http::response($this->response()));
+        $input = $this->input();
+
+        $first = $this->provider()->analyze($input);
+        $replay = $this->provider()->analyze($input);
+
+        self::assertSame($first->toArray(), $replay->toArray());
+        Http::assertSent(fn ($request): bool => $request['max_completion_tokens'] === $ceiling);
+        Http::assertSentCount(1);
+        self::assertCount(1, $this->attempts);
+        self::assertCount(1, $this->physicalAttempts->costReservations());
+    }
+
+    private function mockApprovedVisionPlan(string $operationId, array $plan, int $lookups): void
+    {
+        $encoded = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($plan);
+        $query = \Mockery::mock(\Illuminate\Database\Query\Builder::class);
+        DB::shouldReceive('table')->times($lookups)->with('estimate_generation_credit_operations')->andReturn($query);
+        foreach (['organization_id' => 7, 'project_id' => 9, 'session_id' => 11, 'operation_id' => $operationId] as $key => $value) {
+            $query->shouldReceive('where')->times($lookups)->with($key, $value)->andReturnSelf();
+        }
+        $query->shouldReceive('first')->times($lookups)->with(['processing_plan', 'plan_hash'])
+            ->andReturn((object) ['processing_plan' => $encoded, 'plan_hash' => hash('sha256', $encoded)]);
     }
 
     #[Test]
