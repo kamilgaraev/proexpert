@@ -412,6 +412,89 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         self::assertSame([], $read($revoked));
     }
 
+    public function test_mixed_mdm_counters_bound_native_membership_without_losing_parts_or_live_access(): void
+    {
+        $this->additionalModules = ['catalog-management'];
+        $this->duplicateProjectRows = true;
+        DB::statement('INSERT INTO mdm_change_logs (organization_id, entity_type, entity_id, action) '
+            ."SELECT ?, 'project', ?, 'mixed-counter' FROM generate_series(1, 2000)", [$this->organization->id, $this->visible->id]);
+        $hiddenLog = DB::table('mdm_change_logs')->insertGetId(['organization_id' => $this->organization->id,
+            'entity_type' => 'project', 'entity_id' => $this->hidden->id, 'action' => 'hidden-counter']);
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $foreignLog = DB::table('mdm_change_logs')->insertGetId(['organization_id' => $foreign->id,
+            'entity_type' => 'project', 'entity_id' => $this->visible->id, 'action' => 'foreign-counter']);
+        DB::statement('INSERT INTO ai_rag_sources (organization_id, project_id, identity_project_id, source_type, entity_type, entity_id, title, checksum) '
+            ."SELECT ?, ?, ?, 'organization_reporting', 'mdm_change_log', id::text, 'Counter', md5(id::text) FROM mdm_change_logs WHERE organization_id = ? AND action = 'mixed-counter'",
+            [$this->organization->id, $this->visible->id, $this->visible->id, $this->organization->id]);
+        $source = RagSource::query()->where('organization_id', $this->organization->id)->where('entity_type', 'mdm_change_log')->orderBy('id')->firstOrFail();
+        $source->replicate()->forceFill(['identity_part_key' => 'second-part'])->saveQuietly();
+        $source->replicate()->forceFill(['project_id' => null, 'identity_project_id' => 0, 'identity_part_key' => 'null-project'])->saveQuietly();
+        $source->replicate()->forceFill(['project_id' => $this->hidden->id, 'identity_project_id' => $this->hidden->id, 'identity_part_key' => 'hidden-source'])->saveQuietly();
+        foreach (['0'.$source->entity_id, ' '.$source->entity_id, 'not-an-id', (string) $hiddenLog, (string) $foreignLog, '9223372036854775808'] as $index => $entityId) {
+            $source->replicate()->forceFill(['entity_id' => $entityId, 'identity_part_key' => 'invalid-'.$index])->saveQuietly();
+        }
+        $source->replicate()->forceFill(['organization_id' => $foreign->id])->saveQuietly();
+        $this->source($this->organization->id, $this->visible->id, 'project', 'project', $this->visible->id);
+        DB::table('ai_rag_chunks')->insert(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'source_id' => $source->id, 'chunk_index' => 0, 'content' => 'Counter chunk', 'content_hash' => hash('sha256', 'Counter chunk')]);
+        $partial = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $combine = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, pg_catalog.SUM(accessible_sources.stored_count) AS stored_count, pg_catalog.SUM(accessible_sources.chunk_count) AS chunk_count, pg_catalog.SUM(accessible_sources.indexed_count) AS indexed_count');
+        $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
+        $candidate = RagSource::query()->from('ai_rag_status_sources as ai_rag_sources')->whereIn('source_type', ['organization_reporting', 'project']);
+        $baseline = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $partial);
+        $optimized = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+        $read = static function (array $batches): array {
+            $result = [];
+            foreach ($batches as $batch) {
+                foreach ($batch->get() as $row) { $result[$row->source_type] = [(int) $row->stored_count, (int) $row->chunk_count, (int) $row->indexed_count]; }
+            }
+            ksort($result);
+
+            return $result;
+        };
+        self::assertSame(['organization_reporting' => [2002, 1, 0], 'project' => [1, 0, 0]], $read($baseline));
+        self::assertSame($read($baseline), $read($optimized));
+        $nativeLoops = [];
+        $joinComparisons = [];
+        $walk = static function (array $node) use (&$walk, &$nativeLoops, &$joinComparisons): void {
+            if ((($node['Node Type'] ?? null) === 'CTE Scan' && ($node['Alias'] ?? null) === 'mdm_change_logs')
+                || ($node['Relation Name'] ?? null) === 'mdm_change_logs') {
+                $nativeLoops[] = (int) $node['Actual Loops'];
+            }
+            if (($node['Node Type'] ?? null) === 'Nested Loop') {
+                $joinComparisons[] = ((int) ($node['Rows Removed by Join Filter'] ?? 0) + (int) $node['Actual Rows']) * (int) $node['Actual Loops'];
+            }
+            foreach ($node['Plans'] ?? [] as $child) { $walk($child); }
+        };
+        foreach ($optimized as $batch) {
+            $plan = DB::selectOne('EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
+            $walk(json_decode(((array) $plan)['QUERY PLAN'], true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        }
+        self::assertNotEmpty($nativeLoops);
+        self::assertLessThanOrEqual(1, max($nativeLoops), 'Native membership must not be rescanned for each admitted source');
+        self::assertLessThan(20000, max($joinComparisons ?: [0]), 'A reversed nested loop must not compare every source with every native identity');
+        DB::table('mdm_change_logs')->where('id', (int) $source->entity_id)->update(['entity_id' => $this->hidden->id]);
+        self::assertSame(['organization_reporting' => [1999, 0, 0], 'project' => [1, 0, 0]], $read($optimized));
+        self::assertSame($read($baseline), $read($optimized));
+        DB::table('mdm_change_logs')->where('id', (int) $source->entity_id)->update(['entity_id' => $this->visible->id]);
+        foreach (['project_assignment', 'inactive_user', 'changed_organization', 'inactive_membership'] as $condition) {
+            if ($condition === 'project_assignment') { $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]); }
+            elseif ($condition === 'inactive_user') { DB::table('users')->where('id', $this->actor->id)->update(['is_active' => false]); }
+            elseif ($condition === 'changed_organization') { DB::table('users')->where('id', $this->actor->id)->update(['current_organization_id' => $foreign->id]); }
+            else { $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]); }
+            self::assertSame([], $read($optimized), $condition);
+            self::assertSame($read($baseline), $read($optimized), $condition);
+            DB::table('users')->where('id', $this->actor->id)->update(['is_active' => true, 'current_organization_id' => $this->organization->id]);
+            $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+            $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => true]);
+        }
+        $this->deniedPermissions = ['mdm.view'];
+        $revoked = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+        self::assertSame(['project' => [1, 0, 0]], $read($revoked));
+    }
+
     public function test_present_report_identity_keeps_structured_content_scope_checks(): void
     {
         $base = [
