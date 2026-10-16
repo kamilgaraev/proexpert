@@ -50,7 +50,7 @@ final class DesignApprovedCompositionCompletenessTest extends TestCase
             }
         }
 
-        $revision = DesignCompositionRevision::query()->create($attributes + ['package_id' => $package->id, 'revision_number' => 1, 'status' => 'approved', 'composition' => ['project_stage' => $stage, $itemsKey => [['code' => 'AR', 'required' => true, 'documents' => [['document_code' => 'AR-01', 'allowed_formats' => ['pdf'], 'sheet_registry_required' => false]]], ['code' => 'EXCLUDED', 'required' => true]]], 'fingerprint' => 'selected-documents', 'approved_by' => $context->user->id, 'approved_at' => now()]);
+        $revision = DesignCompositionRevision::query()->create($attributes + ['package_id' => $package->id, 'revision_number' => 1, 'status' => 'approved', 'composition' => ['project_stage' => $stage, $itemsKey => [['code' => 'AR', 'title' => 'Архитектурные решения', 'required' => true, 'documents' => [['document_code' => 'AR-01', 'allowed_formats' => ['pdf'], 'sheet_registry_required' => false]]], ['code' => 'EXCLUDED', 'required' => true]]], 'fingerprint' => 'selected-documents', 'approved_by' => $context->user->id, 'approved_at' => now()]);
         DesignCompositionExclusion::query()->create($attributes + ['package_id' => $package->id, 'revision_id' => $revision->id, 'item_key' => 'EXCLUDED', 'reason' => 'Не входит в выпуск']);
         $package->update(['composition_revision_id' => $revision->id, 'composition_status' => 'approved']);
         $relations = ['sections.artifacts.currentVersion.sheets', 'artifacts.currentVersion'];
@@ -85,6 +85,7 @@ final class DesignApprovedCompositionCompletenessTest extends TestCase
         $sectionResults = (new RequiredSectionRule())->check($package->fresh($relations));
         self::assertCount(1, $sectionResults);
         self::assertSame('AR', $sectionResults[0]->metadata['section_code']);
+        self::assertSame(trans_message('design_management.completeness.required_section_missing', ['section' => 'Архитектурные решения']), $sectionResults[0]->message);
     }
 
     public function test_historical_section_and_excluded_selected_section_do_not_block_but_required_document_does(): void
@@ -102,8 +103,28 @@ final class DesignApprovedCompositionCompletenessTest extends TestCase
         $sectionFindings = (new RequiredSectionRule())->check($loaded);
         $this->assertCount(1, $sectionFindings);
         $this->assertSame('AR', $sectionFindings[0]->metadata['section_code']);
+        $this->assertSame(trans_message('design_management.completeness.required_section_missing', ['section' => 'АР']), $sectionFindings[0]->message);
         $findings = (new RequiredCurrentArtifactRule())->check($loaded);
         $this->assertCount(1, $findings);
         $this->assertSame('AR-01', $findings[0]->metadata['document_code']);
+    }
+
+    public function test_legacy_section_messages_use_titles_and_keep_code_fallback(): void
+    {
+        $package = new DesignPackage();
+        $sections = collect([
+            (new DesignPackageSection())->forceFill(['id' => 1, 'code' => 'DRAWINGS', 'title' => 'Рабочие чертежи', 'required' => true])->setRelation('artifacts', collect()),
+            (new DesignPackageSection())->forceFill(['id' => 2, 'code' => 'CUSTOM', 'title' => '  ', 'required' => true])->setRelation('artifacts', collect()),
+        ]);
+        $package->setRelation('sections', $sections);
+
+        $findings = (new RequiredSectionRule())->check($package);
+
+        $this->assertCount(2, $findings);
+        $this->assertSame(trans_message('design_management.completeness.required_section_missing', ['section' => 'Рабочие чертежи']), $findings[0]->message);
+        $this->assertSame('DRAWINGS', $findings[0]->metadata['section_code']);
+        $this->assertSame(1, $findings[0]->targetId);
+        $this->assertSame(trans_message('design_management.completeness.required_section_missing', ['section' => 'CUSTOM']), $findings[1]->message);
+        $this->assertSame('CUSTOM', $findings[1]->metadata['section_code']);
     }
 }

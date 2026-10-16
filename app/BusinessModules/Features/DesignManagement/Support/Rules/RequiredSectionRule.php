@@ -23,7 +23,7 @@ final class RequiredSectionRule implements DesignCompletenessRule
             return collect($selected)->filter(static fn (array $item): bool => (bool) ($item['required'] ?? true))->filter(function (array $item) use ($package, $artifacts): bool {
                 $section = $package->sections->firstWhere('code', (string) $item['code']);
                 return ! $section instanceof DesignPackageSection || ! $artifacts->contains(static fn (DesignArtifact $artifact): bool => $artifact->section_id === $section->id && $artifact->currentVersion !== null);
-            })->map(static fn (array $item): DesignCompletenessRuleResult => new DesignCompletenessRuleResult('required_section', DesignCompletenessStatusEnum::BLOCKED, trans_message('design_management.completeness.required_section_missing', ['section' => $item['code']]), 'package', (int) $package->id, ['section_code' => $item['code']]))->values()->all();
+            })->map(fn (array $item): DesignCompletenessRuleResult => new DesignCompletenessRuleResult('required_section', DesignCompletenessStatusEnum::BLOCKED, trans_message('design_management.completeness.required_section_missing', ['section' => $this->sectionLabel((string) $item['code'], $item['title'] ?? null, $package->sections->firstWhere('code', (string) $item['code'])?->title)]), 'package', (int) $package->id, ['section_code' => $item['code']]))->values()->all();
         }
         if (!$package->relationLoaded('sections')) {
             return [
@@ -58,16 +58,27 @@ final class RequiredSectionRule implements DesignCompletenessRule
 
                 return !$section->artifacts->contains(static fn (DesignArtifact $artifact): bool => $artifact->currentVersion !== null);
             })
-            ->map(static fn (DesignPackageSection $section): DesignCompletenessRuleResult => new DesignCompletenessRuleResult(
+            ->map(fn (DesignPackageSection $section): DesignCompletenessRuleResult => new DesignCompletenessRuleResult(
                 'required_section',
                 DesignCompletenessStatusEnum::BLOCKED,
-                trans_message('design_management.completeness.required_section_missing', ['section' => $section->code]),
+                trans_message('design_management.completeness.required_section_missing', ['section' => $this->sectionLabel((string) $section->code, $section->title)]),
                 'section',
                 (int) $section->id,
                 ['section_code' => $section->code]
             ))
             ->values()
             ->all();
+    }
+
+    private function sectionLabel(string $code, mixed ...$titles): string
+    {
+        foreach ($titles as $title) {
+            if (is_string($title) && trim($title) !== '') {
+                return trim($title);
+            }
+        }
+
+        return $code;
     }
 
 }
