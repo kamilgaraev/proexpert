@@ -8,6 +8,6 @@ final class VisionOutputTokenPolicy
 {
     public static function ceiling(): int
     {
-        return max(256, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
+        return max(8_192, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
     }
 }

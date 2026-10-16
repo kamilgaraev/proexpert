@@ -1881,7 +1881,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
 
     public static function visionCompletionCeilings(): array
     {
-        return ['minimum' => [0, 256], 'configured' => [6144, 6144], 'default' => [8192, 8192],
+        return ['minimum' => [0, 8192], 'legacy 4096' => [4096, 8192], 'configured' => [6144, 8192], 'default' => [8192, 8192],
             'bounded maximum' => [1000000, 16384]];
     }
 
