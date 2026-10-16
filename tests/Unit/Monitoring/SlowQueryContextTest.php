@@ -4,19 +4,81 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Monitoring;
 
+use App\Services\Logging\EnsureLogFailuresAreNonFatal;
 use App\Services\Monitoring\SlowQueryContext;
 use App\Services\Monitoring\TracingService;
 use DateTimeImmutable;
 use Illuminate\Container\Container;
+use Illuminate\Config\Repository;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Application;
+use Illuminate\Log\Logger as IlluminateLogger;
+use Monolog\Formatter\JsonFormatter;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger as MonologLogger;
 use OpenTelemetry\SDK\Trace\Sampler\AlwaysOffSampler;
 use OpenTelemetry\SDK\Trace\TracerProviderBuilder;
 use PHPUnit\Framework\TestCase;
 
 final class SlowQueryContextTest extends TestCase
 {
+    public function test_full_statement_fingerprint_survives_log_redaction_without_exposing_sql_or_bindings(): void
+    {
+        $previous = Container::getInstance();
+        $application = new Application(dirname(__DIR__, 3));
+        $key = str_repeat('test-hmac-key-', 3);
+        $configuration = new Repository(['app' => ['key' => 'base64:'.base64_encode($key)]]);
+        $application->instance('config', $configuration);
+        try {
+            $binding = str_repeat('private-binding-', 8);
+            $earlyLiteral = 'private-literal-before-prefix';
+            $literal = 'private-literal-after-prefix';
+            $sql = "select id from records where note = '".$earlyLiteral."' and id in (".implode(',', array_fill(0, 2500, '?')).") and note = '".$literal."'";
+            $contextFactory = new SlowQueryContext(new TracingService(null));
+            $context = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+            $other = $contextFactory->forQuery(new QueryExecuted($sql.' limit 1', [$binding], 600, new Connection(null)));
+            self::assertSame($context['sql'], $other['sql']);
+
+            $handler = new TestHandler;
+            $handler->setFormatter(new JsonFormatter);
+            $monolog = new MonologLogger('slow_queries', [$handler]);
+            $logger = new IlluminateLogger($monolog);
+            (new EnsureLogFailuresAreNonFatal)($logger);
+            $logger->warning('slow_query', $context);
+            $serialized = $handler->getRecords()[0]->formatted;
+            $logged = json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context'];
+
+            self::assertSame('[REDACTED]', $logged['sql_fingerprint']);
+            self::assertSame('hmac-sha256', $logged['sql_fingerprint_algorithm']);
+            self::assertSame(str_split(hash_hmac('sha256', $sql, $key), 32), $logged['sql_fingerprint_parts']);
+            self::assertNotSame($context['sql_fingerprint_parts'], $other['sql_fingerprint_parts']);
+            self::assertSame(hash_hmac('sha256', $sql, $key), implode('', $logged['sql_fingerprint_parts']));
+            self::assertNotSame(hash('sha256', $sql), implode('', $logged['sql_fingerprint_parts']));
+            self::assertSame(mb_strlen($sql), $logged['sql_length']);
+            self::assertTrue($logged['bindings'][0]['redacted']);
+            self::assertStringNotContainsString($earlyLiteral, $serialized);
+            self::assertStringNotContainsString($literal, $serialized);
+            self::assertStringNotContainsString($binding, $serialized);
+            self::assertStringNotContainsString($key, $serialized);
+            self::assertStringNotContainsString(base64_encode($key), $serialized);
+
+            $configuration->set('app.key', $key);
+            $plainKey = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+            self::assertSame($context['sql_fingerprint_parts'], $plainKey['sql_fingerprint_parts']);
+            $configuration->set('app.key', str_repeat('rotated-key-', 3));
+            $rotated = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+            self::assertNotSame($context['sql_fingerprint_parts'], $rotated['sql_fingerprint_parts']);
+            foreach ([null, '', 'short', 'base64:not-valid!', 'base64:'.base64_encode('short')] as $invalidKey) {
+                $configuration->set('app.key', $invalidKey);
+                $missing = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+                self::assertNull($missing['sql_fingerprint_parts']);
+            }
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_bindings_keep_diagnostic_ids_dates_and_status_without_disclosing_text_or_payloads(): void
     {
         $bindings = SlowQueryContext::safeBindings('update estimate_dataset_versions set status = ?, meta = ?, started_at = ? where id = ?', [
