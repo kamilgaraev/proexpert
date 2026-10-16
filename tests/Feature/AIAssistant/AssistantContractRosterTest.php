@@ -57,8 +57,17 @@ final class AssistantContractRosterTest extends TestCase
             $opposite = $native[$native['is_income'] ? 'first_party' : 'second_party'];
             self::assertSame('Контрагент '.$direction, $opposite['name']);
             self::assertSame($opposite['name'], $rows[$contract->id]['counterparty']);
+            self::assertSame($native[$native['is_income'] ? 'second_party' : 'first_party']['role'], $rows[$contract->id]['our_role']);
+            self::assertSame($opposite['role'], $rows[$contract->id]['counterparty_role']);
             self::assertStringContainsString('Контрагент '.$direction, $result['server_formatted_answer']);
         }
+        self::assertStringContainsString('Наша роль: Заказчик', $result['server_formatted_answer']);
+        self::assertStringContainsString('Наша роль: Генподрядчик', $result['server_formatted_answer']);
+        \Illuminate\Support\Facades\DB::table('contract_parties')->where('contract_id', $contracts['income'][0]->id)->where('side', 'second')->update(['role' => 'contractor']);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $result['source_refs'][0]));
+        $roleChanged = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame('contractor', array_column($roleChanged['data']['items'], null, 'id')[$contracts['income'][0]->id]['our_role']);
+        self::assertStringContainsString('Наша роль: Подрядчик', $roleChanged['server_formatted_answer']);
         foreach (['private_inn_marker', 'private_email_marker', 'private_phone_marker', 'private_snapshot_marker', '123456.78', 'Наша организация'] as $excluded) {
             self::assertStringNotContainsString($excluded, json_encode($result, JSON_UNESCAPED_UNICODE));
         }

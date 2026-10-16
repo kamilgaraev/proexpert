@@ -54,6 +54,28 @@ final class AssistantMachinerySummaryTest extends TestCase
         });
         $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame(2, $read['data']['asset_count']);
+        $canonical->updateQuietly(['status' => 'assigned']);
+        $expired = Model::withoutEvents(fn () => MachineryAssignment::query()->create([
+            'organization_id' => $fixture->organization->id, 'organization_asset_id' => $canonical->organization_asset_id,
+            'project_id' => $project->id, 'asset_id' => $canonical->id, 'status' => 'active',
+            'planned_start_at' => now()->subDays(3), 'planned_end_at' => now()->subDays(2),
+        ]));
+        $otherAssignment = Model::withoutEvents(fn () => MachineryAssignment::query()->create([
+            'organization_id' => $fixture->organization->id, 'organization_asset_id' => $canonical->organization_asset_id,
+            'project_id' => $other->id, 'asset_id' => $canonical->id, 'status' => 'active',
+            'planned_start_at' => now()->subDays(5), 'planned_end_at' => now()->subDays(4),
+        ]));
+        $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertCount(2, $read['data']['assignment_history']['items']);
+        self::assertTrue($read['data']['assignment_history']['complete']);
+        self::assertNotContains($otherAssignment->id, array_column($read['data']['assignment_history']['items'], 'id'));
+        self::assertStringContainsString($expired->planned_end_at->toDateString(), $read['server_formatted_answer']);
+        self::assertStringContainsString('фактическое окончание: не зафиксировано', $read['server_formatted_answer']);
+        self::assertStringContainsString('нельзя считать свободной', $read['server_formatted_answer']);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $empty['source_refs'][0]));
+        \Illuminate\Support\Facades\DB::table('machinery_assignments')->where('id', $expired->id)->update(['actual_end_at' => now()]);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $read['source_refs'][0]));
+        $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertStringNotContainsString('77777.00', json_encode($read));
         foreach (['machinery_assignment', 'machinery_downtime', 'machinery_maintenance_order'] as $type) { self::assertSame(1, $read['data']['sections'][$type]['total']); }
         self::assertStringNotContainsString('Другой проект', json_encode($read, JSON_UNESCAPED_UNICODE));

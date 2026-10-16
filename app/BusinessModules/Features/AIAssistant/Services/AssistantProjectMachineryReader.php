@@ -14,7 +14,7 @@ final readonly class AssistantProjectMachineryReader
     public static function matches(string $query): bool
     {
         return preg_match('/техник[а-яё]*|машин[а-яё]*|механизм[а-яё]*/iu', $query) === 1
-            && preg_match('/закреплен|закрепл[её]н|простаива|ремонт|обслуживан/iu', $query) === 1
+            && preg_match('/закреплен|закрепл[её]н|назначен|назначени|свободн|простаива|ремонт|обслуживан/iu', $query) === 1
             && preg_match('/назначь|создай|отправь|спиши|измени|удали|бюджет|расход|потрач|затрат|сумм|стоим|сч[её]т|плат[её]ж|оплат|документ|смет|поставк|договор|табел|замечан|дефект|качест|зависимост|критическ|сотрудник|бим|ifc|bim/iu', $query) !== 1;
     }
     public function read(User $actor, int $organizationId, array $arguments): array
@@ -46,11 +46,17 @@ final readonly class AssistantProjectMachineryReader
                 $rows[$type] = $records;
             }
             $assetRows = $assets->map(static fn ($asset): array => $asset->getAttributes())->all();
+            $historyQuery = $assets->count() <= 1000 ? $this->access->entityQuery($actor, $organizationId, 'machinery_assignment') : null;
+            $history = $historyQuery?->where('project_id', $projectId)->whereIn('asset_id', array_column(array_slice($assetRows, 0, 20), 'id'))
+                ->orderByDesc('planned_start_at')->orderByDesc('id')->limit(21)
+                ->get(['id', 'asset_id', 'status', 'planned_start_at', 'planned_end_at', 'actual_start_at', 'actual_end_at', 'updated_at'])
+                ->map(static fn ($record): array => $record->getAttributes())->all();
             $canonical = $this->access->entityQuery($actor, $organizationId, 'organization_asset')?->whereKey($assets->pluck('organization_asset_id')->filter()->all())
                 ->select(['id', 'technical_status', 'lifecycle_status', 'current_project_id', 'updated_at'])->get()->map(static fn ($record): array => $record->getAttributes())->all() ?? [];
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => today()->toDateString(), 'assets_available' => $assets->count() <= 1000,
-                'asset_count' => $assets->count() <= 1000 ? $assets->count() : null, 'assets' => array_slice($assetRows, 0, 20), 'canonical_states' => $canonical, 'sections' => $sections];
-            $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'assets' => $assetRows, 'rows' => $rows]);
+                'asset_count' => $assets->count() <= 1000 ? $assets->count() : null, 'assets' => array_slice($assetRows, 0, 20), 'canonical_states' => $canonical, 'sections' => $sections,
+                'assignment_history' => ['available' => $history !== null, 'complete' => $history !== null && count($history) <= 20, 'items' => array_slice($history ?? [], 0, 20)]];
+            $version = AssistantSourceReferenceIdentity::key(['schema' => 2, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'assets' => $assetRows, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id,
                 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
             return ['status' => 'partial', 'source_refs' => [$ref], 'data' => $payload, 'server_formatted_answer' => self::format($payload)];
@@ -92,9 +98,27 @@ final readonly class AssistantProjectMachineryReader
                 $lines[] = '- #'.$example['id'].' ('.trans_message('ai_assistant_machinery.asset_id', ['id' => $example['asset_id']]).') '.self::text((string) ($example['title'] ?? $example['reason'] ?? ''));
             }
         }
+        $history = $data['assignment_history'];
+        if ($history['available']) {
+            $lines[] = trans_message('ai_assistant_machinery.assignment_history', ['shown' => count($history['items'])]);
+            foreach ($history['items'] as $assignment) {
+                $status = in_array($assignment['status'], ['active', 'completed', 'cancelled', 'planned'], true) ? $assignment['status'] : 'unknown';
+                $lines[] = trans_message('ai_assistant_machinery.assignment_row', [
+                    'id' => $assignment['id'], 'asset' => $assignment['asset_id'], 'status' => trans_message('ai_assistant_machinery.assignment_'.$status),
+                    'start' => self::date($assignment['planned_start_at']), 'end' => self::date($assignment['planned_end_at']),
+                    'actual_start' => self::date($assignment['actual_start_at']), 'actual_end' => self::date($assignment['actual_end_at']),
+                ]);
+            }
+            if (! $history['complete']) { $lines[] = trans_message('ai_assistant_machinery.assignment_history_partial'); }
+        } else { $lines[] = trans_message('ai_assistant_machinery.unavailable'); }
+        $lines[] = trans_message('ai_assistant_machinery.assignment_basis');
         $lines[] = trans_message('ai_assistant_machinery.action');
         $lines[] = trans_message('ai_assistant_machinery.basis');
         return implode("\n", $lines);
+    }
+    private static function date(?string $value): string
+    {
+        return $value === null ? trans_message('ai_assistant_machinery.date_unknown') : self::text($value);
     }
     private static function text(string $value): string
     {

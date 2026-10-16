@@ -17,8 +17,14 @@ final readonly class AssistantReportSubscriptionCatalogReader extends AssistantO
 
     public static function hasIntent(string $query): bool
     {
-        return AssistantReportSubscriptionsReader::hasIntent($query)
-            && preg_match('/поддерж|доступ|возможн|на\s+какие\s+отч[её]т|(?:можно|могу)[^.!?]*(?:настро|подпис|включ|созда)/iu', $query) === 1;
+        return preg_match('/отч[её]т/iu', $query) === 1
+            && preg_match('/регулярн|автоматическ|расписан|подписк|рассылк|кажд[а-яё]*\s+(?:недел|месяц|день)|еженедел|ежемесяч|ежеднев/iu', $query) === 1
+            && preg_match('/поддерж|доступ|возможн|на\s+какие\s+отч[её]т|(?:можно|могу)[^.!?]*(?:настро|подпис|включ|созда|получ|присыл|выгру|рассыл)/iu', $query) === 1;
+    }
+
+    public static function intentQuery(string $query): string
+    {
+        return preg_replace('/(отч[её]т[а-яё]*\s+)(?:об?|по)\s+(?:оплат[а-яё]*|плат[её]ж[а-яё]*|сч[её]т[а-яё]*|расход[а-яё]*|затрат[а-яё]*)(?!\pL)/iu', '$1', $query) ?? $query;
     }
 
     public static function matches(string $query): bool
@@ -27,7 +33,7 @@ final readonly class AssistantReportSubscriptionCatalogReader extends AssistantO
 
         return self::hasIntent($query) && ! AssistantMutationIntent::containsRequest($query)
             && ! AssistantMutationIntent::containsFollowUpCommand($query)
-            && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1
+            && preg_match('/пакет|тариф|биллинг|оплат|плат[её]ж|сч[её]т|расход|затрат|долг|задолж|аванс|бюджет|прибыл|выручк|марж|рентабел|зарплат|сумм|продлен|стоим|сколько\s+стоит|цен[аы]|баланс|единиц/iu', self::intentQuery($query)) !== 1
             && preg_match('/(?<!\pL)(?:мои|моих)\s+(?:автоматическ[а-яё]*\s+)?(?:подписк|расписан)/iu', $query) !== 1
             && preg_match('/(?:уже|мои|у\s+меня|у\s+нас)[^.!?]*(?:настроен|активн|приостановл|отключен)|следующ[а-яё]*\s+запуск/iu', $query) !== 1;
     }

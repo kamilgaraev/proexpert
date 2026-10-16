@@ -93,6 +93,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.',
             'Покажи активные, не архивные договоры нашего объекта.', 'Покажи активные, не черновые договоры нашего объекта.',
             'Покажи действующие договора нашего объекта',
+            'В действующих общих договорах нашего объекта мы всегда заказчик? Покажи, где мы заказчик, а где исполнитель, и назови вторую сторону.',
             'Покажи сроки окончания договоров нашего объекта',
             'Покажи даты окончания договоров нашего объекта'] as $query) {
             $filter = match ($query) {
@@ -165,6 +166,13 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $plan = $this->plan('Какая техника сейчас закреплена за нашим объектом и есть ли среди неё простаивающая или ожидающая ремонта? Что мне нужно решить в первую очередь?');
         self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_machinery_summary', ['project_id' => 999]));
+        foreach ([
+            'Почему техника OA-35 на нашем объекте числится назначенной, хотя текущих назначений нет? Покажи плановые даты назначения и поясни, можно ли считать эту машину свободной.',
+            'Какая техника назначена на наш объект и до каких дат?',
+            'Какие машины нашего объекта свободны?',
+        ] as $query) {
+            self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
+        }
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', 'Какая техника закреплена за нашим объектом и сколько потрачено за сентябрь?'));
         $mixed = 'Какая техника простаивает в нашем проекте и какие счета не оплачены?';
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
