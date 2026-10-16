@@ -170,7 +170,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
         $this->activateBudgetingModule($context->organization->id);
-        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
         $contract = $this->createApprovedAct($context)->contract;
         $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
         $request = $this->createDocument($context, $budget, 900.0);
@@ -212,6 +212,12 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'payment_document_id' => $request->id,
             'status' => BudgetLimitReservation::STATUS_RELEASED,
         ]);
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $orderId,
+            'status' => BudgetLimitReservation::STATUS_RESERVED,
+            'amount' => 900,
+        ]);
+        self::assertSame('100.00', $this->service()->check($order->fresh(), $context->user)['summary']['available_after_request']);
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
@@ -222,7 +228,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
         $this->activateBudgetingModule($context->organization->id);
-        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
         $contract = $this->createApprovedAct($context)->contract;
         $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
         $request = $this->createDocument($context, $budget, 900.0);
@@ -245,6 +251,9 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'due_date' => $request->due_date->toDateString(),
             'amount' => 900,
             'currency' => 'RUB',
+            'payment_purpose' => 'Учебное поручение по требованию',
+            'bank_account' => '40702810000000000001',
+            'bank_bik' => '044525225',
             'source_type' => PaymentDocument::class,
             'source_id' => $request->id,
         ])->assertCreated();
@@ -259,10 +268,124 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseHas('budget_limit_reservations', [
             'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RELEASED,
         ]);
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $orderId, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
+        ]);
+        $order = PaymentDocument::query()->findOrFail($orderId);
+        self::assertSame('100.00', $this->service()->check($order, $context->user)['summary']['available_after_request']);
+        self::assertSame('100.00', $this->service()->check($request->fresh(), $context->user)['summary']['available_after_request']);
+        $probe = $this->createDocument($context, $budget, 100.0);
+        $probe->forceFill([
+            'project_id' => $contract->project_id, 'currency' => 'RUB',
+            'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $contract->contractor_id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'due_date' => $request->due_date,
+        ])->save();
+        self::assertSame('0.00', $this->service()->check($probe->fresh(), $context->user)['summary']['available_after_request']);
+        $this->service()->syncReservation($probe->fresh(), $context->user);
+        $this->assertDatabaseMissing('budget_limit_reservations', ['payment_document_id' => $probe->id, 'status' => BudgetLimitReservation::STATUS_RESERVED]);
+        $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/payments/documents/{$orderId}", ['amount' => 450])
+            ->assertUnprocessable();
+        self::assertSame(900.0, (float) $order->fresh()->amount);
         $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
             ->assertOk()->assertJsonPath('data.payment_order.id', $orderId);
-        $this->assertDatabaseCount('payment_documents', 2);
+        self::assertSame(900.0, (float) BudgetLimitReservation::query()->where('status', BudgetLimitReservation::STATUS_RESERVED)->sum('amount'));
+        app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentService::class)->submit($order->fresh(), $context->user);
+        self::assertSame('100.00', $this->service()->check($order->fresh(), $context->user)['summary']['available_after_request']);
+        $this->assertDatabaseCount('payment_documents', 3);
         $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_unscoped_budget_includes_reservations_from_contracts_and_counterparties(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
+        $firstContract = $this->createApprovedAct($context)->contract;
+        $secondContract = $this->createApprovedAct($context)->contract;
+        $reserved = $this->createDocument($context, $budget, 900.0);
+        $reserved->forceFill([
+            'status' => PaymentDocumentStatus::APPROVED, 'currency' => 'RUB',
+            'project_id' => $firstContract->project_id, 'payee_contractor_id' => $firstContract->contractor_id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $firstContract->id,
+        ])->save();
+        $this->service()->syncReservation($reserved->fresh(), $context->user);
+        $probe = $this->createDocument($context, $budget, 100.0);
+        $probe->forceFill([
+            'currency' => 'RUB', 'project_id' => $secondContract->project_id,
+            'payee_contractor_id' => $secondContract->contractor_id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $secondContract->id,
+        ])->save();
+
+        self::assertSame('0.00', $this->service()->check($probe->fresh(), $context->user)['summary']['available_after_request']);
+        $this->assertDatabaseHas('budget_limit_reservations', ['payment_document_id' => $reserved->id, 'amount' => 900, 'status' => BudgetLimitReservation::STATUS_RESERVED]);
+    }
+
+    #[DataProvider('changedContractOrganizations')]
+    public function test_order_creation_rejects_changed_contract_organizations(string $change, bool $accept): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $contract = $this->createApprovedAct($context)->contract;
+        $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
+        $recipient = \App\Models\Organization::factory()->create();
+        $firstParty = \App\Models\ContractParty::query()->create([
+            'contract_id' => $contract->id, 'side' => 'first', 'role' => 'customer',
+            'party_key' => 'first',
+            'linked_organization_id' => $context->organization->id, 'name' => 'Заказчик', 'snapshot' => [],
+        ]);
+        $secondParty = \App\Models\ContractParty::query()->create([
+            'contract_id' => $contract->id, 'side' => 'second', 'role' => 'contractor',
+            'party_key' => 'second',
+            'linked_organization_id' => $recipient->id, 'name' => 'Подрядчик', 'snapshot' => [],
+        ]);
+        $request = $this->createDocument($context, $budget, 900.0);
+        $request->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $recipient->id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'currency' => 'RUB', 'due_date' => now()->addDays(3)->toDateString(),
+        ])->save();
+        $this->service()->syncReservation($request->fresh(), $context->user);
+        if ($change === 'direction') {
+            $firstParty->update(['linked_organization_id' => $recipient->id]);
+            $secondParty->update(['linked_organization_id' => $context->organization->id]);
+        } else {
+            $secondParty->update(['linked_organization_id' => \App\Models\Organization::factory()->create()->id]);
+        }
+
+        $response = $accept
+            ? $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+            : $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(), 'due_date' => $request->due_date->toDateString(),
+                'amount' => 900, 'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ]);
+
+        $response->assertUnprocessable();
+        $this->assertDatabaseCount('payment_documents', 1);
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
+        ]);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public static function changedContractOrganizations(): array
+    {
+        return [
+            'recipient_accept' => ['recipient', true],
+            'direction_accept' => ['direction', true],
+            'recipient_generic' => ['recipient', false],
+            'direction_generic' => ['direction', false],
+        ];
     }
 
     #[DataProvider('legacyRequestOrders')]
@@ -362,7 +485,9 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'currency' => 'RUB',
             'due_date' => now()->addDays(3)->toDateString(),
         ])->save();
-        $this->service()->syncReservation($existingOrder->fresh(), $context->user);
+        if ($orderStatus !== PaymentDocumentStatus::DRAFT) {
+            $this->service()->syncReservation($existingOrder->fresh(), $context->user);
+        }
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept");
@@ -385,6 +510,7 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
     {
         return [
             'compatible' => [PaymentDocumentStatus::APPROVED, null, true],
+            'compatible_draft' => [PaymentDocumentStatus::DRAFT, null, true],
             'different_article' => [PaymentDocumentStatus::APPROVED, 'article', false],
             'different_center' => [PaymentDocumentStatus::APPROVED, 'center', false],
             'different_contract' => [PaymentDocumentStatus::APPROVED, 'contract', false],

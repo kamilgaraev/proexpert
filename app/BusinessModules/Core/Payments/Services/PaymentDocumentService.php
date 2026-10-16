@@ -62,7 +62,7 @@ class PaymentDocumentService
                 if (isset($data['organization_id'])) {
                     $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $data['organization_id']);
                 }
-                $preparedOrder = $this->preparePaymentRequestOrder($data);
+                $preparedOrder = $this->preparePaymentRequestOrder($data, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
                 if ($preparedOrder instanceof PaymentDocument) {
                     DB::commit();
 
@@ -70,6 +70,18 @@ class PaymentDocumentService
                 }
                 $data = app(ContractPaymentPreparationService::class)->prepare((int) ($preparedOrder['organization_id'] ?? 0), $preparedOrder);
                 $data = $this->normalizeDocumentData($data);
+                if (($preparedOrder['document_type'] ?? null) === PaymentDocumentType::PAYMENT_ORDER->value
+                    && ($preparedOrder['source_type'] ?? null) === PaymentDocument::class
+                    && ($preparedOrder['origin_key'] ?? null) === sprintf('payment-request:%d:order', (int) ($preparedOrder['source_id'] ?? 0))) {
+                    if (($data['direction'] ?? null) !== ($preparedOrder['direction'] ?? null)) {
+                        throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                    }
+                    foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id'] as $field) {
+                        if ((int) ($data[$field] ?? null) !== (int) ($preparedOrder[$field] ?? null)) {
+                            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                        }
+                    }
+                }
                 $data = $this->canonicalizeActInvoiceData($data);
                 if (isset($data['origin_key'])) {
                     $existingDocument = PaymentDocument::query()
@@ -161,8 +173,8 @@ class PaymentDocumentService
                     if (($data['document_type'] ?? null) === PaymentDocumentType::PAYMENT_ORDER->value
                         && ($data['source_type'] ?? null) === PaymentDocument::class
                         && $data['origin_key'] === sprintf('payment-request:%d:order', (int) ($data['source_id'] ?? 0))) {
-                        return DB::transaction(function () use ($data): PaymentDocument {
-                            $existingOrder = $this->preparePaymentRequestOrder($data);
+                        return DB::transaction(function () use ($data, $createdBy, $budgetOverrideReason): PaymentDocument {
+                            $existingOrder = $this->preparePaymentRequestOrder($data, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
                             if ($existingOrder instanceof PaymentDocument) {
                                 return $existingOrder;
                             }
@@ -228,7 +240,7 @@ class PaymentDocumentService
         ));
     }
 
-    private function preparePaymentRequestOrder(array $data): array|PaymentDocument
+    private function preparePaymentRequestOrder(array $data, ?User $user = null, ?string $overrideReason = null): array|PaymentDocument
     {
         if (($data['document_type'] ?? null) !== PaymentDocumentType::PAYMENT_ORDER->value
             || ($data['source_type'] ?? null) !== PaymentDocument::class
@@ -296,6 +308,9 @@ class PaymentDocumentService
             }
         }
         $this->budgetLimitService->release($request, trans_message('budgeting.limits.request_accepted'));
+        if ($existingOrder instanceof PaymentDocument) {
+            $this->budgetLimitService->syncReservation($existingOrder->fresh(), $user, $overrideReason);
+        }
 
         return $existingOrder ?? $data;
     }
@@ -327,6 +342,12 @@ class PaymentDocumentService
 
         try {
             // Валидация изменений
+            $user = auth()->user();
+            $this->preparePaymentRequestOrder(
+                array_merge($document->getAttributes(), $data),
+                $user instanceof User ? $user : null,
+                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+            );
             $this->validator->validate(array_merge($document->toArray(), $data), $document);
 
             // Перерасчет сумм если изменилась amount или vat_rate
@@ -337,7 +358,6 @@ class PaymentDocumentService
             $document->update($data);
             $document->refresh();
 
-            $user = auth()->user();
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_UPDATE,
@@ -381,6 +401,7 @@ class PaymentDocumentService
         DB::beginTransaction();
 
         try {
+            $this->preparePaymentRequestOrder($document->getAttributes(), $user, $overrideReason);
             $document = PaymentDocument::query()
                 ->where('organization_id', $document->organization_id)
                 ->lockForUpdate()
