@@ -55,12 +55,15 @@ final class RagCoverageService
             ->selectRaw('accessible_sources.source_type, COUNT(DISTINCT accessible_sources.id) AS stored_count, COUNT(accessible_chunks.id) AS chunk_count, COUNT(DISTINCT CASE WHEN accessible_chunks.embedding IS NOT NULL THEN accessible_sources.id END) AS indexed_count');
         if ($countsOnly) {
             $progress?->__invoke('source_acl');
-            $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
+            $aggregateBranch = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
                 ->groupBy('accessible_sources.source_type')
                 ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+            $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
+                ->groupBy('accessible_sources.source_type')
+                ->selectRaw('accessible_sources.source_type, pg_catalog.SUM(accessible_sources.stored_count) AS stored_count, pg_catalog.SUM(accessible_sources.chunk_count) AS chunk_count, pg_catalog.SUM(accessible_sources.indexed_count) AS indexed_count');
             $batches = $policy->aggregateSourceIdentityBatches($sources, $actor, $organizationId,
                 ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
-                $aggregate, $checkpoint);
+                $aggregate, $checkpoint, $aggregateBranch);
             foreach ($batches as $scoped) {
                 if ($checkpoint !== null) { $checkpoint(); }
                 $progress?->__invoke('source_counts');
