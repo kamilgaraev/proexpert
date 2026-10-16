@@ -12,6 +12,7 @@ use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierCreationService;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\Contract\ContractSideMutationService;
+use App\Services\LegalArchive\Access\ContractDossierReplayAccess;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
@@ -66,7 +67,7 @@ try {
     $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
     $actorLookup = Auth::shouldReceive('user')->andReturn($actor);
     $role === 'leader' ? $actorLookup->once() : $actorLookup->never();
-    $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+    $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers, Mockery::mock(ContractDossierReplayAccess::class)])->makePartial();
     $validation = $service->shouldReceive('validateProcurementContractCreation')->andReturnNull();
     $role === 'leader' ? $validation->once() : $validation->never();
     $order = PurchaseOrder::query()->findOrFail($orderId);

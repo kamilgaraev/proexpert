@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\DTOs\Contract\ContractDossierCreationInput;
@@ -17,6 +18,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierCreationService;
+use App\Services\LegalArchive\Access\ContractDossierReplayAccess;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -27,6 +29,7 @@ class PurchaseContractService
     public function __construct(
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly ContractDossierCreationService $dossiers,
+        private readonly ContractDossierReplayAccess $replayAccess,
     ) {}
 
     public function createManualContract(array $data, int $organizationId, string $idempotencyKey): Contract
@@ -47,13 +50,19 @@ class PurchaseContractService
 
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        return $this->createDossierFromOrder($order)->contract;
+        return $this->resolveOrderDossier($order, false)->contract;
     }
 
     public function createDossierFromOrder(PurchaseOrder $order): ContractDossierCreationResult
     {
-        return DB::transaction(function () use ($order): ContractDossierCreationResult {
+        return $this->resolveOrderDossier($order, true);
+    }
+
+    private function resolveOrderDossier(PurchaseOrder $order, bool $requiresDocumentView): ContractDossierCreationResult
+    {
+        return DB::transaction(function () use ($order, $requiresDocumentView): ContractDossierCreationResult {
             $order = PurchaseOrder::query()
+                ->where('organization_id', $order->organization_id)
                 ->whereKey($order->id)
                 ->lockForUpdate()
                 ->firstOrFail();
@@ -63,17 +72,8 @@ class PurchaseContractService
                     'contractor',
                     'project',
                     'organization',
-                    'legalArchiveDocument',
-                ])->firstOrFail();
-                $document = $contract->legalArchiveDocument;
-
-                if (
-                    (int) $contract->organization_id !== (int) $order->organization_id
-                    || $document === null
-                    || (int) $document->organization_id !== (int) $order->organization_id
-                ) {
-                    throw new \DomainException(trans_message('procurement.purchase_orders.create_contract_error'));
-                }
+                ])->lockForUpdate()->firstOrFail();
+                $document = $this->replayDocument($contract, (int) $order->organization_id, $requiresDocumentView);
 
                 return new ContractDossierCreationResult($contract, $document, true);
             }
@@ -124,6 +124,12 @@ class PurchaseContractService
                 sourceId: (string) $order->id,
             ));
             $contract = $result->contract;
+            $document = $result->document;
+            if ($result->replayed && $requiresDocumentView) {
+                $contract = Contract::query()->where('organization_id', $order->organization_id)
+                    ->whereKey($contract->id)->lockForUpdate()->firstOrFail();
+                $document = $this->replayDocument($contract, (int) $order->organization_id, true);
+            }
 
             $order->update(['contract_id' => $contract->id]);
             if (! $result->replayed) {
@@ -132,10 +138,28 @@ class PurchaseContractService
 
             return new ContractDossierCreationResult(
                 $contract->fresh(['supplier', 'contractor', 'project', 'organization', 'legalArchiveDocument']) ?? $contract,
-                $result->document,
+                $document,
                 $result->replayed,
             );
         });
+    }
+
+    private function replayDocument(Contract $contract, int $organizationId, bool $requiresDocumentView): LegalArchiveDocument
+    {
+        $query = LegalArchiveDocument::query()->where('organization_id', $organizationId)
+            ->whereKey($contract->legal_archive_document_id)->lockForUpdate();
+        if ($requiresDocumentView) {
+            $query->with(['project', 'links']);
+        }
+        $document = $query->first();
+        if ((int) $contract->organization_id !== $organizationId || ! $document instanceof LegalArchiveDocument) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.create_contract_error'));
+        }
+        if ($requiresDocumentView) {
+            $this->replayAccess->authorizeProcurement($this->actor(), $organizationId, $contract, $document);
+        }
+
+        return $document;
     }
 
     public function validateProcurementContractCreation(array $data, int $organizationId): void

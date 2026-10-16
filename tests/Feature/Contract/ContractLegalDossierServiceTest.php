@@ -16,6 +16,7 @@ use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\Contract\ContractLegalDossierService;
+use App\Services\LegalArchive\Access\ContractDossierReplayAccess;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
@@ -53,7 +54,14 @@ final class ContractLegalDossierServiceTest extends TestCase
         $this->database->setAsGlobal();
         $this->database->setEventDispatcher(new Dispatcher($this->app));
         $this->database->bootEloquent();
+        \Illuminate\Support\Facades\Facade::clearResolvedInstance('db');
+        $this->app->instance('db', $this->database->getDatabaseManager());
         Model::clearBootedModels();
+        \Tests\Support\ContractDossierHistoryTestSchema::create($this->database->schema());
+        $this->database->schema()->create('projects', static function (Blueprint $table): void {
+            $table->id();
+            $table->softDeletes();
+        });
 
         $this->database->schema()->create('contracts', static function (Blueprint $table): void {
             $table->id();
@@ -127,6 +135,13 @@ final class ContractLegalDossierServiceTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
+        $this->database->schema()->create('contract_parties', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('contract_id');
+            $table->string('side');
+            $table->string('name');
+            $table->unsignedBigInteger('linked_organization_id')->nullable();
+        });
     }
 
     protected function tearDown(): void
@@ -142,12 +157,6 @@ final class ContractLegalDossierServiceTest extends TestCase
         });
         $this->database->schema()->table('legal_archive_documents', static function (Blueprint $table): void {
             $table->string('counterparty_name')->nullable();
-        });
-        $this->database->schema()->create('contract_parties', static function (Blueprint $table): void {
-            $table->id();
-            $table->unsignedBigInteger('contract_id');
-            $table->string('side');
-            $table->string('name');
         });
         Organization::query()->forceCreate(['id' => 7, 'name' => 'Наша организация']);
         Supplier::query()->forceCreate(['id' => 55, 'organization_id' => 7, 'name' => 'Текущее имя поставщика']);
@@ -171,6 +180,7 @@ final class ContractLegalDossierServiceTest extends TestCase
                 $this->database->table('contract_parties')->insert([
                     'contract_id' => $contract->id, 'side' => $side,
                     'name' => $side === $externalSide ? $name : 'Наша организация',
+                    'linked_organization_id' => $side === $externalSide ? null : 7,
                 ]);
             }
             $creator = Mockery::mock(ContractDossierDocumentCreator::class);
@@ -650,6 +660,7 @@ final class ContractLegalDossierServiceTest extends TestCase
             $authorizer ?? Mockery::mock(LegalDocumentAuthorizer::class)->shouldIgnoreMissing(),
             new LegalDocumentProfileRegistry,
             new LegalDocumentProfileValidator,
+            Mockery::mock(ContractDossierReplayAccess::class)->shouldIgnoreMissing(),
         );
     }
 
