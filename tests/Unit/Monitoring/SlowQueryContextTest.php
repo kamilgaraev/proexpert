@@ -23,6 +23,40 @@ use PHPUnit\Framework\TestCase;
 
 final class SlowQueryContextTest extends TestCase
 {
+    public function test_connection_observation_is_a_fixed_boolean_allowlist_after_redaction(): void
+    {
+        $previous = Container::getInstance();
+        $application = new Application(dirname(__DIR__, 3));
+        $application->instance('config', new Repository);
+        try {
+            $factory = new SlowQueryContext(new TracingService(null));
+            $event = new QueryExecuted('select 1', [], 600, new Connection(null));
+            $state = [
+                'observed' => true, 'write_lazy_before' => true, 'read_lazy_before' => false,
+                'write_ready_before' => false, 'read_ready_before' => false,
+                'write_ready_after' => true, 'read_ready_after' => false,
+                'manager_connection_event_during_run' => false,
+            ];
+            $context = $factory->forQuery($event, $state + ['password' => 'private-value']);
+            self::assertSame($state, $context['connection_state']);
+            $handler = new TestHandler;
+            $handler->setFormatter(new JsonFormatter);
+            $logger = new IlluminateLogger(new MonologLogger('slow_queries', [$handler]));
+            (new EnsureLogFailuresAreNonFatal)($logger);
+            $logger->warning('slow_query', $context);
+            $serialized = $handler->getRecords()[0]->formatted;
+            $logged = json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context'];
+            self::assertSame($state, $logged['connection_state']);
+            self::assertStringNotContainsString('private-value', $serialized);
+            self::assertSame(['observed' => false], $factory->forQuery($event)['connection_state']);
+            foreach ([['observed' => false, 'write_lazy_before' => true], ['observed' => true], array_replace($state, ['read_ready_after' => 'private-value'])] as $invalid) {
+                self::assertSame(['observed' => false], $factory->forQuery($event, $invalid)['connection_state']);
+            }
+        } finally {
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_full_statement_fingerprint_survives_log_redaction_without_exposing_sql_or_bindings(): void
     {
         $previous = Container::getInstance();
