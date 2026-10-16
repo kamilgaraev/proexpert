@@ -46,7 +46,8 @@ final class DesignIssueRegisterExportController extends Controller
                     foreach ($section['documents'] as $document) {
                         $row = [$register['package']['title'], $register['release']['workflow_event_id'] ?? '', $register['release']['issued_at'] ?? '', $section['code'], $document['document_code'], $document['title'], $document['current_version_id'], $document['revision'], $document['source_original_name'], $document['source_sha256'] ?? '', $document['sheets_count']];
                         if ($includeVersionNumber) {
-                            array_splice($row, 6, 0, [$document['version_number'] ?? '']);
+                            $versionNumber = (string) ($document['version_number'] ?? '');
+                            array_splice($row, 6, 0, [$versionNumber === '' ? '' : "'".$versionNumber]);
                         }
                         fputcsv($output, array_map($safe, $row), ';', '"', '');
                     }
