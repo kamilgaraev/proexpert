@@ -187,13 +187,35 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             app()->setLocale($locale);
         }
 
-        $task->update(['status' => 'completed', 'progress_percent' => 100]);
-        $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
-            'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
-            'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
-            'allocated_units' => 20, 'cost_per_unit' => 180,
-        ])->assertUnprocessable()->assertJsonPath('errors.task_id.0', 'Задача уже завершена');
-        $this->assertSame(10, $task->resources()->count());
+        try {
+            foreach (['ru', 'en'] as $language) {
+                app()->setLocale($language);
+                $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+                    'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+                    'assignment_start_date' => '2026-05-31', 'assignment_end_date' => '2026-06-06',
+                    'allocated_units' => 20, 'cost_per_unit' => 180,
+                ])->assertUnprocessable()
+                    ->assertJsonPath('message', $language === 'en' ? 'The resource assignment dates are invalid' : 'Ошибка валидации дат назначения ресурса')
+                    ->assertJsonPath('errors.assignment_start_date.0', $language === 'en' ? 'The assignment cannot start before the task start date' : 'Дата начала назначения не может быть раньше даты начала задачи')
+                    ->assertJsonPath('errors.assignment_end_date.0', $language === 'en' ? 'The assignment cannot end after the task end date' : 'Дата окончания назначения не может быть позже даты окончания задачи');
+                $this->assertSame(10, $task->resources()->count());
+            }
+
+            $task->update(['status' => 'completed', 'progress_percent' => 100]);
+            foreach (['ru', 'en'] as $language) {
+                app()->setLocale($language);
+                $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+                    'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+                    'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
+                    'allocated_units' => 20, 'cost_per_unit' => 180,
+                ])->assertUnprocessable()
+                    ->assertJsonPath('message', $language === 'en' ? 'Resources cannot be assigned to a completed task' : 'Нельзя назначать ресурсы на завершенную задачу')
+                    ->assertJsonPath('errors.task_id.0', $language === 'en' ? 'The task is already completed' : 'Задача уже завершена');
+                $this->assertSame(10, $task->resources()->count());
+            }
+        } finally {
+            app()->setLocale($locale);
+        }
     }
 
     public function test_gantt_does_not_return_another_projects_schedule_resources(): void
