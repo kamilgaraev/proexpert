@@ -41,12 +41,16 @@ final readonly class EvaluationSourceConflictProjector
             $unboundScope = false;
             foreach ($positions as $index => $position) {
                 $operands = array_column($position['quantity_basis']['formula_inputs']['operands'] ?? [], 'fact_id');
-                $sources = [];
+                $sources = $quantitySources = [];
                 foreach ($position['source_refs'] ?? [] as $reference) {
                     if (is_string($reference)) {
                         $sources[] = $reference;
+                        $quantitySources[] = $reference;
                     } elseif (is_array($reference) && is_string($reference['fact_id'] ?? null)) {
                         $sources[] = $reference['fact_id'];
+                        if (($reference['role'] ?? 'quantity_operand') === 'quantity_operand') {
+                            $quantitySources[] = $reference['fact_id'];
+                        }
                     }
                 }
                 $unboundRoomWork = ($position['entity_id'] ?? null) === null && ($position['section'] ?? null) === 'finishing' && $roomConflict;
@@ -57,7 +61,7 @@ final readonly class EvaluationSourceConflictProjector
                     continue;
                 }
                 $affected[] = $position['key'];
-                if (array_intersect([...$operands, ...$sources], $factIds) !== []) {
+                if (array_intersect([...$operands, ...$quantitySources], $factIds) !== []) {
                     $positions[$index]['quantity'] = null;
                     $positions[$index]['quantity_status'] = 'unknown';
                     $positions[$index]['price_snapshot'] = null;

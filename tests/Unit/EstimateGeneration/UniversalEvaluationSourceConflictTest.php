@@ -65,6 +65,16 @@ final class UniversalEvaluationSourceConflictTest extends TestCase
             self::assertNull($legacy['scenarios'][0]['positions'][0]['total_cost']);
             self::assertSame([], $legacy['scenarios'][0]['known_subtotals']);
         }
+        $item['source_refs'] = [['fact_id' => 'fact:plan', 'role' => 'context']];
+        $contextOnly = $builder->build($draft, $snapshot);
+        self::assertSame('20', $contextOnly['scenarios'][0]['positions'][0]['quantity']);
+        self::assertNotNull($contextOnly['scenarios'][0]['positions'][0]['price_snapshot']);
+        self::assertSame(['RUB' => '2000.00'], $contextOnly['scenarios'][0]['known_subtotals']);
+        self::assertContains('source_conflict', array_column($contextOnly['missing_requirements'], 'requirement'));
+        self::assertFalse($contextOnly['can_confirm_for_apply']);
+        $item['quantity_basis_details'] = ['formula_inputs' => ['operands' => [['fact_id' => 'fact:plan']]]];
+        self::assertNull($builder->build($draft, $snapshot)['scenarios'][0]['positions'][0]['quantity']);
+        unset($item['quantity_basis_details']);
         unset($item['metadata']['scope_entity_id']);
         $item['source_refs'] = [];
         $unbound = $builder->build($draft, $snapshot);
