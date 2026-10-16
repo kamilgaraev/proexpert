@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin\Schedule;
 
+use App\Exceptions\Schedule\ScheduleValidationException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Schedule\StoreTaskResourceRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateScheduleTaskRequest;
@@ -186,6 +187,8 @@ class ScheduleTaskController extends Controller
                 trans_message('schedule_management.task_resource_assigned'),
                 Response::HTTP_CREATED
             );
+        } catch (ScheduleValidationException $e) {
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY, $e->getErrors());
         } catch (\Throwable $e) {
             Log::error('schedule.task.resource.store.error', [
                 'project_id' => $project,

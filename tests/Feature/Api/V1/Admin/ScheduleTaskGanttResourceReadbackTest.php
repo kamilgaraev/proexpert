@@ -10,6 +10,7 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
+use App\Models\Material;
 use App\Models\Module;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
@@ -107,6 +108,43 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             'equipment_name' => 'Excavator E-12',
         ]);
 
+        $unit = MeasurementUnit::query()->firstOrCreate([
+            'organization_id' => $context->organization->id, 'short_name' => 'л',
+        ], [
+            'name' => 'Литр',
+            'type' => 'material', 'is_default' => false, 'is_system' => false,
+        ]);
+        $materialAssignments = [];
+        foreach ([
+            ['quantity' => '20', 'price' => '180', 'stored_quantity' => '20.00', 'stored_price' => '180.00', 'total' => '3600.00'],
+            ['quantity' => '0.25', 'price' => '0.10', 'stored_quantity' => '0.25', 'stored_price' => '0.10', 'total' => '0.03'],
+            ['quantity' => '1.005', 'price' => '2.675', 'stored_quantity' => '1.01', 'stored_price' => '2.68', 'total' => '2.71'],
+            ['quantity' => '0', 'price' => '180', 'stored_quantity' => '0.00', 'stored_price' => '180.00', 'total' => '0.00'],
+            ['quantity' => '20', 'price' => '0', 'stored_quantity' => '20.00', 'stored_price' => '0.00', 'total' => '0.00'],
+            ['quantity' => '20', 'price' => '180', 'stored_quantity' => '20.00', 'stored_price' => '180.00', 'total' => '999.99', 'estimated_cost' => '999.99'],
+            ['quantity' => '20', 'price' => '180', 'stored_quantity' => '20.00', 'stored_price' => '180.00', 'total' => '0.00', 'estimated_cost' => '0'],
+        ] as $index => $case) {
+            $material = Material::query()->create([
+                'organization_id' => $context->organization->id, 'measurement_unit_id' => $unit->id,
+                'name' => 'Учебная грунтовка '.$index, 'code' => 'RESOURCE-'.$index, 'is_active' => true,
+            ]);
+            $assignment = $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+                'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+                'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
+                'allocated_units' => $case['quantity'], 'cost_per_unit' => $case['price'],
+            ] + (array_key_exists('estimated_cost', $case) ? ['estimated_cost' => $case['estimated_cost']] : []))
+                ->assertCreated()->json('data');
+            $this->assertEquals((float) $case['stored_quantity'], $assignment['allocated_units'] ?? null);
+            $this->assertEquals((float) $case['stored_price'], $assignment['cost_per_unit'] ?? null);
+            $this->assertEquals((float) $case['total'], $assignment['estimated_cost'] ?? null);
+            $this->assertSame('л', $assignment['material']['unit_name']);
+            $this->assertDatabaseHas('task_resources', [
+                'id' => $assignment['id'], 'allocated_units' => $case['stored_quantity'],
+                'cost_per_unit' => $case['stored_price'], 'total_planned_cost' => $case['total'],
+            ]);
+            $materialAssignments[$assignment['id']] = $case;
+        }
+
         $gantt = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}?format=gantt")
             ->assertOk()
@@ -116,6 +154,21 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
         $this->assertSame($assignee->id, $resources->firstWhere('id', $userAssignment['id'])['user']['id'] ?? null);
         $this->assertSame($assignee->name, $resources->firstWhere('id', $userAssignment['id'])['user']['name'] ?? null);
         $this->assertSame('Excavator E-12', $resources->firstWhere('id', $equipmentAssignment['id'])['equipment_name'] ?? null);
+        foreach ($materialAssignments as $id => $case) {
+            $resource = $resources->firstWhere('id', $id);
+            $this->assertEquals((float) $case['stored_quantity'], $resource['allocated_units'] ?? null);
+            $this->assertEquals((float) $case['stored_price'], $resource['cost_per_unit'] ?? null);
+            $this->assertEquals((float) $case['total'], $resource['estimated_cost'] ?? null);
+            $this->assertSame('л', $resource['material']['unit_name']);
+        }
+
+        $task->update(['status' => 'completed', 'progress_percent' => 100]);
+        $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+            'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+            'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
+            'allocated_units' => 20, 'cost_per_unit' => 180,
+        ])->assertUnprocessable()->assertJsonPath('errors.task_id.0', 'Задача уже завершена');
+        $this->assertSame(9, $task->resources()->count());
     }
 
     public function test_gantt_does_not_return_another_projects_schedule_resources(): void
