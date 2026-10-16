@@ -176,10 +176,7 @@ final class EstimateAuditContextPlanner
             $facts = array_values(array_filter($root->facts, static fn (array $fact): bool => isset($wanted[$index][$fact['id']])));
             $quantities = array_values(array_filter($root->derivedQuantities, static fn (array $quantity): bool => isset($quantityIds[$index][$quantity['id']])));
             $evidence = array_values(array_filter($root->evidence, static fn (array $record): bool => isset($wanted[$index][$record['fact_id']])));
-            $draft = $part['draft'];
-            if (isset($draft['estimate_composition']['derived_quantities'])) {
-                $draft['estimate_composition']['derived_quantities'] = $quantities;
-            }
+            $draft = EstimateAuditDraftWireProjection::forContextPart($part['draft'], $root->derivedQuantities, $quantities);
             $payload = [...$full, 'facts' => $facts, 'derived_quantities' => $quantities, 'evidence' => $evidence,
                 'draft' => EstimateAuditDraftWireProjection::project($draft, $quantities), 'part_id' => $id, 'context_manifest' => $manifest];
             if (! $this->fits($payload, $maximumBytes)) {

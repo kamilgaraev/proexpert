@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditContextPlanner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftWireProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
@@ -116,6 +119,66 @@ final class EstimateAuditContextPlannerTest extends TestCase
         $different = $root->withDraft($changed, 0);
         self::assertSame('21', $different->canonicalPayload()['draft']['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence']['amount']);
         self::assertNotSame($root->fingerprint(), $different->fingerprint());
+    }
+
+    public function test_quantity_proofs_are_scoped_to_their_parts_after_canonical_storage_round_trip(): void
+    {
+        $facts = $evidence = $items = $quantities = $bases = [];
+        for ($i = 0; $i < 4; $i++) {
+            $factId = 'fact:'.$i;
+            $entityId = 'room:'.$i;
+            $facts[] = ['id' => $factId, 'entity_id' => $entityId, 'value' => '20', 'unit' => 'm2'];
+            $evidence[] = ['fact_id' => $factId, 'locator' => ['evidence_id' => 'evidence:'.$i]];
+            $basis = ['key' => 'quantity:'.$i, 'amount' => '20', 'unit' => 'm2',
+                'formula_inputs' => ['entity_id' => $entityId, 'operands' => [['fact_id' => $factId,
+                    'decision_reason' => str_repeat('confirmed dimension ', 500)]]]];
+            $bases[] = $basis;
+            $quantities[] = ['id' => 'quantity:'.$i, 'entity_id' => $entityId,
+                'quantity_basis' => $basis, 'operand_fact_ids' => [$factId]];
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Floor '.$i, 'entity_id' => $entityId,
+                'quantity_formula' => 'quantity:'.$i, 'quantity_evidence' => $basis, 'quantity_basis_details' => $basis];
+        }
+        $draft = json_decode(CanonicalPipelineJson::encode([
+            'local_estimates' => [['key' => 'building', 'sections' => [['key' => 'floor', 'work_items' => $items]]]],
+            'building_quantities' => ['quantities' => $bases, 'diagnostics' => ['retain coverage warning']],
+            'estimate_composition' => ['derived_quantities' => $quantities],
+        ]), true, 64, JSON_THROW_ON_ERROR);
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+        self::assertGreaterThan(1, count($parts));
+        $seen = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            $wire = $input->canonicalPayload();
+            self::assertArrayNotHasKey('quantities', $wire['draft']['building_quantities']);
+            self::assertArrayNotHasKey('derived_quantities', $wire['draft']['estimate_composition']);
+            self::assertSame(['retain coverage warning'], $wire['draft']['building_quantities']['diagnostics']);
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            $messages = [['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $wire])]];
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper($messages));
+            array_push($seen, ...$input->derivedQuantities);
+        }
+        self::assertEqualsCanonicalizing($quantities, $seen);
+        self::assertSame($draft, $root->draft);
+    }
+
+    public function test_distinct_quantity_proofs_keep_their_values_types_and_list_order(): void
+    {
+        $basis = ['key' => 'floor_area', 'amount' => '20', 'operands' => ['length', 'width']];
+        $quantity = ['id' => 'quantity:1', 'quantity_basis' => $basis];
+        $distinctBasis = [...$basis, 'amount' => 20, 'operands' => ['width', 'length']];
+        $distinctQuantity = [...$quantity, 'quantity_basis' => $distinctBasis];
+        $draft = ['building_quantities' => ['quantities' => [$distinctBasis]],
+            'estimate_composition' => ['derived_quantities' => [$distinctQuantity]],
+            'local_estimates' => [['sections' => [['work_items' => [
+                ['key' => 'work:1', 'quantity_evidence' => $basis, 'quantity_basis_details' => $distinctBasis],
+            ]]]]]];
+        self::assertSame($draft, EstimateAuditDraftWireProjection::forContextPart($draft, [$quantity], []));
+        self::assertSame($draft, EstimateAuditDraftWireProjection::project($draft, [$quantity]));
     }
 
     private function root(): EstimateAuditInput
