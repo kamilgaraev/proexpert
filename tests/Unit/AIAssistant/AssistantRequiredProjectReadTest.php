@@ -93,6 +93,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Покажи нерасторгнутые действующие договоры нашего объекта.', 'Покажи не закрытые активные договоры нашего объекта.',
             'Покажи активные, не архивные договоры нашего объекта.', 'Покажи активные, не черновые договоры нашего объекта.',
             'Покажи действующие договора нашего объекта',
+            'В действующих общих договорах нашего объекта мы всегда заказчик? Покажи, где мы заказчик, а где исполнитель, и назови вторую сторону.',
             'Покажи сроки окончания договоров нашего объекта',
             'Покажи даты окончания договоров нашего объекта'] as $query) {
             $filter = match ($query) {
@@ -165,10 +166,45 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $plan = $this->plan('Какая техника сейчас закреплена за нашим объектом и есть ли среди неё простаивающая или ожидающая ремонта? Что мне нужно решить в первую очередь?');
         self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
         self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_machinery_summary', ['project_id' => 999]));
+        foreach ([
+            'Почему техника OA-35 на нашем объекте числится назначенной, хотя текущих назначений нет? Покажи плановые даты назначения и поясни, можно ли считать эту машину свободной.',
+            'Какая техника назначена на наш объект и до каких дат?',
+            'Какие машины нашего объекта свободны?',
+            'Сделай сводку по назначенной технике нашего объекта',
+            'Сделайте, пожалуйста, список свободных машин нашего объекта',
+            'Сделай краткую сводку по назначенной технике нашего объекта',
+        ] as $query) {
+            $arguments = ['project_id' => 52];
+            if (str_contains($query, 'OA-35')) { $arguments['asset_code'] = 'OA-35'; }
+            self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => $arguments], AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
+        }
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', 'Какая техника закреплена за нашим объектом и сколько потрачено за сентябрь?'));
         $mixed = 'Какая техника простаивает в нашем проекте и какие счета не оплачены?';
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $mixed));
+        foreach (['Сделай машину нашего объекта свободной', 'Переведи назначенную технику нашего объекта на другой проект',
+            'Сделай машину нашего объекта свободной и сводку по её назначениям',
+            'Сделай сводку по назначенной технике нашего объекта и сделай машину свободной',
+            'Какие машины OA-35 и OA-36 нашего объекта назначены?',
+            'Какие машины #26 и #27 нашего объекта назначены?',
+        ] as $write) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($write)), $write);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $write), $write);
+        }
+        foreach ([['Почему техника OA-35 нашего объекта назначена?', ['asset_code' => 'OA-35']],
+            ['Почему техника OA-35 нашего объекта по-прежнему назначена?', ['asset_code' => 'OA-35']],
+            ['Почему техника CAN-DIRECTOR нашего объекта назначена?', ['asset_code' => 'CAN-DIRECTOR']],
+            ['Почему техника «can-director» нашего объекта назначена?', ['asset_code' => 'can-director']],
+            ['Почему техника нашего объекта по-прежнему назначена?', []],
+            ['Техника по-прежнему назначена на наш объект?', []],
+            ['Почему машина #26 нашего объекта назначена?', ['asset_id' => 26]],
+            ['Почему машина #26 нашего проекта в смене #52 всё ещё назначена?', ['asset_id' => 26]],
+        ] as [$query, $filter]) {
+            $expected = ['project_id' => 52] + $filter;
+            $target = $this->plan($query);
+            self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => $expected], AssistantRequiredProjectRead::fromPlan($target));
+            self::assertSame($expected, AssistantRequiredProjectRead::bindArguments($target, 'get_project_machinery_summary', ['project_id' => 999, 'asset_id' => 999]));
+        }
     }
 
     public function test_director_compound_finance_and_schedule_impact_bind_verified_scope(): void

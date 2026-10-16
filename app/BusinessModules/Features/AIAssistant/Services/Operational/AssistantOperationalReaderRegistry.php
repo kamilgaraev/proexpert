@@ -123,9 +123,11 @@ final class AssistantOperationalReaderRegistry
         }
         $purchaseOrders = AssistantOrganizationPurchaseOrdersReader::matches($query);
         $ownPermissions = AssistantOwnAdminPermissionsReader::matches($query);
+        $subscriptionCatalog = AssistantReportSubscriptionCatalogReader::matches($query);
         $financeQuery = AssistantProjectReportCatalogReader::matches($query)
             ? preg_replace('/для\s+проверки\s+оплат(?:,?\s+работ(?:\s+и\s+остатков)?)?/iu', '', $query) ?? $query
             : $query;
+        if ($subscriptionCatalog) { $financeQuery = AssistantReportSubscriptionCatalogReader::intentQuery($financeQuery); }
         if (AssistantOrganizationModulesReader::matches($query)) {
             $financeQuery = preg_replace('/без\s+плат[её]ж[а-яё]*\s+(?:подробност|детал)[а-яё]*/iu', '', $financeQuery) ?? $financeQuery;
         }
@@ -147,7 +149,7 @@ final class AssistantOperationalReaderRegistry
             : $query;
         $topicQuery = AssistantAdvanceSettingsReader::intentQuery($topicQuery);
         foreach (self::TOPICS as $pattern) {
-            if ($pattern === AssistantProjectReportCatalogReader::INTENT_PATTERN && AssistantReportSubscriptionCatalogReader::matches($query)) { continue; }
+            if ($pattern === AssistantProjectReportCatalogReader::INTENT_PATTERN && $subscriptionCatalog) { continue; }
             if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
                 continue;
             }
@@ -157,9 +159,9 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
-            if ($class === AssistantReportSubscriptionsReader::class && AssistantReportSubscriptionCatalogReader::matches($query)) { continue; }
-            if ($class === AssistantOrganizationPackagesReader::class && AssistantReportSubscriptionsReader::matches($query)
-                && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1) { continue; }
+            if ($class === AssistantReportSubscriptionsReader::class && $subscriptionCatalog) { continue; }
+            if ($class === AssistantOrganizationPackagesReader::class && ($subscriptionCatalog || (AssistantReportSubscriptionsReader::matches($query)
+                && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1))) { continue; }
             if (AssistantAdvanceSettingsReader::matches($query) && in_array($class, [AssistantNotificationPreferencesReader::class, AssistantOrganizationNotificationsReader::class], true)) { continue; }
             if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
             if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
