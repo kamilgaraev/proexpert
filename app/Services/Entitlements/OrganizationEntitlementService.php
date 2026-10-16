@@ -34,13 +34,42 @@ class OrganizationEntitlementService
         $slugs = array_values(array_unique(array_merge(
             $this->packageCatalog->foundationModules(),
             $this->getAlwaysOnModuleSlugs(),
-            array_keys($this->getPackageModuleSources($organizationId)),
         )));
 
-        return Module::query()->where('is_active', true)->where(static function (Builder $query) use ($slugs): void {
+        $packages = [];
+        $subscriptionSlugs = array_unique(array_merge(
+            array_column($this->packageCatalog->allPackages(), 'slug'),
+            $this->packageCatalog->retiredEntryPackageSlugs(),
+        ));
+        foreach ($subscriptionSlugs as $subscriptionSlug) {
+            $packageSlug = $this->packageCatalog->canonicalizePackageSlug($subscriptionSlug);
+            if ($this->packageCatalog->package($packageSlug) === null) {
+                continue;
+            }
+            $modules = $this->packageCatalog->tierModules($packageSlug, 'standard');
+            if ($modules === []) {
+                continue;
+            }
+            $packages[$packageSlug]['slugs'][] = $subscriptionSlug;
+            $packages[$packageSlug]['modules'] = $modules;
+        }
+        $subscriptions = $packages === [] ? null : $this->activePackageSubscriptionQuery($organizationId)
+            ->selectRaw('1')->where(static function (Builder $query) use ($packages): void {
+                foreach ($packages as $package) {
+                    $query->orWhere(static function (Builder $subscription) use ($package): void {
+                        $subscription->whereIn('organization_package_subscriptions.package_slug', $package['slugs'])
+                            ->whereIn('modules.slug', $package['modules']);
+                    });
+                }
+            });
+
+        return Module::query()->where('is_active', true)->where(static function (Builder $query) use ($slugs, $subscriptions): void {
             $query->where('can_deactivate', false)->orWhere('is_system_module', true);
             if ($slugs !== []) {
                 $query->orWhereIn('slug', $slugs);
+            }
+            if ($subscriptions !== null) {
+                $query->orWhereExists($subscriptions->toBase());
             }
         });
     }
@@ -67,15 +96,7 @@ class OrganizationEntitlementService
     {
         $sources = [];
 
-        $packageSubscriptions = OrganizationPackageSubscription::query()
-            ->where('organization_id', $organizationId)
-            ->whereHas('commercialAccount', function ($account): void {
-                $account->whereColumn(
-                    'organization_commercial_accounts.organization_id',
-                    'organization_package_subscriptions.organization_id',
-                );
-            })
-            ->active()
+        $packageSubscriptions = $this->activePackageSubscriptionQuery($organizationId)
             ->orderBy('package_slug')
             ->orderBy('id')
             ->get();
@@ -85,6 +106,19 @@ class OrganizationEntitlementService
         }
 
         return $sources;
+    }
+
+    private function activePackageSubscriptionQuery(int $organizationId): Builder
+    {
+        return OrganizationPackageSubscription::query()
+            ->where('organization_id', $organizationId)
+            ->whereHas('commercialAccount', function ($account): void {
+                $account->whereColumn(
+                    'organization_commercial_accounts.organization_id',
+                    'organization_package_subscriptions.organization_id',
+                );
+            })
+            ->active();
     }
 
     private function appendPackageModuleSources(
