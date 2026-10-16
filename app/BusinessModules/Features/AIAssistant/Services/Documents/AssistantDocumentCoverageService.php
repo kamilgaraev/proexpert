@@ -309,7 +309,7 @@ final class AssistantDocumentCoverageService
             'ai_assistant_documents.project_id', 'ai_assistant_documents.checksum', 'ai_assistant_documents.coverage_status',
             'ai_assistant_documents.status', 'ai_assistant_documents.processed_at', 'ai_assistant_documents.updated_at', 'ai_assistant_documents.metadata');
         $units = DB::table('ai_assistant_document_units as evidence_unit')
-            ->joinSub($currentDocuments, 'evidence_document', 'evidence_document.id', '=', 'evidence_unit.document_id')
+            ->join('assistant_coverage_documents as evidence_document', 'evidence_document.id', '=', 'evidence_unit.document_id')
             ->whereRaw("BTRIM(evidence_unit.text) <> ''");
         $current = (clone $units)->whereRaw("encode(sha256(convert_to(evidence_unit.text, 'UTF8')), 'hex') = evidence_unit.checksum")
             ->whereExists(static function (QueryBuilder $sources) use ($semantic): void {
@@ -338,9 +338,23 @@ final class AssistantDocumentCoverageService
                         ->havingRaw('MIN(evidence_chunk.chunk_index) = 0 AND MAX(evidence_chunk.chunk_index) = COUNT(*) - 1');
                 });
         });
-        $expectedCount = (clone $units)->count();
+        $partialDocuments = DB::table('assistant_coverage_documents as document')->where(static function (QueryBuilder $query): void {
+            $query->whereNotIn('document.coverage_status', ['full', 'ocr'])->orWhereNull('document.coverage_status')
+                ->orWhere('document.status', '!=', 'ready')->orWhereNull('document.processed_at')
+                ->orWhereRaw("COALESCE(document.metadata->>'partial', 'false') <> 'false'")
+                ->orWhereRaw("COALESCE(document.metadata->>'truncated', 'false') <> 'false'")
+                ->orWhereNotExists(static fn (QueryBuilder $unit) => $unit->selectRaw('1')->from('ai_assistant_document_units')
+                    ->whereColumn('ai_assistant_document_units.document_id', 'document.id')->whereRaw("BTRIM(ai_assistant_document_units.text) <> ''"));
+        });
+        $aggregate = DB::query()->selectSub((clone $units)->selectRaw('COUNT(*)'), 'expected_units')
+            ->selectSub($current->selectRaw('COUNT(*)'), 'current_units')
+            ->selectSub($partialDocuments->selectRaw('COUNT(*)'), 'partial_documents');
         $checkpoint?->__invoke();
-        $currentCount = $current->count();
+        $counts = $this->withVisibleDocuments($aggregate, $currentDocuments)->first();
+        if ($counts === null) { throw new \LogicException('assistant_document_retrieval_aggregate_missing'); }
+        $expectedCount = (int) $counts->expected_units;
+        $currentCount = (int) $counts->current_units;
+        $partial = (int) $counts->partial_documents;
         $checkpoint?->__invoke();
         $legacySources = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->from('ai_rag_sources as legacy_source')
             ->joinSub($currentDocuments, 'legacy_document', static function (JoinClause $join): void {
@@ -355,14 +369,6 @@ final class AssistantDocumentCoverageService
             $currentCount += count(app(AssistantDocumentIndexCompatibility::class)->verifiedMetadata($packet->all(), $checkpoint, $semantic));
         }
         $checkpoint?->__invoke();
-        $partial = DB::query()->fromSub($currentDocuments, 'document')->where(static function (QueryBuilder $query): void {
-            $query->whereNotIn('document.coverage_status', ['full', 'ocr'])->orWhereNull('document.coverage_status')
-                ->orWhere('document.status', '!=', 'ready')->orWhereNull('document.processed_at')
-                ->orWhereRaw("COALESCE(document.metadata->>'partial', 'false') <> 'false'")
-                ->orWhereRaw("COALESCE(document.metadata->>'truncated', 'false') <> 'false'")
-                ->orWhereNotExists(static fn (QueryBuilder $unit) => $unit->selectRaw('1')->from('ai_assistant_document_units')
-                    ->whereColumn('ai_assistant_document_units.document_id', 'document.id')->whereRaw("BTRIM(ai_assistant_document_units.text) <> ''"));
-        })->count();
         return ['complete' => $partial === 0 && $expectedCount === $currentCount, 'fresh' => true,
             'mode' => $semantic ? 'semantic' : 'lexical', 'expected_units' => $expectedCount, 'current_units' => $currentCount, 'partial_documents' => $partial];
     }

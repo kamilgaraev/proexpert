@@ -825,6 +825,56 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer($incomplete));
     }
 
+    public function test_retrieval_coverage_uses_one_aggregate_and_preserves_current_chunk_checks(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('coverage-current.txt', 'Полный текст документа.'))->id);
+        $unit = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->firstOrFail();
+        $data = \App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit);
+        $identity = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->coverageIdentity($data);
+        $source = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->create(['organization_id' => $this->organization->id,
+            'project_id' => $this->project->id, 'identity_part_key' => (string) $unit->id, 'source_type' => 'file_document',
+            'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id, 'title' => $document->filename, 'checksum' => $identity['checksum'],
+            'source_version' => $document->processed_at->toAtomString(), 'metadata' => $data->metadata, 'indexed_at' => now()]);
+        $chunk = $source->chunks()->create(['organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+            'chunk_index' => 0, 'content' => $unit->text, 'content_hash' => hash('sha256', $unit->text),
+            'metadata' => $data->metadata + ['chunk_count' => 1, 'chunk_index' => 0]]);
+        $service = app(AssistantDocumentCoverageService::class);
+        $scope = ['source_types' => ['file_document']];
+        $retrievalQueries = 0;
+        $capture = true;
+        DB::listen(static function ($query) use (&$retrievalQueries, &$capture): void {
+            if ($capture && str_contains($query->sql, 'evidence_unit')) { $retrievalQueries++; }
+        });
+        try {
+            $coverage = $service->coverage($this->organization->id, $this->owner, scope: $scope)['retrieval_coverage'];
+        } finally {
+            $capture = false;
+        }
+        self::assertSame(1, $retrievalQueries);
+        self::assertSame([1, 1, 0, true], [$coverage['expected_units'], $coverage['current_units'], $coverage['partial_documents'], $coverage['complete']]);
+
+        $semanticScope = $scope + ['retrieval_mode' => 'semantic'];
+        $semantic = $service->coverage($this->organization->id, $this->owner, scope: $semanticScope)['retrieval_coverage'];
+        self::assertSame([1, 0, false], [$semantic['expected_units'], $semantic['current_units'], $semantic['complete']]);
+        DB::table('ai_rag_chunks')->where('id', $chunk->id)
+            ->update(['embedding' => '['.implode(',', \Tests\Support\RagTestEmbedding::fromLeadingValues([1.0])).']']);
+        self::assertNotNull(DB::table('ai_rag_chunks')->where('id', $chunk->id)->value('embedding'));
+        $semantic = $service->coverage($this->organization->id, $this->owner, scope: $semanticScope)['retrieval_coverage'];
+        self::assertSame([1, true], [$semantic['current_units'], $semantic['complete']]);
+
+        $chunk->update(['chunk_index' => 1]);
+        $noncontiguous = $service->coverage($this->organization->id, $this->owner, scope: $scope)['retrieval_coverage'];
+        self::assertSame([0, false], [$noncontiguous['current_units'], $noncontiguous['complete']]);
+        $chunk->update(['chunk_index' => 0, 'metadata' => array_replace($chunk->metadata, ['chunk_count' => 2])]);
+        $incomplete = $service->coverage($this->organization->id, $this->owner, scope: $scope)['retrieval_coverage'];
+        self::assertSame([0, false], [$incomplete['current_units'], $incomplete['complete']]);
+        $chunk->update(['metadata' => array_replace($chunk->metadata, ['chunk_count' => 1])]);
+        $document->update(['coverage_status' => 'partial']);
+        $source->update(['indexed_at' => now()]);
+        $partial = $service->coverage($this->organization->id, $this->owner, scope: $scope)['retrieval_coverage'];
+        self::assertSame([1, 1, false], [$partial['current_units'], $partial['partial_documents'], $partial['complete']]);
+    }
+
     public function test_legacy_document_index_is_readable_without_reindex_and_refs_reject_changed_unit_content(): void
     {
         $document = $this->documents->process((int) $this->documents->registerFile($this->file('legacy-normative.txt', 'Норматив: высота ограждения.'))->id);
