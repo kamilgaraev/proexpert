@@ -48,7 +48,9 @@ final class PersonalFileControllerWorkflowTest extends TestCase
             ->andReturn('https://download.example.test/personal');
         $files->shouldReceive('deleteCurrent')
             ->once()
-            ->with(Mockery::on(static fn (string $key): bool => $key === $storedKey));
+            ->with(Mockery::on(static function (string $key) use (&$storedKey): bool {
+                return $key === $storedKey;
+            }));
         $this->app->instance(FileService::class, $files);
 
         $createFolderResponse = $this->withHeaders($context->authHeaders())
@@ -67,7 +69,7 @@ final class PersonalFileControllerWorkflowTest extends TestCase
         $uploadResponse = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/personal-files/upload', [
                 'parent_path' => 'docs',
-                'file' => UploadedFile::fake()->create('contract.pdf', 12, 'application/pdf'),
+                'file' => UploadedFile::fake()->createWithContent('contract.pdf', str_pad("%PDF-1.4\n%%EOF", 12 * 1024, "\n")),
             ]);
 
         $uploadResponse->assertCreated();
@@ -173,7 +175,7 @@ final class PersonalFileControllerWorkflowTest extends TestCase
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/personal-files/upload', [
-                'file' => UploadedFile::fake()->create('contract.pdf', 12, 'application/pdf'),
+                'file' => UploadedFile::fake()->createWithContent('contract.pdf', str_pad("%PDF-1.4\n%%EOF", 12 * 1024, "\n")),
             ]);
 
         $response->assertStatus(500);

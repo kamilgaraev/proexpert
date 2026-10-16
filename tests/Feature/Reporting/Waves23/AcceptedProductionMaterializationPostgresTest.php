@@ -6,10 +6,18 @@ namespace Tests\Feature\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
+use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
@@ -20,6 +28,8 @@ use App\Services\Acting\ActingPriceService;
 use App\Services\ActReport\ActReportNotificationService;
 use App\Services\ActReport\ActReportWorkflowService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Providers\AcceptedProductionReportProvider;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Queries\AcceptedProductionRowQuery;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionHistoryBoundaryResolver;
@@ -37,6 +47,7 @@ use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use ReflectionMethod;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
+use Tests\Support\Reporting\ReportExecutionContextBuilder;
 use Tests\TestCase;
 
 #[Group('postgresql')]
@@ -77,6 +88,31 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             $baselineRows = $rows($baseline->id);
             self::assertCount(1, $baselineRows);
             self::assertSame(2.5, (float) $baselineRows[0]['accepted_quantity']);
+            $actor = User::factory()->create(['current_organization_id' => $organizationId]);
+            $context = (new ReportExecutionContextBuilder)
+                ->actor(new ReportActor((int) $actor->id, 'active', ['reports.view', 'reports.run', 'reports.export']))
+                ->scope($scope)
+                ->authorization(new AuthorizationDecisionContext('queue', $organizationId, [$organizationId], [$projectId], [], new DateTimeZone('UTC'), 'nonempty-owner-test', null))
+                ->build();
+            $result = app(AcceptedProductionReportProvider::class)->result($context, $baseline);
+            $canonicalHash = app(CanonicalReportSourceHashBuilder::class)->build($query, $baseline, $result);
+            $canonical = new ReportSnapshotRef(
+                $baseline->kind, $baseline->id, $baseline->scope, $baseline->definitionHash, $baseline->formulaVersion,
+                $canonicalHash, $baseline->generatedAt, $baseline->staleAt, $baseline->watermarks, $baseline->classification,
+                $baseline->seal, $baseline->materializedSourceHash,
+            );
+            $rowQuery = app(AcceptedProductionRowQuery::class);
+            $sort = new ReportWindowSort('recognized_on', ReportSortDirection::DESC);
+            $envelopes = iterator_to_array($rowQuery->cursor($context, $canonical, $sort, 10));
+            self::assertCount(1, $envelopes);
+            self::assertSame($canonicalHash->value, $envelopes[0]['source_hash']);
+            self::assertNotSame($baseline->materializedSourceHash->value, $envelopes[0]['source_hash']);
+            self::assertSame(2.5, (float) $envelopes[0]['values']['accepted_quantity']);
+            $page = $rowQuery->page($context, $canonical, $sort, null, 10);
+            self::assertCount(1, $page->rows);
+            self::assertCount(1, iterator_to_array((new ReportRowChunkReader)->read(
+                $context, $canonical, new Sha256Hash($envelopes[0]['query_hash']), $sort, 10, $rowQuery,
+            )));
             $baselineTotals = DB::table('accepted_production_snapshots')->where('id', $baseline->id)->value('totals');
             $reversedAt = $day->setTime(12, 0);
             $reacceptedAt = $day->setTime(13, 0);

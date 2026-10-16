@@ -232,9 +232,12 @@ final class PersonalFileService
     public function delete(string $id, int $organizationId, int $userId, ?string $directoryScope = null): void
     {
         $file = $this->findOwned($id, $organizationId, $userId, $directoryScope);
+        $reports = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportArtifactLifecycle($this->files);
         if (! $file->is_folder) {
-            $this->deleteObject($file);
-            $file->delete();
+            if (! $reports->delete((string) $file->storage_key, $organizationId, $userId)) {
+                $this->deleteObject($file);
+                $file->delete();
+            }
 
             return;
         }
@@ -248,7 +251,7 @@ final class PersonalFileService
             ->get();
 
         foreach ($nested as $nestedFile) {
-            if (! $nestedFile->is_folder) {
+            if (! $nestedFile->is_folder && ! $reports->delete((string) $nestedFile->storage_key, $organizationId, $userId)) {
                 $this->deleteObject($nestedFile);
             }
         }

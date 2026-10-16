@@ -528,6 +528,61 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertLessThanOrEqual(40, count($hints[0]['fields']));
     }
 
+    public function test_contract_source_matches_active_organization_placement_with_shared_and_revoked_access(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $own = $this->contract($org, $project, '100.00');
+        $own->organizationViews()->delete();
+        $foreign = Organization::factory()->create();
+        $shared = $this->contract($foreign, $project, '200.00');
+        $sharedView = \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $shared->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1]);
+        $archived = $this->contract($org, $project, '300.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $archived->id, 'organization_id' => $org->id], ['visibility' => 'archived', 'version' => 1]);
+        $revoked = $this->contract($org, $project, '400.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $revoked->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1, 'access_revoked_at' => now()]);
+        $hiddenProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $this->contract($org, $hiddenProject, '500.00');
+        $this->contract($foreign, $project, '600.00');
+        $source = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null);
+        self::assertSame([$own->id, $shared->id], $source['query']->orderBy('contracts.id')->pluck('contracts.id')->all());
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $shared->id));
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $archived->id));
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'contract', $revoked->id));
+        $report = $this->builder->build($this->plan($this->contractsSection(['columns' => ['number']])), $actor, $org->id);
+        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        self::assertTrue($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $sharedView->update(['access_revoked_at' => now()]);
+        self::assertFalse($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
+    public function test_report_status_choices_are_canonical_and_valid_filter_returns_active_projects(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $project->update(['status' => 'active']);
+        $source = $this->sources->resolve($actor, $org->id, 'projects', 'project', null);
+        self::assertSame(['draft', 'active', 'completed', 'paused', 'cancelled'], array_column($source['fields']['status']['choices'], 'value'));
+        $query = 'Сделай CSV по действующим проектам';
+        $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query, []);
+        $hints = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints(
+            new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $this->sources, $this->policy))->forRequest($actor, $org->id, $query, $understanding);
+        self::assertSame($source['fields']['status']['choices'], $hints[0]['choices']['status']);
+        $report = $this->builder->build($this->plan(['columns' => ['id', 'name'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'active']]]), $actor, $org->id);
+        self::assertSame([[$project->id, $project->name]], $report['sections'][0]['rows']);
+    }
+
+    public function test_invalid_enum_filter_is_rejected_before_generating_a_misleading_empty_report(): void
+    {
+        [$org, $actor] = $this->fixture();
+        foreach ([['eq', 'Активный'], ['in', ['active', 'unknown_status']], ['contains', 'active'], ['gt', 'active']] as [$operator, $value]) {
+            try {
+                $this->builder->build($this->plan(['filters' => [['field' => 'status', 'operator' => $operator, 'value' => $value]]]), $actor, $org->id);
+                self::fail('Invalid enum filter must be rejected');
+            } catch (ValidationException $error) {
+                self::assertArrayHasKey('filters', $error->errors());
+            }
+        }
+    }
+
     private function fixture(): array
     {
         $org = Organization::factory()->create();
