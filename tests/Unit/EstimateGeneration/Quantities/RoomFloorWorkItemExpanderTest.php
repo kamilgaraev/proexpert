@@ -185,7 +185,9 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         self::assertSame($draft, $this->expand($draft, $this->quantities(), 128, []));
         $building = new QuantityData('floor_area', 'm2', '40', 'direct_floor_area', '1',
             ['entity_id' => 'room:building-floor'], QuantitySource::Evidenced, ['evidence:building'], 'model:1');
-        self::assertSame($draft, $this->expand($draft, ['floor_area' => $building, ...$this->quantities()], 128));
+        $withGlobal = $this->expand($draft, ['floor_area' => $building, ...$this->quantities()], 128);
+        self::assertCount(6, $withGlobal['local_estimates'][0]['sections'][0]['work_items']);
+        self::assertNotContains('room:building-floor', array_column($withGlobal['local_estimates'][0]['sections'][0]['work_items'], 'entity_id'));
         $buildingLogical = new QuantityData('quantity:building', 'm2', '40', 'direct_floor_area', '1',
             $building->formulaInputs, $building->source, $building->evidenceIds, $building->modelVersion);
         $expanded = $this->expand($draft, [$buildingLogical->key => $buildingLogical, ...$this->quantities()], 128);

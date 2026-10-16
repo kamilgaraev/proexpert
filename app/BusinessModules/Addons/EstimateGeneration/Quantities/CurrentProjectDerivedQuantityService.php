@@ -206,7 +206,8 @@ final readonly class CurrentProjectDerivedQuantityService
             }
             $derived[] = $quantity;
         }
-        $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings, array_column($snapshot->facts, null, 'id'));
+        $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings,
+            array_column($snapshot->facts, null, 'id'), array_column($snapshot->entities, null, 'id'));
 
         return [
             'derived' => $derived,
@@ -769,14 +770,19 @@ final readonly class CurrentProjectDerivedQuantityService
         ];
     }
 
-    private function quantityDataMap(array $derived, string $modelVersion, array &$warnings, array $facts): array
+    private function quantityDataMap(array $derived, string $modelVersion, array &$warnings, array $facts, array $entities): array
     {
         $aliases = [...self::FORMULA_PURPOSES, ...array_map(static fn (array $definition): string => $definition['purpose'], FactVocabulary::engineeringFormulas())];
         $aliasedPurposes = array_fill_keys(array_values($aliases), true);
         $unresolvedPurposes = [];
+        $unresolvedBuildingFloor = false;
         foreach ($warnings as $warning) {
             if (is_string($warning['formula'] ?? null)) {
-                $unresolvedPurposes[$aliases[$warning['formula']] ?? $warning['formula']] = true;
+                $purpose = $aliases[$warning['formula']] ?? $warning['formula'];
+                $unresolvedPurposes[$purpose] = true;
+                if ($purpose === 'floor_area' && $this->isBuildingFloor($entities[$warning['entity_id'] ?? ''] ?? null)) {
+                    $unresolvedBuildingFloor = true;
+                }
             }
         }
         $byPurpose = [];
@@ -788,7 +794,19 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $result = [];
         foreach ($byPurpose as $purpose => $items) {
-            if (isset($aliasedPurposes[$purpose]) && count($items) === 1 && ! isset($unresolvedPurposes[$purpose])) {
+            $allItems = $items;
+            $hasGlobal = false;
+            if ($purpose === 'floor_area' && ! $unresolvedBuildingFloor) {
+                $buildingFloors = array_values(array_filter($items,
+                    fn (DerivedQuantity $quantity): bool => $this->isBuildingFloor($entities[$quantity->entityId] ?? null)));
+                if (count($buildingFloors) === 1) {
+                    $global = $buildingFloors[0];
+                    $result[$purpose] = $this->quantityData($global, $modelVersion, $purpose, $facts);
+                    $hasGlobal = true;
+                    $items = array_values(array_filter($items, static fn (DerivedQuantity $quantity): bool => $quantity !== $global));
+                }
+            }
+            if (! $hasGlobal && isset($aliasedPurposes[$purpose]) && count($items) === 1 && ! isset($unresolvedPurposes[$purpose])) {
                 $result[$purpose] = $this->quantityData($items[0], $modelVersion, $purpose, $facts);
 
                 continue;
@@ -797,15 +815,15 @@ final readonly class CurrentProjectDerivedQuantityService
                 $key = $quantity->logicalId ?? $quantity->id;
                 $result[$key] = $this->quantityData($quantity, $modelVersion, $key, $facts);
             }
-            if (isset($aliasedPurposes[$purpose]) && count($items) > 1) {
+            if (isset($aliasedPurposes[$purpose]) && count($allItems) > 1) {
                 $formulas = array_values(array_unique(array_map(
-                    static fn (DerivedQuantity $quantity): string => $quantity->formulaIdentity ?? $quantity->formula, $items)));
+                    static fn (DerivedQuantity $quantity): string => $quantity->formulaIdentity ?? $quantity->formula, $allItems)));
                 $warnings[] = [
                     'code' => 'canonical_quantity_aggregate_unresolved',
                     'formula' => count($formulas) === 1 ? $formulas[0] : $purpose,
                     'quantity_ids' => array_slice(array_map(
                         static fn (DerivedQuantity $quantity): string => $quantity->id,
-                        $items,
+                        $allItems,
                     ), 0, 100),
                 ];
             }
@@ -823,13 +841,19 @@ final readonly class CurrentProjectDerivedQuantityService
             $entity = $entities[$quantity->entityId] ?? null;
             if ($entity instanceof Entity && self::formulaPurpose($quantity->formulaIdentity ?? $quantity->formula) === 'floor_area'
                 && ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type) === 'room'
-                && ($entity->attributes['document_role'] ?? $entity->attributes['properties']['document_role'] ?? null) !== 'building_floor') {
+                && ! $this->isBuildingFloor($entity)) {
                 $rooms[$entity->id] = true;
             }
         }
         ksort($rooms, SORT_STRING);
 
         return array_keys($rooms);
+    }
+
+    private function isBuildingFloor(?Entity $entity): bool
+    {
+        return $entity !== null
+            && ($entity->attributes['document_role'] ?? $entity->attributes['properties']['document_role'] ?? null) === 'building_floor';
     }
 
     private function quantityData(DerivedQuantity $quantity, string $modelVersion, string $key, array $facts): QuantityData

@@ -32,7 +32,7 @@ final readonly class RoomFloorWorkItemExpander
         FrozenWorkItemLimit::assertCount($count, $limit);
         $global = $quantities['floor_area'] ?? null;
         if ($global !== null && (! $global instanceof QuantityData
-            || ! is_string($global->formulaInputs['entity_id'] ?? null) || ! isset($rooms[$global->formulaInputs['entity_id']]))) {
+            || ! is_string($global->formulaInputs['entity_id'] ?? null) || $global->formulaInputs['entity_id'] === '')) {
             return $draft;
         }
         foreach ($quantities as $quantity) {
