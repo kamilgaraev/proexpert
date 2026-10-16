@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\DTOs\UndatedPaymentCalendarItem;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
@@ -43,14 +44,24 @@ final class PaymentCalendarSourceService
             periodEnd: CarbonImmutable::parse($filters->periodEnd)->endOfMonth(),
         );
         [$scheduleItems, $scheduledDocumentIds] = $this->collectPaymentScheduleItems($cashFlowFilters, $today, $scopeDocument);
-        $cashFlowItems = $this->normalizeItems(array_merge(
+        $cashFlowItems = array_merge(
             $this->collectPaymentTransactionItems($cashFlowFilters, $scopeDocument, $scopeProjects),
             $scheduleItems,
             $this->collectPaymentDocumentItems($cashFlowFilters, $today, $scheduledDocumentIds, $scopeDocument),
-        ), $cashFlowFilters);
+        );
+        $reservationItems = $this->collectBudgetLimitReservationItems(
+            $filters, $today, $scheduledDocumentIds, $scopeDocument, $scopeProjects,
+        );
+        [$requestBalances, $scheduleBalances] = $this->requestOrderForecastBalances(
+            array_merge($cashFlowItems, $reservationItems), $filters, $scopeDocument,
+        );
+        $cashFlowItems = $this->normalizeItems(
+            $this->netPaymentRequestItems($cashFlowItems, $requestBalances, $scheduleBalances),
+            $cashFlowFilters,
+        );
         $items = array_merge(
             $cashFlowItems,
-            $this->collectBudgetLimitReservationItems($filters, $today, $scheduledDocumentIds, $scopeDocument, $scopeProjects),
+            $this->netPaymentRequestItems($reservationItems, $requestBalances, $scheduleBalances),
             $this->collectBudgetPlanItems($filters, $scopeProjects, $scopeDocument, $cashFlowItems),
         );
 
@@ -77,12 +88,133 @@ final class PaymentCalendarSourceService
         $items = [];
         foreach ($schedules as $schedule) {
             $item = $this->fromUndatedPaymentSchedule($schedule);
-            if ($item !== null && $filters->matches($item)) {
+            if ($item !== null) {
                 $items[] = $item;
             }
         }
 
-        return $items;
+        [$requestBalances, $scheduleBalances] = $this->requestOrderForecastBalances($items, $filters, $scopeDocument);
+
+        return array_values(array_filter(
+            $this->netPaymentRequestItems($items, $requestBalances, $scheduleBalances),
+            fn (UndatedPaymentCalendarItem $item): bool => $filters->matches($item),
+        ));
+    }
+
+    private function requestOrderForecastBalances(
+        array $items,
+        PaymentCalendarSourceFilters $filters,
+        ?\Closure $scopeDocument,
+    ): array {
+        $documentIds = [];
+        foreach ($items as $item) {
+            $documentId = $item->sourceType === 'payment_document'
+                ? $item->sourceId
+                : ($item->drillDown['payment_document_id'] ?? null);
+            if ($documentId !== null && $item->sourceType !== 'payment_transaction') {
+                $documentIds[(int) $documentId] = true;
+            }
+        }
+        if ($documentIds === []) {
+            return [[], []];
+        }
+
+        $requests = PaymentDocument::query()
+            ->where('organization_id', $filters->organizationId)
+            ->whereIn('id', array_keys($documentIds))
+            ->where('document_type', PaymentDocumentType::PAYMENT_REQUEST->value)
+            ->whereIn('status', $this->activeDocumentStatuses())
+            ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
+            ->get()->keyBy('id');
+        if ($requests->isEmpty()) {
+            return [[], []];
+        }
+
+        $orders = PaymentDocument::query()
+            ->where('organization_id', $filters->organizationId)
+            ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+            ->where('source_type', PaymentDocument::class)
+            ->whereIn('source_id', $requests->keys()->all())
+            ->whereIn('status', [...$this->activeDocumentStatuses(), PaymentDocumentStatus::PAID->value])
+            ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
+            ->get();
+        $coverage = [];
+        foreach ($orders as $order) {
+            $request = $requests->get($order->source_id);
+            if ($request === null
+                || $this->nullableInt($request->project_id) !== $this->nullableInt($order->project_id)
+                || $this->currency($request->currency) !== $this->currency($order->currency)
+                || $this->paymentDocumentDirection($request) !== $this->paymentDocumentDirection($order)) {
+                continue;
+            }
+            $coverage[$request->id] = PortfolioDecimal::add(
+                $coverage[$request->id] ?? '0.00', $this->positive((string) $order->amount),
+            );
+        }
+
+        $requestBalances = [];
+        foreach ($coverage as $requestId => $amount) {
+            $request = $requests->get($requestId);
+            $requestBalances[$requestId] = [
+                'remaining' => $this->positive(PortfolioDecimal::subtract($this->documentRemainingAmount($request), $amount)),
+                'currency' => $this->currency($request->currency),
+                'direction' => $this->paymentDocumentDirection($request),
+                'project_id' => $this->nullableInt($request->project_id),
+            ];
+        }
+        if ($requestBalances === []) {
+            return [[], []];
+        }
+
+        $schedules = PaymentSchedule::query()
+            ->whereIn('payment_document_id', array_keys($requestBalances))
+            ->where('status', 'pending')
+            ->orderByRaw('CASE WHEN due_date IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('due_date')->orderBy('installment_number')->orderBy('id')
+            ->get();
+        $scheduleBalances = [];
+        $unallocatedBalances = array_map(fn (array $balance): string => $balance['remaining'], $requestBalances);
+        foreach ($schedules as $schedule) {
+            $requestId = $schedule->payment_document_id;
+            $remaining = $this->positive(PortfolioDecimal::subtract(
+                (string) $schedule->amount, (string) ($schedule->paid_amount ?? '0.00'),
+            ));
+            $covered = PortfolioDecimal::compare($remaining, $coverage[$requestId]) <= 0
+                ? $remaining : $coverage[$requestId];
+            $coverage[$requestId] = PortfolioDecimal::subtract($coverage[$requestId], $covered);
+            $remaining = PortfolioDecimal::subtract($remaining, $covered);
+            $remaining = PortfolioDecimal::compare($remaining, $unallocatedBalances[$requestId]) <= 0
+                ? $remaining : $unallocatedBalances[$requestId];
+            $scheduleBalances[$schedule->id] = $remaining;
+            $unallocatedBalances[$requestId] = PortfolioDecimal::subtract($unallocatedBalances[$requestId], $remaining);
+        }
+
+        return [$requestBalances, $scheduleBalances];
+    }
+
+    private function netPaymentRequestItems(array $items, array $requestBalances, array $scheduleBalances): array
+    {
+        $result = [];
+        foreach ($items as $item) {
+            $remaining = $item->remainingAmount;
+            if ($item->sourceType === 'payment_schedule' && isset($scheduleBalances[$item->sourceId])) {
+                $remaining = $scheduleBalances[$item->sourceId];
+            } elseif (in_array($item->sourceType, ['payment_document', 'budget_limit_reservation'], true)) {
+                $documentId = $item->sourceType === 'payment_document'
+                    ? $item->sourceId : ($item->drillDown['payment_document_id'] ?? null);
+                $balance = $requestBalances[$documentId] ?? null;
+                if ($balance !== null && $item->currency === $balance['currency']
+                    && $item->direction === $balance['direction'] && $item->projectId === $balance['project_id']) {
+                    $remaining = PortfolioDecimal::compare($remaining, $balance['remaining']) <= 0
+                        ? $remaining : $balance['remaining'];
+                }
+            }
+            if (! $this->notPositive($remaining)) {
+                $result[] = $remaining === $item->remainingAmount ? $item : $item->withRemainingAmount($remaining);
+            }
+        }
+
+        return $result;
     }
 
     public function summarizeUndated(array $items, PaymentCalendarSourceFilters $filters): array
