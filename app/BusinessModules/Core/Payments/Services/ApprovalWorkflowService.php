@@ -687,7 +687,7 @@ class ApprovalWorkflowService
     /**
      * Получить pending утверждения для пользователя
      */
-    public function getPendingApprovalsForUser(int $userId, ?int $organizationId = null, ?User $actor = null): Collection
+    public function getPendingApprovalsForUser(int $userId, ?int $organizationId = null, ?User $actor = null, ?int $projectId = null): Collection
     {
         $user = $this->access->actor($userId, $actor);
         $organizationId ??= (int) $user->current_organization_id;
@@ -735,6 +735,7 @@ class ApprovalWorkflowService
         // (если правила утверждения не создали записи)
         if ($isAdmin && $organizationId) {
             $documentsWithoutApprovals = $this->access->query($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION)
+                ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
                 ->where('status', PaymentDocumentStatus::PENDING_APPROVAL)
                 ->whereDoesntHave('approvals', function ($q) {
                     $q->where('status', 'pending');
@@ -747,8 +748,9 @@ class ApprovalWorkflowService
             ]);
 
             foreach ($documentsWithoutApprovals as $doc) {
-                DB::transaction(function () use ($doc, $organizationId, $userId, $user): void {
+                DB::transaction(function () use ($doc, $organizationId, $userId, $user, $projectId): void {
                     $document = $this->access->query($organizationId, $user, self::PAYMENT_APPROVAL_PERMISSION)
+                        ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId))
                         ->lockForUpdate()
                         ->find($doc->id);
 
@@ -786,8 +788,9 @@ class ApprovalWorkflowService
         }
 
         return $query->orderBy('created_at', 'desc')
-            ->whereHas('paymentDocument', function ($documents) use ($organizationId, $user): void {
-                $documents->where('status', PaymentDocumentStatus::PENDING_APPROVAL);
+            ->whereHas('paymentDocument', function ($documents) use ($organizationId, $user, $projectId): void {
+                $documents->where('status', PaymentDocumentStatus::PENDING_APPROVAL)
+                    ->when($projectId !== null, fn ($query) => $query->where('project_id', $projectId));
                 $this->access->scope($documents, $organizationId, $user, 'payments.transaction.view');
             })
             ->get()->filter(static function (PaymentApproval $approval): bool {

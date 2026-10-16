@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\EnablesImmutableAuditWriter;
@@ -130,6 +131,31 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
 
         $lockedUpdateResponse->assertStatus(422);
         $this->assertSame(2, PaymentSchedule::query()->where('payment_document_id', $document->id)->count());
+    }
+
+    public function test_schedule_queues_and_totals_use_the_selected_project(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        foreach ([$project, $otherProject] as $index => $target) {
+            $document = $this->createDocument($context, 1000 + 9000 * $index);
+            $document->forceFill(['project_id' => $target->id])->save();
+            foreach ([-1, 2] as $installment => $days) {
+                PaymentSchedule::query()->create([
+                    'payment_document_id' => $document->id, 'installment_number' => $installment + 1,
+                    'due_date' => now()->addDays($days)->toDateString(), 'amount' => 500 + 4500 * $index, 'status' => 'pending',
+                ]);
+            }
+        }
+
+        foreach (['upcoming', 'overdue'] as $queue) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/payments/schedules/{$queue}?project_id={$project->id}&days=7")
+                ->assertOk()->assertJsonCount(1, 'data')
+                ->assertJsonPath('meta.total_count', 1)->assertJsonPath('meta.total_amount', 500);
+        }
     }
 
     private function createDocument(AdminApiTestContext $context, int $amount): PaymentDocument

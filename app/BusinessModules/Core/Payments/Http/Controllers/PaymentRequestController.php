@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
 use App\Http\Controllers\Controller;
+use App\Rules\ProjectAccessibleRule;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -80,7 +81,7 @@ class PaymentRequestController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    new ProjectAccessibleRule($organizationId),
                 ],
                 'contract_id' => [
                     'nullable',
@@ -267,7 +268,7 @@ class PaymentRequestController extends Controller
             'project_id' => [
                 'nullable',
                 'integer',
-                Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                new ProjectAccessibleRule($organizationId),
             ],
             'contractor_id' => [
                 'nullable',
