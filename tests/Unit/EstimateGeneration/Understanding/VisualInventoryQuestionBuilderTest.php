@@ -8,7 +8,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\Visu
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnswerEstimateClarificationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectUnderstandingQuestionProjector;
+use Illuminate\Translation\ArrayLoader;
+use Illuminate\Translation\Translator;
+use Illuminate\Validation\Factory;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -62,6 +66,36 @@ final class VisualInventoryQuestionBuilderTest extends TestCase
         ], [new Evidence('evidence:page5', 1, 2, 3, $source, 'document:177', 'document', 5)]);
 
         self::assertSame([], $questions);
+    }
+
+    #[Test]
+    public function every_published_inventory_choice_is_accepted_by_the_answer_request(): void
+    {
+        $source = 'sha256:'.str_repeat('a', 64);
+        $entity = $this->entity('equipment:toilet', $source, 'Унитаз', 'sanitary_fixture', 'room:bathroom');
+        $questions = $this->builder()->build([$entity], [
+            $this->fact('fact:toilet', $entity, $source, 'sanitary_fixture', 'candidate'),
+        ], [new Evidence('evidence:page5', 1, 2, 3, $source, 'document:177', 'document', 5)]);
+        $projector = new ProjectUnderstandingQuestionProjector(static fn (string $key): string => match ($key) {
+            'estimate_generation.ai_questions.other' => 'Другое',
+            'estimate_generation.ai_questions.leave_unresolved' => 'Оставить нерешённым',
+            default => $key,
+        });
+        $question = $projector->project($questions, $source)[0];
+        $validator = new Factory(new Translator(new ArrayLoader, 'ru'));
+        foreach ($question->choices as $choice) {
+            $input = [
+                'response' => $choice->value,
+                'idempotency_key' => 'inventory-answer-0001',
+                'expected_source_version' => $source,
+                'answer_fingerprint' => str_repeat('b', 64),
+            ];
+            if ($choice->kind === 'other') {
+                $input['other'] = 'Комплектация уточнена';
+            }
+            $validation = $validator->make($input, (new AnswerEstimateClarificationRequest)->rules());
+            self::assertTrue($validation->passes(), $choice->value.': '.json_encode($validation->errors()->toArray()));
+        }
     }
 
     private function builder(): VisualInventoryQuestionBuilder
