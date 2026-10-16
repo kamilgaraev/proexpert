@@ -93,6 +93,7 @@ final class DesignPackageIssueRegisterService
                             'title' => $artifact->document_title ?: $artifact->title,
                             'artifact_type' => $artifact->artifact_type instanceof BackedEnum ? $artifact->artifact_type->value : (string) $artifact->artifact_type,
                             'current_version_id' => $artifact->currentVersion?->id,
+                            'version_number' => $artifact->currentVersion?->version_number,
                             'file_format' => $artifact->currentVersion?->file_format,
                             'revision' => $artifact->currentVersion?->revision_label ?: $artifact->currentVersion?->revision,
                             'source_original_name' => $artifact->currentVersion?->source_original_name,

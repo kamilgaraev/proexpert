@@ -19,24 +19,36 @@ final class DesignIssueRegisterExportController extends Controller
 
     public function __invoke(Request $request, int $packageId): JsonResponse|StreamedResponse
     {
-        $request->validate(['workflow_event_id' => ['nullable', 'integer', 'min:1']]);
+        $request->validate([
+            'workflow_event_id' => ['nullable', 'integer', 'min:1'],
+            'format_version' => ['sometimes', 'integer', 'in:1,2'],
+        ]);
         try {
             $package = $this->packages->findPackage((int) $request->attributes->get('current_organization_id'), $packageId, $request->user(), 'design-management.export');
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
             }
             $register = $this->register->build($package, $request->integer('workflow_event_id') ?: null, $request->user());
-            return response()->streamDownload(static function () use ($register): void {
+            $includeVersionNumber = $request->integer('format_version', 1) === 2;
+            return response()->streamDownload(static function () use ($register, $includeVersionNumber): void {
                 $output = fopen('php://output', 'wb');
                 if ($output === false) {
                     return;
                 }
                 fwrite($output, "\xEF\xBB\xBF");
                 $safe = static fn (mixed $value): string => preg_match('/^[=+@\-\t\r]/u', (string) $value) === 1 ? "'".(string) $value : (string) $value;
-                fputcsv($output, ['Комплект', 'Выдача', 'Дата', 'Раздел', 'Документ', 'Название', 'Версия', 'Ревизия', 'Файл', 'SHA256', 'Листов'], ';', '"', '');
+                $headers = ['Комплект', 'Выдача', 'Дата', 'Раздел', 'Документ', 'Название', 'Версия', 'Ревизия', 'Файл', 'SHA256', 'Листов'];
+                if ($includeVersionNumber) {
+                    array_splice($headers, 6, 1, ['Номер версии', 'ID версии']);
+                }
+                fputcsv($output, $headers, ';', '"', '');
                 foreach ($register['sections'] as $section) {
                     foreach ($section['documents'] as $document) {
-                        fputcsv($output, array_map($safe, [$register['package']['title'], $register['release']['workflow_event_id'] ?? '', $register['release']['issued_at'] ?? '', $section['code'], $document['document_code'], $document['title'], $document['current_version_id'], $document['revision'], $document['source_original_name'], $document['source_sha256'] ?? '', $document['sheets_count']]), ';', '"', '');
+                        $row = [$register['package']['title'], $register['release']['workflow_event_id'] ?? '', $register['release']['issued_at'] ?? '', $section['code'], $document['document_code'], $document['title'], $document['current_version_id'], $document['revision'], $document['source_original_name'], $document['source_sha256'] ?? '', $document['sheets_count']];
+                        if ($includeVersionNumber) {
+                            array_splice($row, 6, 0, [$document['version_number'] ?? '']);
+                        }
+                        fputcsv($output, array_map($safe, $row), ';', '"', '');
                     }
                 }
                 fclose($output);
