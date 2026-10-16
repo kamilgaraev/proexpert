@@ -27,15 +27,33 @@ final class BankTransferQrService
 
     public function payable(CommercialBankInvoice $invoice): bool
     {
-        return in_array($invoice->status, ['awaiting_payment', 'partially_paid'], true)
-            && $invoice->currency === 'RUB' && $invoice->paid_at === null
-            && $invoice->paid_minor >= 0 && $invoice->amount_minor > $invoice->paid_minor
-            && $invoice->expires_at !== null && $invoice->expires_at->isFuture();
+        try {
+            $this->payload($invoice);
+
+            return true;
+        } catch (InvalidArgumentException) {
+            return false;
+        }
     }
 
     public function forInvoice(CommercialBankInvoice $invoice): array
     {
-        if (! $this->payable($invoice)) {
+        $payload = $this->payload($invoice);
+        $options = new QROptions(['outputType' => QROutputInterface::GDIMAGE_PNG,
+            'outputBase64' => true, 'eccLevel' => EccLevel::M, 'scale' => 5,
+            'addQuietzone' => true, 'quietzoneSize' => 4, 'imageTransparent' => false]);
+
+        return ['type' => 'bank_transfer', 'invoice_id' => $invoice->public_id,
+            'payload' => $payload, 'image' => (new QRCode($options))->render($payload),
+            'amount_minor' => $invoice->amount_minor - $invoice->paid_minor, 'expires_at' => $invoice->expires_at->toJSON()];
+    }
+
+    private function payload(CommercialBankInvoice $invoice): string
+    {
+        if (! in_array($invoice->status, ['awaiting_payment', 'partially_paid'], true)
+            || $invoice->currency !== 'RUB' || $invoice->paid_at !== null
+            || $invoice->paid_minor < 0 || $invoice->amount_minor <= $invoice->paid_minor
+            || $invoice->expires_at === null || ! $invoice->expires_at->isFuture()) {
             throw new InvalidArgumentException('bank_transfer_qr_not_payable');
         }
         $snapshot = $invoice->snapshot;
@@ -57,13 +75,8 @@ final class BankTransferQrService
         foreach ($fields as $key => $value) {
             $payload .= '|'.$key.'='.$value;
         }
-        $options = new QROptions(['outputType' => QROutputInterface::GDIMAGE_PNG,
-            'outputBase64' => true, 'eccLevel' => EccLevel::M, 'scale' => 5,
-            'addQuietzone' => true, 'quietzoneSize' => 4, 'imageTransparent' => false]);
 
-        return ['type' => 'bank_transfer', 'invoice_id' => $invoice->public_id,
-            'payload' => $payload, 'image' => (new QRCode($options))->render($payload),
-            'amount_minor' => $amount, 'expires_at' => $invoice->expires_at->toJSON()];
+        return $payload;
     }
 
     private function text(mixed $value, int $maximum): string

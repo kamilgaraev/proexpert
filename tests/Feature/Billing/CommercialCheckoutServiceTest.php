@@ -775,6 +775,17 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame('pending', $invoice->documents()->sole()->status);
     }
 
+    public function test_bank_transfer_qr_is_not_offered_when_bank_requisites_cannot_be_encoded(): void
+    {
+        $this->prepareBankBilling();
+        config(['bank_billing.seller_bank' => str_repeat('б', 46)]);
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->assertFalse(app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['bank_transfer_qr_available']);
+        $this->expectException(\InvalidArgumentException::class);
+        app(\App\Services\Billing\Bank\BankTransferQrService::class)->get($this->user, (int) $this->organization->id, $invoice->public_id);
+    }
+
     public function test_bank_transfer_qr_cannot_read_an_invoice_from_another_organization(): void
     {
         $this->prepareBankBilling();

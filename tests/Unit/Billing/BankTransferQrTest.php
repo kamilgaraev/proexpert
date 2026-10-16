@@ -80,6 +80,7 @@ class BankTransferQrTest extends TestCase
                 $snapshot[$path] = $value;
             }
             $invoice->snapshot = $snapshot;
+            $this->assertFalse($service->payable($invoice));
             try {
                 $service->forInvoice($invoice);
                 $this->fail('Unsafe QR field accepted');
