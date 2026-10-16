@@ -208,7 +208,7 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                     ? $claim['fact_type']
                     : (is_string($claim['factType'] ?? null) ? $claim['factType'] : '');
                 if (($claimId === '' && $evidenceRef === '')
-                    || ! in_array($factType, ['area', 'quantity', 'length', 'height', 'count'], true)
+                    || ! in_array($factType, ['area', 'quantity', 'length', 'width', 'height', 'count'], true)
                     || ! $this->isPositiveNumericClaimValue($claim['value'] ?? null)) {
                     continue;
                 }
