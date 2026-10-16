@@ -180,7 +180,30 @@ final class ReportSubscriptionRunCreationTest extends TestCase
         }
     }
 
-    private function processor(array $fixture, CreateReportRunAction $runs, int $dispatchCount, ?ReportSubscriptionDeliveryStore $store = null): ReportSubscriptionDeliveryProcessor
+    public function test_event_failure_rolls_back_run_attachment_and_recovers_with_same_key(): void
+    {
+        $fixture = $this->fixture();
+        [, $delivery] = $fixture;
+        $run = (new ReportRunBuilder)->queued();
+        $runs = $this->createMock(CreateReportRunAction::class);
+        $runs->expects(self::exactly(2))->method('handle')->with(self::anything(), self::anything(), self::callback(static fn (IdempotencyKey $key): bool => $key->hash === $delivery->runIdempotencyKey()->hash))->willReturn($run);
+        DB::commit();
+        try {
+            try {
+                $this->processor($fixture, $runs, 0, failRecording: true)->process($delivery->id);
+                self::fail('The event failure must roll back the attachment.');
+            } catch (RuntimeException $exception) {
+                self::assertSame('event_recorder_unavailable', $exception->getMessage());
+            }
+            $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'building_run', 'attempt' => 1, 'run_id' => null]);
+            $this->processor($fixture, $runs, 1)->process($delivery->id);
+            $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'building_run', 'attempt' => 1, 'run_id' => $run->id]);
+        } finally {
+            DB::beginTransaction();
+        }
+    }
+
+    private function processor(array $fixture, CreateReportRunAction $runs, int $dispatchCount, ?ReportSubscriptionDeliveryStore $store = null, bool $failRecording = false): ReportSubscriptionDeliveryProcessor
     {
         [$context, $delivery, $definition] = $fixture;
         $registry = $this->createMock(ReportDefinitionRegistry::class);
@@ -201,9 +224,12 @@ final class ReportSubscriptionRunCreationTest extends TestCase
             self::assertSame(0, DB::transactionLevel());
         });
         $events = $this->createMock(ReportSubscriptionEventRecorder::class);
-        $events->expects(self::exactly($dispatchCount))->method('record')->with('report_subscription_run_requested', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything())->willReturnCallback(static function (): void {
-            self::assertSame(0, DB::transactionLevel());
+        $record = $events->expects(self::exactly($dispatchCount + (int) $failRecording))->method('record')->with('report_subscription_run_requested', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything())->willReturnCallback(static function (): void {
+            self::assertSame(1, DB::transactionLevel());
         });
+        if ($failRecording) {
+            $record->willThrowException(new RuntimeException('event_recorder_unavailable'));
+        }
 
         return new ReportSubscriptionDeliveryProcessor(
             $store ?? app(EloquentReportSubscriptionDeliveryStore::class),

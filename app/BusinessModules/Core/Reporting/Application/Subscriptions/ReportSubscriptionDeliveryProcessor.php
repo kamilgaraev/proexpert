@@ -182,8 +182,7 @@ final readonly class ReportSubscriptionDeliveryProcessor
             });
         }
 
-        $attached = null;
-        $dispatches = DB::transaction(function () use ($delivery, $run, &$attached): array {
+        return DB::transaction(function () use ($delivery, $run, $context): array {
             [$current] = $this->deliveries->lockWithSubscription($delivery->id);
             if ($current->status !== ReportSubscriptionDeliveryStatus::BUILDING_RUN) {
                 return [];
@@ -199,16 +198,11 @@ final readonly class ReportSubscriptionDeliveryProcessor
             }
             if ($current->runId === null) {
                 $this->deliveries->attachRunLocked($current, $run->id);
-                $attached = $current;
+                $this->record($context, 'report_subscription_run_requested', $current);
             }
 
             return [[$current->id, 0]];
         });
-        if ($attached !== null) {
-            $this->record($context, 'report_subscription_run_requested', $attached);
-        }
-
-        return $dispatches;
     }
 
     private function notifyReady(ReportSubscriptionDelivery $delivery, ReportSubscription $subscription): array
