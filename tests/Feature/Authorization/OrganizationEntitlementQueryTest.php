@@ -15,6 +15,27 @@ use Tests\TestCase;
 
 final class OrganizationEntitlementQueryTest extends TestCase
 {
+    public function test_scoped_catalog_keeps_new_entitlement_reads_fresh(): void
+    {
+        $catalog = app(PackageCatalogService::class);
+        $fixture = AssistantRealAuthorizationFixture::create(array_column($catalog->allPackages(), 'slug'));
+        $service = app(OrganizationEntitlementService::class);
+        $free = $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id);
+        $paid = array_values(array_diff($service->getEffectiveModuleSlugs($fixture->organization->id), $free));
+        self::assertNotEmpty($paid);
+        Module::query()->where('slug', $paid[0])->update(['is_active' => false]);
+
+        $next = app(OrganizationEntitlementService::class);
+        self::assertNotSame($service, $next);
+        self::assertSame($catalog, app(PackageCatalogService::class));
+        self::assertNotContains($paid[0], $next->getEffectiveModuleSlugs($fixture->organization->id));
+        self::assertEqualsCanonicalizing($free, $next->getEffectiveModuleSlugs($fixture->foreignOrganization->id));
+
+        Module::query()->where('slug', $paid[0])->update(['is_active' => true]);
+        OrganizationPackageSubscription::query()->where('organization_id', $fixture->organization->id)->update(['status' => 'canceled']);
+        self::assertEqualsCanonicalizing($free, app(OrganizationEntitlementService::class)->getEffectiveModuleSlugs($fixture->organization->id));
+    }
+
     public function test_module_rows_are_loaded_once_and_inactive_foundation_is_excluded(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
