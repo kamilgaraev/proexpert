@@ -24,6 +24,9 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Auth\JwtTokenIssuer;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Monolog\Handler\TestHandler;
+use Monolog\Logger;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
@@ -62,6 +65,7 @@ final class ProcurementMobileSummaryAuthorizationSecurityTest extends TestCase
             ->assertJsonPath('data.summary.purchase_requests_count', 1)
             ->assertJsonPath('data.summary.purchase_orders_count', 0)
             ->assertJsonPath('data.summary.receivable_orders_count', 0)
+            ->assertJsonMissingPath('data.purchase_request_order_access')
             ->assertJsonPath('data.purchase_orders', [])
             ->assertJsonPath('data.assigned_approvals', []);
     }
@@ -126,6 +130,43 @@ final class ProcurementMobileSummaryAuthorizationSecurityTest extends TestCase
         self::assertSame([], $data['purchase_orders']);
         self::assertSame(0, $data['statistics']['purchase_orders_count']);
         self::assertSame($purchaseRequest->id, $data['id']);
+    }
+
+    public function test_order_permission_denial_logs_do_not_grow_with_page_size(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(['working-entry', 'supply-warehouse']);
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $this->order($fixture->owner, $project);
+        foreach (range(1, 49) as $index) {
+            PurchaseRequest::create(['organization_id' => $fixture->organization->id, 'request_number' => 'PAGE-'.$index, 'status' => 'approved']);
+        }
+        $logger = Log::channel('security')->getLogger();
+        self::assertInstanceOf(Logger::class, $logger);
+        $handler = new TestHandler;
+        $logger->pushHandler($handler);
+        try {
+            foreach (['procurement.purchase_requests.view', 'procurement.view'] as $permission) {
+                $member = $fixture->addMember(['procurement' => [$permission]]);
+                $member->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+                $counts = [];
+                foreach ([1, 50] as $pageSize) {
+                    $handler->clear();
+                    $this->getJson('/api/v1/mobile/procurement/purchase-requests?per_page='.$pageSize, $this->headers($member, $fixture->organization->id))
+                        ->assertOk()->assertJsonCount($pageSize, 'data.items');
+                    $counts[] = count(array_filter($handler->getRecords(), static fn ($record): bool => $record->message === '[SECURITY] auth.permission.denied'
+                        && in_array($record->context['context']['permission'] ?? null, ['procurement.view', 'procurement.purchase_orders.view'], true)));
+                }
+                self::assertSame($counts[0], $counts[1]);
+                if ($permission === 'procurement.view') {
+                    self::assertSame(0, $counts[1]);
+                } else {
+                    self::assertGreaterThanOrEqual(1, $counts[1]);
+                    self::assertLessThanOrEqual(3, $counts[1]);
+                }
+            }
+        } finally {
+            $logger->popHandler();
+        }
     }
 
     public function test_assigned_approvals_require_view_and_resolve_and_preserve_duty_separation(): void

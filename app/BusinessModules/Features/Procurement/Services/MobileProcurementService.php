@@ -71,7 +71,8 @@ final class MobileProcurementService
         $requestQuery = $canViewAll || $this->authorizationService->can($user, 'procurement.purchase_requests.view', $context)
             ? $this->purchaseRequestQuery($organizationId, $filters)
             : null;
-        $orderQuery = $canViewAll || $this->authorizationService->can($user, 'procurement.purchase_orders.view', $context)
+        $canViewOrders = $canViewAll || $this->authorizationService->can($user, 'procurement.purchase_orders.view', $context);
+        $orderQuery = $canViewOrders
             ? $this->purchaseOrderQuery($organizationId, $filters)
             : null;
 
@@ -107,10 +108,19 @@ final class MobileProcurementService
                 'pending_approvals_count' => $assignedApprovals->count(),
             ],
             'purchase_requests' => $requests,
+            'purchase_request_order_access' => $canViewOrders,
             'purchase_orders' => $orders,
             'assigned_approvals' => $assignedApprovals,
             'warehouses' => $this->activeWarehouses($organizationId),
         ];
+    }
+
+    public function canViewPurchaseOrders(int $organizationId, User $user): bool
+    {
+        $context = ['organization_id' => $organizationId];
+
+        return $this->authorizationService->can($user, 'procurement.view', $context)
+            || $this->authorizationService->can($user, 'procurement.purchase_orders.view', $context);
     }
 
     public function paginatePurchaseRequests(int $organizationId, array $filters, int $perPage): LengthAwarePaginator

@@ -7,25 +7,21 @@ namespace App\BusinessModules\Features\Procurement\Http\Resources;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
-use App\Domain\Authorization\Services\AuthorizationService;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 final class MobilePurchaseRequestResource extends JsonResource
 {
+    public function __construct(mixed $resource, private readonly bool $canViewOrders = false)
+    {
+        parent::__construct($resource);
+    }
+
     public function toArray(Request $request): array
     {
         /** @var PurchaseRequest $purchaseRequest */
         $purchaseRequest = $this->resource;
         $siteRequest = $purchaseRequest->siteRequest;
-        $user = $request->user();
-        $authorization = app(AuthorizationService::class);
-        $context = ['organization_id' => (int) $purchaseRequest->organization_id];
-        $canViewOrders = $user instanceof User && (
-            $authorization->can($user, 'procurement.purchase_orders.view', $context)
-            || $authorization->can($user, 'procurement.view', $context)
-        );
 
         return [
             'id' => $purchaseRequest->id,
@@ -42,7 +38,7 @@ final class MobilePurchaseRequestResource extends JsonResource
             'statistics' => [
                 'lines_count' => (int) ($purchaseRequest->lines_count ?? $purchaseRequest->lines->count()),
                 'supplier_requests_count' => (int) ($purchaseRequest->supplier_requests_count ?? 0),
-                'purchase_orders_count' => $canViewOrders ? (int) ($purchaseRequest->purchase_orders_count ?? $purchaseRequest->purchaseOrders->count()) : 0,
+                'purchase_orders_count' => $this->canViewOrders ? (int) ($purchaseRequest->purchase_orders_count ?? $purchaseRequest->purchaseOrders->count()) : 0,
             ],
             'site_request' => $siteRequest ? [
                 'id' => $siteRequest->id,
@@ -52,7 +48,7 @@ final class MobilePurchaseRequestResource extends JsonResource
                 'required_date' => $siteRequest->required_date?->toDateString(),
             ] : null,
             'lines' => $this->lines($purchaseRequest),
-            'purchase_orders' => $canViewOrders ? $this->orders($purchaseRequest) : [],
+            'purchase_orders' => $this->canViewOrders ? $this->orders($purchaseRequest) : [],
             'created_at' => $purchaseRequest->created_at?->toIso8601String(),
             'updated_at' => $purchaseRequest->updated_at?->toIso8601String(),
         ];
