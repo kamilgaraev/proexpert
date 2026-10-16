@@ -6,7 +6,10 @@ namespace App\BusinessModules\Core\Mdm\Services;
 
 use App\BusinessModules\Core\Mdm\Models\MdmImportBatch;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
+use App\Models\MeasurementUnit;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class MdmImportService
 {
@@ -20,10 +23,28 @@ class MdmImportService
     {
         $issues = [];
         $accepted = 0;
+        $references = $this->scopedReferences($organizationId, $entityType, $rows);
 
-        foreach ($rows as $index => $row) {
+        foreach (array_values($rows) as $index => $row) {
             $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
             $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
+            $referenceErrors = $this->referenceErrors($entityType, $data, $references);
+
+            if ($referenceErrors !== []) {
+                $referenceIssues = [];
+                foreach ($referenceErrors as $field => $messages) {
+                    foreach ($messages as $message) {
+                        $referenceIssues[] = ['code' => 'reference_not_found', 'field' => $field, 'message' => $message];
+                    }
+                }
+                $issues[] = [
+                    'row' => $index + 1,
+                    'score' => $quality['score'],
+                    'issues' => [...$quality['issues'], ...$referenceIssues],
+                ];
+
+                continue;
+            }
 
             if ($quality['score'] >= 70) {
                 if (! $this->registry->supportsCreate($entityType) && $this->findRecordByQuality($organizationId, $entityType, $quality) === null) {
@@ -75,6 +96,7 @@ class MdmImportService
             $rejected = 0;
             $issues = $batch->issues ?? [];
             $modelClass = $this->registry->get($entityType)['model'];
+            $references = $this->scopedReferences($organizationId, $entityType, $rows, true);
 
             foreach ($rows as $index => $row) {
                 $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
@@ -86,6 +108,7 @@ class MdmImportService
                     continue;
                 }
 
+                $this->assertScopedReferences($entityType, $data, $references, $index);
                 $data['organization_id'] = $organizationId;
                 $record = $this->findRecordByQuality($organizationId, $entityType, $quality);
 
@@ -130,6 +153,73 @@ class MdmImportService
 
             return $batch->refresh();
         });
+    }
+
+    private function assertScopedReferences(string $entityType, array $values, array $references, int|string $rowIndex): void
+    {
+        $errors = [];
+        foreach ($this->referenceErrors($entityType, $values, $references) as $field => $messages) {
+            $errors["rows.{$rowIndex}.{$field}"] = $messages;
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function scopedReferences(int $organizationId, string $entityType, array $rows, bool $lock = false): array
+    {
+        $referenceFields = $this->registry->referenceFields($entityType);
+        $idsByField = array_fill_keys(array_keys($referenceFields), []);
+        foreach ($rows as $row) {
+            $values = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
+            foreach (array_keys($referenceFields) as $field) {
+                if (array_key_exists($field, $values) && $values[$field] !== null && $values[$field] !== '') {
+                    $idsByField[$field][(int) $values[$field]] = true;
+                }
+            }
+        }
+
+        $references = array_fill_keys(array_keys($referenceFields), []);
+        foreach ($referenceFields as $field => $referenceEntityType) {
+            $ids = array_keys($idsByField[$field]);
+            sort($ids, SORT_NUMERIC);
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $query = $referenceEntityType === 'measurement_unit'
+                    ? MeasurementUnit::query()->where(fn (Builder $query) => $query
+                        ->where('organization_id', $organizationId)->orWhere('is_system', true))
+                    : $this->registry->query((string) $referenceEntityType, $organizationId);
+
+                $query->whereKey($chunk)->orderBy('id');
+                if ($lock) {
+                    $query->sharedLock();
+                }
+
+                foreach ($query->get(['id']) as $reference) {
+                    $references[$field][(int) $reference->getKey()] = true;
+                }
+            }
+        }
+
+        return $references;
+    }
+
+    private function referenceErrors(string $entityType, array $values, array $references): array
+    {
+        $errors = [];
+        foreach (array_keys($this->registry->referenceFields($entityType)) as $field) {
+            if (! array_key_exists($field, $values) || $values[$field] === null || $values[$field] === '') {
+                continue;
+            }
+
+            if (! isset($references[$field][(int) $values[$field]])) {
+                $errors[$field] = [trans_message('mdm.validation.reference_not_found', [
+                    'field' => $this->registry->fieldLabel($entityType, (string) $field),
+                ])];
+            }
+        }
+
+        return $errors;
     }
 
     private function findRecordByQuality(int $organizationId, string $entityType, array $quality): ?MdmRecord
