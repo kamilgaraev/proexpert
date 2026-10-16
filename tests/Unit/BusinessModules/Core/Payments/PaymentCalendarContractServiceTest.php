@@ -49,7 +49,7 @@ final class PaymentCalendarContractServiceTest extends TestCase
         Facade::setFacadeApplication($container);
 
         $this->service = new PaymentCalendarContractService(
-            new PaymentCalendarSourceService(),
+            $container->make(PaymentCalendarSourceService::class),
             new CashGapForecastService(),
         );
     }

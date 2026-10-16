@@ -32,6 +32,8 @@ final class PaymentCalendarSourceService
 {
     private const MAX_PAYMENT_SOURCE_DEPTH = 32;
 
+    public function __construct(private readonly PaymentBudgetLimitService $budgetLimitService) {}
+
     public function collect(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today = null,
@@ -135,9 +137,14 @@ final class PaymentCalendarSourceService
             ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
             ->where('source_type', PaymentDocument::class)
             ->whereIn('source_id', $requests->keys()->all())
-            ->whereIn('status', [...$this->activeDocumentStatuses(), PaymentDocumentStatus::PAID->value])
+            ->whereIn('status', [...$this->activeDocumentStatuses(), PaymentDocumentStatus::PAID->value, PaymentDocumentStatus::DRAFT->value])
             ->when($scopeDocument !== null, fn (Builder $query) => $scopeDocument($query))
             ->get();
+        $draftReservations = BudgetLimitReservation::query()
+            ->where('organization_id', $filters->organizationId)
+            ->whereIn('payment_document_id', $orders->where('status', PaymentDocumentStatus::DRAFT)->modelKeys())
+            ->where('status', BudgetLimitReservation::STATUS_RESERVED)
+            ->get()->groupBy('payment_document_id');
         $coverage = [];
         foreach ($orders as $order) {
             $request = $requests->get($order->source_id);
@@ -146,6 +153,14 @@ final class PaymentCalendarSourceService
                 || $this->currency($request->currency) !== $this->currency($order->currency)
                 || $this->paymentDocumentDirection($request) !== $this->paymentDocumentDirection($order)) {
                 continue;
+            }
+            if ($order->status === PaymentDocumentStatus::DRAFT) {
+                $order->setRelation('source', $request);
+                if (! $draftReservations->get($order->id, collect())->contains(
+                    fn (BudgetLimitReservation $reservation): bool => $this->budgetLimitService->isRequestOrderReservation($order, $reservation),
+                )) {
+                    continue;
+                }
             }
             $coverage[$request->id] = PortfolioDecimal::add(
                 $coverage[$request->id] ?? '0.00', $this->positive((string) $order->amount),

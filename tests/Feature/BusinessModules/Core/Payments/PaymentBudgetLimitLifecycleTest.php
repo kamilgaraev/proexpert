@@ -311,6 +311,55 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_bank_completion_preserves_an_existing_exception_only_for_unchanged_financial_context(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 500.0);
+        $contract = $this->createApprovedAct($context)->contract;
+        $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
+        $request = $this->createDocument($context, $budget, 900.0);
+        $request->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST, 'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id, 'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'currency' => 'RUB', 'due_date' => now()->addDays(3)->toDateString(),
+            'payment_purpose' => 'Учебное поручение без фактической оплаты',
+        ])->save();
+        $reason = 'Учебное превышение без фактической оплаты';
+        $this->service()->syncReservation($request->fresh(), $context->user, $reason);
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept", ['budget_override_reason' => $reason])->assertOk();
+        $order = PaymentDocument::findOrFail($created->json('data.payment_order.id'));
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$order->id}", [
+                'bank_account' => '00000000000000000000', 'bank_bik' => '000000000',
+                'bank_name' => 'Учебные реквизиты — не для оплаты',
+                'due_date' => $order->due_date->toDateString(),
+                'notes' => 'Учебные недействительные реквизиты.',
+            ])->assertOk();
+        self::assertSame($reason, $order->fresh()->budget_limit_override_reason);
+        self::assertNull($request->fresh()->bank_account);
+        self::assertSame(1, BudgetLimitReservation::query()->where('payment_document_id', $order->id)
+            ->where('status', BudgetLimitReservation::STATUS_RESERVED)->count());
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $order->id, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
+        ]);
+        $this->assertDatabaseMissing('budget_limit_reservations', [
+            'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RESERVED,
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['due_date' => now()->addDays(4)->toDateString()])
+            ->assertUnprocessable();
+        self::assertSame(now()->addDays(3)->toDateString(), $order->fresh()->due_date->toDateString());
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_unscoped_budget_includes_reservations_from_contracts_and_counterparties(): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));

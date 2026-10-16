@@ -172,7 +172,24 @@ final class PaymentDocumentWorkflowService
                 $preflight = $this->access->bulk($organizationId, $user, $ids, $permission);
                 $expectedContracts = $this->contractLocks->lockForPaymentDocuments($preflight);
             }
+            $sourceSnapshots = [];
+            if ($action === 'submit') {
+                $preflight = $this->access->bulk($organizationId, $user, $ids, $permission);
+                foreach ($preflight as $document) {
+                    $sourceSnapshots[$document->id] = $document;
+                }
+                $this->lockRequestOrderSources($organizationId, $preflight->all());
+            }
             $documents = $this->access->bulk($organizationId, $user, $ids, $permission, true);
+            if ($action === 'submit') {
+                foreach ($documents as $document) {
+                    $snapshot = $sourceSnapshots[$document->id] ?? null;
+                    if (! $snapshot instanceof PaymentDocument) {
+                        throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                    }
+                    $this->assertSourceUnchanged($document, $snapshot);
+                }
+            }
             if ($expectedContracts !== null) {
                 foreach ($documents as $document) {
                     $this->contractLocks->assertContractUnchanged($document, $expectedContracts);
@@ -262,10 +279,43 @@ final class PaymentDocumentWorkflowService
     private function mutate(PaymentDocument $document, User $actor, string $permission, Closure $operation): mixed
     {
         return DB::transaction(function () use ($document, $actor, $permission, $operation): mixed {
-            $current = $this->access->find((int) $actor->current_organization_id, $actor, $document->id, $permission, true);
+            $organizationId = (int) $actor->current_organization_id;
+            $snapshot = $this->access->find($organizationId, $actor, $document->id, $permission);
+            $this->lockRequestOrderSources($organizationId, [$snapshot]);
+            $current = $this->access->find($organizationId, $actor, $document->id, $permission, true);
+            $this->assertSourceUnchanged($current, $snapshot);
             $this->access->assertDocument($current, $actor, $permission);
 
             return $operation($current);
         });
+    }
+
+    private function lockRequestOrderSources(int $organizationId, array $documents): void
+    {
+        $requestIds = [];
+        foreach ($documents as $document) {
+            if ($document->document_type === PaymentDocumentType::PAYMENT_ORDER
+                && $document->source_type === PaymentDocument::class
+                && $document->source_id !== null) {
+                $requestIds[] = (int) $document->source_id;
+            }
+        }
+        if ($requestIds === []) {
+            return;
+        }
+
+        PaymentDocument::query()->forOrganization($organizationId)
+            ->where('document_type', PaymentDocumentType::PAYMENT_REQUEST->value)
+            ->whereIn('id', array_unique($requestIds))->orderBy('id')
+            ->lockForUpdate()->get();
+    }
+
+    private function assertSourceUnchanged(PaymentDocument $current, PaymentDocument $snapshot): void
+    {
+        if ($current->document_type !== $snapshot->document_type
+            || $current->source_type !== $snapshot->source_type
+            || $current->source_id !== $snapshot->source_id) {
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+        }
     }
 }

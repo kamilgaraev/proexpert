@@ -8,6 +8,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ContractPerformanceAct as Act;
 use Illuminate\Support\Collection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -238,7 +239,53 @@ class PaymentRequestService
         $filters['document_type'] = PaymentDocumentType::PAYMENT_REQUEST->value;
         $filters['payer_organization_id'] = $organizationId;
 
-        return $this->documentService->getForOrganization($organizationId, $filters);
+        return $this->documentService->getForOrganization($organizationId, $filters, function (Builder $query) use ($organizationId, $filters): void {
+            $orderState = $filters['payment_order_state'] ?? null;
+            if (in_array($orderState, ['linked', 'unlinked'], true)) {
+                $query->whereExists(function ($orders) use ($organizationId): void {
+                    $orders->select(DB::raw('1'))->from('payment_documents as linked_order')
+                        ->whereColumn('linked_order.source_id', 'payment_documents.id')
+                        ->where('linked_order.organization_id', $organizationId)
+                        ->where('linked_order.document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+                        ->where('linked_order.source_type', PaymentDocument::class);
+                }, 'and', $orderState === 'unlinked');
+            }
+            if (isset($filters['limit'])) {
+                $query->limit(max(1, min(100, (int) $filters['limit'])));
+            }
+        });
+    }
+
+    public function incomingOrderStates(int $organizationId, Collection $requests): array
+    {
+        $parents = $requests->filter(fn (PaymentDocument $document): bool =>
+            (int) $document->organization_id === $organizationId
+            && $document->document_type === PaymentDocumentType::PAYMENT_REQUEST
+        )->keyBy('id');
+        $orders = PaymentDocument::query()->withTrashed()
+            ->where('organization_id', $organizationId)
+            ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+            ->where('source_type', PaymentDocument::class)
+            ->whereIn('source_id', $parents->keys()->all())
+            ->get(['id', 'source_id', 'project_id', 'document_number', 'status', 'deleted_at'])
+            ->groupBy('source_id');
+
+        return $parents->map(function (PaymentDocument $request) use ($orders): array {
+            $children = $orders->get($request->id, collect());
+            $activeChildren = $children->reject(fn (PaymentDocument $child): bool => $child->trashed());
+            $order = $activeChildren->count() === 1 ? $activeChildren->first() : null;
+            $conflict = $children->isNotEmpty()
+                && ($order === null || (int) $order->project_id !== (int) $request->project_id);
+
+            return [
+                'payment_order' => $order !== null && ! $conflict ? [
+                    'id' => $order->id,
+                    'document_number' => $order->document_number,
+                    'status' => $order->status->value,
+                ] : null,
+                'payment_order_conflict' => $conflict,
+            ];
+        })->all();
     }
 
     /**
@@ -343,12 +390,6 @@ class PaymentRequestService
                 'number' => (string) $request->document_number,
             ]),
             'payment_purpose' => $request->payment_purpose,
-            
-            // Реквизиты
-            'bank_account' => $request->bank_account,
-            'bank_bik' => $request->bank_bik,
-            'bank_correspondent_account' => $request->bank_correspondent_account,
-            'bank_name' => $request->bank_name,
             
             // Документы
             'attached_documents' => array_merge(
