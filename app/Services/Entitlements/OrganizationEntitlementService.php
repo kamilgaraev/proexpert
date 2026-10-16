@@ -21,6 +21,20 @@ class OrganizationEntitlementService
         return $this->effectiveModuleQuery($organizationId)->pluck('slug')->all();
     }
 
+    public function getEffectiveModuleSlugsMatching(int $organizationId, string $moduleSlug): array
+    {
+        if (get_class($this) !== self::class
+            || strlen($moduleSlug) > 1024
+            || str_contains($moduleSlug, "\0")
+            || preg_match('//u', $moduleSlug) !== 1) {
+            $slugs = $this->getEffectiveModuleSlugs($organizationId);
+        } else {
+            $slugs = $this->effectiveModuleQuery($organizationId)->where('modules.slug', $moduleSlug)->pluck('slug')->all();
+        }
+
+        return array_values(array_filter($slugs, static fn (mixed $slug): bool => $slug === $moduleSlug));
+    }
+
     public function getEffectiveModules(int $organizationId): Collection
     {
         return $this->effectiveModuleQuery($organizationId)

@@ -96,6 +96,44 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
     }
 
+    public function testUnmemoizedAliasesObserveRevocationBetweenCandidates(): void
+    {
+        $injected = Mockery::mock(OrganizationEntitlementService::class);
+        $injected->shouldNotReceive('getEffectiveModuleSlugsMatching');
+        $injected->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn(['ai-assistant'], []);
+        $resolver = $this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks();
+
+        self::assertFalse($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+    }
+
+    public function testUnmemoizedCustomGetterAllowsTheSecondAlias(): void
+    {
+        $injected = Mockery::mock(OrganizationEntitlementService::class);
+        $injected->shouldNotReceive('getEffectiveModuleSlugsMatching');
+        $injected->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn(['ai-assistant']);
+        $resolver = $this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks();
+
+        self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+    }
+
+    public function testExplicitReadScopeKeepsAllModulesForOtherCandidates(): void
+    {
+        $injected = Mockery::mock(OrganizationEntitlementService::class);
+        $injected->shouldNotReceive('getEffectiveModuleSlugsMatching');
+        $injected->shouldReceive('getEffectiveModuleSlugs')->once()->with(37)->andReturn(['ai-assistant', 'project-management']);
+        $scanner = Mockery::mock(RoleScanner::class);
+        $scanner->shouldReceive('getModulePermissions')->with('unit-fence-role')->andReturn([
+            'ai_assistant' => ['chat'], 'project-management' => ['view'],
+        ]);
+        $logging = Mockery::mock(LoggingService::class);
+        $logging->shouldReceive('technical')->andReturnNull();
+        $resolver = (new PermissionResolver($scanner, new ModulePermissionChecker(Mockery::mock(AccessController::class)), $logging))
+            ->withCurrentEntitlementSource($injected)->forCurrentChecks()->forReadScope(new Repository(new ArrayStore));
+
+        self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertTrue($resolver->hasModulePermission(self::assignment(), 'project-management.view', ['organization_id' => 37]));
+    }
+
     public function testSourceLocalRoleScannerHelpersBypassStaleSharedRoleCache(): void
     {
         $directory = sys_get_temp_dir().'/mostai93-role-'.bin2hex(random_bytes(8));

@@ -52,6 +52,8 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             'submitted_at' => now(), 'temporary_expires_at' => now()->addMinute(),
         ]);
         app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->invalidate($org);
+        $entitlements = app(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $this->assertSame(['ai-assistant'], $entitlements->getEffectiveModuleSlugsMatching($org, 'ai-assistant'));
         $authorization = app(AuthorizationService::class);
         $context = ['organization_id' => $org];
         $this->assertTrue($authorization->can($fixture->member, 'ai_assistant.chat', $context));
@@ -64,6 +66,7 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertSame(200, $permissions->getStatusCode());
         $this->assertContains('ai-assistant', array_column($permissions->getData(true)['data']['active_modules'], 'slug'));
         $this->travelTo($proof->temporary_expires_at);
+        $this->assertSame([], $entitlements->getEffectiveModuleSlugsMatching($org, 'ai-assistant'));
         $this->assertFalse($authorization->can($fixture->member, 'ai_assistant.chat', $context));
         $this->assertFalse($authorization->canCurrent($fixture->member, 'ai_assistant.chat', $context));
         $permissions = $controller->index($request);
