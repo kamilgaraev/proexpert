@@ -96,12 +96,12 @@ final class AssistantSourceIdentityQueryBuilder
 
     private function sourceCountBatches(array $sourceTypes, array $sourceCounts, int $batchSize): array
     {
-        $largeTypes = array_values(array_intersect($sourceTypes,
-            array_keys(array_filter($sourceCounts, static fn (int $count): bool => $count > self::MAX_SOURCE_BATCH_ROWS))));
-        $batches = array_map(static fn (string $type): array => [$type], $largeTypes);
+        $standaloneTypes = array_values(array_filter($sourceTypes,
+            static fn (string $type): bool => $type === 'file_document' || ($sourceCounts[$type] ?? 0) > self::MAX_SOURCE_BATCH_ROWS));
+        $batches = array_map(static fn (string $type): array => [$type], $standaloneTypes);
         $batch = [];
         $rows = 0;
-        foreach (array_values(array_diff($sourceTypes, $largeTypes)) as $type) {
+        foreach (array_values(array_diff($sourceTypes, $standaloneTypes)) as $type) {
             $count = $sourceCounts[$type] ?? 0;
             if ($batch !== [] && (count($batch) >= $batchSize || $rows + $count > self::MAX_SOURCE_BATCH_ROWS)) {
                 $batches[] = $batch;

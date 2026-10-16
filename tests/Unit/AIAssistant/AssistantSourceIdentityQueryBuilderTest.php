@@ -9,6 +9,37 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantSourceIdentityQueryBuilderTest extends TestCase
 {
+    public function test_document_visibility_has_its_own_counter_batch_without_displacing_other_types(): void
+    {
+        $types = ['time_tracking', 'contract', 'knowledge', 'performance_act', 'catalog_measurement_units',
+            'construction_journal', 'project_pulse', 'file_document', 'catalog_work_types'];
+        $identities = [];
+        foreach ($types as $type) { $identities[$type] = [$type => true]; }
+        $counts = array_fill_keys($types, 20);
+        $counts['file_document'] = 2;
+        $expected = [
+            ['types' => ['file_document'], 'entity' => null],
+            ['types' => array_values(array_diff($types, ['file_document'])), 'entity' => null],
+        ];
+
+        foreach ([false, true] as $expectedProjection) {
+            self::assertSame($expected, (new AssistantSourceIdentityQueryBuilder)->planBatches($identities, $counts, 8, $expectedProjection));
+        }
+    }
+
+    public function test_document_only_batch_does_not_add_an_empty_counter_batch(): void
+    {
+        self::assertSame([['types' => ['file_document'], 'entity' => null]],
+            (new AssistantSourceIdentityQueryBuilder)->planBatches(['assistant_document' => ['file_document' => true]], ['file_document' => 2], 8, false));
+    }
+
+    public function test_unbatched_identity_queries_keep_the_existing_shape(): void
+    {
+        self::assertSame([['types' => null, 'entity' => null]], (new AssistantSourceIdentityQueryBuilder)->planBatches(
+            ['assistant_document' => ['file_document' => true], 'contract' => ['contract' => true]],
+            ['file_document' => 2, 'contract' => 20], null, false));
+    }
+
     public function test_large_identity_stays_out_of_bounded_candidates(): void
     {
         $counts = [
