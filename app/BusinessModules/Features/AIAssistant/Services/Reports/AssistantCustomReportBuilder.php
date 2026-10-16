@@ -104,6 +104,7 @@ final readonly class AssistantCustomReportBuilder
         $counterpartyProjection = $scope['entity_type'] === 'contract' && in_array('counterparty_name', $fields, true);
         if ($counterpartyProjection) {
             $selected[] = '_report_counterparty_id';
+            $selected[] = '_report_counterparty_supplier_id';
         }
         foreach (['currency', 'budget_currency', 'material_unit', 'unit_dimension', 'unit_code', 'unit'] as $dimension) {
             if (isset($source['fields'][$dimension])) {
@@ -179,11 +180,13 @@ final readonly class AssistantCustomReportBuilder
         unset($valuesRow);
         [$values, $labelRefs, $labelDomains] = $this->relatedLabels($values, $outputFields, $actor, $organizationId, $scope['project_id'], $fetchedAt);
         if ($counterpartyProjection) {
-            $legacyIds = array_values(array_unique(array_filter($rows->pluck('_report_counterparty_id')->all())));
-            [, $legacyRefs, $legacyDomains] = $this->relatedLabels(array_map(static fn ($id): array => [$id], $legacyIds),
-                ['contractor_id'], $actor, $organizationId, $scope['project_id'], $fetchedAt);
-            $labelRefs = [...$labelRefs, ...$legacyRefs];
-            $labelDomains = [...$labelDomains, ...$legacyDomains];
+            foreach (['_report_counterparty_id' => 'contractor_id', '_report_counterparty_supplier_id' => 'supplier_id'] as $projection => $field) {
+                $legacyIds = array_values(array_unique(array_filter($rows->pluck($projection)->all())));
+                [, $legacyRefs, $legacyDomains] = $this->relatedLabels(array_map(static fn ($id): array => [$id], $legacyIds),
+                    [$field], $actor, $organizationId, $scope['project_id'], $fetchedAt);
+                $labelRefs = [...$labelRefs, ...$legacyRefs];
+                $labelDomains = [...$labelDomains, ...$legacyDomains];
+            }
         }
         $types = array_map(static fn (string $field): string => preg_match('/(^id$|_id$|number$|version$)/', $field) ? 'string' : $source['fields'][$field]['type'], $outputFields);
         $types = [...$types, ...array_fill(0, count($section['metrics']), 'number')];
@@ -207,7 +210,7 @@ final readonly class AssistantCustomReportBuilder
 
     private function relatedLabels(array $rows, array $fields, User $actor, int $organizationId, ?int $projectId, string $fetchedAt): array
     {
-        $types = ['project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'contract_id' => ['contract', 'number'],
+        $types = ['project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'supplier_id' => ['supplier', 'name'], 'contract_id' => ['contract', 'number'],
             'user_id' => ['user', 'name'], 'assigned_to' => ['user', 'name'], 'warehouse_id' => ['warehouse', 'name'], 'material_id' => ['material', 'name']];
         $refs = $domains = [];
         foreach ($fields as $index => $field) {
