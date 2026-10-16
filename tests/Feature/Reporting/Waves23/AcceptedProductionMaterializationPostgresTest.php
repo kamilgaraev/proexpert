@@ -53,6 +53,52 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
+    public function test_frozen_as_of_replays_nonempty_result_after_later_reversal_and_reacceptance(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $organizationId = (int) $organization->id;
+        $projectId = (int) $project->id;
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')->where('organization_id', $organizationId)->firstOrFail();
+        $day = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->setTime(0, 0)->modify('+1 day');
+        $acceptedAt = $day->setTime(8, 0);
+        $acceptedId = $this->insertEvent($organizationId, $projectId, 'accepted', '2.500', $acceptedAt->format(DATE_ATOM));
+        $this->insertOwnerVersion($organizationId, $projectId, 'accepted', $acceptedAt->format(DATE_ATOM), 1);
+        $scope = new ReportScope($organizationId, [$organizationId], [$projectId], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)->code('accepted_production_progress')->formulaVersion('accepted_production.v1')->sourceSchemaVersion('production_acceptance_events_v2')->payload();
+        $filters = new ReportFilterSet(['organization_id' => (string) $organizationId, 'project_id' => (string) $projectId, 'period_from' => $day->format('Y-m-d'), 'period_to' => $day->format('Y-m-d')]);
+        $query = new ReportQuery($definition, $scope, $filters, [], $day->setTime(10, 0), 'ru-RU');
+        $materializer = new AcceptedProductionSnapshotMaterializer(new AcceptedProductionFormula, new ProductionAcceptanceRecognitionGrain);
+        self::assertSame(1, DB::transactionLevel());
+        DB::commit();
+        try {
+            $baseline = $materializer->materialize($scope, $query, new ReportProgress(0));
+            $rows = static fn (string $snapshotId): array => DB::table('accepted_production_rows')->where('organization_id', $organizationId)->where('snapshot_id', $snapshotId)->orderBy('row_key')->get()->map(static fn (object $row): array => (array) $row)->all();
+            $baselineRows = $rows($baseline->id);
+            self::assertCount(1, $baselineRows);
+            self::assertSame(2.5, (float) $baselineRows[0]['accepted_quantity']);
+            $baselineTotals = DB::table('accepted_production_snapshots')->where('id', $baseline->id)->value('totals');
+            $reversedAt = $day->setTime(12, 0);
+            $reacceptedAt = $day->setTime(13, 0);
+            $this->insertEvent($organizationId, $projectId, 'reversed', '-2.500', $reversedAt->format(DATE_ATOM), reversesEventId: $acceptedId, transitionVersion: 2);
+            $this->insertOwnerVersion($organizationId, $projectId, 'reversed', $reversedAt->format(DATE_ATOM), 2);
+            $latestEventId = $this->insertEvent($organizationId, $projectId, 'accepted', '4.500', $reacceptedAt->format(DATE_ATOM), transitionVersion: 3);
+            $this->insertOwnerVersion($organizationId, $projectId, 'accepted', $reacceptedAt->format(DATE_ATOM), 3);
+            $replay = $materializer->materialize($scope, $query, new ReportProgress(0));
+            self::assertSame($baseline->materializedSourceHash->value, $replay->materializedSourceHash->value);
+            self::assertSame($baseline->id, $replay->id);
+            self::assertSame($baselineRows, $rows($replay->id));
+            self::assertSame($baselineTotals, DB::table('accepted_production_snapshots')->where('id', $replay->id)->value('totals'));
+            $laterQuery = new ReportQuery($definition, $scope, $filters, [], $day->setTime(14, 0), 'ru-RU');
+            $later = $materializer->materialize($scope, $laterQuery, new ReportProgress(0));
+            self::assertNotSame($baseline->materializedSourceHash->value, $later->materializedSourceHash->value);
+            self::assertSame('event_'.$latestEventId, $later->watermarks['acceptance_events']);
+            self::assertSame(4.5, (float) DB::table('accepted_production_rows')->where('organization_id', $organizationId)->where('snapshot_id', $later->id)->sum('accepted_quantity'));
+        } finally {
+            DB::beginTransaction();
+        }
+    }
+
     public function test_period_filter_keeps_acceptance_and_reversal_on_their_own_days_and_isolates_tenant(): void
     {
         $organization = Organization::factory()->create();

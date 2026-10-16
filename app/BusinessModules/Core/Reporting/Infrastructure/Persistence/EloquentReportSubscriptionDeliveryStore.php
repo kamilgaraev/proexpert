@@ -96,7 +96,13 @@ final class EloquentReportSubscriptionDeliveryStore implements ReportSubscriptio
 
     public function attachRunLocked(ReportSubscriptionDelivery $delivery, string $runId): void
     {
-        $this->move($delivery, 'building_run', ['run_id' => $runId]);
+        if (ReportSubscriptionDeliveryRecord::query()
+            ->where('id', $delivery->id)
+            ->where('status', 'building_run')
+            ->where(fn ($query) => $query->whereNull('run_id')->orWhere('run_id', $runId))
+            ->update(['run_id' => $runId]) !== 1) {
+            throw new LogicException('report_subscription_delivery_concurrent_change');
+        }
     }
 
     public function attachExportLocked(ReportSubscriptionDelivery $delivery, string $exportId): void

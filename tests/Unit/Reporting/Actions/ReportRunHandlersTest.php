@@ -282,6 +282,24 @@ final class ReportRunHandlersTest extends TestCase
         self::assertSame(1, $publisher->calls);
     }
 
+    public function test_frozen_saved_view_is_stable_but_current_visibility_is_required(): void
+    {
+        [$coordinator, $store, $savedViews, $context] = $this->fixture();
+        $reference = new ReportSavedViewRef($savedViews->reference->id, 3, new Sha256Hash(str_repeat('d', 64)));
+        $data = new CreateReportRunData('report', new ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU', $reference->id, $reference);
+        $handler = new CreateReportRunHandler($coordinator, new RecordingReportDispatchIntentPromptPublisher);
+        $handler->handle($context, $data, new IdempotencyKey('frozen-view-key'));
+        self::assertSame($reference, $store->lastSavedView);
+        self::assertNotSame($savedViews->reference, $store->lastSavedView);
+        $savedViews->rejectResolve = true;
+        try {
+            $handler->handle($context, $data, new IdempotencyKey('frozen-view-key'));
+            self::fail('A frozen reference must not bypass current visibility.');
+        } catch (InvalidArgumentException) {
+            self::assertSame(1, $store->createCalls);
+        }
+    }
+
     public function test_create_reuses_same_explicit_key_and_conflicts_when_canonical_body_changes(): void
     {
         [$coordinator, $store, , $context] = $this->fixture();

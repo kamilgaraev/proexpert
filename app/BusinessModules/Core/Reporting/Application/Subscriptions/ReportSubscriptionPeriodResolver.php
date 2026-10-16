@@ -61,6 +61,7 @@ final class ReportSubscriptionPeriodResolver
             $scheduledFor,
             $input->locale,
             $input->savedViewId,
+            $input->savedViewReference,
         );
     }
 

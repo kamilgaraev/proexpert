@@ -33,6 +33,7 @@ final readonly class ReportRunCoordinator
         $definition = $this->definitions->published($data->reportCode)->payload();
         $query = new ReportQuery($definition, $context->scope, $data->filters, $data->comparison, $data->asOf, $data->locale);
         $savedView = $data->savedViewId === null ? null : $this->savedViews->resolve($context, $data->savedViewId);
+        $savedView = $data->savedViewReference ?? $savedView;
         $this->access->assertOperation($context, $definition, ReportOperation::RUN, null);
 
         return $this->runs->createOrReuse($context, $query, $savedView, $idempotencyKey);

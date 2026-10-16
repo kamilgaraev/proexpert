@@ -72,8 +72,10 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
         ));
 
         self::assertSame(1, ReportSubscriptionExecutionInput::fromCanonicalBytes($created->executionInputBytes)->periodPolicyVersion);
+        self::assertSame($created->savedViewId, ReportSubscriptionExecutionInput::fromCanonicalBytes($created->executionInputBytes)->savedViewReference?->id);
         $coordinator->update($context, $created->id, new UpdateReportSubscriptionData(['format' => 'csv']));
         self::assertSame(1, ReportSubscriptionExecutionInput::fromCanonicalBytes($subscriptions->updates['execution_input_bytes'])->periodPolicyVersion);
+        self::assertSame($created->savedViewId, ReportSubscriptionExecutionInput::fromCanonicalBytes($subscriptions->updates['execution_input_bytes'])->savedViewReference?->id);
 
         $this->expectException(ReportContractException::class);
         $coordinator->update($context, $created->id, new UpdateReportSubscriptionData(['period_policy' => ['mode' => 'whenever']]));

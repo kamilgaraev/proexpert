@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\CreateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedView;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
@@ -367,6 +368,7 @@ final readonly class ReportSubscriptionCoordinator
             $definition->contractVersion,
             $definition->definitionHash,
             periodPolicyVersion: $preserveLegacyPolicy ? null : 1,
+            savedViewReference: ReportSavedViewRef::fromView($view),
         );
         if (! $preserveLegacyPolicy) {
             (new ReportSubscriptionPeriodResolver)->validate($input);

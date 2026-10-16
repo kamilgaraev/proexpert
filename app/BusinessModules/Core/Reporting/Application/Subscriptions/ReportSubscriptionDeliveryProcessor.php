@@ -25,6 +25,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use LogicException;
 use Throwable;
 
 final readonly class ReportSubscriptionDeliveryProcessor
@@ -44,7 +45,8 @@ final readonly class ReportSubscriptionDeliveryProcessor
 
     public function process(string $id): void
     {
-        $dispatches = DB::transaction(function () use ($id): array {
+        $runWork = null;
+        $dispatches = DB::transaction(function () use ($id, &$runWork): array {
             [$delivery, $subscription] = $this->deliveries->lockWithSubscription($id);
             $now = new DateTimeImmutable;
 
@@ -79,23 +81,17 @@ final readonly class ReportSubscriptionDeliveryProcessor
             }
 
             try {
-                $input = $delivery->executionInput();
-                $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN);
+                if ($delivery->status === ReportSubscriptionDeliveryStatus::SCHEDULED
+                    || ($delivery->status === ReportSubscriptionDeliveryStatus::BUILDING_RUN && $delivery->runId === null)) {
+                    if ($delivery->status === ReportSubscriptionDeliveryStatus::SCHEDULED) {
+                        $this->deliveries->beginAttemptLocked($delivery);
+                    }
+                    $runWork = [$delivery, $subscription];
 
-                if ($delivery->status === ReportSubscriptionDeliveryStatus::SCHEDULED) {
-                    $this->deliveries->beginAttemptLocked($delivery);
-
-                    $run = $this->runs->handle(
-                        $context,
-                        $this->periods->runData($input, $delivery->scheduledFor),
-                        $delivery->runIdempotencyKey(),
-                    );
-
-                    $this->deliveries->attachRunLocked($delivery, $run->id);
-                    $this->record($context, 'report_subscription_run_requested', $delivery);
-
-                    return [[$delivery->id, 0]];
+                    return [];
                 }
+                $input = $delivery->executionInput();
+                $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN, $input);
 
                 if ($delivery->status === ReportSubscriptionDeliveryStatus::BUILDING_RUN) {
                     $run = $this->getRuns->handle($context, (string) $delivery->runId);
@@ -150,15 +146,75 @@ final readonly class ReportSubscriptionDeliveryProcessor
             }
         });
 
+        if ($runWork !== null) {
+            $dispatches = [...$dispatches, ...$this->createRunOutsideTransaction(...$runWork)];
+        }
         foreach ($dispatches as [$deliveryId, $delaySeconds]) {
             $this->dispatcher->dispatch($deliveryId, $delaySeconds);
         }
     }
 
+    private function createRunOutsideTransaction(ReportSubscriptionDelivery $delivery, ReportSubscription $subscription): array
+    {
+        try {
+            $input = $delivery->executionInput();
+            $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN, $input);
+            $run = $this->runs->handle(
+                $context,
+                $this->periods->runData($input, $delivery->scheduledFor),
+                $delivery->runIdempotencyKey(),
+            );
+        } catch (Throwable $exception) {
+            return DB::transaction(function () use ($delivery, $exception): array {
+                [$current] = $this->deliveries->lockWithSubscription($delivery->id);
+                if ($current->status !== ReportSubscriptionDeliveryStatus::BUILDING_RUN || $current->runId !== null) {
+                    return [];
+                }
+                if ($current->executionExpiresAt <= new DateTimeImmutable) {
+                    $this->deliveries->markExpiredLocked($current);
+
+                    return [];
+                }
+                $this->logFailure($current, $exception);
+
+                return $this->retry($current, $exception instanceof ReportContractException
+                    ? $exception->errorCode->value : ReportErrorCode::REPORT_INTERNAL_ERROR->value);
+            });
+        }
+
+        $attached = null;
+        $dispatches = DB::transaction(function () use ($delivery, $run, &$attached): array {
+            [$current] = $this->deliveries->lockWithSubscription($delivery->id);
+            if ($current->status !== ReportSubscriptionDeliveryStatus::BUILDING_RUN) {
+                return [];
+            }
+            if ($current->executionExpiresAt <= new DateTimeImmutable) {
+                $this->deliveries->markExpiredLocked($current);
+
+                return [];
+            }
+            if (! hash_equals($current->executionInputHash->value, $delivery->executionInputHash->value)
+                || ($current->runId !== null && $current->runId !== $run->id)) {
+                throw new LogicException('report_subscription_delivery_concurrent_change');
+            }
+            if ($current->runId === null) {
+                $this->deliveries->attachRunLocked($current, $run->id);
+                $attached = $current;
+            }
+
+            return [[$current->id, 0]];
+        });
+        if ($attached !== null) {
+            $this->record($context, 'report_subscription_run_requested', $attached);
+        }
+
+        return $dispatches;
+    }
+
     private function notifyReady(ReportSubscriptionDelivery $delivery, ReportSubscription $subscription): array
     {
         try {
-            $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN);
+            $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN, $delivery->executionInput());
             $export = $this->getExports->handle($context, (string) $delivery->exportId);
             $key = $delivery->notificationIdempotencyKey();
             $receipt = $this->notifier->notify($context, $subscription, $delivery, $export, $key);
