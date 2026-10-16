@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\BatchReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationIdentity;
@@ -19,7 +19,7 @@ use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
 use LogicException;
 
-final class EloquentReportPublicationRegistry implements ReportPublicationRegistry
+final class EloquentReportPublicationRegistry implements BatchReportPublicationRegistry
 {
     public function __construct(
         private readonly ConnectionInterface $connection,
@@ -46,6 +46,27 @@ final class EloquentReportPublicationRegistry implements ReportPublicationRegist
             ->first();
 
         return $row === null ? null : $this->record((array) $row);
+    }
+
+    public function currentMany(array $codes): array
+    {
+        foreach ($codes as $code) {
+            $this->assertCode($code);
+        }
+        if ($codes === []) {
+            return [];
+        }
+
+        $publications = [];
+        $rows = $this->connection->table('public.report_publications')
+            ->whereIn('code', $codes)
+            ->where('status', ReportPublicationStatus::PUBLISHED->value)
+            ->get();
+        foreach ($rows as $row) {
+            $publications[(string) $row->code] = $this->published($this->record((array) $row));
+        }
+
+        return $publications;
     }
 
     public function publishedCodes(): array

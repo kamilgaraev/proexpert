@@ -6,10 +6,13 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Catalog;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\BatchReportPublicationFeatureStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\BatchReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationFeatureConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -28,8 +31,12 @@ final readonly class DatabasePublishedReportDefinitionRegistry implements Publis
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
-        $feature = $this->features->current($code);
-        if ($feature === null
+        return $this->enabledDefinition($definition, $this->features->current($code));
+    }
+
+    private function enabledDefinition(?PublishedReportDefinition $definition, ?ReportPublicationFeatureConfiguration $feature): PublishedReportDefinition
+    {
+        if ($definition === null || $definition->publicationIdentity === null || $feature === null
             || $feature->mode !== ReportPublicationFeatureMode::ON
             || ! hash_equals($feature->publicationId, $definition->publicationIdentity->publicationId)
             || ! hash_equals($feature->proofHash->value, $definition->publicationIdentity->proofHash->value)) {
@@ -55,8 +62,28 @@ final readonly class DatabasePublishedReportDefinitionRegistry implements Publis
 
     public function publishedDefinitions(): array
     {
+        $codes = $this->publications->publishedCodes();
+        if ($this->publications instanceof BatchReportPublicationRegistry && $this->features instanceof BatchReportPublicationFeatureStore) {
+            if ($codes === []) {
+                return [];
+            }
+            $publications = $this->publications->currentMany($codes);
+            $boundCodes = array_values(array_filter($codes,
+                static fn (string $code): bool => isset($publications[$code]) && $publications[$code]->publicationIdentity !== null));
+            $features = $boundCodes === [] ? [] : $this->features->currentMany($boundCodes);
+            $definitions = [];
+            foreach ($codes as $code) {
+                try {
+                    $definitions[$code] = $this->enabledDefinition($publications[$code] ?? null, $features[$code] ?? null);
+                } catch (ReportContractException) {
+                }
+            }
+
+            return $definitions;
+        }
+
         $definitions = [];
-        foreach ($this->publications->publishedCodes() as $code) {
+        foreach ($codes as $code) {
             try {
                 $definitions[$code] = $this->published($code);
             } catch (ReportContractException) {
