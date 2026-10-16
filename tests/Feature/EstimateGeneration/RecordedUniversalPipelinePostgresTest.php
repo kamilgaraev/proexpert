@@ -79,10 +79,17 @@ final class RecordedUniversalPipelinePostgresTest extends EstimateGenerationCano
                 BenchmarkSourceType::TextDescription, 'work-ceiling.txt', hash('sha256', $source), ['current_repair'], []), 300000);
             self::fail('A paid composer expanded the approved work limit.');
         } catch (\InvalidArgumentException $exception) {
+            if ($exception instanceof BenchmarkContractException) {
+                $cause = $exception->getPrevious();
+                self::assertInstanceOf(\InvalidArgumentException::class, $cause);
+                $exception = $cause;
+            }
             self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
             // The adapter invokes handle directly. Deliver the remaining queue attempts,
             // then execute the production terminal callback instead of assuming first-failure refund.
-            $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+            $queue = \Illuminate\Support\Facades\Queue::getFacadeRoot();
+            self::assertInstanceOf(\Illuminate\Support\Testing\Fakes\QueueFake::class, $queue);
+            $job = $queue->pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
             self::assertInstanceOf(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, $job);
             for ($delivery = 1; $delivery < $job->maxExceptions; $delivery++) {
                 try {

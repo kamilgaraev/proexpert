@@ -157,7 +157,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId, $context->creditOperationId),
             ($payload['evaluation_policy']['mode'] ?? null) === 'universal' ? ($payload['evaluation_policy']['selected_sections'] ?? []) : [],
         );
-        $composition = $this->composer->runDetailed($composerInput);
+        $composition = $this->composer->runDetailed($composerInput, $payload['local_estimates']);
         $intents = $composition['intents'];
         $payload['local_estimates'] = $this->compositionProjector->apply(
             $payload['local_estimates'],

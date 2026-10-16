@@ -12,7 +12,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -27,6 +26,7 @@ final readonly class RunEstimateComposer
         private string $modelName,
         private EstimateComposerBatchPlanner $batches = new EstimateComposerBatchPlanner,
         private ?EstimateComposerAllowance $allowance = null,
+        private SupplementaryWorkPhysicalGuard $physicalGuard = new SupplementaryWorkPhysicalGuard,
     ) {}
 
     /** @return list<array<string, mixed>> */
@@ -36,7 +36,7 @@ final readonly class RunEstimateComposer
     }
 
     /** @return array{intents:list<array<string,mixed>>,quarantined:list<array<string,mixed>>} */
-    public function runDetailed(EstimateComposerInput $input): array
+    public function runDetailed(EstimateComposerInput $input, array $localEstimates = []): array
     {
         $limit = $this->allowance?->partLimit($input);
         if ($input->wireScope?->creditOperationId !== null && $this->allowance === null) {
@@ -54,7 +54,7 @@ final readonly class RunEstimateComposer
             throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
         }
         if (count($plan) === 1) {
-            $outcome = $this->runBatch($plan[0]);
+            $outcome = $this->physicalGuard->filter($localEstimates, $this->runBatch($plan[0]), $input->derivedQuantities, $input->facts);
             $additional = array_filter($outcome['intents'], static fn (array $intent): bool => $intent['kind'] === 'supplementary');
             \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($additional), $workLimit);
 
@@ -63,7 +63,6 @@ final readonly class RunEstimateComposer
         $existing = [];
         $supplementary = [];
         $quarantined = [];
-        $workKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
         foreach ($plan as $batch) {
             \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($supplementary), $workLimit);
             $outcome = $this->runBatch($batch);
@@ -73,20 +72,20 @@ final readonly class RunEstimateComposer
             foreach ($outcome['intents'] as $intent) {
                 if ($intent['kind'] === 'existing') {
                     $existing[$intent['candidate_id']] = $intent;
-                } elseif (! isset($workKeys[$intent['work_key']])) {
-                    $identity = CanonicalPipelineJson::encode([$intent['work_key'], $intent['derived_quantity_id'], $intent['source_fact_ids']]);
-                    if (isset($supplementary[$intent['work_key']]) && $supplementary[$intent['work_key']]['identity'] !== $identity) {
-                        throw new InvalidArgumentException('estimate_composer_cross_batch_work_conflict');
-                    }
-                    $supplementary[$intent['work_key']] ??= ['identity' => $identity, 'intent' => $intent];
+                } else {
+                    $supplementary[] = $intent;
                 }
             }
+            $filtered = $this->physicalGuard->filter($localEstimates, ['intents' => $supplementary, 'quarantined' => $quarantined], $input->derivedQuantities, $input->facts);
+            $supplementary = $filtered['intents'];
+            $quarantined = $filtered['quarantined'];
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($supplementary), $workLimit);
         }
 
         \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertCount(count($input->candidates) + count($supplementary), $workLimit);
 
         return ['intents' => [...array_map(static fn (array $candidate): array => $existing[$candidate['candidate_id']], $input->candidates),
-            ...array_column(array_values($supplementary), 'intent')], 'quarantined' => $quarantined];
+            ...$supplementary], 'quarantined' => $quarantined];
     }
 
     /** @return array{intents:list<array<string,mixed>>,quarantined:list<array<string,mixed>>} */
@@ -270,15 +269,17 @@ final readonly class RunEstimateComposer
                     if ($intent->workSection !== null && ! in_array($intent->workSection, $input->allowedWorkSections, true)) {
                         throw new InvalidArgumentException('estimate_composer_work_section_not_selected');
                     }
-                    if ($intent->workKey === null
-                        || isset($candidateWorkKeys[$intent->workKey])
-                        || isset($supplementaryWorkKeys[$intent->workKey])) {
+                    if ($intent->workKey === null) {
                         throw new InvalidArgumentException('estimate_composer_supplementary_duplicate');
                     }
                     if ($intent->derivedQuantityId !== null && ! isset($allowedQuantityIds[$intent->derivedQuantityId])) {
                         throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
                     }
                     $intent = $this->bindSupplementary($intent, $input, $quantityProvenance);
+                    if ($intent->entityId === null && (isset($candidateWorkKeys[$intent->workKey])
+                        || isset($supplementaryWorkKeys[$intent->workKey]))) {
+                        throw new InvalidArgumentException('estimate_composer_supplementary_duplicate');
+                    }
                     if ($intent->technologyPackageCandidate !== null
                         && ! isset($allowedTechnologyCandidates[$intent->technologyPackageCandidate])) {
                         throw new InvalidArgumentException('estimate_composer_technology_candidate_invalid');

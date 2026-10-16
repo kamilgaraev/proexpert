@@ -41,6 +41,12 @@ final class UniversalEvaluationBuilderTest extends TestCase
         $draft['estimate_composition']['request_info'][0]['reason'] = 'estimate_composer_work_section_not_selected';
         $outsideScope = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
         self::assertNotContains('work_source_review', array_column($outsideScope['missing_requirements'], 'requirement'));
+        $draft['estimate_composition']['request_info'][0]['reason'] = 'estimate_composer_physical_duplicate_covered';
+        $covered = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        self::assertNotContains('work_source_review', array_column($covered['missing_requirements'], 'requirement'));
+        $draft['estimate_composition']['request_info'][0]['reason'] = 'estimate_composer_supplementary_duplicate';
+        $ambiguous = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        self::assertContains('work_source_review', array_column($ambiguous['missing_requirements'], 'requirement'));
     }
 
     public function test_quantity_source_keeps_exact_document_reference_page_region_and_native_cell(): void

@@ -416,6 +416,76 @@ final class EstimateAuditTest extends TestCase
         }
     }
 
+    public function test_add_work_corrections_reject_hashed_physical_duplicates_and_keep_other_rooms(): void
+    {
+        $facts = [['id' => 'fact:foundation', 'status' => 'confirmed']];
+        $quantities = $intents = [];
+        foreach (range(1, 4) as $room) {
+            $facts[] = ['id' => 'fact:area:'.$room, 'entity_id' => 'room:'.$room, 'value' => '50', 'unit' => 'm2', 'status' => 'confirmed'];
+            $basis = ['key' => 'floor_area', 'amount' => '50', 'unit' => 'm2', 'formula_key' => 'direct_floor_area',
+                'formula_version' => 'v1', 'source' => 'evidenced', 'model_version' => 'test:v1', 'evidence_ids' => [],
+                'assumptions' => [], 'review_blockers' => [], 'formula_inputs' => ['entity_id' => 'room:'.$room,
+                    'operands' => [['fact_id' => 'fact:area:'.$room, 'value' => '50', 'unit' => 'm2']]]];
+            $quantities[] = ['id' => 'quantity:area:'.$room, 'entity_id' => 'room:'.$room, 'value' => '50', 'unit' => 'm2',
+                'formula_key' => 'direct_floor_area', 'source' => 'evidenced', 'operand_fact_ids' => ['fact:area:'.$room], 'quantity_basis' => $basis];
+            if ($room <= 2) {
+                $intents['candidate:'.$room] = ['work_key' => 'finish.floor', 'name' => 'Чистовое покрытие пола',
+                    'entity_id' => 'room:'.$room, 'derived_quantity_id' => 'quantity:area:'.$room,
+                    'source_fact_ids' => ['fact:area:'.$room], 'technology_package_candidate' => null];
+            }
+        }
+        $projector = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
+        $keys = (new \ReflectionMethod($projector, 'supplementaryPositionKeys'))->invoke($projector, [], $intents);
+        $items = (new \ReflectionMethod($projector, 'supplementaryItems'))->invoke($projector, $intents, $quantities, $facts, $keys);
+        self::assertCount(2, array_unique(array_column($items, 'key')));
+        self::assertNotContains('finish.floor', array_column($items, 'key'));
+        $draft = $this->draft($items);
+        $duplicate = ['operation' => 'add_work', 'finding_id' => 'finding:duplicate', 'work_key' => 'finish.floor',
+            'name' => 'Чистовое покрытие пола', 'derived_quantity_id' => 'quantity:area:1', 'source_fact_ids' => ['fact:area:1']];
+        $input = $this->input($draft, derivedQuantities: $quantities, facts: $facts);
+        try {
+            $this->corrector([$duplicate])->run(new EstimateComposerCorrectionInput($input, [$this->finding('finding:duplicate', 'omission')]));
+            self::fail('A hashed row allowed a duplicate physical add_work correction.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_composer_correction_add_invalid', $exception->getMessage());
+        }
+        $cycle = new ApplyComposerCorrectionCycle(new RunEstimateAudit(new InMemoryAiRoleRunRepository,
+            new RecordedEstimateAuditModel([]), 'openai/gpt-6-luna'), $this->corrector());
+        $apply = new \ReflectionMethod($cycle, 'applyComposerCorrections');
+        self::assertSame([$draft, false], $apply->invoke($cycle, $draft, [$duplicate], $quantities, $facts));
+        $emptyPart = $this->draft([]);
+        self::assertSame([$emptyPart, false], $apply->invoke($cycle, $emptyPart, [$duplicate], $quantities, $facts, $draft['local_estimates']));
+        $additions = $findings = [];
+        foreach ([3, 4] as $room) {
+            $additions[] = [...$duplicate, 'finding_id' => 'finding:room:'.$room,
+                'derived_quantity_id' => 'quantity:area:'.$room, 'source_fact_ids' => ['fact:area:'.$room]];
+            $findings[] = $this->finding('finding:room:'.$room, 'omission');
+        }
+        $auditor = new RecordedEstimateAuditModel([['accepted' => false, 'findings' => $findings], ['accepted' => true, 'findings' => []]]);
+        $cycle = new ApplyComposerCorrectionCycle(new RunEstimateAudit(new InMemoryAiRoleRunRepository, $auditor, 'openai/gpt-6-luna'),
+            $this->corrector($additions));
+        $result = $cycle->apply($input);
+        self::assertSame('accepted', $result['audit']['status']);
+        $all = [];
+        foreach ($result['draft']['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                array_push($all, ...$section['work_items']);
+            }
+        }
+        self::assertCount(4, $all);
+        self::assertCount(4, array_unique(array_column($all, 'key')));
+        self::assertSame(['finish.floor'], array_values(array_unique(array_column($all, 'work_key'))));
+        self::assertSame(['room:1', 'room:2', 'room:3', 'room:4'], array_column(array_column($all, 'metadata'), 'scope_entity_id'));
+        self::assertSame($result, $cycle->apply($input));
+        self::assertSame(2, $auditor->calls);
+        self::assertSame([$result['draft'], false], $apply->invoke($cycle, $result['draft'], $additions, $quantities, $facts));
+        $technologyDraft = $draft;
+        $technologyDraft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['technology_package_id'] = 'package:alternative';
+        $technologyInput = $this->input($technologyDraft, derivedQuantities: $quantities, facts: $facts);
+        self::assertCount(1, $this->corrector([$duplicate])->run(new EstimateComposerCorrectionInput($technologyInput,
+            [$this->finding('finding:duplicate', 'omission')])));
+    }
+
     public function test_replayed_correction_is_checked_again_before_mutating_the_draft(): void
     {
         $item = $this->item('finish.paint');

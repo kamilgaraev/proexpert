@@ -108,6 +108,7 @@ final readonly class EstimateCompositionProjector
         }
 
         if ($supplementary !== []) {
+            $positionKeys = $this->supplementaryPositionKeys($localEstimates, $supplementary);
             $groups = [];
             foreach ($supplementary as $id => $intent) {
                 $package = isset($intent['work_section']) ? 'ai-composer-supplementary:'.$intent['work_section'] : 'ai-composer-supplementary';
@@ -122,7 +123,7 @@ final readonly class EstimateCompositionProjector
                     'sections' => [[
                         'key' => $package,
                         'title' => trans_message('estimate_generation.composition.supplementary_section'),
-                        'work_items' => $this->supplementaryItems($group, $derivedQuantities, $facts),
+                        'work_items' => $this->supplementaryItems($group, $derivedQuantities, $facts, $positionKeys),
                     ]],
                 ];
             }
@@ -132,16 +133,16 @@ final readonly class EstimateCompositionProjector
     }
 
     /** @param array<string, array<string, mixed>> $supplementary @param list<array<string, mixed>> $derivedQuantities @param list<array<string, mixed>> $facts */
-    private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts): array
+    private function supplementaryItems(array $supplementary, array $derivedQuantities, array $facts, array $positionKeys): array
     {
         $quantityProvenance = new ComposedQuantityProvenance($derivedQuantities, $facts);
         $items = [];
-        foreach ($supplementary as $intent) {
+        foreach ($supplementary as $candidateId => $intent) {
             $binding = $quantityProvenance->binding($intent);
             $quantity = ($binding['eligible'] ?? false) ? $binding['quantity'] : null;
             $operandIds = $quantity === null ? [] : $binding['operand_fact_ids'];
             $technology = $this->identifier($intent['technology_package_candidate'] ?? null);
-            $metadata = [];
+            $metadata = ['composition_work_key' => $intent['work_key']];
             if ($technology !== null) {
                 $metadata['technology_package_id'] = $technology;
             }
@@ -158,7 +159,8 @@ final readonly class EstimateCompositionProjector
             }
             $refs = array_values(array_unique([...$intent['source_fact_ids'], ...$operandIds]));
             $items[] = [
-                'key' => $intent['work_key'],
+                'key' => $positionKeys[$candidateId],
+                'work_key' => $intent['work_key'],
                 'name' => $intent['name'],
                 'item_type' => 'priced_work',
                 'unit' => is_array($quantity)
@@ -180,6 +182,36 @@ final readonly class EstimateCompositionProjector
         }
 
         return $items;
+    }
+
+    public function supplementaryPositionKeys(array $localEstimates, array $supplementary): array
+    {
+        $reserved = [];
+        foreach ($localEstimates as $estimate) {
+            foreach ($estimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    $reserved[$item['key']] = true;
+                }
+            }
+        }
+        $counts = array_count_values(array_column($supplementary, 'work_key'));
+        $keys = [];
+        foreach ($supplementary as $id => $intent) {
+            $raw = $intent['work_key'];
+            if (! isset($reserved[$raw]) && $counts[$raw] === 1) {
+                $keys[$id] = $raw;
+                $reserved[$raw] = true;
+            } else {
+                $salt = 0;
+                do {
+                    $key = 'supplementary:'.hash('sha256', $id.':'.$salt++);
+                } while (isset($reserved[$key]));
+                $keys[$id] = $key;
+                $reserved[$key] = true;
+            }
+        }
+
+        return $keys;
     }
 
     /** @param array<string, array<string, mixed>> $supplementary */

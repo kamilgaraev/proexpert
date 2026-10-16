@@ -60,7 +60,7 @@ final readonly class UniversalEvaluationBuilder
                     }
                     $position = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'], 'section' => $sectionKey,
                         'package_key' => $estimate['key'], 'entity_id' => $entityId, 'unit' => $item['unit'] ?? null,
-                        'work_key' => $item['work_key'] ?? $item['key'],
+                        'work_key' => $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'],
                         'coverage_requirement' => $item['metadata']['requirement_key']
                             ?? ScopeCompletenessEvaluator::workRequirement($sectionKey, $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key']),
                         'quantity' => $item['quantity'] ?? null, 'quantity_status' => $item['quantity_status'] ?? 'unknown',
@@ -139,7 +139,7 @@ final readonly class UniversalEvaluationBuilder
                 'position_keys' => isset($finding['item_key']) ? [$finding['item_key']] : []];
         }
         foreach ($draft['estimate_composition']['request_info'] ?? [] as $index => $request) {
-            if (($request['reason'] ?? null) === 'estimate_composer_work_section_not_selected') {
+            if (in_array($request['reason'] ?? null, ['estimate_composer_work_section_not_selected', 'estimate_composer_physical_duplicate_covered'], true)) {
                 continue;
             }
             $requirements[] = ['section' => $scope[0], 'entity_id' => null, 'requirement' => 'work_source_review',

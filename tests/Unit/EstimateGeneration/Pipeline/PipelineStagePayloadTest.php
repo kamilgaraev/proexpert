@@ -77,6 +77,23 @@ final class PipelineStagePayloadTest extends TestCase
         ];
 
         self::assertSame($data, PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data)->data);
+        $notice = ['index' => 1, 'reason' => 'estimate_composer_physical_duplicate_covered', 'work_name' => 'Отделка пола',
+            'next_action' => 'keep_existing_work', 'source_fact_ids' => ['fact:floor']];
+        foreach (['covered_by_position_key', 'covered_by_candidate_id'] as $field) {
+            $data['estimate_composition']['request_info'] = [[...$notice, $field => 'floor:1']];
+            self::assertSame($data, PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data)->data);
+        }
+        foreach ([$notice, [...$notice, 'covered_by_position_key' => ''],
+            [...$notice, 'covered_by_position_key' => 'floor:1', 'reason' => 'estimate_composer_work_scope_unresolved'],
+            [...$notice, 'covered_by_position_key' => 'floor:1', 'covered_by_candidate_id' => 'candidate:1']] as $invalidNotice) {
+            $data['estimate_composition']['request_info'] = [$invalidNotice];
+            try {
+                PipelineStagePayload::from(ProcessingStage::PlanWorkItems, $data);
+                self::fail('Invalid duplicate notice was accepted.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('Pipeline work source requests are invalid.', $exception->getMessage());
+            }
+        }
         $data['estimate_composition']['intents_count'] = 0;
         $data['estimate_composition']['request_info'] = [['index' => -1, 'reason' => 'estimate_composer_work_scope_unresolved',
             'work_name' => null, 'next_action' => 'provide_work_scope', 'source_fact_ids' => []]];

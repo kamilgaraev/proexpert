@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\SupplementaryWorkPhysicalGuard;
 
 final readonly class ApplyComposerCorrectionCycle
 {
@@ -66,8 +68,17 @@ final readonly class ApplyComposerCorrectionCycle
             $assertPart = static function (array $candidate) use (&$draft, $workKeys, $workLimit): void {
                 \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertReplacement($draft, $candidate, $workKeys, $workLimit);
             };
-            $outcome = $this->applyPart($inputs[$partIndex], $assertPart);
             $originalKeys = array_fill_keys($part['work_keys'], true);
+            $unaffected = $draft['local_estimates'];
+            foreach ($unaffected as &$local) {
+                foreach ($local['sections'] as &$section) {
+                    $section['work_items'] = array_values(array_filter($section['work_items'],
+                        static fn (array $item): bool => ! isset($originalKeys[$item['key']])));
+                }
+                unset($section);
+            }
+            unset($local);
+            $outcome = $this->applyPart($inputs[$partIndex], $assertPart, $unaffected);
             $replacements = [];
             foreach ($outcome['draft']['local_estimates'] ?? [] as $localIndex => $local) {
                 $newItems = [];
@@ -116,7 +127,7 @@ final readonly class ApplyComposerCorrectionCycle
     }
 
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
-    private function applyPart(EstimateAuditInput $root, callable $assertDraft): array
+    private function applyPart(EstimateAuditInput $root, callable $assertDraft, array $otherEstimates = []): array
     {
         $draft = $root->draft;
         $history = [];
@@ -143,7 +154,7 @@ final readonly class ApplyComposerCorrectionCycle
             if ($remaining !== []) {
                 $assertDraft($corrected);
                 $corrections = $this->corrector->run(new EstimateComposerCorrectionInput($root->withDraft($corrected, $cycle), $remaining));
-                [$corrected, $composerApplied] = $this->applyComposerCorrections($corrected, $corrections, $input->derivedQuantities, $input->facts);
+                [$corrected, $composerApplied] = $this->applyComposerCorrections($corrected, $corrections, $input->derivedQuantities, $input->facts, $otherEstimates);
                 $applied = $applied || $composerApplied;
             }
             $assertDraft($corrected);
@@ -185,7 +196,7 @@ final readonly class ApplyComposerCorrectionCycle
     }
 
     /** @param list<array<string,mixed>> $corrections @param list<array<string,mixed>> $derivedQuantities @return array{array<string,mixed>,bool} */
-    private function applyComposerCorrections(array $draft, array $corrections, array $derivedQuantities, array $facts): array
+    private function applyComposerCorrections(array $draft, array $corrections, array $derivedQuantities, array $facts, array $otherEstimates = []): array
     {
         $provenance = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\ComposedQuantityProvenance($derivedQuantities, $facts);
         $quantities = [];
@@ -196,17 +207,23 @@ final readonly class ApplyComposerCorrectionCycle
             }
         }
         $applied = false;
+        $physicalGuard = new SupplementaryWorkPhysicalGuard;
+        $projector = new EstimateCompositionProjector;
         foreach ($corrections as $correction) {
             $quantity = $quantities[$correction['derived_quantity_id']] ?? null;
             if ($quantity === null) {
                 continue;
             }
             if ($correction['operation'] === 'add_work') {
-                if ($this->findItem($draft, $correction['work_key']) !== null) {
-                    continue;
-                }
                 $binding = $provenance->correction($correction);
                 $basis = $provenance->basis($binding);
+                $intent = $physicalGuard->correctionIntent($correction, $binding);
+                $coveredEstimates = [...($draft['local_estimates'] ?? []), ...$otherEstimates];
+                $filtered = $physicalGuard->filter($coveredEstimates, ['intents' => [$intent], 'quarantined' => []], $derivedQuantities, $facts);
+                if ($filtered['intents'] === []) {
+                    continue;
+                }
+                $positionKeys = $projector->supplementaryPositionKeys($coveredEstimates, [$intent['candidate_id'] => $intent]);
                 $operandIds = $binding['operand_fact_ids'];
                 $sourceRefs = array_map(static fn (string $id): array => ['fact_id' => $id,
                     'role' => in_array($id, $operandIds, true) ? 'quantity_operand' : 'context'],
@@ -221,7 +238,8 @@ final readonly class ApplyComposerCorrectionCycle
                         'key' => 'ai-audit-corrections',
                         'title' => $correction['name'],
                         'work_items' => [[
-                            'key' => $correction['work_key'],
+                            'key' => $positionKeys[$intent['candidate_id']],
+                            'work_key' => $correction['work_key'],
                             'name' => $correction['name'],
                             'item_type' => 'priced_work',
                             'unit' => $quantity['unit'],
@@ -234,6 +252,7 @@ final readonly class ApplyComposerCorrectionCycle
                             'unit_price' => null, 'total_cost' => null,
                             'pricing_status' => 'not_calculated', 'pricing_blocker' => 'price_unknown',
                             'metadata' => ['audit_correction' => ['finding_id' => $correction['finding_id']],
+                                'composition_work_key' => $correction['work_key'],
                                 'scope_entity_id' => $binding['entity_id'], 'quantity_key' => $quantity['id'],
                                 'quantity_operand_fact_ids' => $binding['operand_fact_ids']],
                         ]],
