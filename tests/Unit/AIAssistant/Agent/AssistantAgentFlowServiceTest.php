@@ -154,6 +154,32 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('https://storage.example.test/org-15/reports/contract-payments.pdf', $metadata['artifacts'][0]['url']);
     }
 
+    public function test_custom_report_handoff_clears_old_pending_report_before_next_message(): void
+    {
+        foreach ([$this->pendingScheduleReportState(), new AssistantTaskState(
+            id: 'report.unspecified', domain: 'reports', capability: 'reports', toolName: '', status: 'waiting_for_slots',
+            slots: [new AssistantTaskSlot('report_type', true)], sourceMessage: 'Сделай отчет',
+        )] as $pending) {
+            $conversation = new AgentFlowConversation(213, ['agent_state' => $pending->toArray(), 'selected_project_id' => 56]);
+            $manager = new AgentFlowConversationManager($conversation);
+            $registry = new AIToolRegistry;
+            $oldTool = new AgentFlowTool('generate_project_timelines_report', ['status' => 'success']);
+            $registry->registerTool($oldTool);
+            $service = $this->makeService($manager, $registry);
+            $plan = $this->taskPlan();
+            $plan['request']['desired_mode'] = 'grounded';
+
+            self::assertNull($service->exposedHandleAgentFlow('Сделай Excel по договорам с суммами', 15, $this->makeUser(), $conversation, $plan));
+            self::assertArrayNotHasKey('agent_state', $conversation->context);
+            self::assertSame(56, $conversation->context['selected_project_id']);
+            self::assertTrue($conversation->saveCalled);
+            self::assertNull($service->exposedHandleAgentFlow('Какие проекты сейчас активны?', 15, $this->makeUser(), $conversation, $plan));
+            self::assertNull($service->exposedHandleAgentFlow('за последний месяц', 15, $this->makeUser(), $conversation, $plan));
+            self::assertSame([], $oldTool->calls);
+            self::assertSame([], $manager->assistantMessages());
+        }
+    }
+
     public function test_executor_success_without_artifacts_returns_failure_without_fake_link(): void
     {
         $conversation = new AgentFlowConversation(303, [

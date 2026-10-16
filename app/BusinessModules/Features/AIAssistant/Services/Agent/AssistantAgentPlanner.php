@@ -48,7 +48,7 @@ final readonly class AssistantAgentPlanner
     {
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
         if (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($message, $requestUnderstanding)) {
-            return new AssistantAgentDecision(type: 'answer');
+            return new AssistantAgentDecision(type: 'answer', clearPendingState: $pendingState?->status === 'waiting_for_slots');
         }
         if ($this->blocksReportPlanning($requestUnderstanding, $pendingState)) {
             return new AssistantAgentDecision(type: 'answer');

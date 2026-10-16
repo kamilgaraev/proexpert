@@ -1669,7 +1669,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     }
 
     #[DataProvider('customReportRequests')]
-    public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(string $query): void
+    public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(string $query, bool $hasPendingReport = false): void
     {
         (require database_path('migrations/2026_08_06_000050_scope_personal_files_to_organizations.php'))->up();
         (require database_path('migrations/2025_07_09_000001_create_report_files_table.php'))->up();
@@ -1736,13 +1736,24 @@ final class AssistantRequestLifecycleTest extends TestCase
             $usage + ['content' => '', 'output' => [$call], 'function_calls' => [$call]],
             $usage + ['content' => 'Готово', 'output' => [$message], 'function_calls' => []]
         );
-        $payload = $this->quote(['message' => $query]);
+        $conversationId = null;
+        if ($hasPendingReport) {
+            $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Переключение отчёта');
+            $conversation->context = ['selected_project_id' => 56, 'agent_state' => [
+                'id' => 'report.unspecified', 'domain' => 'reports', 'capability' => 'reports', 'tool_name' => '',
+                'status' => 'waiting_for_slots', 'source_message' => 'Сделай отчет',
+                'slots' => [['name' => 'report_type', 'required' => true, 'value' => null, 'label' => null]],
+            ]];
+            $conversation->save();
+            $conversationId = $conversation->id;
+        }
+        $payload = $this->quote(['message' => $query, ...($conversationId === null ? [] : ['conversation_id' => $conversationId])]);
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->method('plan')->willReturn(['request' => ['message' => $payload['message'], 'context' => []],
             'request_understanding' => (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($payload['message'])->toArray(),
             'task_type' => 'summary', 'access_context_public' => [], 'capability' => ['id' => 'reports']]);
         $service = $this->providerService($provider, $registry, $orchestrator);
-        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, $conversationId, $payload);
         $metadata = $response['message']['metadata'];
         self::assertArrayHasKey('artifacts', $metadata, json_encode($response['message'], JSON_UNESCAPED_UNICODE));
         self::assertCount(1, $metadata['artifacts']);
@@ -1752,11 +1763,16 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame('verified', $metadata['validation_status']);
         self::assertFalse($metadata['needs_clarification']);
         self::assertSame(trans_message('ai_custom_reports.ready'), $response['message']['content']);
+        if ($hasPendingReport) {
+            $savedContext = \App\BusinessModules\Features\AIAssistant\Models\Conversation::query()->findOrFail($conversationId)->context;
+            self::assertArrayNotHasKey('agent_state', $savedContext);
+            self::assertSame(56, $savedContext['selected_project_id']);
+        }
     }
 
     public static function customReportRequests(): array
     {
-        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF'], ['Не делай PDF, сделай Excel со списком сотрудников'], ['Не делай файл PDF, сделай Excel со списком сотрудников']];
+        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF'], ['Не делай PDF, сделай Excel со списком сотрудников'], ['Не делай файл PDF, сделай Excel со списком сотрудников'], ['Сделай Excel со списком сотрудников', true]];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

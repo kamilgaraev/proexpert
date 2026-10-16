@@ -1285,11 +1285,11 @@ class AIAssistantService
         $decision = $this->agentPlanner->decide($query, $context, $pendingState,
             fn (string $type, ?string $name, ?int $id): ?array => $this->resolveAgentReportEntityScope($type, $name, $id, $user, $organizationId, $taskPlan));
 
-        if ($this->isGroundedRequest($taskPlan) && $decision->type === 'answer') {
-            return null;
-        }
-
         if ($decision->type === 'answer') {
+            if ($decision->clearPendingState) {
+                $this->agentStateStore->clear($conversation);
+            }
+
             return null;
         }
 
@@ -1317,14 +1317,6 @@ class AIAssistantService
     {
         return $this->agentExecutor->resolveReportEntityScope($type, $name, $id, $actor,
             $this->resolveOrganization($organizationId), $this->requestUnderstandingFromPlan($taskPlan));
-    }
-
-    private function isGroundedRequest(array $taskPlan): bool
-    {
-        $request = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
-        $desiredMode = mb_strtolower(trim((string) ($request['desired_mode'] ?? '')));
-
-        return $desiredMode === 'grounded';
     }
 
     private function logRequestUnderstanding(array $taskPlan, int $organizationId, User $user): void

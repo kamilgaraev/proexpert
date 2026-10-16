@@ -583,6 +583,10 @@ class AssistantAgentPlannerTest extends TestCase
         $decision = $this->decide('Сделай Excel: договоры по подрядчикам с суммами и статусами', $this->projectContext(), null);
         self::assertSame('answer', $decision->type);
         self::assertNull($decision->toolName);
+        self::assertFalse($decision->clearPendingState);
+        $switch = $this->decide('Сделай Excel по договорам с суммами', $this->projectContext(), $this->pendingScheduleState());
+        self::assertSame('answer', $switch->type);
+        self::assertTrue($switch->clearPendingState);
     }
 
     private function projectContext(): array
