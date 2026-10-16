@@ -64,12 +64,27 @@ final class MixedSourceUnderstandingPostgresTest extends EstimateGenerationCanon
         self::assertSame(array_column($facts, 'sourceVersion'), array_column($snapshot->conflicts[0]->facts, 'sourceVersion'));
         $bindings = DB::table('estimate_generation_project_model_conflict_facts')->where('session_id', $scope[2])->orderBy('fact_id')->pluck('source_version')->all();
         self::assertSame(array_column($facts, 'sourceVersion'), $bindings);
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'local_estimates' => [['key' => 'finishing',
+            'sections' => [['work_items' => [['key' => 'finish.floor', 'name' => 'Отделка пола', 'quantity' => '18.4', 'unit' => 'm2',
+                'metadata' => ['scope_entity_id' => $facts[0]->entityId],
+                'quantity_basis_details' => ['formula_inputs' => ['operands' => [['fact_id' => $facts[0]->id]]]],
+            ]]]]]]];
+        $builder = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder::class);
+        $evaluation = $builder->build($draft, $snapshot);
+        self::assertContains('source_conflict', array_column($evaluation['missing_requirements'], 'requirement'));
+        self::assertSame('review_source_questions', $evaluation['priority_questions'][0]['next_action']);
+        self::assertSame($conflict->id, $evaluation['priority_questions'][0]['conflict_id']);
+        self::assertNull($evaluation['scenarios'][0]['positions'][0]['quantity']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
         $selected = $facts[1];
         $decision = new Decision('decision:cross-source-choice', ...[...$scope, $selected->sourceVersion,
             'conflict', $conflict->id, $selected->id, 'user', (string) $actor->id,
             'Пользователь выбирает значение из второго документа.', 1, $selected->evidenceIds]);
         $models->applyDecision($decision, $selected);
         self::assertSame([], $models->snapshot(...$scope)->conflicts);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = null;
+        $after = $builder->build($draft, $models->snapshot(...$scope));
+        self::assertNotContains('source_conflict', array_column($after['missing_requirements'], 'requirement'));
         self::assertSame($selected->sourceVersion, $models->decisionsForSelectedFacts(...[...$scope, [$selected->id]])[0]->sourceVersion);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
         try {

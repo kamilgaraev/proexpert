@@ -21,6 +21,7 @@ final class EvaluationQuestionPrioritizer
                 continue;
             }
             $score = (($candidate['correctness_blocker'] ?? false) === true ? 1000 : 0)
+                + (($candidate['source_conflict_blocker'] ?? false) === true ? 2000 : 0)
                 + (($candidate['cost_blocker'] ?? false) === true ? 500 : 0)
                 + min(count($candidate['affected_position_keys']), 100) * 2
                 + (($candidate['easy_to_answer'] ?? false) === true ? 20 : 0);

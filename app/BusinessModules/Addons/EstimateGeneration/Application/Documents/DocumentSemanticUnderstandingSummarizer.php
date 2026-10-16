@@ -26,14 +26,21 @@ final readonly class DocumentSemanticUnderstandingSummarizer
         $schemaFourPageKinds = [];
         $acceptedQuantityClaimIds = [];
         $nativeUnderstanding = [];
+        $nativeKinds = [];
 
         foreach ($payloads as $payload) {
             if (! is_array($payload)) {
                 continue;
             }
-            if (($payload['schema_version'] ?? null) === 1 && ($payload['source_kind'] ?? null) === 'spreadsheet'
-                && ($payload['native_understanding']['contract'] ?? null) === NativeSpreadsheetUnderstanding::CONTRACT) {
+            $nativeContract = match ($payload['source_kind'] ?? null) {
+                'spreadsheet' => NativeSpreadsheetUnderstanding::CONTRACT,
+                'cad' => NativeCadUnderstanding::CONTRACT,
+                default => null,
+            };
+            if (($payload['schema_version'] ?? null) === 1 && $nativeContract !== null
+                && ($payload['native_understanding']['contract'] ?? null) === $nativeContract) {
                 $nativeUnderstanding[] = $payload['native_understanding'];
+                $nativeKinds[$payload['source_kind']] = true;
 
                 continue;
             }
@@ -140,7 +147,8 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             'page_kinds' => array_values(array_keys($schemaFourPageKinds)),
             'pages_count' => $arbitratedPageCount,
         ];
-        if ($nativeUnderstanding !== [] && count($nativeUnderstanding) === count($payloads)) {
+        $nativeComplete = $nativeUnderstanding !== [] && count($nativeUnderstanding) === count($payloads) && count($nativeKinds) === 1;
+        if ($nativeComplete) {
             $capabilities = [];
             foreach ($nativeUnderstanding as $page) {
                 foreach ($page['extracted_capabilities'] as $key => $value) {
@@ -149,11 +157,12 @@ final readonly class DocumentSemanticUnderstandingSummarizer
                         : ($capabilities[$key] ?? false) || $value;
                 }
             }
-            $documentUnderstanding = ['document_type' => 'spreadsheet',
+            $nativeKind = array_key_first($nativeKinds);
+            $documentUnderstanding = ['document_type' => $nativeKind === 'cad' ? 'drawing' : 'spreadsheet',
                 'role_for_estimation' => ($capabilities['requires_manual_review'] ?? true) ? 'needs_review'
                     : (($capabilities['has_quantities'] ?? false) ? 'quantity_source' : 'context_document'),
                 'extracted_capabilities' => $capabilities,
-                'pages_count' => count($nativeUnderstanding), 'page_kinds' => ['spreadsheet'],
+                'pages_count' => count($nativeUnderstanding), 'page_kinds' => [$nativeKind === 'cad' ? 'drawing' : 'spreadsheet'],
                 'verification_status' => 'native_source_checked'];
         }
 
@@ -161,7 +170,7 @@ final readonly class DocumentSemanticUnderstandingSummarizer
             'pages_checked' => count($coverage) + $arbitratedPageCount + count($nativeUnderstanding),
             'roles' => $roles,
             'facts' => $facts,
-            ...(count($nativeUnderstanding) > 0 && count($nativeUnderstanding) === count($payloads)
+            ...($nativeComplete
                 ? [] : ['analysis_roles_complete' => $arbitratedPageCount > 0 && $roleRunsComplete]),
             ...($documentUnderstanding === null ? [] : ['document_understanding' => $documentUnderstanding]),
             'recommendations' => array_slice($recommendations, 0, self::MAX_ITEMS_PER_GROUP),

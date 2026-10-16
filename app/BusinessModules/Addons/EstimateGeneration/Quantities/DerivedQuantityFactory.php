@@ -86,6 +86,29 @@ final class DerivedQuantityFactory
 
         $entities = $this->indexEntities($snapshot->entities);
         $facts = $this->indexFacts($snapshot->facts);
+        $conflicted = [];
+        foreach ($snapshot->conflicts as $conflict) {
+            if ($conflict->status !== 'unresolved') {
+                continue;
+            }
+            $currentConflict = [];
+            foreach ($conflict->facts as $fact) {
+                if (isset($facts[$fact->id]) && $facts[$fact->id]->version === $fact->version
+                    && $facts[$fact->id]->sourceVersion === $fact->sourceVersion) {
+                    $currentConflict[$fact->id] = true;
+                }
+            }
+            if (count($currentConflict) === count($conflict->facts)) {
+                $conflicted += $currentConflict;
+            }
+        }
+        foreach ($requestedOperands as $role => $ids) {
+            foreach (is_array($ids) ? $ids : [$ids] as $id) {
+                if (is_string($id) && isset($conflicted[$id])) {
+                    return $this->unresolved('operand_source_conflict', (string) $role, $id);
+                }
+            }
+        }
         $evidence = $this->indexEvidence($snapshot->evidence);
         $decisionIndex = $this->indexDecisions($decisions);
         $entityId = is_string($request['entity_id'] ?? null) ? $request['entity_id'] : '';

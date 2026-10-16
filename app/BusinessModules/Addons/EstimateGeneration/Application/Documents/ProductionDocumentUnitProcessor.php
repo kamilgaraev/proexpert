@@ -262,6 +262,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             static fn (mixed $item): string => is_array($item) ? trim((string) ($item['text'] ?? '')) : '',
             $payload['texts'],
         ))));
+        $structure = $this->cadStructure->extract($geometry);
+        $publication = $this->nativeFacts->cad($context, $payload);
 
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
@@ -273,7 +275,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 'source_kind' => $provenance->sourceKind,
                 'source' => $provenance->toArray(),
                 'vector_geometry' => $payload,
-                ...$this->cadStructure->extract($geometry),
+                ...$structure,
+                'native_understanding' => (new NativeCadUnderstanding)->summarize($publication, $structure['native_structure'], $geometry->warnings),
                 ...($representation === null ? [] : ['document_representation' => $representation->toArray()]),
                 'provenance' => [
                     'provider' => 'cad_geometry',
@@ -291,7 +294,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                     'hard_blockers' => $geometry->unitStatus === 'confirmed' ? [] : ['unit_unconfirmed'],
                 ],
             ],
-            publication: $this->nativeFacts->cad($context, $payload),
+            publication: $publication,
         );
     }
 

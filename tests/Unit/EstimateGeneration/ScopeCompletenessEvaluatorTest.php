@@ -16,6 +16,25 @@ use PHPUnit\Framework\TestCase;
 
 final class ScopeCompletenessEvaluatorTest extends TestCase
 {
+    public function test_registered_finishing_work_covers_only_its_requirement_section_and_entity(): void
+    {
+        $version = 'sha256:'.str_repeat('a', 64);
+        $entities = [new Entity('room:1', 1, 2, 3, $version, 'room', 'room:1'), new Entity('room:2', 1, 2, 3, $version, 'room', 'room:2')];
+        $snapshot = new ProjectModelSnapshot($entities, [], [], []);
+        $positions = array_map(static fn (string $key): array => ['key' => $key, 'work_key' => $key,
+            'section' => 'finishing', 'entity_id' => 'room:1'], ['rough.floor', 'finish.floor']);
+        $evaluator = new ScopeCompletenessEvaluator;
+        self::assertTrue($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:1']], $positions)['scope_complete']);
+        self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:2']], $positions)['scope_complete']);
+        self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:1']], [$positions[1]])['scope_complete']);
+        self::assertSame('rough.floor', ScopeCompletenessEvaluator::workRequirement('structures', 'rough.floor'));
+        self::assertSame('custom.floor', ScopeCompletenessEvaluator::workRequirement('finishing', 'custom.floor'));
+        $positions[0]['key'] = $positions[0]['work_key'] = 'floor_screed';
+        self::assertTrue($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:1']], $positions)['scope_complete']);
+        self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:2']], $positions)['scope_complete']);
+        self::assertSame('floor_screed', ScopeCompletenessEvaluator::workRequirement('structures', 'floor_screed'));
+    }
+
     public function test_specific_work_identity_preserves_coverage_of_the_same_entity_and_legacy_positions(): void
     {
         $version = 'sha256:'.str_repeat('a', 64);

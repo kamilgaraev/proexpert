@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use App\Enums\CurrencyCode;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationContractDatabaseProvisioner;
 
 final class EvidencePersistenceContractTest extends TestCase
 {
@@ -19,9 +20,8 @@ final class EvidencePersistenceContractTest extends TestCase
     public function postgres_schema_and_repository_encode_graph_invariants(): void
     {
         $migration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000300_create_estimate_generation_evidence_table.php'));
-        $evidenceContract = $migration.file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_18_000100_accept_signed_elevation_source_facts.php'));
-        $evidenceContract .= file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000900_allow_proven_evaluation_choices.php'));
-        $evidenceContract .= file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php'));
+        $evidenceContract = implode("\n", array_map(fn (string $path): string => (string) file_get_contents($this->path($path)),
+            EstimateGenerationContractDatabaseProvisioner::freshInventory()));
         $checkpointMigration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000100_create_estimate_generation_pipeline_checkpoints_table.php'));
         $repository = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/Evidence/EloquentEvidenceRepository.php'));
 
