@@ -159,6 +159,18 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
         $historical = json_decode((string) DB::scalar($lighting ? 'SELECT public.eg_expected_package_item_price_closed_v4(?)' : 'SELECT public.eg_expected_package_item_price_closed_v8(?)', [$persisted->id]), true, 512, JSON_THROW_ON_ERROR);
         self::assertSame($case['historical_work'], (string) \Brick\Math\BigDecimal::of((string) $historical['money'])->toScale(2));
         self::assertSame($lighting ? 'supplementary_project_material:v4' : 'semantic_project_resource:v8', $historical['snapshot']['coefficients']['pricing_formula_version']);
+        $historicalSources = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NormativePriceEvidenceProjector)
+            ->resources($historical['snapshot'], (string) $persisted->quantity);
+        self::assertNotNull($historicalSources);
+        self::assertCount($case['resources'] + ($lighting ? 1 : 0), $historicalSources);
+        $historicalSum = \Brick\Math\BigDecimal::zero();
+        foreach ($historicalSources as $source) {
+            $historicalSum = $historicalSum->plus($source['final_amount']);
+        }
+        self::assertSame($case['historical_work'], (string) $historicalSum->toScale(2));
+        if ($lighting) {
+            self::assertContains('estimate_resource_prices:'.$catalog['material_row']->price_id, array_column($historicalSources, 'source_reference'));
+        }
         $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_16_000100_round_normative_resource_amounts_before_summing.php');
         try {
             $migration->down();

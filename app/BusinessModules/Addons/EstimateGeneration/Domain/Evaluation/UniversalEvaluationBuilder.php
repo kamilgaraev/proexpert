@@ -214,7 +214,7 @@ final readonly class UniversalEvaluationBuilder
             || ! is_array($price['coefficients']['resource_evidence'] ?? null) || $price['coefficients']['resource_evidence'] === []) {
             return null;
         }
-        $resources = (new NormativePriceEvidenceProjector)->resources($price);
+        $resources = (new NormativePriceEvidenceProjector)->resources($price, $quantity);
         if ($resources === null) {
             return null;
         }
