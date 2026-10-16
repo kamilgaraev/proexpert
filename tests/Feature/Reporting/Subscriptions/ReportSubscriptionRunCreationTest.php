@@ -7,8 +7,8 @@ namespace Tests\Feature\Reporting\Subscriptions;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -63,11 +63,19 @@ use Tests\TestCase;
 final class ReportSubscriptionRunCreationTest extends TestCase
 {
     #[DataProvider('creationStates')]
-    public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt, bool $holding = false): void
+    public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt, bool $holding = false, bool $frozenProject = false): void
     {
-        $fixture = $this->fixture($status, $attempt, $holding);
+        $fixture = $this->fixture($status, $attempt, $holding, $frozenProject);
         [$context, $delivery, $definition, $input] = $fixture;
         DB::table('report_subscriptions')->where('id', $delivery->subscriptionId)->update(['report_code' => 'new_report', 'timezone' => 'UTC']);
+        if ($frozenProject) {
+            $changedInput = json_decode($input->canonicalBytes(), true, 512, JSON_THROW_ON_ERROR);
+            $changedInput['project_scope_id'] = 999;
+            $changedInput = ReportSubscriptionExecutionInput::fromCanonicalBytes(\App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($changedInput));
+            DB::table('report_subscriptions')->where('id', $delivery->subscriptionId)->update([
+                'execution_input_bytes' => $changedInput->canonicalBytes(), 'execution_input_sha256' => $changedInput->digest()->value,
+            ]);
+        }
         $run = (new ReportRunBuilder)->queued();
         $runs = $this->createMock(CreateReportRunAction::class);
         $runs->expects(self::once())->method('handle')->willReturnCallback(
@@ -97,7 +105,7 @@ final class ReportSubscriptionRunCreationTest extends TestCase
 
     public static function creationStates(): array
     {
-        return [['scheduled', 0], ['building_run', 1], ['scheduled', 0, true]];
+        return [['scheduled', 0], ['building_run', 1], ['scheduled', 0, true], ['scheduled', 0, false, true]];
     }
 
     public function test_interrupted_attach_recovers_same_run_without_new_attempt(): void
@@ -248,7 +256,7 @@ final class ReportSubscriptionRunCreationTest extends TestCase
         );
     }
 
-    private function fixture(string $status = 'scheduled', int $attempt = 0, bool $holding = false): array
+    private function fixture(string $status = 'scheduled', int $attempt = 0, bool $holding = false, bool $frozenProject = false): array
     {
         $organization = Organization::factory()->verified()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -288,6 +296,7 @@ final class ReportSubscriptionRunCreationTest extends TestCase
             $definition->code, $filters, [], 'ru', $viewId, 'csv', ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC), $timezone, ['mode' => 'previous_week'],
             $definition->contractVersion, $definition->definitionHash, 1, ReportSavedViewRef::fromView($view),
+            $frozenProject ? (int) $project->id : null,
         );
         $subscription = app(EloquentReportSubscriptionStore::class)->create(new ReportSubscription(
             (string) Str::ulid(), (int) $organization->id, (int) $user->id, $viewId, $definition->code,

@@ -34,6 +34,8 @@ final readonly class ReportDefinitionVisibilityResolver
                 $operation,
                 $exportFormat,
                 $permissionGranted,
+                $definition->supportsSubscriptions
+                    && ($moduleAccess ?? $this->moduleAccessDecision($organizationId))->allowsModule($organizationId, 'reports'),
             );
         }
 
@@ -82,6 +84,7 @@ final readonly class ReportDefinitionVisibilityResolver
         ReportOperation $operation,
         ?string $exportFormat,
         Closure $permissionGranted,
+        bool $workspaceManagementAllowed,
     ): ReportVisibility {
         $canView = $this->allGranted(
             $definition->permissionPolicy->viewPermissions,
@@ -111,7 +114,8 @@ final readonly class ReportDefinitionVisibilityResolver
             $canView,
             $canExport,
             $canExport,
-            false,
+            $workspaceManagementAllowed && $canView
+                && $this->allGranted(ReportingPermissionMatrix::requiredFor(ReportOperation::MANAGE), $permissionGranted),
             $canViewSensitive,
             $canViewAudit,
         );

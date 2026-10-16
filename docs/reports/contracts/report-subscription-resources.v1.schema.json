@@ -15,11 +15,12 @@
     "subscription": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "saved_view_id", "report_code", "frequency", "weekday", "day_of_month", "local_time", "timezone", "period_policy", "format", "channel", "status", "disabled_reason", "consecutive_failures", "next_run_at", "created_at", "updated_at"],
+      "required": ["id", "saved_view_id", "report_code", "project_id", "frequency", "weekday", "day_of_month", "local_time", "timezone", "period_policy", "format", "channel", "status", "disabled_reason", "consecutive_failures", "next_run_at", "created_at", "updated_at"],
       "properties": {
         "id": {"$ref": "#/$defs/ulid"},
         "saved_view_id": {"$ref": "#/$defs/ulid"},
         "report_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+        "project_id": {"type": ["integer", "null"], "minimum": 1},
         "frequency": {"enum": ["daily", "weekly", "monthly"]},
         "weekday": {"type": ["integer", "null"], "minimum": 1, "maximum": 7},
         "day_of_month": {"type": ["integer", "null"], "minimum": 1, "maximum": 31},
@@ -39,10 +40,11 @@
     "delivery": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "subscription_id", "trigger", "scheduled_for", "run_id", "export_id", "attempt", "status", "safe_error_code", "created_at", "updated_at", "expires_at"],
+      "required": ["id", "subscription_id", "project_id", "trigger", "scheduled_for", "run_id", "export_id", "attempt", "status", "safe_error_code", "created_at", "updated_at", "expires_at"],
       "properties": {
         "id": {"$ref": "#/$defs/ulid"},
         "subscription_id": {"$ref": "#/$defs/ulid"},
+        "project_id": {"type": ["integer", "null"], "minimum": 1},
         "trigger": {"enum": ["calendar", "manual"]},
         "scheduled_for": {"$ref": "#/$defs/timestamp"},
         "run_id": {"anyOf": [{"$ref": "#/$defs/ulid"}, {"type": "null"}]},

@@ -13,7 +13,9 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFa
 final readonly class AcceptedProductionBuiltinPublishedReport
 {
     public const CONTRACT_VERSION = '1.0.0';
+
     public const RENDERER_VERSION = '1.0.0';
+
     public const MANIFEST_ORDINAL = 8;
 
     public function __construct(private AcceptedProductionCandidateContract $contract) {}
@@ -42,7 +44,7 @@ final readonly class AcceptedProductionBuiltinPublishedReport
 
     public function scheduling(): ReportSchedulingCapability
     {
-        return new ReportSchedulingCapability(AcceptedProductionCandidateContract::CODE, false, false);
+        return new ReportSchedulingCapability(AcceptedProductionCandidateContract::CODE, true, true);
     }
 
     public function document(): array
@@ -94,8 +96,8 @@ final readonly class AcceptedProductionBuiltinPublishedReport
                 'publication' => 'published',
             ],
             'capabilities' => [
-                'supports_subscriptions' => false,
-                'reproducible_scheduled_snapshot' => false,
+                'supports_subscriptions' => true,
+                'reproducible_scheduled_snapshot' => true,
             ],
         ];
     }

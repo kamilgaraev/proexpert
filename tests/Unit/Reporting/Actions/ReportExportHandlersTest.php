@@ -40,6 +40,10 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportHistoricalReadCompatibility;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\ReportDefinitionFactory;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCandidateContract;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -57,7 +61,8 @@ final class ReportExportHandlersTest extends TestCase
         $classification = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(
             \App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::SENSITIVE, ['secret'], ['audit'], false, false, false);
         $builder = (new ReportDefinitionBuilder)->columns([['id' => 'secret'], ['id' => 'audit']])->outputClassification($classification);
-        $published = $builder->published(); $definition = $published->definition;
+        $published = $builder->published();
+        $definition = $published->definition;
         $scope = $case === 'foreign_scope' ? new ReportScope($context->scope->organizationId, $context->scope->holdingOrganizationIds, [999], [], $context->scope->timezone) : $context->scope;
         $snapshot = new ReportSnapshotRef('materialized', 'snapshot', $scope, $definition->definitionHash, $definition->formulaVersion,
             new Sha256Hash(str_repeat('c', 64)), new DateTimeImmutable('2026-01-01T00:00:00Z'), null, [], ReportSnapshotClassification::OPERATIONAL, null);
@@ -78,6 +83,7 @@ final class ReportExportHandlersTest extends TestCase
                 if ($case === 'revoked_sensitive') {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
                 }
+
                 return array_map(static fn ($target) => new CurrentReportAuthorization($context->actor, $context->authorization,
                     new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility(true, true, true, true, true, true, true), $target), $targets);
             });
@@ -91,6 +97,53 @@ final class ReportExportHandlersTest extends TestCase
     public static function exportReadCases(): array
     {
         return ['allowed' => ['allowed'], 'scope' => ['foreign_scope'], 'definition' => ['changed_definition'], 'sensitive' => ['revoked_sensitive']];
+    }
+
+    #[DataProvider('legacyReadCases')]
+    public function test_capability_only_history_keeps_frozen_definition_and_current_authorization(bool $revoked): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $builtin = new AcceptedProductionBuiltinPublishedReport(new AcceptedProductionCandidateContract);
+        $document = $builtin->document();
+        $document['capabilities'] = ['supports_subscriptions' => false, 'reproducible_scheduled_snapshot' => false];
+        $definition = (new ReportDefinitionFactory)->fromManifest($document);
+        $snapshot = new ReportSnapshotRef('materialized', 'snapshot', $context->scope, $definition->definitionHash,
+            $definition->formulaVersion, new Sha256Hash(str_repeat('c', 64)), new DateTimeImmutable('2026-01-01T00:00:00Z'),
+            null, [], ReportSnapshotClassification::OPERATIONAL, null);
+        $export = (new \Tests\Support\Reporting\ReportExportBuilder)->columns(['accepted_quantity'])->queued();
+        $subject = new ReportAuthorizationSubject(ReportDispatchAggregate::EXPORT, $export->id, $definition,
+            $context->scope, $snapshot, $export->runId, null, null, $export->format);
+        $subjects = $this->createStub(ReportAuthorizationSubjectReader::class);
+        $subjects->method('export')->willReturn($subject);
+        $store = $this->createStub(ReportExportStore::class);
+        $store->method('get')->willReturn($export);
+        $definitions = $this->createStub(ReportDefinitionRegistry::class);
+        $definitions->method('published')->willReturn($builtin->definition());
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->expects(self::once())->method('authorizeExactMany')->willReturnCallback(
+            static function (int $actorId, $scope, array $targets) use ($context, $definition, $revoked): array {
+                self::assertSame($context->actor->id, $actorId);
+                self::assertSame($context->scope->canonicalIdentity(), $scope->canonicalIdentity());
+                self::assertSame($definition->definitionHash->value, $targets[0]->definition->definitionHash->value);
+                if ($revoked) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
+
+                return array_map(static fn ($target) => new CurrentReportAuthorization($context->actor,
+                    $context->authorization, $context->visibility, $target), $targets);
+            },
+        );
+        $handler = new GetReportExportHandler($store, $definitions, $authorizer, new ReportExecutionContextFactory,
+            $subjects, new BuiltinReportHistoricalReadCompatibility($builtin));
+        if ($revoked) {
+            $this->expectException(ReportContractException::class);
+        }
+        self::assertSame($export, $handler->handle($context, $export->id));
+    }
+
+    public static function legacyReadCases(): array
+    {
+        return [[false], [true]];
     }
 
     public function test_public_action_contracts_are_exact_and_handlers_expose_one_workflow_method(): void

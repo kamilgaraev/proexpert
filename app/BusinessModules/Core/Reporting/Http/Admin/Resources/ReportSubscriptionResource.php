@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Resources;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -18,6 +19,7 @@ final class ReportSubscriptionResource extends JsonResource
             'id' => $this->resource->id,
             'saved_view_id' => $this->resource->savedViewId,
             'report_code' => $this->resource->reportCode,
+            'project_id' => ReportSubscriptionExecutionInput::fromCanonicalBytes($this->resource->executionInputBytes)->effectiveProjectId(),
             'frequency' => $this->resource->frequency->value,
             'weekday' => $this->resource->weekday,
             'day_of_month' => $this->resource->dayOfMonth,

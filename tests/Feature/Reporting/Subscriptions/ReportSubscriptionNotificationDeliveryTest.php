@@ -7,14 +7,14 @@ namespace Tests\Feature\Reporting\Subscriptions;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
-use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
-use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionDeliveryProcessor;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
@@ -237,8 +237,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
             );
         } else {
             $authorizer->method('authorizeForOrganization')->willReturnCallback(
-                static fn (int $actorId, int $organizationId, DateTimeZone $timezone, CurrentReportAuthorizationTarget $target): CurrentReportAuthorization =>
-                    new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target),
+                static fn (int $actorId, int $organizationId, DateTimeZone $timezone, CurrentReportAuthorizationTarget $target): CurrentReportAuthorization => new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target),
             );
         }
         $getExport = $this->createMock(GetReportExportAction::class);
@@ -310,6 +309,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
             $definition->code, $filters, [], 'ru', $savedViewId, 'csv', ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC), $timezone, ['mode' => 'previous_day'],
             $definition->contractVersion, $definition->definitionHash,
+            projectScopeId: $projectIds[0] ?? null,
         );
         $subscription = app(EloquentReportSubscriptionStore::class)->create(new ReportSubscription(
             (string) Str::ulid(), (int) $organization->id, (int) $user->id, $savedViewId, $definition->code,

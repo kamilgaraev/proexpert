@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Application\Execution;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReportFilterInputNormalizer;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportRunData;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
@@ -25,13 +26,14 @@ final readonly class ReportRunCoordinator
         private ReportRunStore $runs,
         private ReportExecutionClock $clock,
         private ReportRunResponseRedactor $responseRedactor,
-    ) {
-    }
+        private ?ReportFilterInputNormalizer $filters = null,
+    ) {}
 
     public function create(ReportExecutionContext $context, CreateReportRunData $data, IdempotencyKey $idempotencyKey): ReportRun
     {
         $definition = $this->definitions->published($data->reportCode)->payload();
-        $query = new ReportQuery($definition, $context->scope, $data->filters, $data->comparison, $data->asOf, $data->locale);
+        $filters = $this->filters?->forExecution($context, $definition, $data->filters) ?? $data->filters;
+        $query = new ReportQuery($definition, $context->scope, $filters, $data->comparison, $data->asOf, $data->locale);
         $savedView = $data->savedViewId === null ? null : $this->savedViews->resolve($context, $data->savedViewId);
         $savedView = $data->savedViewReference ?? $savedView;
         $this->access->assertOperation($context, $definition, ReportOperation::RUN, null);

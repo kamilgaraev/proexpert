@@ -6,6 +6,7 @@
       "id": "01J00000000000000000000001",
       "saved_view_id": "01J00000000000000000000002",
       "report_code": "budget_plan_fact",
+      "project_id": 52,
       "frequency": "daily",
       "weekday": null,
       "day_of_month": null,
@@ -28,6 +29,7 @@
     "data": {
       "id": "01J00000000000000000000003",
       "subscription_id": "01J00000000000000000000001",
+      "project_id": 52,
       "trigger": "manual",
       "scheduled_for": "2026-07-26T10:00:00+00:00",
       "run_id": "01J00000000000000000000004",
@@ -49,6 +51,7 @@
           "id": "01J00000000000000000000001",
           "saved_view_id": "01J00000000000000000000002",
           "report_code": "budget_plan_fact",
+          "project_id": 52,
           "frequency": "daily",
           "weekday": null,
           "day_of_month": null,

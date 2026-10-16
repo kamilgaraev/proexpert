@@ -23,6 +23,11 @@ final readonly class ReportDefinitionModuleAuthorizer
 
     public function allows(int $organizationId, ReportDefinition $definition): bool
     {
+        return $this->allowsModule($organizationId, $definition->sourceModule);
+    }
+
+    public function allowsModule(int $organizationId, string $module): bool
+    {
         if ($organizationId <= 0) {
             return false;
         }
@@ -30,7 +35,7 @@ final readonly class ReportDefinitionModuleAuthorizer
         try {
             return $this->entitlements->organizationHasModule(
                 $organizationId,
-                $definition->sourceModule,
+                $module,
             );
         } catch (Throwable) {
             return false;

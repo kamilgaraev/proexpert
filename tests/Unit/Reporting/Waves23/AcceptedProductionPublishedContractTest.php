@@ -67,8 +67,9 @@ final class AcceptedProductionPublishedContractTest extends TestCase
         self::assertFalse($definition->outputClassification->provenanceAudit);
         self::assertSame(['csv', 'xlsx'], $definition->formats);
         self::assertSame(8, $builtin->metadata()->manifestOrdinal);
-        self::assertFalse($builtin->scheduling()->supportsSubscriptions);
-        self::assertFalse($builtin->scheduling()->reproducibleScheduledSnapshot);
+        self::assertTrue($definition->supportsSubscriptions);
+        self::assertTrue($builtin->scheduling()->supportsSubscriptions);
+        self::assertTrue($builtin->scheduling()->reproducibleScheduledSnapshot);
     }
 
     public function test_runtime_binding_uses_the_immutable_projection_and_signed_drill_down(): void

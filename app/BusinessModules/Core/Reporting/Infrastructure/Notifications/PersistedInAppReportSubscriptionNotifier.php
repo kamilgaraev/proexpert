@@ -71,6 +71,13 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 $user,
                 'report_subscription_ready',
                 [
+                    'title' => trans_message('reports.subscriptions.ready_title'),
+                    'message' => trans_message('reports.subscriptions.ready_message'),
+                    'target_route' => '/reports/exports/'.$export->id,
+                    'actions' => [[
+                        'label' => trans_message('reports.subscriptions.open_file'),
+                        'route' => '/reports/exports/'.$export->id,
+                    ]],
                     'report_code' => $delivery->executionInput()->reportCode,
                     'export_id' => $export->id,
                     'format' => $export->format,

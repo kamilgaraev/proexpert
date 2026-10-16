@@ -9,7 +9,6 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibi
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportCoreAccessMode;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 
@@ -52,26 +51,25 @@ final class ReportDefinitionModuleAccessDecisionTest extends TestCase
             ->code('generic_report')
             ->sourceModule('reports')
             ->payload();
-        $permissionGranted = static fn (string $permission): bool => true;
         $decision = $resolver->moduleAccessDecision(7);
 
-        self::assertFalse($resolver->resolve(7, $sourceFirst, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
-        self::assertFalse($resolver->resolve(7, $sourceSecond, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
-        self::assertTrue($resolver->resolve(7, $generic, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
-        self::assertTrue($resolver->resolve(7, $generic, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
+        self::assertFalse($decision->allows(7, $sourceFirst));
+        self::assertFalse($decision->allows(7, $sourceSecond));
+        self::assertTrue($decision->allows(7, $generic));
+        self::assertTrue($decision->allowsModule(7, 'reports'));
         self::assertSame(['7:act-reporting' => 1, '7:reports' => 1], $entitlements->calls);
 
         $entitlements->allowed = ['act-reporting' => true, 'reports' => false];
-        self::assertFalse($resolver->resolve(7, $sourceFirst, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
-        self::assertTrue($resolver->resolve(7, $generic, ReportOperation::VIEW, null, $permissionGranted, $decision)->canView);
+        self::assertFalse($decision->allows(7, $sourceFirst));
+        self::assertTrue($decision->allows(7, $generic));
         self::assertSame(['7:act-reporting' => 1, '7:reports' => 1], $entitlements->calls);
 
         $freshDecision = $resolver->moduleAccessDecision(7);
-        self::assertTrue($resolver->resolve(7, $sourceFirst, ReportOperation::VIEW, null, $permissionGranted, $freshDecision)->canView);
-        self::assertFalse($resolver->resolve(7, $generic, ReportOperation::VIEW, null, $permissionGranted, $freshDecision)->canView);
+        self::assertTrue($freshDecision->allows(7, $sourceFirst));
+        self::assertFalse($freshDecision->allows(7, $generic));
         self::assertSame(['7:act-reporting' => 2, '7:reports' => 2], $entitlements->calls);
 
-        self::assertFalse($resolver->resolve(8, $sourceFirst, ReportOperation::VIEW, null, $permissionGranted, $freshDecision)->canView);
+        self::assertFalse($freshDecision->allows(8, $sourceFirst));
         self::assertSame(['7:act-reporting' => 2, '7:reports' => 2], $entitlements->calls);
     }
 }
