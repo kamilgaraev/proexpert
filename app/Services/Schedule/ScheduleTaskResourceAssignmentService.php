@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Schedule;
 
+use App\Exceptions\Schedule\ScheduleValidationException;
 use App\Models\Material;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -22,7 +23,13 @@ class ScheduleTaskResourceAssignmentService
             if ($data['resource_type'] === 'material' && $plannedCost === null && isset($data['cost_per_unit'])) {
                 $quantity = BigDecimal::of((string) ($data['allocated_units'] ?? 1))->toScale(2, RoundingMode::HalfUp);
                 $unitCost = BigDecimal::of((string) $data['cost_per_unit'])->toScale(2, RoundingMode::HalfUp);
-                $plannedCost = (string) $quantity->multipliedBy($unitCost)->toScale(2, RoundingMode::HalfUp);
+                $total = $quantity->multipliedBy($unitCost)->toScale(2, RoundingMode::HalfUp);
+                if ($total->isGreaterThan('9999999999999.99')) {
+                    throw new ScheduleValidationException('Плановая стоимость материала превышает допустимую сумму.', [
+                        'allocated_units' => ['Уменьшите количество или цену материала.'],
+                    ]);
+                }
+                $plannedCost = (string) $total;
             }
             $resource = TaskResource::query()->create(array_merge(
                 [

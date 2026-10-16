@@ -121,6 +121,7 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             ['quantity' => '1.005', 'price' => '2.675', 'stored_quantity' => '1.01', 'stored_price' => '2.68', 'total' => '2.71'],
             ['quantity' => '0', 'price' => '180', 'stored_quantity' => '0.00', 'stored_price' => '180.00', 'total' => '0.00'],
             ['quantity' => '20', 'price' => '0', 'stored_quantity' => '20.00', 'stored_price' => '0.00', 'total' => '0.00'],
+            ['quantity' => '999999.99', 'price' => '9999999.99', 'stored_quantity' => '999999.99', 'stored_price' => '9999999.99', 'total' => '9999999890000.00'],
             ['quantity' => '20', 'price' => '180', 'stored_quantity' => '20.00', 'stored_price' => '180.00', 'total' => '999.99', 'estimated_cost' => '999.99'],
             ['quantity' => '20', 'price' => '180', 'stored_quantity' => '20.00', 'stored_price' => '180.00', 'total' => '0.00', 'estimated_cost' => '0'],
         ] as $index => $case) {
@@ -162,13 +163,20 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             $this->assertSame('л', $resource['material']['unit_name']);
         }
 
+        $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+            'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+            'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
+            'allocated_units' => '999999.99', 'cost_per_unit' => '99999999.99',
+        ])->assertUnprocessable()->assertJsonPath('errors.allocated_units.0', 'Уменьшите количество или цену материала.');
+        $this->assertSame(10, $task->resources()->count());
+
         $task->update(['status' => 'completed', 'progress_percent' => 100]);
         $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
             'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
             'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
             'allocated_units' => 20, 'cost_per_unit' => 180,
         ])->assertUnprocessable()->assertJsonPath('errors.task_id.0', 'Задача уже завершена');
-        $this->assertSame(9, $task->resources()->count());
+        $this->assertSame(10, $task->resources()->count());
     }
 
     public function test_gantt_does_not_return_another_projects_schedule_resources(): void
