@@ -561,7 +561,7 @@ final class PipelineStageFunctionalTest extends TestCase
 
     #[Test]
     #[DataProvider('pinnedPriceCases')]
-    public function nine_real_stage_boundaries_consume_exact_typed_dependencies(bool $knownPricedPart): void
+    public function real_stage_boundaries_consume_exact_typed_dependencies(bool $knownPricedPart, bool $roomFloorCase = false): void
     {
         $regional = $knownPricedPart ? [
             'normative_dataset_id' => 77, 'normative_dataset_version' => 'synthetic-2026.1',
@@ -569,9 +569,9 @@ final class PipelineStageFunctionalTest extends TestCase
             'estimate_regional_price_version_id' => 11, 'price_version' => 'synthetic-prices-2026.07',
             'business_date' => '2026-07-13',
         ] : [];
-        $gateway = new class($regional, $knownPricedPart) implements GenerationPipelineDataGateway
+        $gateway = new class($regional, $knownPricedPart, $roomFloorCase) implements GenerationPipelineDataGateway
         {
-            public function __construct(private array $regional, private bool $knownPricedPart) {}
+            public function __construct(private array $regional, private bool $knownPricedPart, private bool $roomFloorCase) {}
 
             public function manifest(PipelineContext $context): array
             {
@@ -587,6 +587,8 @@ final class PipelineStageFunctionalTest extends TestCase
                     'area' => 80,
                     'generation_mode' => 'ai_assisted',
                     'regional_context' => $this->regional,
+                    ...($this->roomFloorCase ? ['evaluation_mode' => 'universal', 'profile_id' => 'construction',
+                        'construction_type' => 'new_construction', 'price_policy' => 'normative', 'selected_sections' => ['finishing']] : []),
                 ], 'documents' => [], 'user_id' => 7, 'document_total_area' => [
                     'amount' => '80.000000',
                     'evidence_id' => 701,
@@ -668,14 +670,26 @@ final class PipelineStageFunctionalTest extends TestCase
                     'parameter' => 'length', 'measurement' => 'm:10', 'evidence_fingerprint' => $lengthEvidence->fingerprint]],
             ),
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
-                'fact:room:width', 1, 2, 3, $base, $room->id, 'width', '8', 'm', 1.0,
+                'fact:room:width', 1, 2, 3, $base, $room->id, 'width', $roomFloorCase ? '7.6' : '8', 'm', 1.0,
                 'document', 'confirmed', [$widthEvidence->id],
                 nativeNumericProofs: [$widthEvidence->id => ['entity_id' => $room->id, 'source_version' => $base,
-                    'parameter' => 'width', 'measurement' => 'm:8', 'evidence_fingerprint' => $widthEvidence->fingerprint]],
+                    'parameter' => 'width', 'measurement' => $roomFloorCase ? 'm:7.6' : 'm:8', 'evidence_fingerprint' => $widthEvidence->fingerprint]],
             ),
         ];
         $projectModels->saveSourceModel([$room], $knownPricedPart ? [$nativeFacts[0]] : $nativeFacts,
             $knownPricedPart ? [$lengthEvidence] : [$lengthEvidence, $widthEvidence]);
+        if ($roomFloorCase) {
+            $secondRoom = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity(
+                'room:2', 1, 2, 3, $base, 'room', 'room:2');
+            $areaEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
+                'evidence:room:2:area', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:2:area', 'native_numeric_parser',
+                fingerprint: hash('sha256', 'room:2:area'));
+            $area = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
+                'fact:room:2:area', 1, 2, 3, $base, $secondRoom->id, 'area', '4', 'm2', 1.0, 'document', 'confirmed', [$areaEvidence->id],
+                nativeNumericProofs: [$areaEvidence->id => ['entity_id' => $secondRoom->id, 'source_version' => $base,
+                    'parameter' => 'area', 'measurement' => 'm2:4', 'evidence_fingerprint' => $areaEvidence->fingerprint]]);
+            $projectModels->saveSourceModel([$secondRoom], [$area], [$areaEvidence]);
+        }
         $selectedSystem = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
             'fact:selected-floor-system', 1, 2, 3, $base, $room->id, 'selected_floor_system',
             ['kind' => 'catalog_system', 'system_id' => 'synthetic-baseboard', 'catalog_version' => 'technology:v1', 'catalog_hash' => str_repeat('c', 64)],
@@ -847,7 +861,7 @@ final class PipelineStageFunctionalTest extends TestCase
             generationAttemptId: $attempt,
             baseInputVersion: $base,
         );
-        for ($invocation = 0; $invocation < 9; $invocation++) {
+        for ($invocation = 0; $invocation < ($roomFloorCase ? 4 : 9); $invocation++) {
             $context = $resolver->next($seed);
             self::assertNotNull($context);
             if ($context->stage === ProcessingStage::ExtractQuantities) {
@@ -875,7 +889,9 @@ final class PipelineStageFunctionalTest extends TestCase
             }
             self::assertSame($context->stage, $result?->stage);
         }
-        self::assertNull($resolver->next($seed));
+        if (! $roomFloorCase) {
+            self::assertNull($resolver->next($seed));
+        }
         $planned = $state->priorOutputs($seed)->payload(ProcessingStage::PlanWorkItems);
         $plannedItems = [];
         foreach ($planned['local_estimates'] as $localEstimate) {
@@ -914,19 +930,40 @@ final class PipelineStageFunctionalTest extends TestCase
             self::assertArrayNotHasKey('price', $workItem['composition_intent']);
         }
         self::assertArrayNotHasKey('work_composition_advice', $planned['package_plan']);
-        $builtDraft = $state->priorOutputs($seed)->payload(ProcessingStage::BuildDraft)['draft'];
-        self::assertSame($planned['estimate_composition'], $builtDraft['estimate_composition']);
         $extracted = $state->priorOutputs($seed)->payload(ProcessingStage::ExtractQuantities);
         $floorAreaRows = array_values(array_filter(
             $extracted['building_quantities']['quantities'] ?? [],
             static fn (mixed $quantity): bool => is_array($quantity) && ($quantity['key'] ?? null) === 'floor_area',
         ));
+        if ($roomFloorCase) {
+            self::assertSame([], $floorAreaRows);
+            self::assertSame(['room:1', 'room:2'], $extracted['stage6_generation_context']['room_floor_entity_ids']);
+            $roomFloors = [];
+            foreach ($pricedItems as $item) {
+                $work = $item['metadata']['composition_work_key'] ?? null;
+                if (! in_array($work, ['rough.floor', 'finish.floor'], true)) {
+                    continue;
+                }
+                self::assertNotEmpty($item['quantity_evidence_id']);
+                self::assertNotEmpty($item['quantity_evidence_fingerprint']);
+                self::assertSame($base, $item['quantity_evidence_source_version']);
+                self::assertSame('evidenced', $item['quantity_evidence']['source']);
+                self::assertSame($item['entity_id'], $item['quantity_evidence']['formula_inputs']['entity_id']);
+                $roomFloors[$work][$item['entity_id']] = (string) $item['quantity'];
+            }
+            self::assertSame(['room:1' => '76', 'room:2' => '4'], $roomFloors['rough.floor']);
+            self::assertSame($roomFloors['rough.floor'], $roomFloors['finish.floor']);
+
+            return;
+        }
         if ($knownPricedPart) {
             self::assertSame([], $floorAreaRows);
         } else {
             self::assertNotEmpty($floorAreaRows);
             self::assertSame('80', $floorAreaRows[0]['amount']);
         }
+        $builtDraft = $state->priorOutputs($seed)->payload(ProcessingStage::BuildDraft)['draft'];
+        self::assertSame($planned['estimate_composition'], $builtDraft['estimate_composition']);
 
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);
@@ -960,6 +997,6 @@ final class PipelineStageFunctionalTest extends TestCase
 
     public static function pinnedPriceCases(): array
     {
-        return ['candidate_only' => [false], 'known_priced_part' => [true]];
+        return ['candidate_only' => [false], 'known_priced_part' => [true], 'universal_room_quantities' => [false, true]];
     }
 }

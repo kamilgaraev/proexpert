@@ -156,6 +156,113 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertSame('72.19', $result['quantities']['floor_area']->amount ?? null);
         self::assertSame('direct_floor_area', $result['quantities']['floor_area']->formulaKey ?? null);
         self::assertSame('fact:building-area', $result['quantities']['floor_area']->formulaInputs['operands'][0]['fact_id'] ?? null);
+        self::assertSame([], $result['context']['room_floor_entity_ids']);
+    }
+
+    #[Test]
+    public function mixed_floor_formulas_preserve_each_room_and_exclude_a_whole_building_from_room_work(): void
+    {
+        foreach ([false, true] as $withBuilding) {
+            $repository = new InMemoryProjectModelRepository;
+            $entities = [new Entity('room:area', 10, 20, 30, self::SOURCE, 'room', 'room:area'),
+                new Entity('room:dimensions', 10, 20, 30, self::SOURCE, 'room', 'room:dimensions')];
+            $measurements = [['room:area', 'area', '4', 'm2'], ['room:dimensions', 'length', '2', 'm'],
+                ['room:dimensions', 'width', '3', 'm']];
+            if ($withBuilding) {
+                $entities[] = new Entity('room:building-floor', 10, 20, 30, self::SOURCE, 'room', 'building.area.total',
+                    ['semantic_type' => 'room', 'document_role' => 'building_floor']);
+                $measurements[] = ['room:building-floor', 'area', '40', 'm2'];
+            }
+            $facts = $evidence = [];
+            foreach ($measurements as [$entity, $parameter, $amount, $unit]) {
+                $id = $entity.':'.$parameter;
+                $proof = $this->nativeEvidence('evidence:'.$id, 10, 20, 30, self::SOURCE, 'artifact:plan', 'document', 1, null, $id);
+                $evidence[] = $proof;
+                $facts[] = $this->nativeFact('fact:'.$id, 10, 20, 30, self::SOURCE, $entity, $parameter,
+                    $amount, $unit, 1.0, 'document', 'confirmed', [$proof->id]);
+            }
+            $repository->saveSourceModel($entities, $facts, $evidence);
+            $this->makeStageFiveCurrent($repository);
+            $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+            if ($withBuilding) {
+                self::assertSame('40', $result['quantities']['floor_area']->amount);
+                $mapper = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
+                self::assertSame('40', $mapper->map('office.ceiling', $result['quantities'])?->amount);
+                self::assertNull($mapper->map('rough.floor', $result['quantities']));
+                self::assertSame([], $result['warnings']);
+            } else {
+                self::assertArrayNotHasKey('floor_area', $result['quantities']);
+                self::assertContains('canonical_quantity_aggregate_unresolved', array_column($result['warnings'], 'code'));
+            }
+            self::assertCount($withBuilding ? 3 : 2, $result['quantities']);
+            self::assertSame(['room:area', 'room:dimensions'], $result['context']['room_floor_entity_ids']);
+            $items = [];
+            foreach (['rough.floor', 'finish.floor'] as $work) {
+                $items[] = ['key' => 'catalog:'.$work, 'item_type' => 'priced_work', 'quantity' => null,
+                    'metadata' => ['generation_source' => 'qualitative_work_catalog', 'quantity_source' => 'unknown',
+                        'composition_work_key' => $work, 'quantity_key' => $work]];
+            }
+            $draft = ['local_estimates' => [['sections' => [['work_items' => $items]]]]];
+            $expanded = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomFloorWorkItemExpander)->expand(
+                $draft, $result['quantities'], 128, $result['context']['room_floor_entity_ids']);
+            $expandedItems = $expanded['local_estimates'][0]['sections'][0]['work_items'];
+            self::assertCount(4, $expandedItems);
+            $amounts = [];
+            foreach ($expandedItems as $item) {
+                $quantity = (new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver)->resolve($item, $result['quantities']);
+                self::assertNotNull($quantity);
+                $amounts[$item['metadata']['composition_work_key']][$item['entity_id']] = $quantity->amount;
+            }
+            self::assertSame(['room:area' => '4', 'room:dimensions' => '6'], $amounts['rough.floor']);
+            self::assertSame($amounts['rough.floor'], $amounts['finish.floor']);
+        }
+    }
+
+    #[Test]
+    public function an_unresolved_room_blocks_a_partial_alias_of_another_floor_formula(): void
+    {
+        foreach (['none', 'confirmed', 'unresolved', 'conflicting', 'partially_confirmed'] as $buildingState) {
+            $repository = new InMemoryProjectModelRepository;
+            $entities = [new Entity('room:area', 10, 20, 30, self::SOURCE, 'room', 'room:area'),
+                new Entity('room:missing-width', 10, 20, 30, self::SOURCE, 'room', 'room:missing-width')];
+            $measurements = [['room:area', 'area', '4', 'm2'], ['room:missing-width', 'length', '2', 'm']];
+            if ($buildingState !== 'none') {
+                $entities[] = new Entity('room:building-floor', 10, 20, 30, self::SOURCE, 'room', 'building.area.total',
+                    ['document_role' => 'building_floor']);
+                if ($buildingState !== 'unresolved') {
+                    $measurements[] = ['room:building-floor', 'area', '40', 'm2'];
+                }
+                if (in_array($buildingState, ['conflicting', 'partially_confirmed'], true)) {
+                    $entities[] = new Entity('room:building-other', 10, 20, 30, self::SOURCE, 'room', 'building.other.total',
+                        ['document_role' => 'building_floor']);
+                    if ($buildingState === 'conflicting') {
+                        $measurements[] = ['room:building-other', 'area', '41', 'm2'];
+                    }
+                }
+            }
+            $facts = $evidence = [];
+            foreach ($measurements as [$entity, $parameter, $amount, $unit]) {
+                $id = $entity.':'.$parameter;
+                $proof = $this->nativeEvidence('evidence:'.$id, 10, 20, 30, self::SOURCE, 'artifact:plan', 'document', 1, null, $id);
+                $evidence[] = $proof;
+                $facts[] = $this->nativeFact('fact:'.$id, 10, 20, 30, self::SOURCE, $entity, $parameter,
+                    $amount, $unit, 1.0, 'document', 'confirmed', [$proof->id]);
+            }
+            $repository->saveSourceModel($entities, $facts, $evidence);
+            $this->makeStageFiveCurrent($repository);
+            $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+            if ($buildingState === 'confirmed') {
+                self::assertSame('40', $result['quantities']['floor_area']->amount);
+                self::assertNotContains('canonical_quantity_aggregate_unresolved', array_column($result['warnings'], 'code'));
+            } else {
+                self::assertArrayNotHasKey('floor_area', $result['quantities']);
+            }
+            self::assertCount(match ($buildingState) {
+                'conflicting' => 3, 'confirmed', 'partially_confirmed' => 2, default => 1,
+            }, $result['quantities']);
+            self::assertSame(['room:area', 'room:missing-width'], $result['context']['room_floor_entity_ids']);
+            self::assertContains('canonical_quantity_unresolved', array_column($result['warnings'], 'code'));
+        }
     }
 
     #[Test]
