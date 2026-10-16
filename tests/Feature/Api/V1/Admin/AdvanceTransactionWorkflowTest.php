@@ -90,6 +90,9 @@ class AdvanceTransactionWorkflowTest extends TestCase
         ]);
         $organizationUser = $this->createOrganizationUser($context->organization);
         $organizationProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($organizationProject->id, [
+            'role' => 'member', 'is_active' => true, 'assigned_at' => now(),
+        ]);
 
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignUser = $this->createOrganizationUser($foreignOrganization);
@@ -456,6 +459,44 @@ class AdvanceTransactionWorkflowTest extends TestCase
             'user_id' => $user->id, 'project_id' => $project->id, 'type' => AdvanceAccountTransaction::TYPE_ISSUE, 'amount' => 100,
         ])->assertStatus(422);
         $this->assertDatabaseCount('advance_account_transactions', 0);
+    }
+
+    public function test_available_advance_projects_match_actor_access_and_preserve_recipient_and_search_filters(): void
+    {
+        $context = $this->createContextWithAdvancePermissions(['advance_transactions.create']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value]);
+        $own = Project::factory()->create(['organization_id' => $context->organization->id, 'name' => 'Own catalog project']);
+        Project::factory()->create(['organization_id' => $context->organization->id, 'is_archived' => true]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $shared = Project::factory()->create(['organization_id' => $foreignOrganization->id, 'name' => 'Shared catalog project']);
+        Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $shared->organizations()->attach($context->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value, 'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+            'is_active' => true, 'invited_at' => now(), 'accepted_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $recipient = $this->createOrganizationUser($context->organization);
+        $recipient->assignedProjects()->attach($shared->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $url = '/api/v1/admin/advance-transactions/available-projects';
+        $response = $this->withHeaders($context->authHeaders())->getJson($url)->assertOk();
+        $this->assertEqualsCanonicalizing([$own->id, $shared->id], collect($response->json('data'))->pluck('id')->all());
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?search=Shared')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value]);
+        $context->user->assignedProjects()->attach($own->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $this->withHeaders($context->authHeaders())->getJson($url)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $own->id);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(0, 'data');
+
+        $context->user->assignedProjects()->attach($shared->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+        $shared->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(0, 'data');
     }
 
     private function createOrganizationUser(Organization $organization, array $overrides = []): User

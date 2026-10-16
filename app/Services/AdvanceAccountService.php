@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Models\AdvanceAccountTransaction;
 use App\Models\User;
 use App\Models\File;
-use App\Models\Project;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -535,10 +535,14 @@ class AdvanceAccountService
     public function getAvailableProjects(int $organizationId, ?int $userId = null, ?string $search = null)
     {
         try {
+            $actor = Auth::user();
+            if (!$actor instanceof User) {
+                throw new \RuntimeException('Authenticated user required.');
+            }
+
             // Базовый запрос для проектов
-            $query = Project::where('organization_id', $organizationId)
-                ->where('is_archived', false)
-                ->select(['id', 'name', 'external_code', 'status', 'address']);
+            $query = app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)
+                ->select(['projects.id', 'projects.name', 'projects.external_code', 'projects.status', 'projects.address']);
 
             // Если указан ID пользователя, фильтруем по проектам, назначенным этому пользователю
             if ($userId) {
