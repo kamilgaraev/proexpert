@@ -169,6 +169,9 @@ class WarehouseStockReportTest extends TestCase
         $warehouse->delete();
         $afterDeletion = $this->reportService->getWarehouseStockReport($this->makeWarehouseStockRequest($organization, $user));
         $this->assertSame(['Ответственное хранение: Объект приёмки, ФИО не указано'], $afterDeletion['data']->pluck('warehouse')->all());
+        $project->delete();
+        $afterProjectDeletion = $this->reportService->getWarehouseStockReport($this->makeWarehouseStockRequest($organization, $user));
+        $this->assertSame(['Ответственное хранение: Объект приёмки, ФИО не указано'], $afterProjectDeletion['data']->pluck('warehouse')->all());
     }
 
     private function createStockReportContext(): array

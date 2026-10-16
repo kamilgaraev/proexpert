@@ -1252,7 +1252,8 @@ class ReportService
 
         $stocks = $query->get();
         $warehouses = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::query()->withTrashed()->where('organization_id', $organizationId)
-            ->whereKey($stocks->pluck('warehouse_id')->unique()->all())->with('project')->get();
+            ->whereKey($stocks->pluck('warehouse_id')->unique()->all())
+            ->with(['project' => static fn ($relation) => $relation->withTrashed()])->get();
         $warehouseNames = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class)
             ->applyReadableCustodyWarehouseNames($organizationId, $warehouses)->pluck('name', 'id');
         $stocks = $stocks->map(function ($stock) use ($warehouseNames) {
