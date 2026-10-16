@@ -59,6 +59,7 @@ class AccessController
     public function getActiveModules(int $organizationId): Collection
     {
         $cacheKey = self::EFFECTIVE_MODULES_CACHE_PREFIX."_{$organizationId}";
+        $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator($organizationId);
 
         return Cache::remember($cacheKey, 60, function () use ($organizationId): Collection {
             return $this->entitlements()->getEffectiveModules($organizationId);
@@ -74,6 +75,7 @@ class AccessController
         }
 
         $cacheKey = "user_available_permissions_{$user->id}_{$organizationId}";
+        $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator($organizationId);
 
         return Cache::remember($cacheKey, 60, function () use ($organizationId): array {
             $activeModules = $this->getActiveModules($organizationId);

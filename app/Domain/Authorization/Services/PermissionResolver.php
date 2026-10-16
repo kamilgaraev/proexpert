@@ -5,13 +5,13 @@ namespace App\Domain\Authorization\Services;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Logging\LoggingService;
 use App\Services\Monitoring\ApiQueryMetrics;
-use App\Services\Entitlements\OrganizationEntitlementService;
+use Closure;
+use Illuminate\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Cache\Repository;
-use Closure;
 
 /**
  * Сервис для резолвинга прав (системных и модульных)
@@ -27,7 +27,9 @@ class PermissionResolver
     protected LoggingService $logging;
 
     private ?Repository $readCache = null;
+
     private bool $currentChecks = false;
+
     private ?OrganizationEntitlementService $currentEntitlementSource = null;
 
     public function __construct(
@@ -45,6 +47,7 @@ class PermissionResolver
         $scope = clone $this;
         $scope->currentChecks = true;
         $scope->readCache = null;
+
         return $scope;
     }
 
@@ -97,7 +100,8 @@ class PermissionResolver
         try {
             $startTime = microtime(true);
 
-            $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
+            $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context,
+                $this->extractOrganizationId($assignment, $context));
             $cachedResult = $this->currentChecks ? null : Cache::get($cacheKey);
 
             if ($cachedResult !== null) {
@@ -131,7 +135,9 @@ class PermissionResolver
                 fn (): bool => $this->hasSystemPermission($assignment, $permission));
 
             if ($hasSystemPerm) {
-                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
+                if (! $this->currentChecks) {
+                    Cache::put($cacheKey, true, 300);
+                }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.system', [
@@ -149,7 +155,9 @@ class PermissionResolver
                 fn (): bool => $this->hasModulePermission($assignment, $permission, $context));
 
             if ($hasModulePerm) {
-                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
+                if (! $this->currentChecks) {
+                    Cache::put($cacheKey, true, 300);
+                }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.module', [
@@ -164,7 +172,9 @@ class PermissionResolver
                 return true;
             }
 
-            if (! $this->currentChecks) { Cache::put($cacheKey, false, 300); }
+            if (! $this->currentChecks) {
+                Cache::put($cacheKey, false, 300);
+            }
 
             if (! str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('permission.denied.complete', [
@@ -263,6 +273,9 @@ class PermissionResolver
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
             $cacheKey = 'module_active_'.self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
+            if (! $this->currentChecks) {
+                $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
+            }
             $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
@@ -725,13 +738,17 @@ class PermissionResolver
     /**
      * Получить ключ кеша с версионированием
      */
-    protected function getVersionedCacheKey(int $userId, string $roleSlug, string $permission, ?array $context = null): string
+    protected function getVersionedCacheKey(int $userId, string $roleSlug, string $permission, ?array $context = null, ?int $organizationId = null): string
     {
         $userVersion = $this->rememberRead("user_permission_version_{$userId}", fn () => Cache::get("user_permission_version_{$userId}", 0));
         $globalVersion = $this->rememberRead('permission_global_version', fn () => Cache::get('permission_global_version', 0));
         $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
 
         $baseKey = 'permission_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$userId}_{$roleSlug}_{$permission}_".md5(json_encode($context));
+        $organizationId ??= $context['organization_id'] ?? null;
+        if (! $this->currentChecks && is_numeric($organizationId)) {
+            $baseKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
+        }
 
         return "{$baseKey}_v{$userVersion}_{$globalVersion}";
     }

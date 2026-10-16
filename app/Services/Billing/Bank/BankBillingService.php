@@ -40,7 +40,7 @@ final class BankBillingService
     {
         $this->access->organization($actor, $organizationId);
         $paginator = CommercialBankInvoice::query()->where('organization_id', $organizationId)
-            ->with(['order', 'documents', 'refunds', 'operations'])->orderByDesc('id')->paginate($perPage, ['*'], 'page', $page);
+            ->with(['order', 'documents', 'refunds', 'operations', 'paymentProof'])->orderByDesc('id')->paginate($perPage, ['*'], 'page', $page);
 
         return ['items' => $paginator->getCollection()->map(fn ($invoice) => $this->invoices->payload($invoice))->all(),
             'meta' => ['current_page' => $paginator->currentPage(), 'per_page' => $paginator->perPage(),
@@ -57,6 +57,7 @@ final class BankBillingService
                 throw new InvalidArgumentException(trans_message('bank_billing.cancel_funded'));
             }
             $invoice->forceFill(['status' => 'canceled'])->save();
+            app(BankPaymentProofService::class)->cancel($invoice);
             $invoice->order->forceFill(['status' => 'canceled'])->save();
             $invoice->payment->forceFill(['provider_status' => 'canceled', 'terminal_at' => now()])->save();
             if ($invoice->order->kind === 'renewal') {

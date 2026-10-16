@@ -43,6 +43,9 @@ class UserPermissionsController extends Controller
             }
 
             $cacheKey = "user_permissions_full_effective_{$user->id}_{$organizationId}_{$this->roleDefinitionsVersion()}";
+            if ($organizationId) {
+                $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
+            }
             $data = Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
                 $context = $organizationId ? ['organization_id' => $organizationId] : null;
                 $authContext = $organizationId ? AuthorizationContext::getOrganizationContext($organizationId) : null;

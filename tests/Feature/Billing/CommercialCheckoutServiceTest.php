@@ -665,6 +665,186 @@ class CommercialCheckoutServiceTest extends TestCase
         ]);
     }
 
+    public function test_bank_payment_proof_grants_temporary_access_without_settling_invoice(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit(
+            $this->user, (int) $this->organization->id, $invoice->public_id,
+            \Illuminate\Http\UploadedFile::fake()->image('payment.png'),
+        );
+        $this->assertSame('pending', $proof->status);
+        $this->assertEqualsWithDelta(now()->getTimestamp(), $proof->fresh()->submitted_at->getTimestamp(), 2);
+        $this->assertSame('awaiting_payment', $invoice->refresh()->status);
+        $this->assertSame(0, $invoice->paid_minor);
+        $this->assertNull($invoice->paid_at);
+        $this->assertNull($invoice->activated_at);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->assertSame($invoice->order->selected_package_slugs, app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs((int) $this->organization->id));
+        $this->assertSame('pending_payment', $invoice->order->status->value);
+        $this->assertDatabaseCount('commercial_bank_documents', 1);
+    }
+
+    public function test_bank_payment_proof_deadline_revokes_access_and_sends_to_review(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        $access = app(\App\Services\Billing\Bank\BankPaymentProofAccess::class);
+        $before = $access->cacheDiscriminator((int) $this->organization->id);
+        $this->travelTo($proof->temporary_expires_at);
+        $this->assertSame([], $access->packageSlugs((int) $this->organization->id));
+        $this->assertNotSame($before, $access->cacheDiscriminator((int) $this->organization->id));
+        app(\App\Services\Billing\Bank\BankPaymentProofService::class)->processExpired();
+        $this->assertSame('review', $proof->refresh()->status);
+        $this->assertNull($invoice->refresh()->paid_at);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    public function test_bank_payment_proof_confirms_only_after_full_bank_settlement(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $settlement->ingest($this->bankTransaction($invoice, 'proof-part', 100));
+        $this->assertSame('pending', $proof->refresh()->status);
+        $this->assertNull($invoice->refresh()->activated_at);
+        $settlement->ingest($this->bankTransaction($invoice, 'proof-rest', $invoice->amount_minor - 100));
+        $this->assertSame('confirmed', $proof->refresh()->status);
+        $this->assertNotNull($invoice->refresh()->activated_at);
+        $this->assertSame([], app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs((int) $this->organization->id));
+    }
+
+    public function test_bank_payment_proof_retry_does_not_extend_access_or_create_files(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $file = \Illuminate\Http\UploadedFile::fake()->image('payment.png');
+        $service = app(\App\Services\Billing\Bank\BankPaymentProofService::class);
+        $proof = $service->submit($this->user, (int) $this->organization->id, $invoice->public_id, $file);
+        $this->travel(1)->days();
+        $again = $service->submit($this->user, (int) $this->organization->id, $invoice->public_id, $file);
+        $this->assertSame($proof->id, $again->id);
+        $this->assertTrue($proof->temporary_expires_at->equalTo($again->temporary_expires_at));
+        $this->assertDatabaseCount('commercial_bank_payment_proofs', 1);
+    }
+
+    public function test_bank_payment_proof_rejects_another_file_for_same_invoice(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $service = app(\App\Services\Billing\Bank\BankPaymentProofService::class);
+        $service->submit($this->user, (int) $this->organization->id, $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('one.png'));
+        $this->expectException(\InvalidArgumentException::class);
+        $service->submit($this->user, (int) $this->organization->id, $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('two.png', 2, 2));
+    }
+
+    public function test_bank_payment_proof_keeps_invoice_open_while_bank_transfer_is_pending(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $invoice->forceFill(['expires_at' => now()->addMinutes(1)])->save();
+        $this->fakePaymentProofStorage();
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        $this->travel(1)->days();
+        app(\App\Services\Billing\Bank\BankInvoiceService::class)->expireUnpaid();
+        $this->assertSame('awaiting_payment', $invoice->refresh()->status);
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'after-original-expiry', $invoice->amount_minor));
+        $this->assertSame('confirmed', $proof->refresh()->status);
+        $this->assertNotNull($invoice->refresh()->activated_at);
+    }
+
+    public function test_bank_payment_proof_cancellation_revokes_temporary_access(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        app(\App\Services\Billing\Bank\BankBillingService::class)->cancel($this->user, (int) $this->organization->id, $invoice->public_id);
+        $this->assertSame('canceled', $proof->refresh()->status);
+        $this->assertSame([], app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs((int) $this->organization->id));
+    }
+
+    public function test_bank_payment_proof_entitlements_expire_even_when_access_is_cached(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $slug = app(\App\Services\Modules\PackageCatalogService::class)->tierModules('machinery', 'standard')[0];
+        DB::table('modules')->insert(['slug' => $slug]);
+        $this->fakePaymentProofStorage();
+        $access = app(\App\Modules\Core\AccessController::class);
+        $this->assertNotContains($slug, $access->getActiveModules((int) $this->organization->id)->pluck('slug')->all());
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        $this->assertContains($slug, $access->getActiveModules((int) $this->organization->id)->pluck('slug')->all());
+        $this->travelTo($proof->temporary_expires_at);
+        $this->assertNotContains($slug, $access->getActiveModules((int) $this->organization->id)->pluck('slug')->all());
+    }
+
+    public function test_bank_payment_proof_rejects_unsafe_upload_and_foreign_organization(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        try {
+            app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+                $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->create('bad.html', 1, 'text/html'));
+            $this->fail('Unsafe upload accepted');
+        } catch (\InvalidArgumentException) {
+            $this->assertDatabaseCount('commercial_bank_payment_proofs', 0);
+        }
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id + 1,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+    }
+
+    public function test_bank_payment_proof_resource_access_does_not_change_paid_quotas_or_prices(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $invoice->order->forceFill(['selected_resource_addons' => [
+            ['slug' => 'storage_gb', 'limit_key' => 'storage_gb', 'quantity' => 10, 'status' => 'ok'],
+        ]])->save();
+        $this->fakePaymentProofStorage();
+        $quotas = app(\App\Services\Billing\CommercialQuotaService::class);
+        $before = $quotas->getEffectiveLimits($this->organization)['storage_gb'];
+        $proof = app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+            $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+        $this->assertGreaterThanOrEqual($before + 10, $quotas->getEffectiveLimits($this->organization)['storage_gb']);
+        $this->assertDatabaseCount('organization_resource_allocations', 0);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->travelTo($proof->temporary_expires_at);
+        $this->assertSame($before, $quotas->getEffectiveLimits($this->organization)['storage_gb']);
+    }
+
+    private function fakePaymentProofStorage(): void
+    {
+        $storage = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $storage->shouldReceive('putPrivate')->andReturnUsing(static function ($key, $contents, $mime, $hash) {
+            return new \App\Services\Storage\DTO\CurrentStoredFile($key, 'proof-etag', strlen($contents), $hash, $mime);
+        });
+        $this->app->instance(\App\Services\Storage\FileService::class, $storage);
+    }
+
     public function test_bank_invoice_partials_overpayment_and_replay_activate_only_once(): void
     {
         $this->prepareBankBilling();
@@ -2091,6 +2271,7 @@ class CommercialCheckoutServiceTest extends TestCase
         (require database_path('migrations/2026_10_15_230000_create_commercial_bank_billing.php'))->up();
         (require database_path('migrations/2026_10_16_120000_add_tochka_document_delivery.php'))->up();
         (require database_path('migrations/2026_10_16_121000_create_commercial_bank_qr_codes.php'))->up();
+        (require database_path('migrations/2026_10_16_150000_create_commercial_bank_payment_proofs.php'))->up();
         $this->organization->forceFill(['legal_name' => 'ООО Покупатель', 'tax_number' => '7707083893', 'registration_number' => '1027700132195', 'address' => 'Москва'])->save();
         $this->user->forceFill(['current_organization_id' => $this->organization->id])->save();
         DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true]);
@@ -2133,6 +2314,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'commercial_bank_payment_proofs',
             'commercial_bank_qr_codes', 'commercial_bank_documents', 'commercial_bank_refunds', 'commercial_bank_webhook_events', 'commercial_bank_statements',
             'commercial_bank_allocations', 'commercial_bank_operations', 'commercial_bank_invoices',
             'commercial_contour_changes', 'commercial_billing_notification_keys',

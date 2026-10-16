@@ -20,6 +20,7 @@ final class BankSyncService
 
     public function process(int $limit = 10): array
     {
+        app(BankPaymentProofService::class)->processExpired();
         app(BankInvoiceService::class)->expireUnpaid();
         $ready = $this->client->ready();
 
@@ -143,7 +144,9 @@ final class BankSyncService
                 $this->settlement->ingest($transaction);
             } catch (Throwable $exception) {
                 $failed = true;
-                Log::error('Bank transaction processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class]);
+                $failureCode = in_array($exception->getMessage(), ['bank_amount_invalid', 'tochka_transaction_invalid', 'tochka_transaction_account_mismatch'], true)
+                    ? $exception->getMessage() : 'transaction_failed';
+                Log::error('Bank transaction processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class, 'failure_code' => $failureCode]);
             }
         }
         if ($failed) {

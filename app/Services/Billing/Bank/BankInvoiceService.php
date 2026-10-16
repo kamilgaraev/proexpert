@@ -114,10 +114,12 @@ final class BankInvoiceService
     public function expireUnpaid(): void
     {
         CommercialBankInvoice::query()->where('status', 'awaiting_payment')->where('expires_at', '<', now())
+            ->whereDoesntHave('paymentProof', fn ($query) => $query->whereIn('status', ['pending', 'review']))
             ->where('paid_minor', 0)->orderBy('id')->limit(100)->get()->each(function ($source): void {
                 DB::transaction(function () use ($source): void {
                     $invoice = CommercialBankInvoice::query()->whereKey($source->id)->lockForUpdate()->firstOrFail();
-                    if ($invoice->status !== 'awaiting_payment' || $invoice->paid_minor !== 0 || $invoice->allocations()->exists()) {
+                    if ($invoice->status !== 'awaiting_payment' || $invoice->paid_minor !== 0 || $invoice->allocations()->exists()
+                        || $invoice->paymentProof()->whereIn('status', ['pending', 'review'])->exists()) {
                         return;
                     }
                     $invoice->forceFill(['status' => 'expired'])->save();
@@ -147,6 +149,7 @@ final class BankInvoiceService
                 throw new \App\Exceptions\Billing\CommercialBillingConflictException('A renewal invoice is already funded.');
             }
             $invoice->forceFill(['status' => 'canceled'])->save();
+            app(BankPaymentProofService::class)->cancel($invoice);
             $invoice->order->forceFill(['status' => 'canceled'])->save();
             $invoice->payment->forceFill(['provider_status' => 'canceled', 'terminal_at' => now()])->save();
         }
@@ -154,10 +157,12 @@ final class BankInvoiceService
 
     public function payload(CommercialBankInvoice $invoice): array
     {
-        $invoice->loadMissing(['order', 'documents', 'refunds', 'operations']);
+        $invoice->loadMissing(['order', 'documents', 'refunds', 'operations', 'paymentProof']);
         $snapshot = $invoice->snapshot;
 
         return [
+            'payment_proof' => app(BankPaymentProofService::class)->payload($invoice->paymentProof, $invoice),
+            'payment_proof_available' => $invoice->paymentProof === null && app(BankPaymentProofService::class)->canSubmit($invoice),
             'id' => $invoice->public_id, 'number' => $invoice->number, 'order_id' => $invoice->order->public_id,
             'status' => $invoice->status, 'amount_minor' => $invoice->amount_minor,
             'paid_minor' => $invoice->paid_minor, 'refunded_minor' => $invoice->refunded_minor,
