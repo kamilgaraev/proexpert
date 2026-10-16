@@ -34,7 +34,9 @@ final class WorkItemQuantityMapper
         if ($sourcePurpose === 'equipment.count' && in_array($workKey, ['equipment.purchase', 'equipment.install'], true)) {
             return true;
         }
-        if (DirectTakeoffRequiredWorkItems::contains($workKey) && ! in_array($workKey, ['roof.area', 'roof.flat_area'], true)) {
+        $canonicalFloorGeometry = $workKey === 'rough.floor' && $sourcePurpose === 'floor_area';
+        if (DirectTakeoffRequiredWorkItems::contains($workKey) && ! $canonicalFloorGeometry
+            && ! in_array($workKey, ['roof.area', 'roof.flat_area'], true)) {
             return false;
         }
         foreach ($rule['sources'] as $candidate) {
@@ -55,6 +57,7 @@ final class WorkItemQuantityMapper
             $purpose = $quantity === null ? null : CurrentProjectDerivedQuantityService::formulaPurpose($quantity->formulaKey);
             if ($quantity === null || ! is_string($purpose) || ($quantity->formulaInputs['entity_id'] ?? null) !== $entityId
                 || $quantity->reviewBlockers !== [] || ($quantity->source === QuantitySource::Estimated && $quantity->assumptions === [])
+                || ($workKey === 'rough.floor' && $quantity->source !== QuantitySource::Evidenced)
                 || ! $this->acceptsExactSource($workKey, $purpose, $quantity->unit)) {
                 continue;
             }
