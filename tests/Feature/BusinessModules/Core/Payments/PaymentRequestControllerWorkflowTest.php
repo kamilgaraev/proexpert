@@ -19,6 +19,8 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -250,6 +252,78 @@ class PaymentRequestControllerWorkflowTest extends TestCase
             self::assertNotSame(PaymentDocumentStatus::DRAFT, $order->fresh()->status);
         }
         $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_linked_order_writes_lock_the_request_before_the_child(): void
+    {
+        $recording = false;
+        $lockedRows = [];
+        DB::listen(static function (QueryExecuted $query) use (&$recording, &$lockedRows): void {
+            if ($recording && str_contains($query->sql, '"payment_documents"')
+                && str_contains(strtolower($query->sql), 'for update')) {
+                $rows = DB::select(str_ireplace('for update', '', $query->sql), $query->bindings);
+                $lockedRows[] = array_map(static fn (object $row): int => (int) $row->id, $rows);
+            }
+        });
+
+        foreach (['update', 'submit', 'bulk-submit'] as $action) {
+            $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+            $this->activatePaymentsModule($context->organization->id);
+            $request = $this->createPaymentRequest($context, $this->createContractor($context), PaymentDocumentStatus::APPROVED);
+            $request->update(['bank_account' => '00000000000000000000', 'bank_bik' => '000000000']);
+            $created = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+            $orderId = $created->json('data.payment_order.id');
+            $lockedRows = [];
+            $recording = true;
+            try {
+                if ($action === 'update') {
+                    $this->withHeaders($context->authHeaders())
+                        ->putJson("/api/v1/admin/payments/documents/{$orderId}", ['notes' => 'Учебное уточнение'])->assertOk();
+                } elseif ($action === 'submit') {
+                    $this->withHeaders($context->authHeaders())
+                        ->postJson("/api/v1/admin/payments/documents/{$orderId}/submit")->assertOk();
+                } else {
+                    $this->withHeaders($context->authHeaders())
+                        ->postJson('/api/v1/admin/payments/documents/bulk', ['ids' => [$orderId], 'action' => 'submit'])
+                        ->assertOk()->assertJsonPath('data.success', 1);
+                }
+            } finally {
+                $recording = false;
+            }
+            self::assertSame([$request->id], $lockedRows[0] ?? null, $action);
+            self::assertContains([(int) $orderId], $lockedRows, $action);
+            self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                ->where('source_id', $request->id)->count());
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_linked_order_update_rejects_a_source_changed_after_preflight(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $replacement = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+        $orderId = $created->json('data.payment_order.id');
+        $changed = false;
+        DB::listen(static function (QueryExecuted $query) use (&$changed, $orderId, $replacement): void {
+            if (! $changed && str_contains($query->sql, '"payment_documents"')
+                && str_contains(strtolower($query->sql), 'for update')
+                && in_array(PaymentDocumentType::PAYMENT_REQUEST->value, $query->bindings, true)) {
+                $changed = true;
+                DB::table('payment_documents')->where('id', $orderId)->update(['source_id' => $replacement->id]);
+            }
+        });
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$orderId}", ['notes' => 'Не должно сохраниться'])
+            ->assertUnprocessable();
+        self::assertTrue($changed);
+        self::assertSame($request->id, PaymentDocument::findOrFail($orderId)->source_id);
+        self::assertNotSame('Не должно сохраниться', PaymentDocument::findOrFail($orderId)->notes);
     }
 
     public function test_legacy_banks_without_controlled_completion_cannot_be_reused_updated_or_submitted(): void
