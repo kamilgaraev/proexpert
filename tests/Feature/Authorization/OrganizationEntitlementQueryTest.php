@@ -15,6 +15,48 @@ use Tests\TestCase;
 
 final class OrganizationEntitlementQueryTest extends TestCase
 {
+    public function test_matching_module_reads_preserve_access_and_fresh_revocation(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $service = app(OrganizationEntitlementService::class);
+        $free = $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id);
+        $paid = array_values(array_diff($service->getEffectiveModuleSlugs($fixture->organization->id), $free));
+        self::assertNotEmpty($paid);
+        self::assertSame([$paid[0]], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->foreignOrganization->id, $paid[0]));
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'unknown-candidate-module'));
+
+        Module::query()->where('slug', $paid[0])->update(['is_active' => false]);
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
+        Module::query()->where('slug', $paid[0])->update(['is_active' => true]);
+        self::assertSame([$paid[0]], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
+        OrganizationPackageSubscription::query()->where('organization_id', $fixture->organization->id)->update(['status' => 'canceled']);
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
+    }
+
+    public function test_non_bindable_candidates_keep_the_legacy_database_reads(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $service = app(OrganizationEntitlementService::class);
+        $queries = [];
+        DB::listen(static function ($query) use (&$queries): void {
+            if (preg_match('/^select\b.*from "modules"/is', $query->sql)) {
+                $queries[] = $query;
+            }
+        });
+        $candidates = ["binary\0module", "invalid\xffmodule", str_repeat('x', 1025)];
+        foreach ($candidates as $candidate) {
+            self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $candidate));
+        }
+
+        self::assertCount(count($candidates), $queries);
+        foreach ($queries as $query) {
+            foreach ($candidates as $candidate) {
+                self::assertNotContains($candidate, $query->bindings);
+            }
+        }
+    }
+
     public function test_scoped_catalog_keeps_new_entitlement_reads_fresh(): void
     {
         $catalog = app(PackageCatalogService::class);

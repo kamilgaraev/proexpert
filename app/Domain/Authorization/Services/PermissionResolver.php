@@ -279,8 +279,13 @@ class PermissionResolver
             $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
-                        fn (): array => ($this->currentEntitlementSource ?? app(OrganizationEntitlementService::class))
-                            ->getEffectiveModuleSlugs($organizationId));
+                        function () use ($organizationId, $moduleToCheck): array {
+                            $source = $this->currentEntitlementSource ?? app(OrganizationEntitlementService::class);
+
+                            return $this->readCache === null && get_class($source) === OrganizationEntitlementService::class
+                                ? $source->getEffectiveModuleSlugsMatching($organizationId, $moduleToCheck)
+                                : $source->getEffectiveModuleSlugs($organizationId);
+                        });
 
                     return in_array($moduleToCheck, $activeModules, true);
                 }
