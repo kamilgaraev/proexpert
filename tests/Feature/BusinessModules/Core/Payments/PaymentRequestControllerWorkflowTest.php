@@ -793,6 +793,45 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         self::assertEqualsCanonicalizing([$outgoing->id, $viaContractor->id, $viaRecipient->id], array_column($response->json('data'), 'id'));
     }
 
+    public function test_incoming_filters_keep_deleted_order_origins_as_opaque_conflicts(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $request = $this->createPaymentRequest($context, $this->createContractor($context), PaymentDocumentStatus::APPROVED);
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+        $order = PaymentDocument::findOrFail($created->json('data.payment_order.id'));
+        $this->withHeaders($context->authHeaders())
+            ->deleteJson("/api/v1/admin/payments/documents/{$order->id}")->assertSuccessful();
+        self::assertNotNull(PaymentDocument::withTrashed()->findOrFail($order->id)->deleted_at);
+
+        foreach (['', '&payment_order_state=linked'] as $filter) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/payments/requests/incoming?status=approved'.$filter)
+                ->assertOk()->assertJsonCount(1, 'data')
+                ->assertJsonPath('data.0.id', $request->id)
+                ->assertJsonPath('data.0.payment_order', null)
+                ->assertJsonPath('data.0.payment_order_conflict', true);
+        }
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved&payment_order_state=unlinked')
+            ->assertOk()->assertJsonCount(0, 'data');
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertUnprocessable();
+        self::assertSame(1, PaymentDocument::withTrashed()->where('source_type', PaymentDocument::class)
+            ->where('source_id', $request->id)->count());
+
+        $replacement = $order->replicate();
+        $replacement->fill(['origin_key' => null, 'document_number' => 'LEGACY-'.uniqid()])->save();
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved&payment_order_state=linked')
+            ->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.payment_order.id', $replacement->id)
+            ->assertJsonPath('data.0.payment_order_conflict', false);
+        self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_incoming_requests_return_existing_orders_and_hide_ambiguous_or_cross_project_links(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

@@ -262,17 +262,18 @@ class PaymentRequestService
             (int) $document->organization_id === $organizationId
             && $document->document_type === PaymentDocumentType::PAYMENT_REQUEST
         )->keyBy('id');
-        $orders = PaymentDocument::query()
+        $orders = PaymentDocument::query()->withTrashed()
             ->where('organization_id', $organizationId)
             ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
             ->where('source_type', PaymentDocument::class)
             ->whereIn('source_id', $parents->keys()->all())
-            ->get(['id', 'source_id', 'project_id', 'document_number', 'status'])
+            ->get(['id', 'source_id', 'project_id', 'document_number', 'status', 'deleted_at'])
             ->groupBy('source_id');
 
         return $parents->map(function (PaymentDocument $request) use ($orders): array {
             $children = $orders->get($request->id, collect());
-            $order = $children->count() === 1 ? $children->first() : null;
+            $activeChildren = $children->reject(fn (PaymentDocument $child): bool => $child->trashed());
+            $order = $activeChildren->count() === 1 ? $activeChildren->first() : null;
             $conflict = $children->isNotEmpty()
                 && ($order === null || (int) $order->project_id !== (int) $request->project_id);
 
