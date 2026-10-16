@@ -79,7 +79,7 @@ final readonly class AssistantRequiredProjectRead
             return ['name' => 'get_project_contract_roster', 'arguments' => $arguments];
         }
         if (AssistantProjectMachineryReader::matches($query)) {
-            return ['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => $scope->projectId]];
+            return ['name' => 'get_project_machinery_summary', 'arguments' => AssistantProjectMachineryReader::arguments($scope->projectId, $query)];
         }
         if (AssistantProjectPaymentReader::matches($query)) {
             $arguments = ['project_id' => $scope->projectId];

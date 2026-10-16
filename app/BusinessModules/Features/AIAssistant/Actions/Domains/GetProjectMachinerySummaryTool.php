@@ -17,7 +17,9 @@ final readonly class GetProjectMachinerySummaryTool implements AIToolInterface
     public function getDescription(): string { return trans_message('ai_assistant_machinery.description'); }
     public function getParametersSchema(): array
     {
-        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1]], 'required' => ['project_id'], 'additionalProperties' => false];
+        return ['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer', 'minimum' => 1],
+            'asset_id' => ['type' => 'integer', 'minimum' => 1], 'asset_code' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 128]],
+            'required' => ['project_id'], 'additionalProperties' => false];
     }
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
