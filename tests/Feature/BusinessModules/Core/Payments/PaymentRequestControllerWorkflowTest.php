@@ -363,15 +363,36 @@ class PaymentRequestControllerWorkflowTest extends TestCase
             'payee_organization_id' => $context->organization->id,
             'payee_contractor_id' => null,
         ]);
+        $selfContractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'source_organization_id' => $context->organization->id,
+            'name' => 'Recipient organization contractor', 'inn' => '7700000011',
+        ]);
+        $viaContractor = $this->createPaymentRequest($context, $selfContractor, PaymentDocumentStatus::APPROVED);
+        $viaContractor->update(['payer_organization_id' => null, 'payer_contractor_id' => $contractor->id]);
+        $viaRecipient = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $viaRecipient->update([
+            'payer_organization_id' => null, 'payer_contractor_id' => $contractor->id,
+            'payee_contractor_id' => null, 'contractor_id' => null,
+            'recipient_organization_id' => $context->organization->id,
+        ]);
         $foreign = AdminApiTestContext::create(roleSlug: 'web_admin');
-        $this->createPaymentRequest($foreign, $this->createContractor($foreign), PaymentDocumentStatus::APPROVED);
+        $contractor->update(['source_organization_id' => $foreign->organization->id]);
+        $foreignContractor = $this->createContractor($foreign);
+        $foreignContractor->update(['source_organization_id' => $context->organization->id]);
+        $foreignRequest = $this->createPaymentRequest($foreign, $foreignContractor, PaymentDocumentStatus::APPROVED);
+        $foreignRequest->update([
+            'payee_organization_id' => $context->organization->id,
+            'recipient_organization_id' => $context->organization->id,
+        ]);
 
         $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/payments/requests/incoming?status=approved')
             ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $incoming->id);
-        $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/payments/requests/outgoing?status=approved')
-            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $outgoing->id);
+            ->assertOk()->assertJsonCount(3, 'data');
+        self::assertEqualsCanonicalizing([$outgoing->id, $viaContractor->id, $viaRecipient->id], array_column($response->json('data'), 'id'));
     }
 
     public function test_payment_request_rejection_sets_rejected_status_and_statistics_count_it(): void

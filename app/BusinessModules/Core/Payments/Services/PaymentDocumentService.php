@@ -988,10 +988,16 @@ class PaymentDocumentService
             $query->byType(PaymentDocumentType::from($filters['document_type']));
         }
 
-        foreach (['payer_organization_id', 'payee_organization_id'] as $partyFilter) {
-            if (isset($filters[$partyFilter])) {
-                $query->where($partyFilter, (int) $filters[$partyFilter]);
-            }
+        if (isset($filters['payer_organization_id'])) {
+            $query->where('payer_organization_id', (int) $filters['payer_organization_id']);
+        }
+        if (isset($filters['payee_organization_id'])) {
+            $payeeOrganizationId = (int) $filters['payee_organization_id'];
+            $query->where(function ($partyQuery) use ($payeeOrganizationId): void {
+                $partyQuery->where('payee_organization_id', $payeeOrganizationId)
+                    ->orWhereHas('payeeContractor', fn ($contractorQuery) => $contractorQuery->where('source_organization_id', $payeeOrganizationId))
+                    ->orWhere('recipient_organization_id', $payeeOrganizationId);
+            });
         }
 
         if (isset($filters['status'])) {
