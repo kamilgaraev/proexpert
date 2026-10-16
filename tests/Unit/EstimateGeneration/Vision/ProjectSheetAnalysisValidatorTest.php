@@ -17,6 +17,30 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
+    public function test_plan_keeps_separate_room_dimensions_with_explicit_units_and_source_anchors(): void
+    {
+        $payload = $this->payload('plan', 'length');
+        $payload['facts'][0] = [...$payload['facts'][0], 'value' => ['type' => 'number', 'data' => '2920'], 'unit' => 'mm'];
+        $payload['facts'][] = [...$payload['facts'][0], 'factType' => 'width', 'value' => ['type' => 'number', 'data' => '2915']];
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+
+        self::assertCount(2, $analysis->facts);
+        self::assertSame(['length', 'width'], array_column($analysis->facts, 'factType'));
+        self::assertSame([], $analysis->quarantinedItems);
+        foreach ([['unit' => null], ['unit' => 'm2'], ['entityKey' => 'plan.overall'],
+            ['value' => ['type' => 'string', 'data' => '2920']], ['value' => ['type' => 'number', 'data' => '0']],
+            ['value' => ['type' => 'number', 'data' => '-2']], ['sourcePolygonOrNativeRef' => [[0.1, 0.1], [1.1, 0.8]]]] as $change) {
+            $invalid = $payload;
+            $invalid['facts'] = [[...$payload['facts'][0], ...$change]];
+            self::assertSame([], ProjectSheetAnalysisData::fromProviderArray($invalid, ['page-1'])->facts);
+        }
+        $duplicate = $payload;
+        $duplicate['facts'][] = $payload['facts'][0];
+        $rejected = ProjectSheetAnalysisData::fromProviderArray($duplicate, ['page-1']);
+        self::assertCount(2, $rejected->facts);
+        self::assertSame('duplicate_project_sheet_fact_key', $rejected->quarantinedItems[0]['reason']);
+    }
+
     public function test_room_numbers_require_their_own_literal_contract_and_room_entity(): void
     {
         foreach (['plan', 'explication', 'unknown'] as $role) {

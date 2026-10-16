@@ -12,6 +12,19 @@ use PHPUnit\Framework\TestCase;
 
 final class PhysicalMeasurementPublicationPolicyTest extends TestCase
 {
+    public function test_typed_room_dimensions_still_require_separate_native_numeric_proofs(): void
+    {
+        $claims = array_map(fn (string $type): ObservationClaim => $this->claim('observer_literal', '2920', $type, 'mm'), ['length', 'width', 'height']);
+        $decisions = array_map(static fn (ObservationClaim $claim): ArbitrationDecision => new ArbitrationDecision(
+            $claim->id, 'accepted', [$claim->id], [$claim->evidenceRef], 'observers_agree', null), $claims);
+        self::assertSame(['candidate', 'candidate', 'candidate'], array_column((new DocumentUnitPublication($claims, $decisions))->decisions, 'status'));
+        $sources = new VerifiedNativeNumericSources([VerifiedNativeNumericSources::fingerprint($claims[0])]);
+        $statuses = array_column((new DocumentUnitPublication($claims, $decisions, numericSources: $sources))->decisions, 'status', 'claimId');
+        self::assertSame('accepted', $statuses[$claims[0]->id]);
+        self::assertSame('candidate', $statuses[$claims[1]->id]);
+        self::assertSame('candidate', $statuses[$claims[2]->id]);
+    }
+
     public function test_three_agreeing_observers_and_a_photo_polygon_cannot_confirm_a_metric_area(): void
     {
         $claims = array_map(fn (string $role): ObservationClaim => $this->claim($role), ['observer_literal', 'observer_construction', 'observer_risk']);
@@ -33,10 +46,10 @@ final class PhysicalMeasurementPublicationPolicyTest extends TestCase
         self::assertSame('candidate', (new DocumentUnitPublication([$changed], [$decision], numericSources: $sources))->decisions[0]->status);
     }
 
-    private function claim(string $role, string $area = '25.97'): ObservationClaim
+    private function claim(string $role, string $area = '25.97', string $factType = 'area', string $unit = 'm2'): ObservationClaim
     {
-        return new ObservationClaim(str_replace('observer_', '', $role).':1', $role, 'room.kitchen', 'area',
-            ['type' => 'number', 'data' => $area], 'm2', str_replace('observer_', '', $role).':source:1', true,
+        return new ObservationClaim(str_replace('observer_', '', $role).':'.$factType, $role, 'room.kitchen', $factType,
+            ['type' => 'number', 'data' => $area], $unit, str_replace('observer_', '', $role).':source:1', true,
             1, 2, 3, 'sha256:'.str_repeat('a', 64), ['document_id' => 4, 'page' => 1, 'explicit' => true,
                 'native_reference' => 'cad:dimension:23', 'coordinate_space' => 'raster_image_normalized'], 1);
     }

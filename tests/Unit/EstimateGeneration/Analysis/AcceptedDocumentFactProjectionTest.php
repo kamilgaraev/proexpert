@@ -11,6 +11,21 @@ use PHPUnit\Framework\TestCase;
 
 final class AcceptedDocumentFactProjectionTest extends TestCase
 {
+    public function test_room_dimensions_preserve_parameter_value_and_unit_without_becoming_area(): void
+    {
+        foreach (['length', 'width', 'height'] as $parameter) {
+            $result = $this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], 'mm', 'room.bedroom-1'));
+            self::assertNotNull($result);
+            self::assertSame('dimension', $result['fact_type']);
+            self::assertSame($parameter, $result['label_key']);
+            self::assertSame('2920', $result['value_number']);
+            self::assertSame('mm', $result['unit']);
+            self::assertNull($this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], null, 'room.bedroom-1')));
+            self::assertNull($this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], 'm2', 'room.bedroom-1')));
+            self::assertNull($this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], 'mm', 'plan.overall')));
+        }
+    }
+
     public function test_room_number_has_a_text_label_in_compatible_document_storage_without_quantity(): void
     {
         $projection = $this->project($this->claim('room_number', ['type' => 'string', 'data' => '001'], null, 'room.office'));

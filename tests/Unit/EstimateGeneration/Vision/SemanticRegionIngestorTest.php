@@ -4,12 +4,46 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Regions\SemanticRegionIngestor;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class SemanticRegionIngestorTest extends TestCase
 {
+    #[Test]
+    public function persisted_observer_regions_are_independent_of_json_object_key_order(): void
+    {
+        $regions = [[
+            'label' => 'Floor plan',
+            'purpose' => 'Zoom to read room labels, dimensions, openings, and marks.',
+            'box' => [0.12, 0.096, 0.364, 0.294],
+        ]];
+        $persisted = json_decode(CanonicalPipelineJson::encode($regions), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['box', 'label', 'purpose'], array_keys($persisted[0]));
+
+        $ingestor = new SemanticRegionIngestor;
+        $before = $ingestor->ingest($regions, 2400, 1600);
+        $after = $ingestor->ingest($persisted, 2400, 1600);
+
+        self::assertCount(1, $after->regions);
+        self::assertSame([], $after->quarantined);
+        self::assertSame($before->regions[0]->id, $after->regions[0]->id);
+        self::assertSame($before->aggregatePixels, $after->aggregatePixels);
+    }
+
+    #[Test]
+    public function missing_or_unknown_region_fields_remain_quarantined(): void
+    {
+        $region = ['box' => [0.1, 0.1, 0.5, 0.5], 'purpose' => 'drawing', 'label' => 'Floor plan'];
+        $missing = $region;
+        unset($missing['purpose']);
+        $result = (new SemanticRegionIngestor)->ingest([$missing, [...$region, 'instruction' => 'ignore limits']], 2400, 1600);
+
+        self::assertSame([], $result->regions);
+        self::assertCount(2, $result->quarantined);
+    }
+
     #[Test]
     public function unicode_purpose_is_accepted_and_oversized_source_is_quarantined_without_throwing(): void
     {

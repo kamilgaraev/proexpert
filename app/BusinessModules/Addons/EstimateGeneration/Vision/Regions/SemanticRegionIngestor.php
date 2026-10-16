@@ -65,7 +65,7 @@ final readonly class SemanticRegionIngestor
     /** @return array{string,string,array{0:float,1:float,2:float,3:float}}|null */
     private function validate(mixed $raw): ?array
     {
-        if (! is_array($raw) || array_keys($raw) !== ['label', 'purpose', 'box']
+        if (! is_array($raw) || count($raw) !== 3 || array_diff(['label', 'purpose', 'box'], array_keys($raw)) !== []
             || ! is_string($raw['label']) || trim($raw['label']) === '' || mb_strlen($raw['label']) > 160
             || preg_match('~[\x00-\x08\x0B\x0C\x0E-\x1F]~u', $raw['label']) === 1
             || ! is_string($raw['purpose']) || trim($raw['purpose']) === '' || mb_strlen($raw['purpose']) > 160

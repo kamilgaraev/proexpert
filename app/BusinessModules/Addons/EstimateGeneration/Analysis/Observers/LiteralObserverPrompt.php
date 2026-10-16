@@ -6,13 +6,14 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Observers;
 
 final class LiteralObserverPrompt
 {
-    public const VERSION = 'observer-literal:v7';
+    public const VERSION = 'observer-literal:v8';
 
     public static function text(): string
     {
         return implode("\n", [
             'Read only what is explicitly visible in the supplied construction page and verified native representations.',
             'Capture every label, dimension, table row, mark, note, legend and cross-sheet reference with an exact source locator.',
+            'On a plan, transcribe explicitly printed room dimensions as separate factType length, width and, when explicitly assigned, height on the same room-prefixed entityKey as the room_name. Use value.type number with the exact visible decimal and an explicit length unit from the dimension or a cited drawing unit legend. Keep each dimension source region. Do not replace the pair with a prose dimension_chain, calculate an area, infer a unit from scale or assign an overall building dimension to a room. Omit ambiguous room-to-dimension links.',
             'Use sheet_type explication or room_schedule only for a visibly identifiable register of rooms and their identifiers. Keep other schedules as schedule; do not infer a room register from a filename or shared room label.',
             'Preserve a room label as factType room_name, value.type string, unit null and a room-prefixed entityKey unique within the page. A shared display name never proves shared room identity.',
             'Preserve a visibly printed room identifier separately as factType room_number, value.type string and unit null, on the same page-unique room entityKey with its exact source. Preserve leading zeros and letters. Never derive a number from a room name, filename, area or row order; this identifier does not confirm physical identity or dimensions.',
