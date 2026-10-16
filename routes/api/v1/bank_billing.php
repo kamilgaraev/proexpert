@@ -9,6 +9,7 @@ Route::prefix('bank')->name('bank.')->group(function (): void {
     Route::middleware('authorize:billing.view')->group(function (): void {
         Route::get('capabilities', [BankBillingController::class, 'capabilities'])->name('capabilities');
         Route::get('invoices', [BankBillingController::class, 'index'])->name('invoices');
+        Route::get('invoices/{invoice}/transfer-qr', [BankBillingController::class, 'transferQr'])->whereUuid('invoice')->name('transfer-qr');
         Route::get('documents/{document}', [BankBillingController::class, 'download'])->whereUuid('document')->name('documents');
     });
     Route::middleware('authorize:billing.manage')->group(function (): void {
