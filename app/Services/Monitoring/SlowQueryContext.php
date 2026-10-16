@@ -13,12 +13,15 @@ final class SlowQueryContext
 
     public function forQuery(QueryExecuted $query): array
     {
+        $fingerprint = hash('sha256', $query->sql);
+
         return [
             'duration_ms' => round($query->time, 2),
             'connection' => $query->connectionName,
             'sql' => mb_substr(self::safeSql($query->sql), 0, 4000),
             'sql_length' => mb_strlen($query->sql),
-            'sql_fingerprint' => hash('sha256', $query->sql),
+            'sql_fingerprint' => $fingerprint,
+            'sql_fingerprint_parts' => str_split($fingerprint, 32),
             'bindings' => self::safeBindings($query->sql, $query->bindings),
             'bindings_count' => count($query->bindings),
             'bindings_truncated' => false,
