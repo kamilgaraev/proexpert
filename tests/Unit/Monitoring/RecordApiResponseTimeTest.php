@@ -130,6 +130,8 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/executive-documentation/references', true],
             ['POST', '/api/v1/admin/executive-documentation/references', false],
             ['GET', '/api/v1/admin/executive-documentation/references/1', false],
+            ['GET', '/api/v1/admin/personal-files', true], ['POST', '/api/v1/admin/personal-files', false],
+            ['GET', '/api/v1/admin/personal-files/1', false],
             ['GET', '/api/v1/admin/projects/17/construction-journals', true],
             ['POST', '/api/v1/admin/projects/17/construction-journals', false],
             ['GET', '/api/v1/admin/construction-journals/1', true],
