@@ -485,7 +485,9 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $operationId = (string) Str::uuid();
         $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $operationId, 'generation');
         DB::transaction(fn () => $operations->begin($actor, $session, 0, $operationId, $quote['quote_id'], 'generation'));
-        $frozenOutput = $quote['processing_plan']['text_payload_policy']['token_limits']['output_tokens'] ?? 2048;
+        $frozenPlan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        $frozenOutput = $frozenPlan['roles']['estimate_composition']['output_ceiling'];
+        self::assertSame(8192, $frozenOutput);
         config(['ai-assistant-credits.profiles.normal' => ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6]]);
         $facts = $candidates = [];
         foreach ([1, 2] as $id) {
