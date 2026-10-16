@@ -14,16 +14,106 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
+use App\Services\Storage\FileService;
+use GuzzleHttp\Psr7\Request;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Cache;
 use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
+use RuntimeException;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class DesignDocumentPermissionRegressionTest extends TestCase
 {
+    public static function streamOwnership(): array
+    {
+        return ['storage closes stream' => [true], 'caller closes stream' => [false]];
+    }
+
+    #[DataProvider('streamOwnership')]
+    public function test_upload_preserves_document_when_storage_may_close_stream(bool $storageCloses): void
+    {
+        $actor = $this->context(['documents.upload']);
+        [$package, $section] = $this->package($actor);
+        $storage = Storage::fake('s3');
+        $received = null;
+        $disk = \Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturnUsing(
+            static function (string $path, mixed $stream, string $visibility) use ($storage, $storageCloses, &$received): bool {
+                $received = $stream;
+                self::assertIsResource($stream);
+                self::assertSame('private', $visibility);
+                $stored = $storage->put($path, $stream, $visibility);
+                if ($storageCloses) {
+                    $request = new Request('PUT', 'https://storage.example.invalid/document', [], $stream);
+                    unset($request);
+                    self::assertFalse(is_resource($stream));
+                }
+
+                return $stored;
+            },
+        );
+        $this->mock(FileService::class, static function (MockInterface $mock) use ($disk): void {
+            $mock->shouldReceive('disk')->once()->andReturn($disk);
+        });
+
+        $version = app(DesignDocumentArtifactService::class)->uploadDocument(
+            $section,
+            (int) $actor->user->id,
+            UploadedFile::fake()->createWithContent('plan.pdf', '%PDF-1.4 document'),
+            ['document_code' => 'AR-01', 'title' => 'План', 'version_number' => '1'],
+        );
+
+        $this->assertFalse(is_resource($received));
+        $this->assertTrue($version->is_current);
+        $this->assertSame((int) $package->organization_id, (int) $version->organization_id);
+        $this->assertSame((int) $package->project_id, (int) $version->project_id);
+        $this->assertSame('%PDF-1.4 document', $storage->get($version->source_file_path));
+        $this->assertSame(1, $section->artifacts()->count());
+        $this->assertSame(1, $version->artifact->versions()->count());
+    }
+
+    #[DataProvider('streamOwnership')]
+    public function test_storage_exception_is_not_masked_by_document_stream_cleanup(bool $storageCloses): void
+    {
+        $actor = $this->context(['documents.upload']);
+        [, $section] = $this->package($actor);
+        $received = null;
+        $failure = new RuntimeException('storage unavailable');
+        $disk = \Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('put')->once()->andReturnUsing(
+            static function (string $path, mixed $stream) use ($storageCloses, $failure, &$received): never {
+                $received = $stream;
+                if ($storageCloses) {
+                    $request = new Request('PUT', 'https://storage.example.invalid/document', [], $stream);
+                    unset($request);
+                }
+                throw $failure;
+            },
+        );
+        $this->mock(FileService::class, static function (MockInterface $mock) use ($disk): void {
+            $mock->shouldReceive('disk')->once()->andReturn($disk);
+        });
+
+        try {
+            app(DesignDocumentArtifactService::class)->uploadDocument(
+                $section,
+                (int) $actor->user->id,
+                UploadedFile::fake()->createWithContent('plan.pdf', '%PDF-1.4 document'),
+                ['document_code' => 'AR-01', 'title' => 'План', 'version_number' => '1'],
+            );
+            $this->fail('Storage failure must propagate');
+        } catch (\Throwable $exception) {
+            $this->assertSame($failure, $exception);
+            $this->assertFalse(is_resource($received));
+            $this->assertSame(0, $section->artifacts()->count());
+        }
+    }
+
     public function test_specialized_document_permissions_work_without_general_edit_or_view(): void
     {
         $actor = $this->context(['documents.upload', 'documents.edit', 'documents.view']);
