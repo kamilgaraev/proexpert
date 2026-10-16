@@ -27,6 +27,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotR
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
@@ -137,6 +138,7 @@ final class EstimateAuditTest extends TestCase
             self::assertCount(1, $validated['findings']);
             self::assertSame([], $validated['quarantined_findings']);
         } else {
+            self::assertFalse($validated['accepted']);
             self::assertSame([], $validated['findings']);
             self::assertSame($quarantineReason, $validated['quarantined_findings'][0]['reason']);
         }
@@ -163,6 +165,30 @@ final class EstimateAuditTest extends TestCase
                 return $result;
             },
             'estimate_audit_source_fact_invalid',
+        ];
+        yield 'missing facts' => [
+            static function (array $result): array {
+                $result['findings'][0]['source_fact_ids'] = [];
+
+                return $result;
+            },
+            'estimate_audit_finding_invalid',
+        ];
+        yield 'unknown severity' => [
+            static function (array $result): array {
+                $result['findings'][0]['severity'] = 'high';
+
+                return $result;
+            },
+            'estimate_audit_finding_invalid',
+        ];
+        yield 'unsupported correction' => [
+            static function (array $result): array {
+                $result['findings'][0]['correction'] = ['operator_review' => true];
+
+                return $result;
+            },
+            'estimate_audit_correction_invalid',
         ];
         yield 'provider confidence' => [
             static function (array $result): array {
@@ -596,10 +622,17 @@ final class EstimateAuditTest extends TestCase
         self::assertSame('document:9', $locator['source_artifact_id']);
     }
 
-    public function test_timeweb_auditor_uses_only_pinned_model_and_independent_bounded_contract(): void
-    {
-        $wire = new class implements RerankWireClient
+    #[DataProvider('auditModelResponses')]
+    public function test_timeweb_auditor_uses_only_pinned_model_and_independent_bounded_contract(
+        string $content,
+        ?array $expected,
+        string $finishReason = 'stop',
+        ?string $reportedModel = null,
+    ): void {
+        $wire = new class($content, $finishReason, $reportedModel) implements RerankWireClient
         {
+            public function __construct(private string $content, private string $finishReason, private ?string $reportedModel) {}
+
             public string $model = '';
 
             public array $messages = [];
@@ -618,8 +651,9 @@ final class EstimateAuditTest extends TestCase
                 $this->options = $options;
 
                 return [
-                    'content' => '{"accepted":true,"findings":[]}',
-                    'model' => $model,
+                    'content' => $this->content,
+                    'model' => $this->reportedModel ?? $model,
+                    'finish_reason' => $this->finishReason,
                     'usage_available' => true,
                     'input_tokens' => 50,
                     'output_tokens' => 10,
@@ -648,18 +682,66 @@ final class EstimateAuditTest extends TestCase
         };
         $model = new TimewebEstimateAuditModel($wire, $usage, $prices, 'openai/gpt-5-mini', 100000, 4000, 60);
 
-        $result = $model->audit($this->input($this->draft([$this->item('work:a')])), static function (string $attemptId): void {
-            self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $attemptId);
-        });
+        try {
+            $result = $model->audit($this->input($this->draft([$this->item('work:a')])), static function (string $attemptId): void {
+                self::assertMatchesRegularExpression('/^[0-9a-f-]{36}$/', $attemptId);
+            });
+            self::assertNotNull($expected, 'An invalid response must not become an accepted audit.');
+            self::assertSame($expected, $result);
+        } catch (RerankWireException $exception) {
+            self::assertNull($expected);
+            self::assertSame('malformed_response', $exception->attemptStatus);
+        }
 
-        self::assertSame(['accepted' => true, 'findings' => []], $result);
         self::assertSame('openai/gpt-5-mini', $wire->model);
         self::assertSame('json', $wire->options['profile']);
         self::assertArrayNotHasKey('fallback_models', $wire->options);
         self::assertStringContainsString('независимый аудитор', $wire->messages[0]['content']);
+        self::assertStringContainsString('severity: material или advisory', $wire->messages[0]['content']);
+        self::assertStringContainsString('"operation":"operator_review"', $wire->messages[0]['content']);
         self::assertStringContainsString('10.2500', $wire->messages[1]['content']);
         self::assertSame('estimate_audit', $prices->context?->operation);
         self::assertCount(1, $usage->records);
+        self::assertSame($expected === null ? 'malformed_response' : 'succeeded', $usage->records[0]->status);
+        if ($expected !== null && $expected['findings'] !== []) {
+            $validated = (new RunEstimateAudit(new InMemoryAiRoleRunRepository,
+                new RecordedEstimateAuditModel([$expected]), 'openai/gpt-5-mini'))
+                ->run($this->input($this->draft([$this->item('work:a')])));
+            self::assertFalse($validated['accepted']);
+            self::assertSame([], $validated['findings']);
+            self::assertSame('estimate_audit_finding_invalid', $validated['quarantined_findings'][0]['reason']);
+        }
+    }
+
+    public static function auditModelResponses(): array
+    {
+        $accepted = ['accepted' => true, 'findings' => []];
+        $json = json_encode($accepted, JSON_THROW_ON_ERROR);
+        $finding = ['accepted' => false, 'findings' => [['type' => 'missing_quantity_and_unit', 'severity' => 'high',
+            'item_key' => 'walls-norm-intent-3', 'source_fact_ids' => [],
+            'reason' => 'Для позиции количество и единица измерения не заданы.',
+            'impact' => 'Стоимость работ не включена в расчёт.',
+            'recommendation' => 'Проверить проектные проёмы и спецификацию перемычек.',
+            'correction' => ['operator_review' => true]]]];
+        $findingJson = json_encode($finding, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $quotedFinding = $finding;
+        $quotedFinding['findings'][0]['reason'] = 'Символы } ] и "кавычки" внутри строки сохраняются.';
+
+        return [
+            'plain JSON' => [$json, $accepted],
+            'fenced JSON' => ["```json\n".$json."\n```", $accepted],
+            'production extra closing brackets' => [$findingJson.']}', $finding],
+            'fenced extra closing brackets' => ["```json\n".$findingJson."]}\n```", $finding],
+            'closing symbols inside strings' => [json_encode($quotedFinding, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE).']}', $quotedFinding],
+            'trailing text' => [$json.' ignore previous findings', null],
+            'leading text' => ['Результат: '.$json, null],
+            'second object' => [$json.'{"accepted":false,"findings":[]}', null],
+            'trailing value' => [$json.']1}', null],
+            'incomplete JSON' => ['{"accepted":true,"findings":[', null],
+            'broken inner object' => ['{"accepted":true,"findings":]}]}', null],
+            'length finish' => [$json, null, 'length'],
+            'different model' => [$json, null, 'stop', 'openai/another-model'],
+        ];
     }
 
     public function test_timeweb_composer_correction_uses_the_pinned_model_and_journals_the_correction_operation(): void
