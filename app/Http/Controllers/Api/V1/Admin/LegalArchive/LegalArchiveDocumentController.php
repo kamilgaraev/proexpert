@@ -107,81 +107,88 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 201,
             ), $document);
         } catch (Throwable $error) {
-            if ($error instanceof LegalDocumentCreateInProgress) {
-                $document = $error->document->refresh();
-                $leaseExpiresAt = $document->source_create_lease_expires_at;
+            try {
+                if ($error instanceof LegalDocumentCreateInProgress) {
+                    $document = $this->registry->findForCreateResponse(
+                        $this->organizationId($request), (int) $this->actor($request)->id, (int) $error->document->id, $error->requiresView,
+                    );
+                    $leaseExpiresAt = $document->source_create_lease_expires_at;
 
-                return $this->etag(AdminResponse::success(
-                    new LegalArchiveDocumentResource($document),
-                    trans_message('legal_archive.messages.source_create_in_progress'),
-                    202,
-                    [
-                        'processing_status' => 'pending',
-                        'operation_result' => 'in_progress',
-                        'operation_id' => $document->create_operation_id,
-                        'lease_expires_at' => $leaseExpiresAt?->toISOString(),
-                        'retry_after' => $leaseExpiresAt === null ? 1 : max(1, now()->diffInSeconds($leaseExpiresAt, false)),
-                    ],
-                ), $document);
-            }
-            if ($error instanceof LegalDocumentCreateFailed) {
-                $this->reportCreateFailure($request, $error, $error->document);
-
-                $document = $error->document->refresh();
-
-                return $this->etag(AdminResponse::success(
-                    new LegalArchiveDocumentResource($document),
-                    trans_message('legal_archive.messages.document_file_processing_failed'),
-                    202,
-                    [
-                        'processing_status' => 'failed',
-                        'operation_result' => 'document_create_failed',
-                        'operation_id' => $error->operationId(),
-                        'retry_action' => $error->retryAction(),
-                        'retry_document_id' => (int) $error->document->id,
-                    ],
-                ), $document);
-            }
-            if ($error instanceof LegalDocumentScanFailed) {
-                $failureCode = $error->failureCode();
-                $messageKey = match ($failureCode) {
-                    'malware_detected' => 'legal_archive.messages.document_file_malware_detected',
-                    'scanner_unavailable' => 'legal_archive.messages.document_file_scan_unavailable',
-                    default => 'legal_archive.messages.document_file_processing_failed',
-                };
-                $document = $this->registry->findForOrganization(
-                    $this->organizationId($request),
-                    (int) $error->version->document_id,
-                );
-                if ($document !== null) {
+                    return $this->etag(AdminResponse::success(
+                        new LegalArchiveDocumentResource($document),
+                        trans_message('legal_archive.messages.source_create_in_progress'),
+                        202,
+                        [
+                            'processing_status' => 'pending',
+                            'operation_result' => 'in_progress',
+                            'operation_id' => $document->create_operation_id,
+                            'lease_expires_at' => $leaseExpiresAt?->toISOString(),
+                            'retry_after' => $leaseExpiresAt === null ? 1 : max(1, now()->diffInSeconds($leaseExpiresAt, false)),
+                        ],
+                    ), $document);
+                }
+                if ($error instanceof LegalDocumentCreateFailed) {
+                    $document = $this->registry->findForCreateResponse(
+                        $this->organizationId($request), (int) $this->actor($request)->id, (int) $error->document->id, $error->requiresView,
+                    );
                     $this->reportCreateFailure($request, $error, $document);
+
+                    return $this->etag(AdminResponse::success(
+                        new LegalArchiveDocumentResource($document),
+                        trans_message('legal_archive.messages.document_file_processing_failed'),
+                        202,
+                        [
+                            'processing_status' => 'failed',
+                            'operation_result' => 'document_create_failed',
+                            'operation_id' => $document->create_operation_id,
+                            'retry_action' => $document->source_create_retry_action ?: 'retry_finalize',
+                            'retry_document_id' => (int) $document->id,
+                        ],
+                    ), $document);
+                }
+                if ($error instanceof LegalDocumentScanFailed) {
+                    $failureCode = $error->failureCode();
+                    $messageKey = match ($failureCode) {
+                        'malware_detected' => 'legal_archive.messages.document_file_malware_detected',
+                        'scanner_unavailable' => 'legal_archive.messages.document_file_scan_unavailable',
+                        default => 'legal_archive.messages.document_file_processing_failed',
+                    };
+                    $document = $this->registry->findForCreateResponse(
+                        $this->organizationId($request),
+                        (int) $this->actor($request)->id,
+                        (int) $error->version->document_id,
+                        $error->requiresView,
+                    );
+                    $this->reportCreateFailure($request, $error, $document);
+
+                    $response = AdminResponse::success(
+                        new LegalArchiveDocumentResource($document),
+                        trans_message($messageKey),
+                        202,
+                        [
+                            'processing_status' => 'failed',
+                            'processing_failure_code' => $failureCode,
+                            'operation_result' => 'document_create_failed',
+                            'operation_id' => $document->create_operation_id,
+                            'retry_action' => 'retry_upload',
+                            'retry_document_id' => (int) $error->version->document_id,
+                        ],
+                    );
+
+                    return $this->etag($response, $document);
+                }
+                if ($error instanceof LegalDocumentFileRejected) {
+                    return AdminResponse::error(
+                        trans_message('legal_archive.messages.validation_error'),
+                        422,
+                        ['file' => [trans_message('legal_archive.messages.file_rejected')]],
+                    );
                 }
 
-                $response = AdminResponse::success(
-                    $document === null ? null : new LegalArchiveDocumentResource($document),
-                    trans_message($messageKey),
-                    202,
-                    [
-                        'processing_status' => 'failed',
-                        'processing_failure_code' => $failureCode,
-                        'operation_result' => 'document_create_failed',
-                        'operation_id' => $document?->create_operation_id,
-                        'retry_action' => 'retry_upload',
-                        'retry_document_id' => (int) $error->version->document_id,
-                    ],
-                );
-
-                return $document === null ? $response : $this->etag($response, $document);
+                return $this->failure($error, $request, 'document_store');
+            } catch (Throwable $responseError) {
+                return $this->failure($responseError, $request, 'document_store');
             }
-            if ($error instanceof LegalDocumentFileRejected) {
-                return AdminResponse::error(
-                    trans_message('legal_archive.messages.validation_error'),
-                    422,
-                    ['file' => [trans_message('legal_archive.messages.file_rejected')]],
-                );
-            }
-
-            return $this->failure($error, $request, 'document_store');
         }
     }
 

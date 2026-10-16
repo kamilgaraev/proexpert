@@ -8,6 +8,7 @@ use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentLink;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentOutboxMessage;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -376,6 +377,219 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
         self::assertSame($before, $this->snapshot());
     }
 
+    public function test_http_create_replay_uses_the_current_document_project_instead_of_the_original_input(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture);
+        $context = $this->httpContext($fixture, $actor);
+        $originalProject = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $currentProject = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $actor->assignedProjects()->attach($originalProject->id, ['role' => 'member', 'is_active' => true]);
+        $input = $this->input($originalProject->id);
+        $url = '/api/v1/admin/legal-archive/documents';
+        $created = $this->withHeaders($context->authHeaders())->postJson($url, $input)->assertCreated();
+        $document = LegalArchiveDocument::query()->findOrFail($created->json('data.id'));
+        app(LegalArchiveRegistryService::class)->update($document, $fixture->organization->id, $fixture->owner->id, [
+            'lock_version' => (int) $document->lock_version, 'primary_project_id' => $currentProject->id,
+            'title' => 'Confidential current project document',
+        ]);
+        $view = $this->withHeaders($context->authHeaders())->getJson($url.'/'.$document->id);
+        self::assertContains($view->status(), [403, 404], $view->getContent());
+        $before = $this->snapshot();
+        $replayed = $this->withHeaders($context->authHeaders())->postJson($url, $input);
+        self::assertContains($replayed->status(), [403, 404], $replayed->getContent());
+        self::assertSame($before, $this->snapshot());
+        $actor->assignedProjects()->updateExistingPivot($originalProject->id, ['is_active' => false]);
+        $actor->assignedProjects()->attach($currentProject->id, ['role' => 'member', 'is_active' => true]);
+        $this->withHeaders($context->authHeaders())->postJson($url, $input)->assertCreated()
+            ->assertJsonPath('data.id', $document->id)
+            ->assertJsonPath('data.primary_project_id', $currentProject->id);
+        self::assertSame($before, $this->snapshot());
+    }
+
+    public function test_http_manual_and_source_recovery_authorize_current_document_before_lease_or_response(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture);
+        $context = $this->httpContext($fixture, $actor);
+        $url = '/api/v1/admin/legal-archive/documents';
+        foreach ([false, true] as $sourceBound) {
+            $original = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+            $current = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+            $actor->assignedProjects()->attach($original->id, ['role' => 'member', 'is_active' => true]);
+            $input = $this->input($original->id);
+            if ($sourceBound) {
+                $input = [...$input, 'source_type' => 'project', 'source_id' => $original->id, 'source_idempotency_key' => (string) Str::uuid()];
+            }
+            $created = $this->withHeaders($context->authHeaders())->postJson($url, $input)->assertCreated();
+            $document = LegalArchiveDocument::query()->findOrFail($created->json('data.id'));
+            app(LegalArchiveRegistryService::class)->update($document, $fixture->organization->id, $fixture->owner->id, [
+                'lock_version' => (int) $document->lock_version, 'primary_project_id' => $current->id,
+                'title' => 'Current confidential recovery content',
+            ]);
+            foreach (['completed', 'pending', 'expired', 'failed'] as $state) {
+                $this->setCreateState($document, $state);
+                $before = $this->snapshot();
+                $response = $this->withHeaders($context->authHeaders())->postJson($url, $input);
+                self::assertContains($response->status(), [403, 404], $response->getContent());
+                self::assertSame($before, $this->snapshot(), $state);
+            }
+            $actor->assignedProjects()->updateExistingPivot($original->id, ['is_active' => false]);
+            $actor->assignedProjects()->attach($current->id, ['role' => 'member', 'is_active' => true]);
+            $this->setCreateState($document, 'pending');
+            $before = $this->snapshot();
+            $this->withHeaders($context->authHeaders())->postJson($url, $input)->assertStatus(202)
+                ->assertJsonPath('data.id', $document->id)->assertJsonPath('data.primary_project_id', $current->id);
+            self::assertSame($before, $this->snapshot());
+            foreach (['expired', 'failed'] as $state) {
+                $recoveryInput = [...$input, 'create_operation_key' => (string) Str::uuid()];
+                if ($sourceBound) {
+                    $recoverySource = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+                    $recoveryInput = [...$recoveryInput, 'source_id' => $recoverySource->id, 'source_idempotency_key' => (string) Str::uuid()];
+                }
+                $recovery = $document->refresh()->replicate();
+                $recovery->forceFill([
+                    'create_operation_id' => (string) Str::uuid(), 'create_operation_key' => $recoveryInput['create_operation_key'],
+                    'source_id' => $recoveryInput['source_id'] ?? null,
+                    'source_idempotency_key' => $recoveryInput['source_idempotency_key'] ?? null,
+                    'source_request_fingerprint' => LegalDocumentCreateRequestFingerprint::fromRequest($fixture->organization->id, $actor->id, $recoveryInput, null),
+                ])->save();
+                $this->setCreateState($recovery, $state);
+                $attempts = $recovery->source_create_attempt_count;
+                $recovered = $this->withHeaders($context->authHeaders())->postJson($url, $recoveryInput);
+                self::assertSame(201, $recovered->status(), $state.': '.$recovered->getContent());
+                $recovered
+                    ->assertJsonPath('data.id', $recovery->id)->assertJsonPath('data.primary_project_id', $current->id)
+                    ->assertJsonPath('data.title', 'Current confidential recovery content');
+                self::assertSame('completed', $recovery->refresh()->source_create_status);
+                self::assertSame($attempts + 1, $recovery->source_create_attempt_count);
+            }
+            $before = $this->snapshot();
+            $this->withHeaders($context->authHeaders())->postJson($url, [...$input, 'title' => 'Different command'])->assertStatus(422);
+            self::assertSame($before, $this->snapshot());
+        }
+    }
+
+    public function test_replay_requires_current_view_permission_and_restricted_document_grant(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture);
+        $input = [...$this->input(), 'confidentiality_level' => 'restricted'];
+        $service = app(LegalArchiveRegistryService::class);
+        $document = $service->create($fixture->organization->id, $actor->id, $input, null, true);
+        $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->sole();
+        $role = OrganizationCustomRole::query()->where('slug', $assignment->role_slug)->sole();
+        $grant = LegalDocumentAccessGrant::query()->where('document_id', $document->id)->where('subject_user_id', $actor->id)->sole();
+        self::assertSame($document->id, $service->create($fixture->organization->id, $actor->id, $input, null, true)->id);
+        foreach (['completed', 'pending', 'expired', 'failed'] as $state) {
+            $this->setCreateState($document, $state);
+            $role->update(['system_permissions' => ['admin.access', 'legal_archive.create', 'legal_archive.update']]);
+            $before = $this->snapshot();
+            $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $input, null, true));
+            self::assertSame($before, $this->snapshot());
+            $role->update(['system_permissions' => ['admin.access', 'legal_archive.create', 'legal_archive.view', 'legal_archive.update']]);
+            $grant->forceFill(['revoked_at' => now(), 'revoked_by_user_id' => $fixture->owner->id, 'revocation_reason' => 'Access removed'])->save();
+            $before = $this->snapshot();
+            $this->assertDenied(fn () => $service->create($fixture->organization->id, $actor->id, $input, null, true));
+            self::assertSame($before, $this->snapshot());
+            $grant = LegalDocumentAccessGrant::query()->create([
+                'organization_id' => $fixture->organization->id, 'document_id' => $document->id,
+                'subject_kind' => 'internal_user', 'subject_organization_id' => $fixture->organization->id,
+                'subject_user_id' => $actor->id, 'abilities' => ['view'], 'granted_by_user_id' => $fixture->owner->id,
+            ]);
+        }
+    }
+
+    public function test_new_http_document_can_be_created_with_create_permission_without_view_permission(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture, ['legal_archive.create']);
+        $context = $this->httpContext($fixture, $actor);
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/legal-archive/documents', $this->input())
+            ->assertCreated();
+    }
+
+    public function test_upload_failure_responses_recheck_project_after_document_processing(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture, ['legal_archive.create', 'legal_archive.view', 'legal_archive.files.upload', 'legal_archive.versions.create']);
+        $context = $this->httpContext($fixture, $actor);
+        $original = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $current = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $actor->assignedProjects()->attach($original->id, ['role' => 'member', 'is_active' => true]);
+        $input = [];
+        $mode = '';
+        $move = static function () use (&$input, $current): void {
+            LegalArchiveDocument::query()->where('create_operation_key', $input['create_operation_key'])
+                ->update(['primary_project_id' => $current->id, 'title' => 'Confidential processing response']);
+        };
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::exactly(2))->method('upload')->willReturnCallback(static function () use (&$mode, $move, $fixture): string {
+            if ($mode === 'storage') {
+                $move();
+                throw new \RuntimeException('Storage unavailable');
+            }
+
+            return 'org-'.$fixture->organization->id.'/legal-archive/recheck.pdf';
+        });
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean')->willReturnCallback(static function () use ($move): void {
+            $move();
+            throw new \RuntimeException('legal_document_scanner_unavailable');
+        });
+        $this->app->instance(FileService::class, $storage);
+        $this->app->instance(LegalDocumentScanner::class, $scanner);
+        foreach (['storage', 'scanner'] as $mode) {
+            $input = $this->input($original->id);
+            $response = $this->withHeaders($context->authHeaders())->post('/api/v1/admin/legal-archive/documents', [
+                ...$input, 'file' => UploadedFile::fake()->createWithContent('response.pdf', "%PDF-1.7\nresponse-check"),
+            ]);
+            self::assertContains($response->status(), [403, 404], $response->getContent());
+            self::assertStringNotContainsString('Confidential processing response', $response->getContent());
+        }
+    }
+
+    public function test_new_upload_failure_preserves_recovery_response_without_view_permission(): void
+    {
+        $fixture = $this->fixture();
+        $actor = $this->actor($fixture, ['legal_archive.create', 'legal_archive.files.upload', 'legal_archive.versions.create']);
+        $context = $this->httpContext($fixture, $actor);
+        $mode = '';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::exactly(2))->method('upload')->willReturnCallback(static function () use (&$mode, $fixture): string {
+            if ($mode === 'storage') {
+                throw new \RuntimeException('Storage unavailable');
+            }
+
+            return 'org-'.$fixture->organization->id.'/legal-archive/new-create.pdf';
+        });
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean')->willThrowException(new \RuntimeException('legal_document_scanner_unavailable'));
+        $this->app->instance(FileService::class, $storage);
+        $this->app->instance(LegalDocumentScanner::class, $scanner);
+        foreach (['storage', 'scanner'] as $mode) {
+            $response = $this->withHeaders($context->authHeaders())->post('/api/v1/admin/legal-archive/documents', [
+                ...$this->input(), 'file' => UploadedFile::fake()->createWithContent('new.pdf', "%PDF-1.7\nnew-create"),
+            ])->assertStatus(202)->assertJsonPath('meta.operation_result', 'document_create_failed');
+            self::assertIsInt($response->json('meta.retry_document_id'));
+            self::assertNotEmpty($response->json('meta.operation_id'));
+            self::assertSame($response->json('data.id'), $response->json('meta.retry_document_id'));
+        }
+    }
+
+    private function setCreateState(LegalArchiveDocument $document, string $state): void
+    {
+        $pending = in_array($state, ['pending', 'expired'], true);
+        $document->refresh()->forceFill([
+            'source_create_status' => $pending ? 'pending' : $state,
+            'source_create_attempt_token' => $pending ? (string) Str::uuid() : null,
+            'source_create_lease_expires_at' => $pending ? ($state === 'expired' ? now()->subMinute() : now()->addMinutes(30)) : null,
+            'source_create_retry_action' => $state === 'completed' ? null : 'retry_finalize',
+            'source_create_failure_fingerprint' => $state === 'failed' ? hash('sha256', 'Recovery security fixture') : null,
+            'source_create_failed_at' => $state === 'failed' ? now() : null,
+        ])->save();
+    }
+
     private function contractActor(AssistantRealAuthorizationFixture $fixture, Project $project, string $roleSlug): User
     {
         $actor = $fixture->addMember([], ['admin.access']);
@@ -458,7 +672,7 @@ final class LegalArchiveProjectBindingSecurityTest extends TestCase
     {
         $snapshot = [];
         foreach ([
-            LegalArchiveDocument::class, LegalArchiveDocumentFile::class, LegalArchiveDocumentLink::class,
+            LegalArchiveDocument::class, LegalArchiveDocumentFile::class, LegalArchiveDocumentLink::class, LegalArchiveDocumentVersion::class,
             LegalDocumentAccessGrant::class, ImmutableAuditEvent::class, LegalDocumentOutboxMessage::class,
         ] as $model) {
             $query = $model::query();

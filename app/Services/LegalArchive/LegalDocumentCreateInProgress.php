@@ -9,7 +9,7 @@ use RuntimeException;
 
 final class LegalDocumentCreateInProgress extends RuntimeException
 {
-    public function __construct(public readonly LegalArchiveDocument $document)
+    public function __construct(public readonly LegalArchiveDocument $document, public readonly bool $requiresView = true)
     {
         parent::__construct('legal_document_create_in_progress');
     }
