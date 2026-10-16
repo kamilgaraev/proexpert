@@ -5,28 +5,32 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
-use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
+use App\Services\LegalArchive\Files\LegalDocumentFileRequirements;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
 use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
-use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileAssignmentGuard;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
-use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
+use App\Services\Project\UserProjectAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
@@ -136,6 +140,27 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         return $document;
     }
 
+    public function findForCreateResponse(int $organizationId, int $userId, int $documentId, bool $requiresView = true): LegalArchiveDocument
+    {
+        return DB::transaction(function () use ($organizationId, $userId, $documentId, $requiresView): LegalArchiveDocument {
+            $document = LegalArchiveDocument::query()->useWritePdo()
+                ->with(['currentVersion', 'versions', 'links', 'project:id,name,status,organization_id', 'createdBy:id,name,email'])
+                ->forOrganization($organizationId)->lockForUpdate()->find($documentId);
+            if (! $document instanceof LegalArchiveDocument) {
+                throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+            }
+            $this->authorizeProjectBinding($organizationId, $userId, $document->primary_project_id, 'legal_archive.create');
+            $this->access->authorizePermission(
+                $this->currentActor($organizationId, $userId),
+                $document,
+                $requiresView ? 'legal_archive.view' : 'legal_archive.create',
+            );
+            $this->attachResolvedProfiles(collect([$document]));
+
+            return $document;
+        });
+    }
+
     public function paginateRecoveries(User $actor, int $organizationId, int $perPage = 20): LengthAwarePaginator
     {
         $query = LegalArchiveDocument::query();
@@ -150,8 +175,11 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             ->paginate(max(10, min($perPage, 100)));
     }
 
-    public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
+    public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null, bool $requiresUserPermissions = false): LegalArchiveDocument
     {
+        if ($requiresUserPermissions && $userId === null) {
+            throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+        }
         $hasSourceIdentity = isset($data['source_type']) || isset($data['source_id']) || isset($data['source_idempotency_key']);
         $rawOperationKey = $data['create_operation_key'] ?? null;
         if (! $hasSourceIdentity && (! is_string($rawOperationKey) || trim($rawOperationKey) === '' || mb_strlen(trim($rawOperationKey)) > 191)) {
@@ -171,7 +199,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         $attemptToken = (string) Str::uuid();
 
         try {
-            [$document, $documentFile, $replayed, $retryAction, $attemptToken] = DB::transaction(function () use (
+            [$document, $documentFile, $replayed, $retryAction, $attemptToken, $existingDocument] = DB::transaction(function () use (
                 $organizationId,
                 $userId,
                 $data,
@@ -180,8 +208,8 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $requestFingerprint,
                 $operationKey,
                 $attemptToken,
+                $requiresUserPermissions,
             ): array {
-                $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
                 $this->sourceResolver->assertOwnedSource($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
                 $replay = $this->resolveSourceCreateReplay(
                     $sourceCreateIdentity,
@@ -189,11 +217,13 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                     $userId,
                     $operationKey,
                     $requestFingerprint,
-                    true,
+                    $requiresUserPermissions,
+                    array_key_exists('primary_project_id', $data),
+                    $file instanceof UploadedFile,
                 );
                 if ($replay instanceof LegalArchiveDocument) {
                     if ((string) $replay->source_create_status === 'completed') {
-                        return [$replay, null, true, null, null];
+                        return [$replay, null, true, null, null, true];
                     }
 
                     $documentFile = $replay->files()->where('role', 'primary')->first();
@@ -206,9 +236,22 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                     }
                     $this->recordCreateRecoveryStarted($replay, $userId, $requestFingerprint, $retryAction);
 
-                    return [$replay, $documentFile, false, $retryAction, $attemptToken];
+                    return [$replay, $documentFile, false, $retryAction, $attemptToken, true];
                 }
 
+                if (array_key_exists('primary_project_id', $data) || $requiresUserPermissions) {
+                    $projectId = $this->authorizeProjectBinding(
+                        $organizationId,
+                        $userId,
+                        $data['primary_project_id'] ?? null,
+                        $requiresUserPermissions ? 'legal_archive.create' : null,
+                        $requiresUserPermissions && $file instanceof UploadedFile
+                            ? ['legal_archive.files.upload', 'legal_archive.versions.create'] : [],
+                    );
+                    if (array_key_exists('primary_project_id', $data)) {
+                        $data['primary_project_id'] = $projectId;
+                    }
+                }
                 $payload = $this->documentPayload($organizationId, $userId, $data);
                 $payload = [...$payload, ...$this->newAttemptPayload(
                     $attemptToken,
@@ -231,7 +274,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                     $this->access->bootstrapCreator($document, $userId);
                 }
 
-                return [$document, $documentFile, false, $file instanceof UploadedFile ? 'retry_upload' : 'retry_finalize', $attemptToken];
+                return [$document, $documentFile, false, $file instanceof UploadedFile ? 'retry_upload' : 'retry_finalize', $attemptToken, false];
             });
         } catch (QueryException $exception) {
             return $this->retryCreateAfterUniqueCollision(
@@ -243,11 +286,14 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $file,
                 $operationKey,
                 $requestFingerprint,
+                $requiresUserPermissions,
             );
         }
 
         if ($replayed) {
-            return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
+            return $requiresUserPermissions
+                ? $this->findForCreateResponse($organizationId, (int) $userId, (int) $document->id)
+                : ($this->findForOrganization($organizationId, (int) $document->id) ?? $document);
         }
 
         if ($retryAction === 'retry_upload' && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
@@ -261,14 +307,19 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $this->heartbeatCreateAttempt($document, $attemptToken, 'retry_finalize');
             } catch (Throwable $exception) {
                 if ($exception instanceof LegalDocumentVersionLeaseLost) {
-                    throw new LegalDocumentCreateInProgress($document->refresh());
+                    throw new LegalDocumentCreateInProgress($document->refresh(), $existingDocument);
                 }
                 $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_upload');
 
                 if (! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed
                     && ! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentFileRejected
                 ) {
-                    throw new LegalDocumentCreateFailed($document->refresh(), $exception);
+                    throw new LegalDocumentCreateFailed($document->refresh(), $exception, $existingDocument);
+                }
+                if ($exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed) {
+                    throw new \App\Services\LegalArchive\Files\LegalDocumentScanFailed(
+                        $exception->version, $exception->getPrevious() ?? $exception, $existingDocument,
+                    );
                 }
                 throw $exception;
             }
@@ -279,10 +330,12 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         } catch (Throwable $exception) {
             $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_finalize');
 
-            throw new LegalDocumentCreateFailed($document->refresh(), $exception);
+            throw new LegalDocumentCreateFailed($document->refresh(), $exception, $existingDocument);
         }
 
-        return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
+        return $requiresUserPermissions
+            ? $this->findForCreateResponse($organizationId, (int) $userId, (int) $document->id, $existingDocument)
+            : ($this->findForOrganization($organizationId, (int) $document->id) ?? $document);
     }
 
     public function update(LegalArchiveDocument $document, int $organizationId, ?int $userId, array $data): LegalArchiveDocument
@@ -302,7 +355,11 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 && (string) $data['type_profile_code'] !== (string) $document->type_profile_code) {
                 (new LegalDocumentProfileAssignmentGuard)->assertCanAssign($document);
             }
-            $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
+            if (array_key_exists('primary_project_id', $data)) {
+                $data['primary_project_id'] = $this->authorizeProjectBinding(
+                    $organizationId, $userId, $data['primary_project_id'], 'legal_archive.update', [], $document,
+                );
+            }
             $this->sourceResolver->assertOwnedSource(
                 $organizationId,
                 $data['source_type'] ?? $document->source_type,
@@ -640,8 +697,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         array $data,
         bool $forUpdate = false,
         ?LegalArchiveDocument $currentDocument = null,
-    ): array
-    {
+    ): array {
         $allowed = [
             'primary_project_id',
             'title',
@@ -749,22 +805,106 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         }
     }
 
-    private function assertProjectBelongsToOrganization(int $organizationId, mixed $projectId): void
+    private function authorizeProjectBinding(
+        int $organizationId,
+        ?int $userId,
+        mixed $rawProjectId,
+        ?string $permission,
+        array $additionalPermissions = [],
+        ?LegalArchiveDocument $sourceDocument = null,
+    ): ?int {
+        $projectId = null;
+        if ($rawProjectId !== null) {
+            $projectId = is_int($rawProjectId) || is_string($rawProjectId)
+                ? filter_var($rawProjectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) : false;
+            if (! is_int($projectId)) {
+                throw $this->projectNotAvailable();
+            }
+        }
+        $project = $projectId === null ? null : Project::query()->useWritePdo()
+            ->whereKey($projectId)->accessibleByOrganization($organizationId)->first();
+        if ($projectId !== null && ! $project instanceof Project) {
+            throw $this->projectNotAvailable();
+        }
+        if ($userId === null && $additionalPermissions === []) {
+            return $projectId;
+        }
+        $actor = $this->currentActor($organizationId, $userId);
+        if ($sourceDocument !== null) {
+            if ($sourceDocument->primary_project_id !== null) {
+                $sourceProject = Project::query()->useWritePdo()->find($sourceDocument->primary_project_id);
+                $this->authorizeActorProject($actor, $sourceProject, $organizationId);
+            }
+            $this->access->authorizePermission($actor, $sourceDocument, 'legal_archive.update');
+        }
+        if ($project instanceof Project) {
+            $this->authorizeActorProject($actor, $project, $organizationId);
+        }
+        $context = ['organization_id' => $organizationId, ...($projectId === null ? [] : ['project_id' => $projectId])];
+        $permissions = $permission === null ? $additionalPermissions : [$permission, ...$additionalPermissions];
+        if ($permissions !== []) {
+            $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+            foreach ($permissions as $requiredPermission) {
+                if (! $authorization->can($actor, $requiredPermission, $context)) {
+                    throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+                }
+            }
+        }
+
+        return $projectId;
+    }
+
+    private function currentActor(int $organizationId, ?int $userId): User
     {
-        if ($projectId === null || $projectId === '') {
-            return;
+        $actor = User::query()->useWritePdo()->whereKey($userId)->where('is_active', true)->first();
+        if (! $actor instanceof User || ! $actor->organizations()->useWritePdo()
+            ->where('organizations.id', $organizationId)->where('organizations.is_active', true)
+            ->wherePivot('is_active', true)->exists()) {
+            throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
+        }
+        $actor->current_organization_id = $organizationId;
+
+        return $actor;
+    }
+
+    private function authorizeCreateReplay(
+        LegalArchiveDocument $document,
+        int $organizationId,
+        ?int $userId,
+        bool $requiresUserPermissions,
+        bool $hasProjectBinding,
+        bool $hasUploadedFile,
+    ): LegalArchiveDocument {
+        if ($requiresUserPermissions || $hasProjectBinding) {
+            $this->authorizeProjectBinding(
+                $organizationId,
+                $userId,
+                $document->primary_project_id,
+                $requiresUserPermissions ? 'legal_archive.create' : null,
+                $requiresUserPermissions && $hasUploadedFile
+                    ? ['legal_archive.files.upload', 'legal_archive.versions.create'] : [],
+            );
+        }
+        if ($requiresUserPermissions) {
+            $this->access->authorizePermission($this->currentActor($organizationId, $userId), $document, 'legal_archive.view');
         }
 
-        $projectExists = Project::query()
-            ->whereKey((int) $projectId)
-            ->accessibleByOrganization($organizationId)
-            ->exists();
+        return $this->assertReplayState($document);
+    }
 
-        if (! $projectExists) {
-            throw ValidationException::withMessages([
-                'primary_project_id' => [trans_message('legal_archive.messages.project_not_available')],
-            ]);
+    private function authorizeActorProject(User $actor, ?Project $project, int $organizationId): void
+    {
+        if (! $project instanceof Project || ! app(UserProjectAccessService::class)->canAccessCurrentOrganizationProject($actor, $project)) {
+            throw new AuthorizationException(trans_message('legal_archive.messages.document_not_found'));
         }
+        AuthorizationContext::getProjectContext((int) $project->id, $organizationId);
+    }
+
+    private function projectNotAvailable(): ValidationException
+    {
+        return ValidationException::withMessages([
+            'primary_project_id' => [trans_message('legal_archive.messages.project_not_available')],
+        ]);
     }
 
     private function sourceCreateIdentity(
@@ -789,7 +929,9 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         ?int $userId,
         ?string $operationKey,
         string $requestFingerprint,
-        bool $lockForUpdate,
+        bool $requiresUserPermissions,
+        bool $hasProjectBinding,
+        bool $hasUploadedFile,
     ): ?LegalArchiveDocument {
         if ($identity === null) {
             if ($operationKey === null || $operationKey === '') {
@@ -801,9 +943,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 ->where('created_by_user_id', $userId)
                 ->whereNull('source_type')
                 ->where('create_operation_key', $operationKey);
-            if ($lockForUpdate) {
-                $manualQuery->lockForUpdate();
-            }
+            $manualQuery->lockForUpdate();
             $manual = $manualQuery->first();
             if (! $manual instanceof LegalArchiveDocument) {
                 return null;
@@ -816,7 +956,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                 $this->sourceIdentityConflict();
             }
 
-            return $this->assertReplayState($manual);
+            return $this->authorizeCreateReplay($manual, $organizationId, $userId, $requiresUserPermissions, $hasProjectBinding, $hasUploadedFile);
         }
 
         $sourceQuery = LegalArchiveDocument::withTrashed()
@@ -831,10 +971,8 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         } else {
             $commandQuery->where('created_by_user_id', $identity->actorId);
         }
-        if ($lockForUpdate) {
-            $sourceQuery->lockForUpdate();
-            $commandQuery->lockForUpdate();
-        }
+        $sourceQuery->lockForUpdate();
+        $commandQuery->lockForUpdate();
         $sourceDocument = $sourceQuery->first();
         $commandDocument = $commandQuery->first();
 
@@ -853,7 +991,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             $this->sourceIdentityConflict();
         }
 
-        return $this->assertReplayState($sourceDocument);
+        return $this->authorizeCreateReplay($sourceDocument, $organizationId, $userId, $requiresUserPermissions, $hasProjectBinding, $hasUploadedFile);
     }
 
     private function retryCreateAfterUniqueCollision(
@@ -865,28 +1003,33 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         ?UploadedFile $file,
         ?string $operationKey,
         string $requestFingerprint,
+        bool $requiresUserPermissions,
     ): LegalArchiveDocument {
         $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
         if (! in_array($sqlState, ['23000', '23505'], true)) {
             throw $exception;
         }
 
-        $canonical = $this->resolveSourceCreateReplay(
+        $canonical = DB::transaction(fn (): ?LegalArchiveDocument => $this->resolveSourceCreateReplay(
             $identity,
             $organizationId,
             $userId,
             $operationKey,
             $requestFingerprint,
-            false,
-        );
+            $requiresUserPermissions,
+            array_key_exists('primary_project_id', $data),
+            $file instanceof UploadedFile,
+        ));
         if (! $canonical instanceof LegalArchiveDocument) {
             throw $exception;
         }
         if ((string) $canonical->source_create_status === 'completed') {
-            return $this->findForOrganization($organizationId, (int) $canonical->id) ?? $canonical;
+            return $requiresUserPermissions
+                ? $this->findForCreateResponse($organizationId, (int) $userId, (int) $canonical->id)
+                : ($this->findForOrganization($organizationId, (int) $canonical->id) ?? $canonical);
         }
 
-        return $this->create($organizationId, $userId, $data, $file);
+        return $this->create($organizationId, $userId, $data, $file, $requiresUserPermissions);
     }
 
     private function assertCreateRecoveryInput(

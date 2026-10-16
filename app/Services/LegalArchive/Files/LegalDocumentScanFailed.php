@@ -13,6 +13,7 @@ final class LegalDocumentScanFailed extends RuntimeException
     public function __construct(
         public readonly LegalArchiveDocumentVersion $version,
         Throwable $previous,
+        public readonly bool $requiresView = true,
     ) {
         parent::__construct('legal_document_scan_failed', 0, $previous);
     }

@@ -193,8 +193,8 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertIsString($resource);
         self::assertStringContainsString('instanceof LegalDocumentCreateFailed', $controller);
         self::assertStringContainsString("'operation_result' => 'document_create_failed'", $controller);
-        self::assertStringContainsString("'retry_action' => \$error->retryAction()", $controller);
-        self::assertStringContainsString("'retry_document_id' => (int) \$error->document->id", $controller);
+        self::assertStringContainsString("'retry_action' => \$document->source_create_retry_action ?: 'retry_finalize'", $controller);
+        self::assertStringContainsString("'retry_document_id' => (int) \$document->id", $controller);
         self::assertStringContainsString("'source_create_status' => \$this->source_create_status", $resource);
     }
 }

@@ -60,6 +60,7 @@ final class LegalArchiveApiContractTest extends TestCase
         DB::setDefaultConnection('legal_api_contract');
         $this->createSchema();
         $this->authorization = Mockery::mock(AuthorizationService::class);
+        $this->authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $this->authorization->shouldReceive('can')->andReturnUsing(
             fn (User $user, string $permission): bool => $this->permissionAllowed
                 && ! in_array($permission, $this->deniedPermissions, true),
@@ -971,6 +972,7 @@ final class LegalArchiveApiContractTest extends TestCase
         $schema->create('organizations', static function (Blueprint $table): void {
             $table->id();
             $table->string('name');
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
             $table->softDeletes();
         });
