@@ -80,6 +80,7 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('data.request.id', $request->id);
         $response->assertJsonPath('data.payment_order.status', PaymentDocumentStatus::DRAFT->value);
+        self::assertSame(now()->addDays(3)->toDateString(), PaymentDocument::findOrFail($response->json('data.payment_order.id'))->scheduled_at->toDateString());
 
         $this->assertDatabaseHas('payment_documents', [
             'source_id' => $request->id,
@@ -147,6 +148,152 @@ class PaymentRequestControllerWorkflowTest extends TestCase
                 'currency' => $request->currency,
             ]);
         }
+    }
+
+    public function test_generic_request_order_inherits_bank_details_and_missing_payment_terms(): void
+    {
+        foreach (['omitted', 'matching', 'explicit_terms'] as $scenario) {
+            $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+            $this->activatePaymentsModule($context->organization->id);
+            $contractor = $this->createContractor($context);
+            $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            $banks = [
+                'bank_account' => '40702810000000000001',
+                'bank_bik' => '044525225',
+                'bank_correspondent_account' => '30101810400000000225',
+                'bank_name' => 'Банк требования',
+            ];
+            $request->update($banks);
+            $payload = [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(),
+                'amount' => 900,
+                'payer_organization_id' => $context->organization->id,
+                'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class,
+                'source_id' => $request->id,
+            ];
+            if ($scenario === 'matching') {
+                $payload += $banks;
+            }
+            if ($scenario === 'explicit_terms') {
+                $payload += [
+                    'due_date' => now()->addDays(9)->toDateString(),
+                    'payment_purpose' => 'Уточнённое назначение поручения',
+                ];
+            }
+
+            $created = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
+            $order = PaymentDocument::findOrFail($created->json('data.id'));
+            foreach ($banks as $field => $value) {
+                self::assertSame($value, $order->{$field}, $scenario.':'.$field);
+            }
+            self::assertSame($payload['due_date'] ?? $request->due_date->toDateString(), $order->due_date->toDateString());
+            self::assertSame($payload['payment_purpose'] ?? $request->payment_purpose, $order->payment_purpose);
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+                ->assertOk()->assertJsonPath('data.payment_order.id', $order->id);
+            self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                ->where('source_id', $request->id)->count());
+            if ($scenario === 'omitted') {
+                $this->withHeaders($context->authHeaders())
+                    ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['bank_account' => '40702810000000000002'])
+                    ->assertUnprocessable();
+                self::assertSame($banks['bank_account'], $order->fresh()->bank_account);
+            }
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_generic_request_order_cannot_replace_approved_bank_details(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $request->update([
+            'bank_account' => '40702810000000000001',
+            'bank_bik' => '044525225',
+            'bank_correspondent_account' => '30101810400000000225',
+            'bank_name' => 'Банк требования',
+        ]);
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(),
+            'amount' => 900,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contractor->id,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ];
+        foreach ([
+            ['bank_account' => '40702810000000000002'],
+            ['bank_bik' => '044525226'],
+            ['bank_correspondent_account' => '30101810400000000226'],
+            ['bank_name' => 'Другой банк'],
+            ['bank_account' => null],
+        ] as $changes) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', $payload + $changes)->assertUnprocessable();
+            self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                ->where('source_id', $request->id)->count());
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_legacy_request_order_with_different_bank_details_cannot_be_reused_or_submitted(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $banks = [
+            'bank_account' => '40702810000000000001',
+            'bank_bik' => '044525225',
+            'bank_correspondent_account' => '30101810400000000225',
+            'bank_name' => 'Банк требования',
+        ];
+        foreach ([
+            ['bank_account' => '40702810000000000002'],
+            ['bank_bik' => '044525226'],
+            ['bank_correspondent_account' => '30101810400000000226'],
+            ['bank_name' => 'Другой банк'],
+            ['bank_account' => null],
+        ] as $changes) {
+            $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            $request->update($banks);
+            $legacy = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::DRAFT);
+            $legacy->update(array_replace($banks, $changes, [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+                'source_type' => PaymentDocument::class,
+                'source_id' => $request->id,
+                'description' => 'Legacy bank details',
+            ]));
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', [
+                    'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                    'document_date' => now()->toDateString(), 'amount' => 900,
+                    'payer_organization_id' => $context->organization->id,
+                    'payee_contractor_id' => $contractor->id,
+                    'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+                ])->assertUnprocessable();
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertUnprocessable();
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/payments/documents/{$legacy->id}", ['description' => 'Changed'])
+                ->assertUnprocessable();
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/documents/{$legacy->id}/submit")->assertUnprocessable();
+            self::assertSame(PaymentDocumentStatus::DRAFT, $legacy->fresh()->status);
+            self::assertSame('Legacy bank details', $legacy->fresh()->description);
+            foreach ($changes as $field => $value) {
+                self::assertSame($value, $legacy->fresh()->{$field});
+            }
+            self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+            self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                ->where('source_id', $request->id)->count());
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
     }
 
     public function test_generic_order_creation_cannot_bypass_request_approval_or_change_its_obligation(): void

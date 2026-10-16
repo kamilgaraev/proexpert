@@ -281,6 +281,14 @@ class PaymentDocumentService
             }
             $data[$field] = $request->{$field};
         }
+        $bankFields = ['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'];
+        foreach ($bankFields as $field) {
+            if (array_key_exists($field, $data) && $data[$field] !== $request->{$field}) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+            $data[$field] = $request->{$field};
+        }
+        $data += ['due_date' => $request->due_date, 'payment_purpose' => $request->payment_purpose];
         $counterpartyId = $this->budgetLimitService->counterpartyId($request);
         if (isset($data['contractor_id']) && (int) $data['contractor_id'] !== $counterpartyId) {
             throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
@@ -315,6 +323,11 @@ class PaymentDocumentService
         if ($existingOrder instanceof PaymentDocument) {
             foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
                 if ((int) $existingOrder->{$field} !== (int) $data[$field]) {
+                    throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                }
+            }
+            foreach ($bankFields as $field) {
+                if ($existingOrder->{$field} !== $data[$field]) {
                     throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                 }
             }

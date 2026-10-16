@@ -242,25 +242,35 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'invoiceable_id' => $contract->id,
             'currency' => 'RUB',
             'due_date' => now()->addDays(3)->toDateString(),
+            'bank_account' => '40702810000000000001',
+            'bank_bik' => '044525225',
         ])->save();
         $this->service()->syncReservation($request->fresh(), $context->user);
 
-        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', [
+        $payload = [
             'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
             'document_date' => now()->toDateString(),
             'due_date' => $request->due_date->toDateString(),
             'amount' => 900,
             'currency' => 'RUB',
             'payment_purpose' => 'Учебное поручение по требованию',
-            'bank_account' => '40702810000000000001',
-            'bank_bik' => '044525225',
             'source_type' => PaymentDocument::class,
             'source_id' => $request->id,
-        ])->assertCreated();
+        ];
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + ['bank_account' => '40702810000000000002'])
+            ->assertUnprocessable();
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
+        ]);
+        self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)->where('source_id', $request->id)->count());
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
         $orderId = $response->json('data.id');
         $this->assertDatabaseHas('payment_documents', [
             'id' => $orderId, 'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
             'budget_article_id' => $budget['article']->id, 'responsibility_center_id' => $budget['center']->id,
+            'bank_account' => $request->bank_account, 'bank_bik' => $request->bank_bik,
         ]);
         $this->assertDatabaseHas('budget_limit_checks', [
             'payment_document_id' => $orderId, 'contract_id' => $contract->id, 'accepted' => true,
