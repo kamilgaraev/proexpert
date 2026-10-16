@@ -58,9 +58,14 @@ final readonly class CompositePublishedReportDefinitionRegistry implements Publi
         $builtinCodes = $this->builtins->publishedCodes();
         $definitions = [];
         foreach ([$this->builtins, $this->database] as $registry) {
-            $published = $registry instanceof PublishedReportDefinitionCatalog ? $registry->publishedDefinitions() : [];
-            if (! $registry instanceof PublishedReportDefinitionCatalog) {
-                foreach ($registry === $this->builtins ? $builtinCodes : $registry->publishedCodes() as $code) { $published[$code] = $registry->published($code); }
+            if ($registry === $this->builtins && ! $this->database instanceof PublishedReportDefinitionCatalog) {
+                $published = [];
+                foreach ($builtinCodes as $code) { $published[$code] = $this->published($code); }
+            } else {
+                $published = $registry instanceof PublishedReportDefinitionCatalog ? $registry->publishedDefinitions() : [];
+                if (! $registry instanceof PublishedReportDefinitionCatalog) {
+                    foreach ($registry === $this->builtins ? $builtinCodes : $registry->publishedCodes() as $code) { $published[$code] = $registry->published($code); }
+                }
             }
             if ($registry === $this->database && array_intersect($builtinCodes, array_keys($published)) !== []) {
                 throw new LogicException('report_published_definition_conflict');

@@ -8,7 +8,10 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use InvalidArgumentException;
 
@@ -86,10 +89,13 @@ final readonly class LaravelReportHttpAuthorizationTargetResolver implements Rep
     {
         $codes = $this->definitions->publishedCodes();
         sort($codes, SORT_STRING);
+        $definitions = $codes !== [] && $this->definitions instanceof PublishedReportDefinitionCatalog
+            ? $this->definitions->publishedDefinitions() : null;
 
         return array_map(
             fn (string $code): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget(
-                $this->definitions->published($code)->payload(),
+                ($definitions === null ? $this->definitions->published($code)
+                    : ($definitions[$code] ?? throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND)))->payload(),
                 ReportOperation::VIEW,
                 null,
             ),

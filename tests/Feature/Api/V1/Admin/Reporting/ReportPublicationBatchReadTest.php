@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin\Reporting;
 
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +13,29 @@ use Tests\TestCase;
 
 final class ReportPublicationBatchReadTest extends TestCase
 {
+    public function test_http_target_catalog_rereads_publications_without_per_builtin_queries(): void
+    {
+        $resolver = app(ReportHttpAuthorizationTargetResolver::class);
+        $previous = null;
+        DB::enableQueryLog();
+        try {
+            foreach ([1, 2] as $read) {
+                DB::flushQueryLog();
+                $targets = $resolver->catalog();
+                self::assertNotEmpty($targets);
+                $publicationQueries = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'report_publications'));
+                self::assertCount(2, $publicationQueries);
+                if ($previous !== null) {
+                    self::assertEquals($previous, $targets);
+                }
+                $previous = $targets;
+            }
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
     public function test_composite_manifest_rereads_empty_database_catalog_without_per_builtin_queries(): void
     {
         $registry = app(ReportDefinitionRegistry::class);
