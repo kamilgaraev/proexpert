@@ -59,6 +59,27 @@ final class AssistantAclQueryCompilerTest extends TestCase
         self::assertFalse($policy->canReadDomain($this->actor, 1, 'projects'));
     }
 
+    public function test_custom_module_source_keeps_stringable_domain_intersection_and_revocation(): void
+    {
+        $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('canCurrent')->andReturnTrue();
+        $module = new class implements \Stringable {
+            public function __toString(): string
+            {
+                return 'project-management';
+            }
+        };
+        $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldNotReceive('getEffectiveModuleSlugsMatching');
+        $modules->shouldReceive('getEffectiveModuleSlugs')->twice()->with(1)->andReturn([$module], []);
+        $policy = new AssistantDataAccessPolicy($authorization,
+            Facade::getFacadeApplication()->make(\App\Services\Project\UserProjectAccessService::class), $modules);
+
+        self::assertTrue($policy->canReadDomain($this->actor, 1, 'projects'));
+        self::assertFalse($policy->canReadDomain($this->actor, 1, 'projects'));
+    }
+
     public function test_purchase_order_parent_accepts_order_read_permission_without_opening_generic_procurement_domain(): void
     {
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);

@@ -501,7 +501,8 @@ final class AssistantDataAccessPolicy
             return false;
         }
         $moduleAlternatives = AssistantExtendedDomainRegistry::values('domainModuleAlternatives')[$domain] ?? [$definition[0]];
-        $modules = $this->currentEffectiveModuleSlugs($user, $organizationId);
+        $candidate = count($moduleAlternatives) === 1 ? reset($moduleAlternatives) : null;
+        $modules = $this->currentEffectiveModuleSlugs($user, $organizationId, is_string($candidate) && $candidate !== '' ? $candidate : null);
         if (! in_array('', $moduleAlternatives, true) && array_intersect($modules, $moduleAlternatives) === []) { return false; }
         if ($definition[1] === [] && (AssistantExtendedDomainRegistry::values('domainEntityPermissionGates')[$domain] ?? false) === true) { return true; }
         foreach ($definition[1] as $permission) {
@@ -545,10 +546,16 @@ final class AssistantDataAccessPolicy
         });
     }
 
-    private function currentEffectiveModuleSlugs(User $user, int $organizationId): array
+    private function currentEffectiveModuleSlugs(User $user, int $organizationId, ?string $candidate = null): array
     {
-        $loadModules = fn (): array => ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))
-            ->getEffectiveModuleSlugs($organizationId);
+        $loadModules = function () use ($organizationId, $candidate): array {
+            $source = $this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class);
+
+            return $candidate !== null && $this->batchIdentity === null && $this->aclCompiler === null
+                && get_class($source) === \App\Services\Entitlements\OrganizationEntitlementService::class
+                ? $source->getEffectiveModuleSlugsMatching($organizationId, $candidate)
+                : $source->getEffectiveModuleSlugs($organizationId);
+        };
 
         $modules = $this->rememberCurrent($user, $organizationId, 'modules', $loadModules);
 
