@@ -19,6 +19,21 @@ comm -23 \
 `retry_after=4200`, один процесс, job timeout 3600 и supervisor timeout 3700:
 `job timeout < supervisor timeout < retry_after`.
 
+## Управление live-флагами через обычный backend deploy
+
+Обычный deploy из `main` читает необязательные GitHub repository variables
+`ESTIMATE_GENERATION_UNIVERSAL_ENABLED`, `ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED`,
+`ESTIMATE_GENERATION_LIVE_QA_ENABLED` и `ESTIMATE_GENERATION_LIVE_QA_RUN_ID`.
+Для трёх boolean-переменных допустимы только точные `true` и `false`. Пустая или
+отсутствующая переменная сохраняет текущее значение production `.env`. Изменения
+проверяются до записи и применяются одним атомарным обновлением; backend services
+пересоздаются после обновления, а release проверяет effective config в API и Horizon.
+
+`ESTIMATE_GENERATION_LIVE_QA_ENABLED=true` требует непустой UUID run ID из переменной
+или уже сохранённого `.env`; deploy не генерирует и не очищает его автоматически.
+Лимит QA остаётся 500 credit units в коде (`EstimatorQaSupplierExpenseGuard`), а
+переменные не включают legacy reconciliation, AI credit enforcement или покупки.
+
 ## Yandex Object Storage: IAM и KMS
 
 Bucket имеет включённые versioning, закрытый публичный доступ, default SSE-KMS и access logs.

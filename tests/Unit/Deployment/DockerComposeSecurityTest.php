@@ -72,7 +72,10 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertIsString($workflow);
         self::assertStringContainsString('YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}', $workflow);
         self::assertStringContainsString('YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}', $workflow);
-        self::assertStringContainsString('envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS', $workflow);
+        self::assertStringContainsString(
+            'YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,ESTIMATE_GENERATION_UNIVERSAL_ENABLED',
+            $workflow,
+        );
         self::assertStringContainsString('upsert_env YOOKASSA_SECRET_KEY "${YOOKASSA_SECRET_KEY}"', $workflow);
         self::assertStringContainsString(
             'upsert_env YOOKASSA_MODE '.PaymentProviderMode::YooKassaTest->value,

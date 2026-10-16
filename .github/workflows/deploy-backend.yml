@@ -21,6 +21,7 @@ on:
       - 'docker-compose.yml'
       - 'docker/**'
       - 'deploy/**'
+      - '.github/scripts/estimator-runtime-flags.sh'
       - 'lang/**'
       - 'monitoring/**'
       - 'public/**'
@@ -393,13 +394,17 @@ jobs:
           YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}
           YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}
           YOOKASSA_TEST_ORGANIZATION_IDS: ${{ secrets.YOOKASSA_TEST_ORGANIZATION_IDS }}
+          ESTIMATE_GENERATION_UNIVERSAL_ENABLED: ${{ vars.ESTIMATE_GENERATION_UNIVERSAL_ENABLED }}
+          ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED: ${{ vars.ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED }}
+          ESTIMATE_GENERATION_LIVE_QA_ENABLED: ${{ vars.ESTIMATE_GENERATION_LIVE_QA_ENABLED }}
+          ESTIMATE_GENERATION_LIVE_QA_RUN_ID: ${{ vars.ESTIMATE_GENERATION_LIVE_QA_RUN_ID }}
         with:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           timeout: 3h
           command_timeout: 3h
-          envs: BACKEND_HELPER_SHA256,MANAGED_MODE,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
+          envs: BACKEND_HELPER_SHA256,MANAGED_MODE,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,ESTIMATE_GENERATION_UNIVERSAL_ENABLED,ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED,ESTIMATE_GENERATION_LIVE_QA_ENABLED,ESTIMATE_GENERATION_LIVE_QA_RUN_ID,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
           script: |
             set -euo pipefail
             umask 077
@@ -421,11 +426,12 @@ jobs:
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
             source .github/scripts/atomic-env.sh
+            source .github/scripts/estimator-runtime-flags.sh
             test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${BACKEND_HELPER_SHA256}"
             source deploy/backend-runtime-allowlist.sh
             BACKEND_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
             BACKEND_STOP_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
-            trap cleanup_deployment_temporary_files EXIT
+            trap 'cleanup_deployment_temporary_files; cleanup_estimator_runtime_flags' EXIT
             ensure_immutable_audit_writer_secret() {
               local current_secret=''
               local secret_lines=0
@@ -730,6 +736,7 @@ jobs:
             docker pull "${IMAGE_REF}"
             verify_backend_release_image "${IMAGE_REF}" "${RELEASE_SHA}"
             assert_public_core_inactive_for_backend_release
+            validate_estimator_runtime_flags
             initialize_secure_env
 
             if [ -n "${YOOKASSA_SHOP_ID:-}" ] && [ -n "${YOOKASSA_SECRET_KEY:-}" ]; then
@@ -793,7 +800,38 @@ jobs:
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             assert_public_core_inactive_for_backend_release
+            apply_estimator_runtime_flags
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}
+            assert_estimator_runtime_config() {
+              local service="$1"
+              docker compose exec -T \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_UNIVERSAL_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED}" \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED}" \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_ENABLED}" \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_PRESENT=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT}" \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID}" \
+                "${service}" php -r '
+                require "vendor/autoload.php";
+                $app = require "bootstrap/app.php";
+                $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+                foreach ([
+                  ["MOST_EXPECTED_ESTIMATE_GENERATION_UNIVERSAL_ENABLED", "estimate-generation.universal_enabled"],
+                  ["MOST_EXPECTED_ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED", "estimate-generation.credits.enabled"],
+                  ["MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_ENABLED", "estimate-generation.live_qa.enabled"],
+                ] as [$environmentKey, $configKey]) {
+                  $raw = getenv($environmentKey);
+                  $expected = filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                  if ($expected === null || config($configKey) !== $expected) {
+                    exit(1);
+                  }
+                }
+                $expectedRunIdPresent = getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_PRESENT") === "1";
+                $expectedRunId = $expectedRunIdPresent ? getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID") : null;
+                exit(config("estimate-generation.live_qa.run_id") === $expectedRunId ? 0 : 1);
+              '
+            }
+            assert_estimator_runtime_config api
+            assert_estimator_runtime_config horizon
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'

@@ -21,7 +21,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
             'docker pull "${IMAGE_REF}"',
             'ensure_immutable_audit_writer_secret',
             'systemctl stop nginx',
-            'docker compose stop --timeout 30 ${BACKEND_SERVICES}',
+            'docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}',
             'assert_legacy_runtime_stopped',
             'php artisan migrate:safe --force',
             'assert_legacy_runtime_stopped',
@@ -33,7 +33,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
             'assert_legacy_runtime_stopped',
             'php artisan immutable-audit:repair-invariants',
             'php artisan immutable-audit:writer-readiness',
-            'docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}',
+            'MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}',
             'curl -fsS http://localhost:8000/ready',
             'systemctl start nginx',
         ];
@@ -65,43 +65,44 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringNotContainsString('set -x', $workflow);
         self::assertStringNotContainsString('sed -i', $workflow);
         self::assertStringContainsString('source .github/scripts/atomic-env.sh', $workflow);
-        self::assertStringContainsString('trap cleanup_deployment_temporary_files EXIT', $workflow);
+        self::assertStringContainsString('source .github/scripts/estimator-runtime-flags.sh', $workflow);
+        self::assertStringContainsString("trap 'cleanup_deployment_temporary_files; cleanup_estimator_runtime_flags' EXIT", $workflow);
     }
 
     public function test_atomic_env_replacement_hardens_mode_preserves_owner_content_and_emits_nothing(): void
     {
         $root = dirname(__DIR__, 3);
-        $directory = sys_get_temp_dir().'/most-env-'.bin2hex(random_bytes(6));
-        self::assertTrue(mkdir($directory, 0777, true));
-        $env = $directory.'/.env';
-        file_put_contents($env, "APP_NAME=MOST\nKEEP=value\nSECRET=original\n");
-        chmod($env, 0644);
-        $originalUid = fileowner($env);
-        $script = $directory.'/atomic-env.sh';
+        $script = sys_get_temp_dir().'/most-atomic-env-'.bin2hex(random_bytes(6)).'.sh';
         $helper = file_get_contents($root.'/.github/scripts/atomic-env.sh');
         self::assertIsString($helper);
-        file_put_contents($script, str_replace("\r\n", "\n", $helper));
-        if (PHP_OS_FAMILY === 'Windows') {
-            $env = $this->wslPath($env);
-            $script = $this->wslPath($script);
-        }
-        $process = new Process([
-            'bash', '-c',
-            'ENV_FILE='.escapeshellarg($env).'; source '.escapeshellarg($script).'; initialize_secure_env; upsert_env SECRET replacement; remove_env_key MISSING; assert_env_security',
-        ]);
+        $command = <<<'BASH'
+set -eu
+directory=$(mktemp -d)
+trap 'rm -rf "$directory"' EXIT
+export ENV_FILE="$directory/.env"
+printf "APP_NAME=MOST\nKEEP=value\nSECRET=original\n" > "$ENV_FILE"
+chmod 644 "$ENV_FILE"
+original_uid=$(stat -c %u "$ENV_FILE")
+source __HELPER__
+initialize_secure_env
+upsert_env SECRET replacement
+remove_env_key MISSING
+assert_env_security
+printf '{"original_uid":"%s","final_uid":"%s","mode":"%s","content_b64":"%s"}\n' "$original_uid" "$(stat -c %u "$ENV_FILE")" "$(stat -c %a "$ENV_FILE")" "$(base64 -w0 "$ENV_FILE")"
+BASH;
+        $helperPath = PHP_OS_FAMILY === 'Windows' ? $this->wslPath($root.'/.github/scripts/atomic-env.sh') : $root.'/.github/scripts/atomic-env.sh';
+        $command = str_replace('__HELPER__', "'".$helperPath."'", $command);
+        file_put_contents($script, $command);
+        $scriptPath = PHP_OS_FAMILY === 'Windows' ? $this->wslPath($script) : $script;
+        $process = new Process(['bash', $scriptPath]);
         $process->run();
+        unlink($script);
 
         self::assertTrue($process->isSuccessful(), $process->getErrorOutput());
-        self::assertSame('', $process->getOutput());
-        $nativeEnv = $directory.'/.env';
-        if (PHP_OS_FAMILY !== 'Windows') {
-            self::assertSame(0600, fileperms($nativeEnv) & 0777);
-        }
-        self::assertSame($originalUid, fileowner($nativeEnv));
-        self::assertSame("APP_NAME=MOST\nKEEP=value\nSECRET=replacement\n", file_get_contents($nativeEnv));
-        unlink($nativeEnv);
-        unlink($directory.'/atomic-env.sh');
-        rmdir($directory);
+        $result = json_decode(trim($process->getOutput()), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame((string) $result['original_uid'], (string) $result['final_uid']);
+        self::assertSame('600', $result['mode']);
+        self::assertSame(base64_encode("APP_NAME=MOST\nKEEP=value\nSECRET=replacement\n"), $result['content_b64']);
     }
 
     public function test_atomic_env_helper_never_overwrites_the_existing_inode(): void
@@ -128,7 +129,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringContainsString('trap deployment_failed ERR', $workflow);
         self::assertStringContainsString('deployment_failed()', $workflow);
         self::assertStringContainsString('systemctl stop nginx', $workflow);
-        self::assertStringContainsString('docker compose stop --timeout 30 ${BACKEND_SERVICES}', $workflow);
+        self::assertStringContainsString('docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}', $workflow);
         self::assertStringNotContainsString('continue-on-error:', $workflow);
         self::assertStringNotContainsString('rollback', strtolower($workflow));
     }
