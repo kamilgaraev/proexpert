@@ -53,12 +53,11 @@ final class MobileProcurementService
         private readonly ProcurementApprovalService $approvalService,
         private readonly PurchaseOrderService $purchaseOrderService,
         private readonly ProcurementAuditService $auditService
-    ) {
-    }
+    ) {}
 
     public function createPurchaseRequest(int $organizationId, User $user, array $payload): PurchaseRequest
     {
-        if (!$this->authorizationService->can($user, 'procurement.purchase_requests.create', ['organization_id' => $organizationId])) {
+        if (! $this->authorizationService->can($user, 'procurement.purchase_requests.create', ['organization_id' => $organizationId])) {
             throw new DomainException(trans_message('procurement.mobile.errors.permission_denied'));
         }
 
@@ -67,31 +66,41 @@ final class MobileProcurementService
 
     public function summary(int $organizationId, array $filters, User $user): array
     {
-        $requestQuery = $this->purchaseRequestQuery($organizationId, $filters);
-        $orderQuery = $this->purchaseOrderQuery($organizationId, $filters);
-        $approvalQuery = $this->approvalQuery($organizationId, ['status' => ProcurementApprovalStatusEnum::PENDING->value]);
+        $context = ['organization_id' => $organizationId];
+        $canViewAll = $this->authorizationService->can($user, 'procurement.view', $context);
+        $requestQuery = $canViewAll || $this->authorizationService->can($user, 'procurement.purchase_requests.view', $context)
+            ? $this->purchaseRequestQuery($organizationId, $filters)
+            : null;
+        $canViewOrders = $canViewAll || $this->authorizationService->can($user, 'procurement.purchase_orders.view', $context);
+        $orderQuery = $canViewOrders
+            ? $this->purchaseOrderQuery($organizationId, $filters)
+            : null;
 
-        $orders = (clone $orderQuery)
+        $orders = $orderQuery === null ? new EloquentCollection : (clone $orderQuery)
             ->orderByDesc('updated_at')
             ->limit(10)
             ->get();
-        $requests = (clone $requestQuery)
+        $requests = $requestQuery === null ? new EloquentCollection : (clone $requestQuery)
             ->orderByDesc('updated_at')
             ->limit(10)
             ->get();
-        $assignedApprovals = $this->decorateApprovals(
-            (clone $approvalQuery)->orderByDesc('requested_at')->limit(20)->get(),
-            $user,
-            $organizationId
-        )->filter(static fn (ProcurementApproval $approval): bool => (bool) $approval->getAttribute('can_resolve'))
-            ->values();
+        $assignedApprovals = new EloquentCollection;
+        if ($this->authorizationService->can($user, 'procurement.approvals.view', $context)) {
+            $assignedApprovals = $this->decorateApprovals(
+                $this->approvalQuery($organizationId, ['status' => ProcurementApprovalStatusEnum::PENDING->value])
+                    ->orderByDesc('requested_at')->limit(20)->get(),
+                $user,
+                $organizationId
+            )->filter(static fn (ProcurementApproval $approval): bool => (bool) $approval->getAttribute('can_resolve'))
+                ->values();
+        }
 
         return [
             'summary' => [
-                'purchase_requests_count' => (int) (clone $requestQuery)->count(),
-                'pending_requests_count' => (int) (clone $requestQuery)->where('status', PurchaseRequestStatusEnum::PENDING->value)->count(),
-                'purchase_orders_count' => (int) (clone $orderQuery)->count(),
-                'receivable_orders_count' => (int) (clone $orderQuery)->whereIn('status', [
+                'purchase_requests_count' => $requestQuery === null ? 0 : (int) (clone $requestQuery)->count(),
+                'pending_requests_count' => $requestQuery === null ? 0 : (int) (clone $requestQuery)->where('status', PurchaseRequestStatusEnum::PENDING->value)->count(),
+                'purchase_orders_count' => $orderQuery === null ? 0 : (int) (clone $orderQuery)->count(),
+                'receivable_orders_count' => $orderQuery === null ? 0 : (int) (clone $orderQuery)->whereIn('status', [
                     PurchaseOrderStatusEnum::CONFIRMED->value,
                     PurchaseOrderStatusEnum::IN_DELIVERY->value,
                     PurchaseOrderStatusEnum::PARTIALLY_DELIVERED->value,
@@ -99,10 +108,19 @@ final class MobileProcurementService
                 'pending_approvals_count' => $assignedApprovals->count(),
             ],
             'purchase_requests' => $requests,
+            'purchase_request_order_access' => $canViewOrders,
             'purchase_orders' => $orders,
             'assigned_approvals' => $assignedApprovals,
             'warehouses' => $this->activeWarehouses($organizationId),
         ];
+    }
+
+    public function canViewPurchaseOrders(int $organizationId, User $user): bool
+    {
+        $context = ['organization_id' => $organizationId];
+
+        return $this->authorizationService->can($user, 'procurement.view', $context)
+            || $this->authorizationService->can($user, 'procurement.purchase_orders.view', $context);
     }
 
     public function paginatePurchaseRequests(int $organizationId, array $filters, int $perPage): LengthAwarePaginator
@@ -119,7 +137,7 @@ final class MobileProcurementService
             ->whereKey($purchaseRequestId)
             ->first();
 
-        if (!$purchaseRequest instanceof PurchaseRequest) {
+        if (! $purchaseRequest instanceof PurchaseRequest) {
             throw new DomainException(trans_message('procurement.mobile.errors.purchase_request_not_found'));
         }
 
@@ -140,7 +158,7 @@ final class MobileProcurementService
             ->whereKey($purchaseOrderId)
             ->first();
 
-        if (!$purchaseOrder instanceof PurchaseOrder) {
+        if (! $purchaseOrder instanceof PurchaseOrder) {
             throw new DomainException(trans_message('procurement.mobile.errors.purchase_order_not_found'));
         }
 
@@ -321,7 +339,7 @@ final class MobileProcurementService
             ->whereKey($approvalId)
             ->first();
 
-        if (!$approval instanceof ProcurementApproval) {
+        if (! $approval instanceof ProcurementApproval) {
             throw new DomainException(trans_message('procurement.mobile.errors.approval_not_found'));
         }
 

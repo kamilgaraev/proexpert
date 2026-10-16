@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Controllers\Mobile;
 
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
+use App\BusinessModules\Features\Procurement\Http\Requests\StoreMobilePurchaseRequestRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobileProcurementApprovalResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\MobilePurchaseRequestResource;
-use App\BusinessModules\Features\Procurement\Http\Requests\StoreMobilePurchaseRequestRequest;
 use App\BusinessModules\Features\Procurement\Services\MobileProcurementService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
@@ -51,7 +51,8 @@ final class ProcurementController extends Controller
                 $user
             );
 
-            $summary['purchase_requests'] = MobilePurchaseRequestResource::collection($summary['purchase_requests'])->resolve();
+            $summary['purchase_requests'] = $this->purchaseRequestItems($request, $summary['purchase_requests'], $summary['purchase_request_order_access']);
+            unset($summary['purchase_request_order_access']);
             $summary['purchase_orders'] = MobilePurchaseOrderResource::collection($summary['purchase_orders'])->resolve();
             $summary['assigned_approvals'] = MobileProcurementApprovalResource::collection($summary['assigned_approvals'])->resolve();
 
@@ -85,7 +86,7 @@ final class ProcurementController extends Controller
             );
 
             return MobileResponse::success([
-                'items' => MobilePurchaseRequestResource::collection($paginator->items())->resolve(),
+                'items' => $this->purchaseRequestItems($request, $paginator->items(), $this->service->canViewPurchaseOrders($this->organizationId($request), $this->mobileUser($request))),
                 'meta' => $this->meta($paginator),
             ]);
         } catch (ValidationException $exception) {
@@ -104,7 +105,8 @@ final class ProcurementController extends Controller
         try {
             return MobileResponse::success(
                 new MobilePurchaseRequestResource(
-                    $this->service->findPurchaseRequest($this->organizationId($request), $purchaseRequest)
+                    $this->service->findPurchaseRequest($this->organizationId($request), $purchaseRequest),
+                    $this->service->canViewPurchaseOrders($this->organizationId($request), $this->mobileUser($request))
                 )
             );
         } catch (DomainException $exception) {
@@ -124,7 +126,7 @@ final class ProcurementController extends Controller
             );
 
             return MobileResponse::success(
-                ['item' => (new MobilePurchaseRequestResource($purchaseRequest))->resolve($request)],
+                ['item' => (new MobilePurchaseRequestResource($purchaseRequest, $this->service->canViewPurchaseOrders($this->organizationId($request), $this->mobileUser($request))))->resolve($request)],
                 trans_message('procurement.purchase_requests.created'),
                 201
             );
@@ -352,6 +354,16 @@ final class ProcurementController extends Controller
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'comment_order');
         }
+    }
+
+    private function purchaseRequestItems(Request $request, iterable $purchaseRequests, bool $canViewOrders): array
+    {
+        $items = [];
+        foreach ($purchaseRequests as $purchaseRequest) {
+            $items[] = (new MobilePurchaseRequestResource($purchaseRequest, $canViewOrders))->resolve($request);
+        }
+
+        return $items;
     }
 
     private function ensureAnyPermission(Request $request, array $permissions): ?JsonResponse

@@ -12,6 +12,11 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 final class MobilePurchaseRequestResource extends JsonResource
 {
+    public function __construct(mixed $resource, private readonly bool $canViewOrders = false)
+    {
+        parent::__construct($resource);
+    }
+
     public function toArray(Request $request): array
     {
         /** @var PurchaseRequest $purchaseRequest */
@@ -33,7 +38,7 @@ final class MobilePurchaseRequestResource extends JsonResource
             'statistics' => [
                 'lines_count' => (int) ($purchaseRequest->lines_count ?? $purchaseRequest->lines->count()),
                 'supplier_requests_count' => (int) ($purchaseRequest->supplier_requests_count ?? 0),
-                'purchase_orders_count' => (int) ($purchaseRequest->purchase_orders_count ?? $purchaseRequest->purchaseOrders->count()),
+                'purchase_orders_count' => $this->canViewOrders ? (int) ($purchaseRequest->purchase_orders_count ?? $purchaseRequest->purchaseOrders->count()) : 0,
             ],
             'site_request' => $siteRequest ? [
                 'id' => $siteRequest->id,
@@ -43,7 +48,7 @@ final class MobilePurchaseRequestResource extends JsonResource
                 'required_date' => $siteRequest->required_date?->toDateString(),
             ] : null,
             'lines' => $this->lines($purchaseRequest),
-            'purchase_orders' => $this->orders($purchaseRequest),
+            'purchase_orders' => $this->canViewOrders ? $this->orders($purchaseRequest) : [],
             'created_at' => $purchaseRequest->created_at?->toIso8601String(),
             'updated_at' => $purchaseRequest->updated_at?->toIso8601String(),
         ];
@@ -58,12 +63,12 @@ final class MobilePurchaseRequestResource extends JsonResource
 
     private function statusLabel(PurchaseRequest $purchaseRequest): string
     {
-        return trans_message('procurement.mobile.purchase_request_statuses.' . $this->statusValue($purchaseRequest));
+        return trans_message('procurement.mobile.purchase_request_statuses.'.$this->statusValue($purchaseRequest));
     }
 
     private function lines(PurchaseRequest $purchaseRequest): array
     {
-        if (!$purchaseRequest->relationLoaded('lines')) {
+        if (! $purchaseRequest->relationLoaded('lines')) {
             return [];
         }
 
@@ -83,7 +88,7 @@ final class MobilePurchaseRequestResource extends JsonResource
 
     private function orders(PurchaseRequest $purchaseRequest): array
     {
-        if (!$purchaseRequest->relationLoaded('purchaseOrders')) {
+        if (! $purchaseRequest->relationLoaded('purchaseOrders')) {
             return [];
         }
 
