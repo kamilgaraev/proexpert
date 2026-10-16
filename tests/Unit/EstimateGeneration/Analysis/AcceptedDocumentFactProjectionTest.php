@@ -13,11 +13,14 @@ final class AcceptedDocumentFactProjectionTest extends TestCase
 {
     public function test_room_dimensions_preserve_parameter_value_and_unit_without_becoming_area(): void
     {
+        $translations = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
         foreach (['length', 'width', 'height'] as $parameter) {
             $result = $this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], 'mm', 'room.bedroom-1'));
             self::assertNotNull($result);
             self::assertSame('dimension', $result['fact_type']);
             self::assertSame($parameter, $result['label_key']);
+            self::assertArrayHasKey($result['label_key'], $translations['accepted_fact_projection']['labels']);
+            self::assertMatchesRegularExpression('/[А-Яа-яЁё]/u', $translations['accepted_fact_projection']['labels'][$result['label_key']]);
             self::assertSame('2920', $result['value_number']);
             self::assertSame('mm', $result['unit']);
             self::assertNull($this->project($this->claim($parameter, ['type' => 'number', 'data' => '2920'], null, 'room.bedroom-1')));
