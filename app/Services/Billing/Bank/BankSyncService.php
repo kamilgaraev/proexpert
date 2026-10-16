@@ -141,7 +141,7 @@ final class BankSyncService
                 if (! is_array($transaction)) {
                     throw new RuntimeException('tochka_transaction_invalid');
                 }
-                $this->settlement->ingest($transaction);
+                $this->settlement->ingestFromStatement($transaction, $statement->account_id);
             } catch (Throwable $exception) {
                 $failed = true;
                 $failureCode = in_array($exception->getMessage(), ['bank_amount_invalid', 'tochka_transaction_invalid', 'tochka_transaction_account_mismatch'], true)

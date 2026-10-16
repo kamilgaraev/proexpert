@@ -18,6 +18,22 @@ final class BankSettlementService
 {
     public function ingest(array $transaction): ?CommercialBankOperation
     {
+        return $this->ingestTransaction($transaction, null);
+    }
+
+    public function ingestFromStatement(array $transaction, string $accountId): ?CommercialBankOperation
+    {
+        if ($accountId !== (string) config('bank_billing.account_id')
+            || preg_match('/\A\d{20}\/\d{9}\z/', $accountId) !== 1
+            || substr($accountId, 0, 20) !== (string) config('bank_billing.seller_account')) {
+            throw new InvalidArgumentException('tochka_statement_account_mismatch');
+        }
+
+        return $this->ingestTransaction($transaction, $accountId);
+    }
+
+    private function ingestTransaction(array $transaction, ?string $statementAccountId): ?CommercialBankOperation
+    {
         if (($transaction['status'] ?? '') !== 'Booked') {
             return null;
         }
@@ -55,8 +71,11 @@ final class BankSettlementService
             'recipient_account' => $this->digits($transaction['CreditorAccount']['identification'] ?? null, 32),
         ];
         $ours = (string) config('bank_billing.seller_account');
+        $accountValue = $transaction[$direction === 'credit' ? 'CreditorAccount' : 'DebtorAccount']['identification'] ?? null;
+        if ($statementAccountId !== null && ($accountValue === null || (is_string($accountValue) && trim($accountValue) === ''))) {
+            $data[$direction === 'credit' ? 'recipient_account' : 'payer_account'] = $ours;
+        }
         if (($direction === 'credit' ? $data['recipient_account'] : $data['payer_account']) !== $ours) {
-            $accountValue = $transaction[$direction === 'credit' ? 'CreditorAccount' : 'DebtorAccount']['identification'] ?? null;
             $accountText = is_string($accountValue) ? $accountValue : '';
             \Illuminate\Support\Facades\Log::warning('Bank transaction account rejected.', [
                 'account_shape' => $accountText === '' ? 'missing' : (preg_match('/\A\d{20}\/\d{9}\z/', $accountText) ? 'account_id'
