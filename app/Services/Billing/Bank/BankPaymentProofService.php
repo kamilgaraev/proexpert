@@ -51,9 +51,7 @@ final class BankPaymentProofService
                     return $existing;
                 }
                 if (! $this->canSubmit($invoice) || (int) $invoice->order->commercial_account_id !== (int) $account->id
-                    || CommercialBankPaymentProof::query()->where('organization_id', $organizationId)->where(function ($query) use ($hash): void {
-                        $query->whereIn('status', ['pending', 'review'])->orWhere('sha256', $hash);
-                    })->exists()) {
+                    || CommercialBankPaymentProof::query()->where('organization_id', $organizationId)->where('sha256', $hash)->exists()) {
                     throw new InvalidArgumentException(trans_message('bank_billing.proof_unavailable'));
                 }
                 $localNow = CarbonImmutable::now('Europe/Moscow');
@@ -80,7 +78,7 @@ final class BankPaymentProofService
                     'package_slugs' => $packages, 'resource_addons' => $order->selected_resource_addons ?? [],
                     'submitted_at' => $now, 'temporary_expires_at' => $deadline,
                 ]);
-            });
+            }, 1);
         } catch (Throwable $exception) {
             if ($path !== null) {
                 try {
@@ -96,11 +94,19 @@ final class BankPaymentProofService
         return $proof;
     }
 
-    public function canSubmit(CommercialBankInvoice $invoice): bool
+    public function canSubmit(CommercialBankInvoice $invoice, ?bool $historyRestricted = null): bool
     {
         return $invoice->paid_at === null && in_array($invoice->status, ['awaiting_payment', 'partially_paid'], true)
             && $invoice->expires_at->isFuture() && $invoice->paid_minor < $invoice->amount_minor
-            && in_array($invoice->order->kind, ['purchase', 'renewal'], true) && $invoice->order->status->value === 'pending_payment';
+            && in_array($invoice->order->kind, ['purchase', 'renewal'], true) && $invoice->order->status->value === 'pending_payment'
+            && ! ($historyRestricted ?? $this->historyRestricted((int) $invoice->organization_id));
+    }
+
+    public function historyRestricted(int $organizationId): bool
+    {
+        return CommercialBankPaymentProof::query()->where('organization_id', $organizationId)->where(function ($query): void {
+            $query->whereIn('status', ['pending', 'review'])->orWhere('submitted_at', '>', now()->subDays(30));
+        })->exists();
     }
 
     public function payload(?CommercialBankPaymentProof $proof, CommercialBankInvoice $invoice): ?array

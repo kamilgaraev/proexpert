@@ -155,14 +155,14 @@ final class BankInvoiceService
         }
     }
 
-    public function payload(CommercialBankInvoice $invoice): array
+    public function payload(CommercialBankInvoice $invoice, ?bool $proofHistoryRestricted = null): array
     {
         $invoice->loadMissing(['order', 'documents', 'refunds', 'operations', 'paymentProof']);
         $snapshot = $invoice->snapshot;
 
         return [
             'payment_proof' => app(BankPaymentProofService::class)->payload($invoice->paymentProof, $invoice),
-            'payment_proof_available' => $invoice->paymentProof === null && app(BankPaymentProofService::class)->canSubmit($invoice),
+            'payment_proof_available' => $invoice->paymentProof === null && app(BankPaymentProofService::class)->canSubmit($invoice, $proofHistoryRestricted),
             'id' => $invoice->public_id, 'number' => $invoice->number, 'order_id' => $invoice->order->public_id,
             'status' => $invoice->status, 'amount_minor' => $invoice->amount_minor,
             'paid_minor' => $invoice->paid_minor, 'refunded_minor' => $invoice->refunded_minor,

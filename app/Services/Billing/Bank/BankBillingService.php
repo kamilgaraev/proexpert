@@ -42,7 +42,9 @@ final class BankBillingService
         $paginator = CommercialBankInvoice::query()->where('organization_id', $organizationId)
             ->with(['order', 'documents', 'refunds', 'operations', 'paymentProof'])->orderByDesc('id')->paginate($perPage, ['*'], 'page', $page);
 
-        return ['items' => $paginator->getCollection()->map(fn ($invoice) => $this->invoices->payload($invoice))->all(),
+        $proofHistoryRestricted = app(BankPaymentProofService::class)->historyRestricted($organizationId);
+
+        return ['items' => $paginator->getCollection()->map(fn ($invoice) => $this->invoices->payload($invoice, $proofHistoryRestricted))->all(),
             'meta' => ['current_page' => $paginator->currentPage(), 'per_page' => $paginator->perPage(),
                 'last_page' => $paginator->lastPage(), 'total' => $paginator->total()]];
     }

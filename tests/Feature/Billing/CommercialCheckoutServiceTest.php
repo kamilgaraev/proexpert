@@ -836,6 +836,54 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame($before, $quotas->getEffectiveLimits($this->organization)['storage_gb']);
     }
 
+    public function test_bank_payment_proof_cancellation_cannot_restart_temporary_access(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->fakePaymentProofStorage();
+        $service = app(\App\Services\Billing\Bank\BankPaymentProofService::class);
+        $service->submit($this->user, (int) $this->organization->id, $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('first.png'));
+        app(\App\Services\Billing\Bank\BankBillingService::class)->cancel($this->user, (int) $this->organization->id, $invoice->public_id);
+        $this->checkoutPayload(['target_package_slugs' => ['supply-warehouse'], 'client_idempotency_key' => fake()->uuid()]);
+        $another = \App\Models\CommercialBankInvoice::query()->latest('id')->firstOrFail();
+        $this->assertNotSame($invoice->id, $another->id);
+        $this->assertFalse($service->canSubmit($another));
+        try {
+            $service->submit($this->user, (int) $this->organization->id, $another->public_id, \Illuminate\Http\UploadedFile::fake()->image('second.png', 2, 2));
+            $this->fail('Cancellation restarted the temporary window');
+        } catch (\InvalidArgumentException) {
+            $this->assertDatabaseCount('commercial_bank_payment_proofs', 1);
+        }
+        $this->travel(31)->days();
+        $this->assertFalse($service->historyRestricted((int) $this->organization->id));
+    }
+
+    public function test_bank_payment_proof_does_not_retry_storage_write_after_transaction_conflict(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $storage = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $storage->shouldReceive('putPrivate')->once()->andReturnUsing(static fn ($key, $contents, $mime, $hash) =>
+            new \App\Services\Storage\DTO\CurrentStoredFile($key, 'etag', strlen($contents), $hash, $mime));
+        $storage->shouldReceive('deleteCurrent')->once();
+        $this->app->instance(\App\Services\Storage\FileService::class, $storage);
+        \App\Models\CommercialBankPaymentProof::creating(static function (): never {
+            throw new \PDOException('serialization failure', 40001);
+        });
+        try {
+            app(\App\Services\Billing\Bank\BankPaymentProofService::class)->submit($this->user, (int) $this->organization->id,
+                $invoice->public_id, \Illuminate\Http\UploadedFile::fake()->image('payment.png'));
+            $this->fail('Expected transaction conflict');
+        } catch (\PDOException) {
+            $this->assertDatabaseCount('commercial_bank_payment_proofs', 0);
+            $this->assertNull($invoice->refresh()->paid_at);
+        } finally {
+            \App\Models\CommercialBankPaymentProof::flushEventListeners();
+        }
+    }
+
     private function fakePaymentProofStorage(): void
     {
         $storage = \Mockery::mock(\App\Services\Storage\FileService::class);
