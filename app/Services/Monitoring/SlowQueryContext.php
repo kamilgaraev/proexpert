@@ -14,6 +14,12 @@ final class SlowQueryContext
     public function forQuery(QueryExecuted $query): array
     {
         $fingerprint = hash('sha256', $query->sql);
+        $key = app()->bound('config') ? config('app.key') : null;
+        if (is_string($key) && str_starts_with($key, 'base64:')) {
+            $key = base64_decode(substr($key, 7), true);
+        }
+        $parts = is_string($key) && strlen($key) >= 16
+            ? str_split(hash_hmac('sha256', $query->sql, $key), 32) : null;
 
         return [
             'duration_ms' => round($query->time, 2),
@@ -21,7 +27,8 @@ final class SlowQueryContext
             'sql' => mb_substr(self::safeSql($query->sql), 0, 4000),
             'sql_length' => mb_strlen($query->sql),
             'sql_fingerprint' => $fingerprint,
-            'sql_fingerprint_parts' => str_split($fingerprint, 32),
+            'sql_fingerprint_algorithm' => 'hmac-sha256',
+            'sql_fingerprint_parts' => $parts,
             'bindings' => self::safeBindings($query->sql, $query->bindings),
             'bindings_count' => count($query->bindings),
             'bindings_truncated' => false,

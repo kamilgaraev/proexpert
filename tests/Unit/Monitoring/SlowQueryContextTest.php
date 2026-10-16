@@ -9,6 +9,7 @@ use App\Services\Monitoring\SlowQueryContext;
 use App\Services\Monitoring\TracingService;
 use DateTimeImmutable;
 use Illuminate\Container\Container;
+use Illuminate\Config\Repository;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Application;
@@ -25,7 +26,10 @@ final class SlowQueryContextTest extends TestCase
     public function test_full_statement_fingerprint_survives_log_redaction_without_exposing_sql_or_bindings(): void
     {
         $previous = Container::getInstance();
-        new Application(dirname(__DIR__, 3));
+        $application = new Application(dirname(__DIR__, 3));
+        $key = str_repeat('test-hmac-key-', 3);
+        $configuration = new Repository(['app' => ['key' => 'base64:'.base64_encode($key)]]);
+        $application->instance('config', $configuration);
         try {
             $binding = str_repeat('private-binding-', 8);
             $earlyLiteral = 'private-literal-before-prefix';
@@ -46,14 +50,30 @@ final class SlowQueryContextTest extends TestCase
             $logged = json_decode($serialized, true, 512, JSON_THROW_ON_ERROR)['context'];
 
             self::assertSame('[REDACTED]', $logged['sql_fingerprint']);
-            self::assertSame(str_split(hash('sha256', $sql), 32), $logged['sql_fingerprint_parts']);
+            self::assertSame('hmac-sha256', $logged['sql_fingerprint_algorithm']);
+            self::assertSame(str_split(hash_hmac('sha256', $sql, $key), 32), $logged['sql_fingerprint_parts']);
             self::assertNotSame($context['sql_fingerprint_parts'], $other['sql_fingerprint_parts']);
-            self::assertSame(hash('sha256', $sql), implode('', $logged['sql_fingerprint_parts']));
+            self::assertSame(hash_hmac('sha256', $sql, $key), implode('', $logged['sql_fingerprint_parts']));
+            self::assertNotSame(hash('sha256', $sql), implode('', $logged['sql_fingerprint_parts']));
             self::assertSame(mb_strlen($sql), $logged['sql_length']);
             self::assertTrue($logged['bindings'][0]['redacted']);
             self::assertStringNotContainsString($earlyLiteral, $serialized);
             self::assertStringNotContainsString($literal, $serialized);
             self::assertStringNotContainsString($binding, $serialized);
+            self::assertStringNotContainsString($key, $serialized);
+            self::assertStringNotContainsString(base64_encode($key), $serialized);
+
+            $configuration->set('app.key', $key);
+            $plainKey = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+            self::assertSame($context['sql_fingerprint_parts'], $plainKey['sql_fingerprint_parts']);
+            $configuration->set('app.key', str_repeat('rotated-key-', 3));
+            $rotated = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+            self::assertNotSame($context['sql_fingerprint_parts'], $rotated['sql_fingerprint_parts']);
+            foreach ([null, '', 'short', 'base64:not-valid!', 'base64:'.base64_encode('short')] as $invalidKey) {
+                $configuration->set('app.key', $invalidKey);
+                $missing = $contextFactory->forQuery(new QueryExecuted($sql, [$binding], 600, new Connection(null)));
+                self::assertNull($missing['sql_fingerprint_parts']);
+            }
         } finally {
             Container::setInstance($previous);
         }
