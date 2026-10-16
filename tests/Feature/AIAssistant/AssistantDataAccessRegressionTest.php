@@ -46,6 +46,7 @@ final class AssistantDataAccessRegressionTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => $this->modules
             ? collect(['ai-assistant', 'project-management', 'reports', 'budget-estimates', 'contract-management', 'payments', 'procurement', 'site-requests'])->filter(fn (string $slug): bool => ! in_array($slug, $this->deniedModuleSlugs, true))->map(static fn (string $slug): object => (object) ['slug' => $slug]) : collect());
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
@@ -360,6 +361,7 @@ final class AssistantDataAccessRegressionTest extends TestCase
         $authorization = app(AuthorizationService::class);
         $this->assertTrue($authorization->can($actor, 'projects.view', ['organization_id' => $organization->id]));
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'ai-assistant']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->assertTrue($policy->canReadEntity($actor, $organization->id, 'project', $visible->id));

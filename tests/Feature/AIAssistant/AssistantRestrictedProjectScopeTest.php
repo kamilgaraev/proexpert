@@ -34,6 +34,7 @@ final class AssistantRestrictedProjectScopeTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'budgeting'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

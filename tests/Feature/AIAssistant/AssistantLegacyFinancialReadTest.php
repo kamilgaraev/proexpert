@@ -124,6 +124,7 @@ final class AssistantLegacyFinancialReadTest extends TestCase
         $authorization->method('canCurrent')->willReturnCallback(fn (User $user, string $permission): bool => ! in_array($permission, $this->denied, true));
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect(['ai-assistant', 'project-management', 'contract-management', 'payments', 'users'])->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $this->app->instance(AuthorizationService::class, $authorization);
         $this->app->instance(AssistantDataAccessPolicy::class, new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules));

@@ -82,6 +82,7 @@ final class AssistantDocumentIngestionTest extends TestCase
         $projects->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn () => Project::query()->where('organization_id', $this->organization->id)->whereNotIn('id', $this->deniedProjects));
         $projects->shouldReceive('canAccessProject')->andReturn(true);
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => $this->modulesEnabled
             ? collect(['ai-assistant', 'project-management', 'payments', 'budget-estimates', 'contract-management'])->map(static fn (string $slug): object => (object) ['slug' => $slug]) : collect());
         $policy = new AssistantDataAccessPolicy($authorization, $projects, $modules);

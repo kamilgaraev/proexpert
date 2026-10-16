@@ -42,6 +42,7 @@ final class AssistantLiveProjectFinanceSourceTest extends TestCase
             return $permission !== 'machinery-operations.view' || $machineryAllowed;
         });
         $modules = $this->createMock(OrganizationEntitlementService::class);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'machinery-operations']), new Module(['slug' => 'project-management'])]));
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturnCallback(static fn () => Project::query()->whereKey($project->id));

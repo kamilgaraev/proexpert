@@ -45,6 +45,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => collect([
             'ai-assistant', 'project-management', 'payments', 'budget-estimates', 'reports', ...$this->additionalModules,
         ])->reject(fn (string $slug): bool => in_array($slug, $this->deniedModules, true))

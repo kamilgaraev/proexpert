@@ -50,6 +50,7 @@ final class AssistantReferenceBatchTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnUsing(fn () => clone $authorization);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => collect(['ai-assistant', 'project-management', 'contract-management', 'payments', 'budget-estimates'])
             ->reject(fn (string $slug): bool => in_array($slug, $this->deniedModules, true))
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));

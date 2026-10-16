@@ -62,6 +62,7 @@ final class AssistantChatAttachmentTest extends TestCase
         $projects->shouldReceive('canAccessProject')->andReturn(true);
         $projects->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn () => \App\Models\Project::query());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([['slug' => 'ai-assistant']]));
         $this->conversations = new ConversationManager(new AssistantDataAccessPolicy($authorization, $projects, $modules));
         $this->app->instance(ConversationManager::class, $this->conversations);

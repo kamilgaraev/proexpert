@@ -282,7 +282,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
             return $result;
         });
 
-        $names = array_column(array_column($definitions, 'function'), 'name');
+        $names = array_column($definitions, 'name');
         $this->assertContains('assistant_domain_discover_capabilities', $names);
         $this->assertContains('get_material_stock', $names);
         $this->assertLessThanOrEqual(4, $definitionChecks);
@@ -295,14 +295,14 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $metadata = $this->readPhase(function () use (&$readsInsideMetadata): array {
             $before = $this->freshRequestReads;
             $result = (new ReflectionMethod(AIAssistantService::class, 'buildPreparationMetadata'))
-                ->invoke($this->service, ['task_type' => 'find'], $this->actor, 38);
+                ->invoke($this->service, ['task_type' => 'find', 'request' => ['message' => 'Покажи остатки материалов на складе']], $this->actor, 38);
             $readsInsideMetadata = $this->freshRequestReads - $before;
 
             return $result;
         });
 
         $this->assertSame(2, $readsInsideMetadata);
-        $names = array_column(array_column($metadata['tools'], 'function'), 'name');
+        $names = array_column($metadata['tools'], 'name');
         $this->assertContains('get_material_stock', $names);
         $this->assertNotEmpty($metadata['capability_hints']['domains']);
 
@@ -321,7 +321,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         };
 
         (new ReflectionMethod(AIAssistantService::class, 'buildPreparationMetadata'))
-            ->invoke($this->service, ['task_type' => 'find'], $this->actor, 38);
+            ->invoke($this->service, ['task_type' => 'find', 'request' => ['message' => 'Покажи остатки материалов на складе']], $this->actor, 38);
     }
 
     public function test_tool_definitions_remove_tools_without_current_domain_permission(): void
@@ -329,7 +329,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->prepareActualChain();
         $this->deniedPermissions = ['warehouse.view'];
         $definitions = $this->readPhase(fn (): array => $this->toolDefinitions());
-        $names = array_column(array_column($definitions, 'function'), 'name');
+        $names = array_column($definitions, 'name');
 
         $this->assertContains('assistant_domain_discover_capabilities', $names);
         $this->assertNotContains('get_material_stock', $names);
@@ -366,7 +366,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
     {
         $this->prepareActualChain();
         $definitions = $this->readPhase(fn (): array => $this->toolDefinitions());
-        $this->assertContains('get_material_stock', array_column(array_column($definitions, 'function'), 'name'));
+        $this->assertContains('get_material_stock', array_column($definitions, 'name'));
         $this->deniedPermissions = ['warehouse.view'];
         $before = $this->permissionChecks;
         $checker = (new ReflectionProperty(AIAssistantService::class, 'permissionChecker'))->getValue($this->service);
@@ -429,7 +429,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
 
     private function toolDefinitions(): array
     {
-        return (new ReflectionMethod(AIAssistantService::class, 'resolveToolDefinitions'))->invoke($this->service, ['task_type' => 'find']);
+        return (new ReflectionMethod(AIAssistantService::class, 'resolveToolDefinitions'))->invoke($this->service, ['task_type' => 'find', 'request' => ['message' => 'Покажи остатки материалов на складе']]);
     }
 
     private function toolDefinitionsWithInterruption(Closure $interrupt): void
@@ -519,6 +519,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
         $moduleSlugs = array_unique(['ai-assistant', ...array_map(fn ($definition): string => $definition->module, $catalog->all())]);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect(array_map(fn (string $slug): Module => new Module(['slug' => $slug]), $moduleSlugs)));
         $this->policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class), $modules);
         app()->instance(AssistantDataAccessPolicy::class, $this->policy);
