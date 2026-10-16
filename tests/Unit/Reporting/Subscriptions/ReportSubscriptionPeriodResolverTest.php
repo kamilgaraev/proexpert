@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Subscriptions;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
@@ -16,6 +19,8 @@ use DateTimeZone;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
+use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportSubscriptionPeriodResolverTest extends TestCase
 {
@@ -71,6 +76,47 @@ final class ReportSubscriptionPeriodResolverTest extends TestCase
         self::assertSame(['period_end' => '2026-10-15', 'period_start' => '2026-10-15'], $data->filters->values);
     }
 
+    #[DataProvider('dateOperators')]
+    public function test_relative_period_keeps_normalized_saved_view_filter_shape(string $fromOperator, string $toOperator): void
+    {
+        $definition = (new ReportDefinitionBuilder)->filters([
+            ['id' => 'period_from', 'type' => 'date', 'operators' => [$fromOperator]],
+            ['id' => 'period_to', 'type' => 'date', 'operators' => [$toOperator]],
+        ])->payload();
+        $context = (new ReportExecutionContextBuilder)->build();
+        $references = $this->createMock(ReportFilterReferenceResolver::class);
+        $references->expects(self::never())->method('resolve');
+        $normalizer = new ReportFilterNormalizer($references);
+        $filters = $normalizer->normalize($context, $definition, [
+            'period_from' => ['operator' => $fromOperator, 'value' => '2026-09-01'],
+            'period_to' => ['operator' => $toOperator, 'value' => '2026-09-30'],
+        ]);
+        $input = $this->input(['mode' => 'previous_week'], 'Europe/Moscow', $filters->values);
+        $bytes = $input->canonicalBytes();
+
+        $data = (new ReportSubscriptionPeriodResolver)->runData($input, new DateTimeImmutable('2026-10-16T09:00:00Z'));
+
+        self::assertSame(['operator' => $fromOperator, 'value' => '2026-10-05'], $data->filters->values['period_from']);
+        self::assertSame(['operator' => $toOperator, 'value' => '2026-10-11'], $data->filters->values['period_to']);
+        self::assertSame($data->filters->values, $normalizer->normalize($context, $definition, $data->filters->values)->values);
+        self::assertSame($bytes, $input->canonicalBytes());
+    }
+
+    public static function dateOperators(): array
+    {
+        return [['eq', 'eq'], ['gte', 'lte']];
+    }
+
+    public function test_relative_period_rejects_a_list_filter_instead_of_silently_changing_its_shape(): void
+    {
+        $input = $this->input(['mode' => 'previous_week'], 'UTC', [
+            'period_from' => ['operator' => 'in', 'value' => ['2026-09-01']],
+            'period_to' => ['operator' => 'eq', 'value' => '2026-09-30'],
+        ]);
+        $this->expectException(ReportContractException::class);
+        (new ReportSubscriptionPeriodResolver)->validate($input);
+    }
+
     #[DataProvider('legacyPolicies')]
     public function test_legacy_frozen_input_keeps_unsupported_policy_and_existing_dates(array $policy, array $filters): void
     {
@@ -122,14 +168,39 @@ final class ReportSubscriptionPeriodResolverTest extends TestCase
         (new ReportSubscriptionPeriodResolver)->runData($this->input(['mode' => 'whenever']), new DateTimeImmutable);
     }
 
-    private function input(array $policy, string $timezone = 'UTC', ?array $filters = null, ?int $version = 1): ReportSubscriptionExecutionInput
+    public function test_frozen_saved_view_round_trips_and_reaches_resolved_period(): void
+    {
+        $reference = new ReportSavedViewRef('01J00000000000000000000002', 7, new Sha256Hash(str_repeat('c', 64)));
+        $original = $this->input(['mode' => 'previous_week'], reference: $reference);
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($original->canonicalBytes());
+        self::assertSame($original->canonicalBytes(), $input->canonicalBytes());
+        self::assertSame($original->digest()->value, $input->digest()->value);
+        self::assertSame($reference->hash->value, $input->savedViewReference?->hash->value);
+        self::assertSame($reference->revision, $input->savedViewReference?->revision);
+        $data = (new ReportSubscriptionPeriodResolver)->runData($input, new DateTimeImmutable('2026-10-16T09:00:00Z'));
+        self::assertSame($input->savedViewReference, $data->savedViewReference);
+        self::assertSame('2026-10-05', $data->filters->values['period_from']);
+        self::assertSame('2026-10-11', $data->filters->values['period_to']);
+    }
+
+    public function test_legacy_bytes_remain_identical_without_frozen_reference(): void
+    {
+        $bytes = '{"columns":["recognized_on"],"comparison":[],"contract_version":"1.0.0","definition_sha256":"'.str_repeat('a', 64).'","filters":{"period_from":"2026-09-01","period_to":"2026-09-30","project_id":52},"format":"xlsx","locale":"ru","period_policy":{"mode":"previous_week"},"report_code":"accepted_production_progress","saved_view_id":"01J00000000000000000000002","sort":{"direction":"desc","field":"recognized_on"},"timezone":"UTC"}';
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($bytes);
+        self::assertNull($input->savedViewReference);
+        self::assertNull($input->periodPolicyVersion);
+        self::assertSame($bytes, $input->canonicalBytes());
+        self::assertSame(hash('sha256', $bytes), $input->digest()->value);
+    }
+
+    private function input(array $policy, string $timezone = 'UTC', ?array $filters = null, ?int $version = 1, ?ReportSavedViewRef $reference = null): ReportSubscriptionExecutionInput
     {
         return new ReportSubscriptionExecutionInput(
             'accepted_production_progress',
             new ReportFilterSet($filters ?? ['period_from' => '2026-09-01', 'period_to' => '2026-09-30', 'project_id' => 52]),
             [], 'ru', '01J00000000000000000000002', 'xlsx', ['recognized_on'],
             new ReportWindowSort('recognized_on', ReportSortDirection::DESC), new DateTimeZone($timezone),
-            $policy, '1.0.0', new Sha256Hash(str_repeat('a', 64)), $version,
+            $policy, '1.0.0', new Sha256Hash(str_repeat('a', 64)), $version, $reference,
         );
     }
 }

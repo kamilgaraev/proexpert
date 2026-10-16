@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModule
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -33,7 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
 
-final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentReportExactManyAuthorizer, CurrentReportScopeAuthorizer
+final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentReportExactManyAuthorizer, CurrentReportProjectScopeResolver, CurrentReportScopeAuthorizer
 {
     public function __construct(
         private CurrentReportAbacEvaluator $abac,
@@ -41,6 +42,24 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         private ReportDefinitionVisibilityResolver $visibilityResolver,
         private ReportAuthorizationFactSetFactory $factSets,
     ) {}
+
+    public function resolveForProject(
+        int $actorId,
+        int $organizationId,
+        int $projectId,
+        DateTimeZone $timezone,
+    ): ReportScope {
+        return $this->transaction(function () use ($actorId, $organizationId, $projectId, $timezone): ReportScope {
+            $this->activeActor($actorId, $organizationId);
+            $holdingIds = $this->accessibleHoldingOrganizationIds($organizationId);
+            $allowedProjectIds = $this->accessibleProjectIds($actorId, $organizationId, $holdingIds);
+            if (! in_array($projectId, $allowedProjectIds, true)) {
+                throw new \InvalidArgumentException('report_project_scope_revoked');
+            }
+
+            return new ReportScope($organizationId, $holdingIds, [$projectId], [], $timezone);
+        });
+    }
 
     public function authorizeForOrganization(
         int $actorId,

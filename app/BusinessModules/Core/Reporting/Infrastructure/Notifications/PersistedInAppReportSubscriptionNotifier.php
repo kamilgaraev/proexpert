@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionNotificationReceipt;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
@@ -43,6 +44,12 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
         IdempotencyKey $key,
     ): ?ReportSubscriptionNotificationReceipt {
         return DB::transaction(function () use ($context, $subscription, $delivery, $export, $key): ?ReportSubscriptionNotificationReceipt {
+            if ($context->actor->id !== $delivery->ownerId || $subscription->ownerId !== $delivery->ownerId
+                || $context->scope->organizationId !== $delivery->organizationId || $subscription->organizationId !== $delivery->organizationId
+                || $subscription->id !== $delivery->subscriptionId || $delivery->runId !== $export->runId
+                || $delivery->exportId !== $export->id || $export->status !== ReportExportStatus::READY) {
+                throw new ReportSubscriptionNotificationUnavailable('report_subscription_notification_unavailable');
+            }
             $receipt = DB::table('report_subscription_notification_receipts')
                 ->where('idempotency_key_hash', $key->hash)
                 ->where('delivery_id', $delivery->id)
@@ -64,8 +71,9 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 $user,
                 'report_subscription_ready',
                 [
-                    'report_code' => $subscription->reportCode,
+                    'report_code' => $delivery->executionInput()->reportCode,
                     'export_id' => $export->id,
+                    'format' => $export->format,
                     'correlation_id' => $context->correlationId(),
                 ],
                 channels: ['in_app'],

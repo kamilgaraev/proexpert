@@ -191,6 +191,7 @@ final class ReportFormRequestContractTest extends TestCase
         self::assertSame('2026-07-27T10:11:12+03:00', $data->asOf->format(DATE_ATOM));
         self::assertSame('ru-RU', $data->locale);
         self::assertSame('01ARZ3NDEKTSV4RRFFQ69G5FAV', $data->savedViewId);
+        self::assertNull($data->savedViewReference);
     }
 
     public function test_create_run_applies_only_documented_defaults(): void
@@ -498,6 +499,18 @@ final class ReportFormRequestContractTest extends TestCase
             'private',
             json_encode([$jsonException->safeFields, $queryException->safeFields], JSON_THROW_ON_ERROR),
         );
+    }
+
+    public function test_http_client_cannot_supply_a_frozen_saved_view_reference(): void
+    {
+        $exception = $this->productionValidationException(
+            CreateReportRunRequest::class, 'POST', [],
+            [...self::inputFor(CreateReportRunRequest::class), 'saved_view_reference' => [
+                'id' => '01ARZ3NDEKTSV4RRFFQ69G5FAV', 'revision' => 1, 'sha256' => str_repeat('a', 64),
+            ]], null, null,
+        );
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        self::assertSame([], $exception->safeFields);
     }
 
     public static function invalidRouteProvider(): array

@@ -8,6 +8,9 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContext
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -21,7 +24,6 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionEventR
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
@@ -41,6 +43,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -180,14 +183,58 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         self::assertSame(1, Notification::query()->count());
     }
 
+    #[DataProvider('unavailableChannels')]
+    public function test_ready_delivery_uses_frozen_report_project_timezone_and_current_access(bool $accessDenied): void
+    {
+        $fixture = $this->fixture(scoped: true);
+        [, $subscription, $delivery, , $definition] = $fixture;
+        DB::table('report_subscriptions')->where('id', $subscription->id)->update(['report_code' => 'new_report', 'timezone' => 'UTC']);
+        $processor = $this->processor($fixture, 1, ! $accessDenied, $accessDenied);
+        $processor->process($delivery->id);
+        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'ready']);
+        if ($accessDenied) {
+            self::assertSame(0, Notification::query()->count());
+            self::assertSame(0, DB::table('report_subscription_notification_receipts')->count());
+
+            return;
+        }
+        $notification = Notification::query()->sole();
+        self::assertSame($definition->code, $notification->data['report_code']);
+        (new SendNotificationJob($notification))->handle(app(NotificationService::class));
+        $processor->process($delivery->id);
+        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'notified']);
+        self::assertSame(1, Notification::query()->count());
+    }
+
     private function processor(array $fixture, int $pendingDispatches, bool $recordDelivery, bool $accessDenied = false, bool $failRecording = false): ReportSubscriptionDeliveryProcessor
     {
         [$context, , $delivery, $export, $definition] = $fixture;
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->method('published')->willReturn(new PublishedReportDefinition($definition));
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $projectScopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        if ($context->scope->projectIds !== []) {
+            $projectScopes->method('resolveForProject')
+                ->with($context->actor->id, $context->scope->organizationId, $context->scope->projectIds[0], $context->scope->timezone)
+                ->willReturn($context->scope);
+        } else {
+            $projectScopes->expects(self::never())->method('resolveForProject');
+        }
+        $authorizationMethod = $context->scope->projectIds === [] ? 'authorizeForOrganization' : 'authorizeExact';
+        if ($authorizationMethod === 'authorizeExact') {
+            $authorizer->expects(self::never())->method('authorizeForOrganization');
+        }
         if ($accessDenied) {
-            $authorizer->method('authorizeForOrganization')->willThrowException(new RuntimeException('authorization_denied'));
+            $authorizer->method($authorizationMethod)->willThrowException(new RuntimeException('authorization_denied'));
+        } elseif ($authorizationMethod === 'authorizeExact') {
+            $authorizer->method('authorizeExact')->willReturnCallback(
+                static function (int $actorId, ReportScope $scope, CurrentReportAuthorizationTarget $target) use ($context): CurrentReportAuthorization {
+                    self::assertSame($context->actor->id, $actorId);
+                    self::assertSame($context->scope->canonicalIdentity(), $scope->canonicalIdentity());
+
+                    return new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target);
+                },
+            );
         } else {
             $authorizer->method('authorizeForOrganization')->willReturnCallback(
                 static fn (int $actorId, int $organizationId, DateTimeZone $timezone, CurrentReportAuthorizationTarget $target): CurrentReportAuthorization =>
@@ -210,7 +257,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
 
         return new ReportSubscriptionDeliveryProcessor(
             app(EloquentReportSubscriptionDeliveryStore::class),
-            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry),
+            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry, $projectScopes),
             $dispatcher,
             $runs,
             $this->createMock(GetReportRunAction::class),
@@ -222,7 +269,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         );
     }
 
-    private function fixture(bool $authorized = true): array
+    private function fixture(bool $authorized = true, bool $scoped = false): array
     {
         Queue::fake();
         $organization = Organization::factory()->verified()->create();
@@ -240,23 +287,27 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
                 'assigned_by' => $user->id, 'is_active' => true,
             ]);
         }
-        $timezone = new DateTimeZone('UTC');
+        $timezone = new DateTimeZone($scoped ? 'Europe/Moscow' : 'UTC');
+        $projectIds = $scoped ? [(int) Project::factory()->create(['organization_id' => $organization->id])->id] : [];
         $context = (new ReportExecutionContextBuilder)
             ->actor(new ReportActor((int) $user->id, 'active', ['reports.view']))
-            ->scope(new ReportScope((int) $organization->id, [(int) $organization->id], [], [], $timezone))
-            ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, [(int) $organization->id], [], [], $timezone, 'subscription-delivery-test', null))
+            ->scope(new ReportScope((int) $organization->id, [(int) $organization->id], $projectIds, [], $timezone))
+            ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, [(int) $organization->id], $projectIds, [], $timezone, 'subscription-delivery-test', null))
             ->build();
-        $definition = (new ReportDefinitionBuilder)->payload();
+        $definition = (new ReportDefinitionBuilder)->filters([['id' => 'project_id', 'type' => 'integer', 'operators' => ['eq']]])->payload();
+        $filters = (new ReportFilterNormalizer($this->createMock(ReportFilterReferenceResolver::class)))->normalize(
+            $context, $definition, $scoped ? ['project_id' => ['operator' => 'eq', 'value' => (string) $projectIds[0]]] : [],
+        );
         $savedViewId = (string) Str::ulid();
         $now = new DateTimeImmutable;
         DB::table('report_saved_views')->insert([
             'id' => $savedViewId, 'organization_id' => $organization->id, 'owner_id' => $user->id,
             'report_code' => $definition->code, 'contract_version' => $definition->contractVersion, 'name' => 'Отчёт',
-            'visibility' => 'private', 'filters_json' => '{}', 'comparison_json' => '{}', 'sort_json' => '{"field":"name","direction":"asc"}',
+            'visibility' => 'private', 'filters_json' => json_encode($filters->values, JSON_THROW_ON_ERROR), 'comparison_json' => '{}', 'sort_json' => '{"field":"name","direction":"asc"}',
             'columns_json' => '["name"]', 'status' => 'active', 'is_default' => false, 'created_at' => $now, 'updated_at' => $now,
         ]);
         $input = new ReportSubscriptionExecutionInput(
-            $definition->code, new ReportFilterSet([]), [], 'ru', $savedViewId, 'csv', ['name'],
+            $definition->code, $filters, [], 'ru', $savedViewId, 'csv', ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC), $timezone, ['mode' => 'previous_day'],
             $definition->contractVersion, $definition->definitionHash,
         );

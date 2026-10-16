@@ -54,13 +54,14 @@ final class ReportSubscriptionPeriodResolver
         return new CreateReportRunData(
             $input->reportCode,
             new ReportFilterSet(array_replace($input->filters->values, [
-                $fromField => $from->format('Y-m-d'),
-                $toField => $to->format('Y-m-d'),
+                $fromField => $this->dateFilter($input->filters->values[$fromField], $from->format('Y-m-d')),
+                $toField => $this->dateFilter($input->filters->values[$toField], $to->format('Y-m-d')),
             ])),
             $input->comparison,
             $scheduledFor,
             $input->locale,
             $input->savedViewId,
+            $input->savedViewReference,
         );
     }
 
@@ -72,8 +73,22 @@ final class ReportSubscriptionPeriodResolver
         if (count($matches) !== 1) {
             $this->invalid();
         }
+        foreach ($matches[0] as $field) {
+            $template = $input->filters->values[$field];
+            if (is_array($template) && (count($template) !== 2 || ! is_string($template['operator'] ?? null) || ! is_string($template['value'] ?? null))) {
+                $this->invalid();
+            }
+        }
 
         return $matches[0];
+    }
+
+    private function dateFilter(mixed $template, string $value): array|string
+    {
+        if (! is_array($template)) {
+            return $value;
+        }
+        return ['operator' => $template['operator'], 'value' => $value];
     }
 
     private function invalid(): never
