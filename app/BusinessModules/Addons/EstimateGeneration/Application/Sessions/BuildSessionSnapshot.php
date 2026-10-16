@@ -138,8 +138,8 @@ final class BuildSessionSnapshot
             return config('estimate-generation.credits.enabled', false)
                 ? ['enabled' => false, 'reason' => 'legacy_balance_requires_reconciliation'] : ['enabled' => false];
         }
-        $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
-        $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);
+        $balance = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\ReadEstimatorCreditBalance::class)
+            ->handle((int) $session->organization_id);
         $operationId = $session->input_payload['generation_credit_operation_id'] ?? $session->input_payload['documents_credit_operation_id'] ?? null;
         $activeDocuments = is_string($operationId) && \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
             ->where('operation_id', $operationId)->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)

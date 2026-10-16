@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
+use App\Models\Credits\AICreditLot;
+use App\Models\Credits\AICreditWallet;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -25,6 +27,62 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 #[Group('postgres')]
 final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[Test]
+    public function shared_credit_snapshot_reads_expiry_reserves_and_holds_without_mutating_the_wallet(): void
+    {
+        $this->freezeTime();
+        config()->set('estimate-generation.credits.enabled', true);
+        config()->set('estimate-generation.universal_enabled', true);
+        [$user, $project, $session] = $this->fixture();
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $wallet = AICreditWallet::query()->create(['organization_id' => $project->organization_id,
+            'balance_minor' => 30000, 'reserved_minor' => 3000]);
+        $expired = AICreditLot::query()->create(['organization_id' => $project->organization_id,
+            'source' => 'conversion', 'original_minor' => 7000, 'remaining_minor' => 7000,
+            'expires_at' => now(), 'metadata' => [AICreditLot::LEGACY_REFUND_HOLD => true]]);
+        AICreditLot::query()->create(['organization_id' => $project->organization_id,
+            'source' => 'conversion', 'original_minor' => 5000, 'remaining_minor' => 5000,
+            'expires_at' => now()->addDay(), 'metadata' => [AICreditLot::LEGACY_REFUND_HOLD => true]]);
+        AICreditLot::query()->create(['organization_id' => $project->organization_id,
+            'source' => 'subscription', 'original_minor' => 18000, 'remaining_minor' => 18000]);
+        $foreign = Organization::factory()->create();
+        AICreditWallet::query()->create(['organization_id' => $foreign->id,
+            'balance_minor' => 90000, 'reserved_minor' => 0]);
+        $ledgerCount = DB::table('ai_credit_ledger_entries')->count();
+        $this->route($project, $session);
+        $this->withToken(auth('api_admin')->login($user));
+
+        $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+        $first->assertOk()
+            ->assertJsonPath('data.credit_policy.enabled', true)
+            ->assertJsonPath('data.credit_policy.available_units_minor', 15000)
+            ->assertJsonPath('data.credit_policy.reserved_units_minor', 3000)
+            ->assertJsonPath('data.credit_policy.reconciliation_held_units_minor', 5000);
+        self::assertSame(30000, $wallet->refresh()->balance_minor);
+        self::assertSame(7000, $expired->refresh()->remaining_minor);
+        self::assertSame($ledgerCount, DB::table('ai_credit_ledger_entries')->count());
+
+        $wallet->update(['reserved_minor' => 4000]);
+        $this->withHeader('If-None-Match', (string) $first->headers->get('ETag'))
+            ->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()->assertJsonPath('data.credit_policy.available_units_minor', 14000);
+    }
+
+    #[Test]
+    public function shared_credit_snapshot_does_not_create_a_missing_wallet(): void
+    {
+        config()->set('estimate-generation.credits.enabled', true);
+        [$user, $project, $session] = $this->fixture();
+        $this->route($project, $session);
+        $this->withToken(auth('api_admin')->login($user));
+
+        $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
+            ->assertOk()->assertJsonPath('data.credit_policy.available_units_minor', 0)
+            ->assertJsonPath('data.credit_policy.reserved_units_minor', 0)
+            ->assertJsonPath('data.credit_policy.reconciliation_held_units_minor', 0);
+        self::assertFalse(AICreditWallet::query()->where('organization_id', $project->organization_id)->exists());
+    }
+
     #[Test]
     public function unchanged_snapshot_returns_empty_not_modified_response(): void
     {
