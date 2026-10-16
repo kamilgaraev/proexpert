@@ -33,7 +33,8 @@ final readonly class RoomFloorWorkItemExpander
             return $draft;
         }
         foreach ($quantities as $quantity) {
-            if (! $quantity instanceof QuantityData || $quantity->formulaKey !== 'floor_area') {
+            if (! $quantity instanceof QuantityData
+                || CurrentProjectDerivedQuantityService::formulaPurpose($quantity->formulaKey) !== 'floor_area') {
                 continue;
             }
             $entity = $quantity->formulaInputs['entity_id'] ?? null;

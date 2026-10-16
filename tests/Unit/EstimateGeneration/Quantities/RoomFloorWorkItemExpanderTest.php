@@ -63,6 +63,30 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         }
     }
 
+    public function test_direct_and_calculated_room_areas_both_expand_floor_works(): void
+    {
+        foreach ([['room:1', 'room:2', 'room:3'], ['room:2']] as $directRooms) {
+            $quantities = $this->quantities();
+            foreach ($quantities as $key => $quantity) {
+                if (in_array($quantity->formulaInputs['entity_id'], $directRooms, true)) {
+                    $quantities[$key] = new QuantityData($key, $quantity->unit, $quantity->amount,
+                        'direct_floor_area', $quantity->formulaVersion, $quantity->formulaInputs,
+                        $quantity->source, $quantity->evidenceIds, $quantity->modelVersion);
+                }
+            }
+            $expanded = (new RoomFloorWorkItemExpander)->expand(
+                $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), $quantities, 128);
+            $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
+            self::assertCount(6, $items);
+            foreach ($items as $item) {
+                $quantity = (new WorkItemQuantityResolver)->resolve($item, $quantities);
+                self::assertNotNull($quantity);
+                self::assertSame($item['entity_id'], $quantity->formulaInputs['entity_id']);
+                self::assertSame($quantities[$item['quantity_formula']], $quantity);
+            }
+        }
+    }
+
     public function test_an_existing_room_work_is_not_duplicated_by_the_generic_catalog_work(): void
     {
         $existing = $this->item('rough.floor');
