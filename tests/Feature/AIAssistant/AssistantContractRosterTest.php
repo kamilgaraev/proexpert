@@ -68,6 +68,23 @@ final class AssistantContractRosterTest extends TestCase
         $roleChanged = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         self::assertSame('contractor', array_column($roleChanged['data']['items'], null, 'id')[$contracts['income'][0]->id]['our_role']);
         self::assertStringContainsString('Наша роль: Подрядчик', $roleChanged['server_formatted_answer']);
+        foreach (['first' => 'Продавец', 'second' => 'Покупатель'] as $side => $label) {
+            \Illuminate\Support\Facades\DB::table('contract_parties')->where('contract_id', $contracts['income'][0]->id)->where('side', $side)->update([
+                'role' => 'other', 'snapshot' => json_encode(['role_label' => $label, 'private' => 'private_snapshot_marker'], JSON_UNESCAPED_UNICODE),
+            ]);
+        }
+        $direct = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        $nativeDirect = app(\App\Services\Contract\ContractSideResolverService::class)->resolve($contracts['income'][0]->fresh(), $fixture->organization->id);
+        $directRow = array_column($direct['data']['items'], null, 'id')[$contracts['income'][0]->id];
+        self::assertSame('other', $directRow['our_role']);
+        self::assertSame($nativeDirect['second_party_role_label'], $directRow['our_role_label']);
+        self::assertSame($nativeDirect['first_party_role_label'], $directRow['counterparty_role_label']);
+        self::assertStringContainsString('Наша роль: Покупатель; роль второй стороны: Продавец', $direct['server_formatted_answer']);
+        self::assertStringNotContainsString('private_snapshot_marker', json_encode($direct));
+        \Illuminate\Support\Facades\DB::table('contract_parties')->where('contract_id', $contracts['income'][0]->id)->where('side', 'second')->update([
+            'snapshot' => json_encode(['role_label' => 'Получатель', 'private' => 'private_snapshot_marker'], JSON_UNESCAPED_UNICODE),
+        ]);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $direct['source_refs'][0]));
         foreach (['private_inn_marker', 'private_email_marker', 'private_phone_marker', 'private_snapshot_marker', '123456.78', 'Наша организация'] as $excluded) {
             self::assertStringNotContainsString($excluded, json_encode($result, JSON_UNESCAPED_UNICODE));
         }

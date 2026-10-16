@@ -87,12 +87,13 @@ final readonly class AssistantProjectContractRosterReader
             $counterparties = $this->access->entityQuery($actor, $organizationId, 'contractor')?->whereKey($records->where('organization_id', $organizationId)->pluck('contractor_id')->filter()->all())
                 ->select(['id', 'name'])->get()->keyBy('id');
             $parties = ContractParty::query()->whereIn('contract_id', $records->pluck('id'))
-                ->get(['contract_id', 'side', 'role', 'linked_organization_id', 'name'])->groupBy('contract_id');
+                ->get(['contract_id', 'side', 'role', 'linked_organization_id', 'name',
+                    \Illuminate\Support\Facades\DB::raw("CASE WHEN jsonb_typeof(snapshot::jsonb->'role_label') = 'string' THEN left(snapshot->>'role_label', 255) END AS assistant_role_label")])->groupBy('contract_id');
             $rows = [];
             foreach ($records as $record) {
                 $own = (int) $record->organization_id === $organizationId;
                 $name = $own ? $counterparties?->get($record->contractor_id)?->name : null;
-                $ourRole = null; $counterpartyRole = null;
+                $ourRole = null; $counterpartyRole = null; $ourRoleLabel = null; $counterpartyRoleLabel = null;
                 $first = $parties->get($record->id)?->firstWhere('side', ContractPartySideEnum::FIRST);
                 $second = $parties->get($record->id)?->firstWhere('side', ContractPartySideEnum::SECOND);
                 if ($first !== null && $second !== null) {
@@ -102,10 +103,13 @@ final readonly class AssistantProjectContractRosterReader
                         : ((int) $first->linked_organization_id === $organizationId ? $first : null);
                     $ourRole = $ourParty?->role?->value;
                     $counterpartyRole = $ourParty === null ? null : ($ourParty === $first ? $second : $first)->role?->value;
+                    $ourRoleLabel = $ourParty?->getAttribute('assistant_role_label');
+                    $counterpartyRoleLabel = $ourParty === null ? null : ($ourParty === $first ? $second : $first)->getAttribute('assistant_role_label');
                 }
                 $rows[] = ['id' => (int) $record->id, 'number' => $record->getRawOriginal('number'), 'status' => $record->getRawOriginal('status'),
                     'start_date' => $record->getRawOriginal('start_date'), 'end_date' => $record->getRawOriginal('end_date'),
-                    'counterparty' => $name, 'our_role' => $ourRole, 'counterparty_role' => $counterpartyRole, 'self_execution' => $own && (bool) $record->is_self_execution,
+                    'counterparty' => $name, 'our_role' => $ourRole, 'counterparty_role' => $counterpartyRole,
+                    'our_role_label' => $ourRoleLabel, 'counterparty_role_label' => $counterpartyRoleLabel, 'self_execution' => $own && (bool) $record->is_self_execution,
                     'shared' => ! $own, 'source_version' => $record->getRawOriginal('updated_at')];
             }
             $asOf = today()->toDateString(); $endingBy = today()->addDays(7)->toDateString(); $complete = count($rows) <= 10000;
@@ -123,7 +127,7 @@ final readonly class AssistantProjectContractRosterReader
                 'overdue_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf)) : null,
                 'ending_soon_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) >= $asOf && substr($row['end_date'], 0, 10) <= $endingBy)) : null,
                 'missing_end_date_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] === null)) : null];
-            $version = AssistantSourceReferenceIdentity::key(['schema' => 4, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
+            $version = AssistantSourceReferenceIdentity::key(['schema' => 5, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'deadline_filter' => $filter, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
             return ['status' => 'success', 'source_refs' => [$ref], 'data' => $payload, 'server_formatted_answer' => self::format($payload)];
@@ -161,14 +165,20 @@ final readonly class AssistantProjectContractRosterReader
             $end = $item['end_date'] === null ? trans_message('ai_assistant_contract_roster.no_date') : substr($item['end_date'], 0, 10);
             $lines[] = '- #'.$item['id'].' '.self::text((string) $item['number']).': '.trans_message('ai_assistant_contract_roster.row', ['counterparty' => $name, 'end' => $end]);
             $lines[] = trans_message('ai_assistant_contract_roster.roles', [
-                'ours' => ContractPartyRoleEnum::tryFrom($item['our_role'] ?? '')?->label() ?? trans_message('ai_assistant_contract_roster.role_unknown'),
-                'other' => ContractPartyRoleEnum::tryFrom($item['counterparty_role'] ?? '')?->label() ?? trans_message('ai_assistant_contract_roster.role_unknown'),
+                'ours' => self::role($item['our_role'], $item['our_role_label']),
+                'other' => self::role($item['counterparty_role'], $item['counterparty_role_label']),
             ]);
             if ($item['end_date'] !== null && substr($item['end_date'], 0, 10) < $data['as_of_date']) { $lines[] = trans_message('ai_assistant_contract_roster.overdue'); }
         }
         $lines[] = trans_message('ai_assistant_contract_roster.basis');
         $lines[] = trans_message('ai_assistant_contract_roster.renewal');
         return implode("\n", $lines);
+    }
+    private static function role(?string $code, ?string $label): string
+    {
+        if ($label !== null && trim($label) !== '') { return self::text($label); }
+        $role = ContractPartyRoleEnum::tryFrom($code ?? '');
+        return trans_message($role === null ? 'ai_assistant_contract_roster.role_unknown' : 'ai_assistant_contract_roster.role_'.$role->value);
     }
     private static function text(string $value): string
     {

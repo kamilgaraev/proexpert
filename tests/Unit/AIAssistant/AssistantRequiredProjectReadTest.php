@@ -191,6 +191,11 @@ final class AssistantRequiredProjectReadTest extends TestCase
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $write), $write);
         }
         foreach ([['Почему техника OA-35 нашего объекта назначена?', ['asset_code' => 'OA-35']],
+            ['Почему техника OA-35 нашего объекта по-прежнему назначена?', ['asset_code' => 'OA-35']],
+            ['Почему техника CAN-DIRECTOR нашего объекта назначена?', ['asset_code' => 'CAN-DIRECTOR']],
+            ['Почему техника «can-director» нашего объекта назначена?', ['asset_code' => 'can-director']],
+            ['Почему техника нашего объекта по-прежнему назначена?', []],
+            ['Техника по-прежнему назначена на наш объект?', []],
             ['Почему машина #26 нашего объекта назначена?', ['asset_id' => 26]],
         ] as [$query, $filter]) {
             $expected = ['project_id' => 52] + $filter;
