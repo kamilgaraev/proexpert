@@ -45,6 +45,40 @@ final class AssistantResponseVerifierTest extends TestCase
         ]));
     }
 
+    public function test_allows_own_private_report_after_publication(): void
+    {
+        $answer = 'Отчёт сформирован. Файл доступен ниже.';
+        $this->assertSame($answer, (new AssistantResponseVerifier)->verify($answer, [
+            'task_id' => 'report.warehouse_stock',
+            'artifacts' => [[
+                'url' => '/api/v1/ai-assistant/reports/opaque/download',
+                'storage_disk' => 's3',
+                'storage_path' => 'org-38/personal-files/user-39/report.pdf',
+            ]],
+        ], 38, 39));
+    }
+
+    public function test_rejects_private_artifacts_without_matching_trusted_actor_context(): void
+    {
+        foreach ([
+            ['org-38/personal-files/user-40/report.pdf', 38, 39],
+            ['org-38/personal-files/user-390/report.pdf', 38, 39],
+            ['org-380/personal-files/user-39/report.pdf', 38, 39],
+            ['org-38/personal-files/user-39/../report.pdf', 38, 39],
+            ['org-38/personal-files/user-39/report.pdf', null, 39],
+            ['org-38/personal-files/user-39/report.pdf', 38, null],
+            ['org-38/personal-files/user-39/reports/report.pdf', 38, 40],
+        ] as [$path, $organizationId, $actorId]) {
+            $this->assertSame('Не удалось сформировать файл отчета по текущему запросу.', (new AssistantResponseVerifier)->verify('Отчёт сформирован.', [
+                'task_id' => 'report.warehouse_stock',
+                'artifacts' => [[
+                    'url' => '/api/v1/ai-assistant/reports/opaque/download',
+                    'storage_disk' => 's3', 'storage_path' => $path,
+                ]],
+            ], $organizationId, $actorId));
+        }
+    }
+
     public function test_strips_untrusted_markdown_link_and_keeps_trusted_link(): void
     {
         $verifier = new AssistantResponseVerifier;

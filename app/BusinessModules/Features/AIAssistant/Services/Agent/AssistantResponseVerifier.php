@@ -6,9 +6,9 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 
 final class AssistantResponseVerifier
 {
-    public function verify(string $answer, array $agentResult): string
+    public function verify(string $answer, array $agentResult, ?int $organizationId = null, ?int $actorId = null): string
     {
-        $trustedUrls = $this->trustedArtifactUrls($agentResult);
+        $trustedUrls = $this->trustedArtifactUrls($agentResult, $organizationId, $actorId);
         $verifiedAnswer = $this->stripUntrustedLinks($answer, $trustedUrls);
         $verifiedAnswer = $this->guardRagSourceClaims($verifiedAnswer, $agentResult);
 
@@ -150,7 +150,7 @@ final class AssistantResponseVerifier
         return is_string($result) ? trim(preg_replace('/[ \t]{2,}/u', ' ', $result) ?? $result) : $answer;
     }
 
-    private function trustedArtifactUrls(array $agentResult): array
+    private function trustedArtifactUrls(array $agentResult, ?int $organizationId, ?int $actorId): array
     {
         $urls = [];
 
@@ -168,14 +168,29 @@ final class AssistantResponseVerifier
                 && $url !== ''
                 && $storageDisk === 's3'
                 && is_string($storagePath)
-                && str_starts_with($storagePath, 'org-')
-                && str_contains($storagePath, '/reports/')
+                && $this->isTrustedReportPath($storagePath, $organizationId, $actorId)
             ) {
                 $urls[] = $url;
             }
         }
 
         return array_values(array_unique($urls));
+    }
+
+    private function isTrustedReportPath(string $path, ?int $organizationId, ?int $actorId): bool
+    {
+        if (str_contains($path, '..') || str_contains($path, '\\')) {
+            return false;
+        }
+        if (preg_match('~^org-[1-9][0-9]*/reports/.+$~D', $path) === 1) {
+            return $organizationId === null || ($organizationId > 0 && str_starts_with($path, "org-{$organizationId}/reports/"));
+        }
+        if ($organizationId === null || $organizationId < 1 || $actorId === null || $actorId < 1) {
+            return false;
+        }
+        $prefix = "org-{$organizationId}/personal-files/user-{$actorId}/";
+
+        return str_starts_with($path, $prefix) && strlen($path) > strlen($prefix);
     }
 
     private function isReportTask(array $agentResult): bool

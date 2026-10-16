@@ -65,7 +65,19 @@
     <table class="totals-table">
         <tr>
             <td>Позиций: <div class="total-val">{{ $totals['total_items'] }}</div></td>
-            <td>Общее кол-во: <div class="total-val">{{ number_format($totals['total_quantity'], 2, ',', ' ') }}</div></td>
+            <td>{{ trans_message('reports.warehouse_stock.quantity_by_unit') }}:
+                @forelse(($totals['quantity_by_unit'] ?? []) as $quantityTotal)
+                    <div class="total-val">
+                        @if($quantityTotal['quantity'] !== null)
+                            {{ number_format($quantityTotal['quantity'], 2, ',', ' ') }} {{ $quantityTotal['unit'] }}
+                        @else
+                            {{ trans_message('reports.warehouse_stock.unit_missing') }}: {{ trans_message('reports.warehouse_stock.quantity_unknown') }}
+                        @endif
+                    </div>
+                @empty
+                    <div class="total-val">—</div>
+                @endforelse
+            </td>
             <td>Общая стоимость: <div class="total-val">{{ number_format($totals['total_value'], 2, ',', ' ') }} ₽</div></td>
             <td>Критических: <div class="total-val" style="color: #e74c3c">{{ $totals['critical_items'] }}</div></td>
         </tr>

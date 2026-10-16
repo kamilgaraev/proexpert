@@ -1420,7 +1420,7 @@ class AIAssistantService
             'task_id' => $finalState->id,
             'state' => $finalState->toArray(),
             'artifacts' => $artifacts,
-        ]);
+        ], $organizationId, (int) $user->id);
 
         $this->agentStateStore->save($conversation, $finalState);
 

@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 return [
+    'warehouse_stock' => [
+        'quantity_by_unit' => 'Количество по единицам',
+        'unit_missing' => 'Единица не указана',
+        'quantity_unknown' => 'Итог не рассчитывается',
+    ],
     'columns' => [
         'confirmed_hours' => 'Подтверждённые часы',
         'actual_duration_known' => 'Часы подтверждены',
