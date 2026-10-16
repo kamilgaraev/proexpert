@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Authorization;
 
 use App\Models\Module;
+use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
@@ -22,7 +23,7 @@ final class OrganizationEntitlementQueryTest extends TestCase
         Module::query()->where('slug', $foundation[0])->update(['is_active' => false]);
         $reads = 0;
         DB::listen(static function ($query) use (&$reads): void {
-            if (preg_match('/from "modules"/i', $query->sql)) {
+            if (preg_match('/from "(?:modules|organization_package_subscriptions)"/i', $query->sql)) {
                 $reads++;
             }
         });
@@ -43,5 +44,60 @@ final class OrganizationEntitlementQueryTest extends TestCase
         OrganizationPackageSubscription::query()->where('organization_id', $fixture->organization->id)->update(['status' => 'canceled']);
         self::assertEqualsCanonicalizing($free, $service->getEffectiveModuleSlugs($fixture->organization->id));
         self::assertEqualsCanonicalizing($free, $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id));
+    }
+
+    public function test_module_reads_preserve_current_subscription_windows(): void
+    {
+        $this->freezeTime();
+        $catalog = app(PackageCatalogService::class);
+        $fixture = AssistantRealAuthorizationFixture::create(array_column($catalog->allPackages(), 'slug'));
+        $service = app(OrganizationEntitlementService::class);
+        $free = $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id);
+        $paid = array_values(array_diff($service->getEffectiveModuleSlugs($fixture->organization->id), $free));
+        self::assertNotEmpty($paid);
+        $account = OrganizationCommercialAccount::query()->findOrFail($fixture->subscription->commercial_account_id);
+        $subscriptions = OrganizationPackageSubscription::query()->where('organization_id', $fixture->organization->id);
+        $cases = [
+            ['active paid', 'active', 'paid_package', now()->addHour(), null, 'active', null, false, true],
+            ['paid without period', 'active', 'paid_package', null, null, 'active', null, false, false],
+            ['unlimited corporate', 'active', 'corporate', null, null, 'active', null, false, true],
+            ['expired corporate', 'active', 'corporate', now()->subHour(), null, 'active', null, false, false],
+            ['scheduled removal', 'scheduled_for_removal', 'paid_package', now()->addHour(), null, 'active', null, false, true],
+            ['current trial', 'trialing', 'paid_package', null, now()->addMinute(), 'active', null, false, true],
+            ['expired trial', 'trialing', 'paid_package', null, now(), 'active', null, false, false],
+            ['canceled', 'canceled', 'paid_package', now()->addHour(), null, 'active', null, false, false],
+            ['current grace', 'grace', 'paid_package', now()->subHour(), null, 'grace', now()->addMinute(), false, true],
+            ['expired grace', 'grace', 'paid_package', now()->subHour(), null, 'grace', now(), false, false],
+            ['renewal processing', 'active', 'paid_package', now()->subMinute(), null, 'active', null, true, true],
+            ['renewal without payment', 'active', 'paid_package', now()->subMinute(), null, 'active', null, false, false],
+        ];
+        foreach ($cases as [$label, $status, $source, $periodEnd, $trialEnd, $accountStatus, $graceEnd, $renew, $expected]) {
+            $account->forceFill([
+                'status' => $accountStatus, 'current_period_end_at' => $periodEnd, 'billing_anchor_at' => $periodEnd,
+                'grace_ends_at' => $graceEnd, 'auto_renew_enabled' => $renew,
+                'saved_payment_method_active' => $renew, 'saved_payment_method_id' => $renew ? 'pm_fixture' : null,
+            ])->save();
+            (clone $subscriptions)->update([
+                'status' => $status, 'access_source' => $source,
+                'current_period_end_at' => $periodEnd, 'trial_ends_at' => $trialEnd,
+            ]);
+            self::assertSame($expected, in_array($paid[0], $service->getEffectiveModuleSlugs($fixture->organization->id), true), $label);
+            self::assertSame($expected, isset($service->getPackageModuleSources($fixture->organization->id)[$paid[0]]), $label);
+        }
+    }
+
+    public function test_retired_package_alias_and_unknown_package_preserve_module_access(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        config(['commercial_offers.retired_entry_packages' => ['legacy-entitlement-fixture']]);
+        $service = app(OrganizationEntitlementService::class);
+        $before = $service->getEffectiveModuleSlugs($fixture->organization->id);
+        $sources = $service->getPackageModuleSources($fixture->organization->id);
+        $fixture->subscription->update(['package_slug' => 'legacy-entitlement-fixture']);
+        self::assertEqualsCanonicalizing($before, $service->getEffectiveModuleSlugs($fixture->organization->id));
+        self::assertEquals($sources, $service->getPackageModuleSources($fixture->organization->id));
+        $fixture->subscription->update(['package_slug' => 'unknown-entitlement-fixture']);
+        self::assertSame([], $service->getPackageModuleSources($fixture->organization->id));
+        self::assertEqualsCanonicalizing($service->getEffectiveModuleSlugs($fixture->foreignOrganization->id), $service->getEffectiveModuleSlugs($fixture->organization->id));
     }
 }
