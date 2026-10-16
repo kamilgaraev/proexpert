@@ -6,6 +6,7 @@ namespace App\Support\Reporting;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use DateTimeImmutable;
 
 final readonly class SourceReadinessResult
@@ -18,6 +19,7 @@ final readonly class SourceReadinessResult
         public int $invalidVersionCount,
         public int $invalidHashCount,
         public DateTimeImmutable $verifiedAt,
+        public ?ReportSourceReadinessIssues $issues = null,
     ) {}
 
     public static function empty(?DateTimeImmutable $verifiedAt = null): self
@@ -34,6 +36,7 @@ final readonly class SourceReadinessResult
             || $this->invalidHashCount !== 0) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+                sourceIssues: $this->issues,
             );
         }
     }

@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSour
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Application\Readiness\ReportCandidateReadinessGate;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceReadinessProbe;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRunReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
@@ -43,6 +44,8 @@ final readonly class ReadinessGuardedReportRunStore implements ReportRunStore
                 $query->definition->code,
                 $probe->inspect($context, $query),
             );
+        } elseif ($probe instanceof ReportRunReadinessProbe) {
+            $probe->assertReady($context, $query);
         }
 
         return $this->runs->createOrReuse($context, $query, $savedView, $idempotencyKey);

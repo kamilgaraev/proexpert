@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Readiness;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadinessProbe;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRunReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskGrainUniverse;
 use App\Support\Reporting\OwnerReportFilterApplier;
@@ -16,7 +17,7 @@ use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 
-final readonly class InventoryRiskReadinessProbe implements ReportDefinitionReadinessProbe
+final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessProbe
 {
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
@@ -133,14 +134,18 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             )
             ->count();
 
+        $invalidVersions = (clone $events)->where('source_version', '<', 1)->count();
+        $invalidHashes = (clone $events)->whereRaw('LENGTH(source_hash) <> 64')->count();
+
         return new SourceReadinessResult(
             $eligible,
             $projected,
             max(0, $eligible - $projected) + $missingOpening + $invalidTransfers,
             $unknown,
-            (clone $events)->where('source_version', '<', 1)->count(),
-            (clone $events)->whereRaw('LENGTH(source_hash) <> 64')->count(),
+            $invalidVersions,
+            $invalidHashes,
             new DateTimeImmutable,
+            new ReportSourceReadinessIssues($missingOpening, $unknown, $invalidTransfers, $invalidVersions, $invalidHashes),
         );
     }
 }

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
 use App\Services\Logging\Context\RequestContext;
 use Illuminate\Auth\GenericUser;
@@ -80,6 +81,26 @@ final class ReportErrorResponseFactoryTest extends TestCase
             self::assertSame('req-report-test-0002', $body['correlation_id']);
             self::assertNotSame($exception->getMessage(), $body['message']);
         }
+    }
+
+    public function test_source_unavailable_exposes_only_typed_aggregate_counts(): void
+    {
+        $issues = new ReportSourceReadinessIssues(7, 2, 1, 0, 0);
+        $exception = ReportContractException::fromCode(
+            ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
+            previous: new RuntimeException('private-source-record'),
+            sourceIssues: $issues,
+        );
+        $body = $this->factory()->make($exception, 'req-report-source')->getData(true);
+
+        self::assertSame(['source_readiness' => [
+            'missing_opening_count' => 7,
+            'unknown_unit_or_valuation_count' => 2,
+            'invalid_transfer_pair_count' => 1,
+            'invalid_version_count' => 0,
+            'invalid_hash_count' => 0,
+        ]], $body['details']);
+        self::assertStringNotContainsString('private-source-record', json_encode($body, JSON_THROW_ON_ERROR));
     }
 
     public function test_middleware_renders_report_contract_exceptions_without_logging_them(): void
