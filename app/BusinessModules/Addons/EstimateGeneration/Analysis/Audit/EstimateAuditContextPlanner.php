@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextPayloadBudget;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 /** Preserve all facts/evidence across parts, including facts not yet used by a work. */
@@ -22,6 +23,8 @@ final class EstimateAuditContextPlanner
                 return $inputs;
             }
         }
+
+        $this->reportUnsplitContext($root, $maximumBytes);
 
         throw new InvalidArgumentException('estimate_audit_context_requires_source_split');
     }
@@ -194,6 +197,33 @@ final class EstimateAuditContextPlanner
         $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
 
         return strlen($encoded) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($encoded, $this->wirePolicy);
+    }
+
+    private function reportUnsplitContext(EstimateAuditInput $root, int $maximumBytes): void
+    {
+        $application = Log::getFacadeApplication();
+        if ($application === null || ! $application->bound('log')) {
+            return;
+        }
+        $draft = EstimateAuditDraftWireProjection::project($root->draft, $root->derivedQuantities);
+        $bytes = static fn (mixed $value): int => strlen(CanonicalPipelineJson::encode([$value])) - 2;
+        $largestWork = [];
+        $largestBytes = 0;
+        foreach ($this->items($draft) as $item) {
+            $itemBytes = $bytes($item);
+            if ($itemBytes > $largestBytes) {
+                $largestBytes = $itemBytes;
+                $largestWork = array_map($bytes, $item);
+            }
+        }
+        Log::warning('estimate_generation.audit_context_requires_source_split', [
+            'organization_id' => $root->organizationId, 'project_id' => $root->projectId,
+            'session_id' => $root->sessionId, 'maximum_part_bytes' => $maximumBytes,
+            'maximum_serialized_input_bytes' => $this->wirePolicy['maximum_serialized_input_bytes'] ?? null,
+            'draft_field_bytes' => array_map($bytes, $draft), 'largest_work_bytes' => $largestBytes,
+            'largest_work_field_bytes' => $largestWork, 'facts_bytes' => $bytes($root->facts),
+            'derived_quantities_bytes' => $bytes($root->derivedQuantities), 'evidence_bytes' => $bytes($root->evidence),
+        ]);
     }
 
     private function items(array $draft): array

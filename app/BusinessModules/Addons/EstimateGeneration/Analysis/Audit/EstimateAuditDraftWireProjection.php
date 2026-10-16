@@ -11,6 +11,16 @@ final class EstimateAuditDraftWireProjection
 {
     public static function project(array $draft, array $quantities): array
     {
+        $basisReferences = [];
+        foreach (array_values($quantities) as $index => $quantity) {
+            if (is_array($quantity['quantity_basis'] ?? null)) {
+                $encoded = CanonicalPipelineJson::encode($quantity['quantity_basis']);
+                $basisReferences[hash('sha256', $encoded)] = [
+                    'encoded' => $encoded,
+                    'reference' => 'audit_input.derived_quantities['.$index.'].quantity_basis',
+                ];
+            }
+        }
         if (is_array($draft['estimate_composition']['derived_quantities'] ?? null)
             && self::same($draft['estimate_composition']['derived_quantities'], $quantities)) {
             unset($draft['estimate_composition']['derived_quantities']);
@@ -30,7 +40,15 @@ final class EstimateAuditDraftWireProjection
                         && self::same($item['quantity_evidence'], $item['quantity_basis_details'])) {
                         $item['item_fingerprint'] = ApplyComposerCorrectionCycle::itemFingerprint($item);
                         unset($item['quantity_evidence']);
-                        $item['quantity_evidence_ref'] = 'quantity_basis_details';
+                        $encoded = CanonicalPipelineJson::encode($item['quantity_basis_details']);
+                        $basisReference = $basisReferences[hash('sha256', $encoded)] ?? null;
+                        if ($basisReference !== null && $basisReference['encoded'] === $encoded) {
+                            unset($item['quantity_basis_details']);
+                            $item['quantity_evidence_ref'] = $basisReference['reference'];
+                            $item['quantity_basis_details_ref'] = $basisReference['reference'];
+                        } else {
+                            $item['quantity_evidence_ref'] = 'quantity_basis_details';
+                        }
                         $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
                     }
                 }
