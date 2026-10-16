@@ -115,6 +115,59 @@ class TochkaProtocolTest extends TestCase
         $this->assertSame($other, \App\Services\Billing\Bank\BankTelemetrySanitizer::sanitize($other));
     }
 
+    public function test_document_and_b2b_qr_client_use_official_api_paths_and_binary_pdf(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-tochka-documents-');
+        file_put_contents($path, 'test-only-credential');
+        try {
+            config(['bank_billing.enabled' => true, 'bank_billing.jwt_path' => $path,
+                'bank_billing.customer_code' => 'test-customer', 'bank_billing.account_id' => '40802810000000000001/044525104']);
+            $id = '11111111-1111-4111-8111-111111111111';
+            Http::fake([
+                TochkaClient::BASE_URL.'/invoice/v1.0/bills' => Http::response(['Data' => ['documentId' => $id]]),
+                TochkaClient::BASE_URL.'/invoice/v1.0/closing-documents' => Http::response(['Data' => ['documentId' => $id]]),
+                TochkaClient::BASE_URL.'/invoice/v1.0/*/test-customer/'.$id.'/file' => Http::response('%PDF-1.4 bank native', 200, ['Content-Type' => 'application/pdf']),
+                TochkaClient::BASE_URL.'/sbp/v1.0/b2b-qr-code/merchant/*' => Http::response(['Data' => ['qrcId' => 'AS000000000000000000000000000001', 'payload' => 'https://qr.nspk.ru/test']]),
+                TochkaClient::BASE_URL.'/sbp/v1.0/b2b-qr-code/AS*' => Http::response(['Data' => ['amount' => 101]]),
+            ]);
+            $client = new TochkaClient;
+            $this->assertSame($id, $client->createDocument('invoice', ['Data' => ['Content' => ['Invoice' => []]]]));
+            $this->assertSame($id, $client->createDocument('closing', ['Data' => ['Content' => ['Act' => []]]]));
+            $this->assertSame('%PDF-1.4 bank native', $client->documentPdf('invoice', 'test-customer', $id));
+            $this->assertSame('%PDF-1.4 bank native', $client->documentPdf('closing', 'test-customer', $id));
+            $this->assertArrayHasKey('Data', $client->createB2bQr('MF0000000001', config('bank_billing.account_id'), ['amount' => 101, 'takeTax' => false]));
+            $this->assertSame(101, $client->b2bQr('AS000000000000000000000000000001')['Data']['amount']);
+            Http::assertSent(fn ($request): bool => $request->method() === 'POST'
+                && str_ends_with($request->url(), '/b2b-qr-code/merchant/MF0000000001/40802810000000000001/044525104')
+                && $request['Data']['amount'] === 101);
+            Http::assertSentCount(6);
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_document_pdf_rejects_oversize_and_json_responses_without_sensitive_errors(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-tochka-doc-limit-');
+        file_put_contents($path, 'test-only-credential');
+        try {
+            config(['bank_billing.enabled' => true, 'bank_billing.jwt_path' => $path, 'bank_billing.maximum_document_bytes' => 16,
+                'bank_billing.customer_code' => 'test-customer', 'bank_billing.account_id' => '40802810000000000001/044525104']);
+            Http::fakeSequence()->push('%PDF-'.str_repeat('x', 20), 200)->push('{"secret":1}', 200);
+            foreach (['tochka_response_too_large', 'tochka_document_invalid'] as $message) {
+                try {
+                    (new TochkaClient)->documentPdf('invoice', 'test-customer', '11111111-1111-4111-8111-111111111111');
+                    $this->fail('Invalid PDF accepted');
+                } catch (RuntimeException $exception) {
+                    $this->assertSame($message, $exception->getMessage());
+                    $this->assertNull($exception->getPrevious());
+                }
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     public function test_bank_billing_resolves_without_validating_the_disabled_yookassa_mode(): void
     {
         config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false,

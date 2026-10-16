@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing\Bank;
 
+use App\Models\CommercialBankQrCode;
 use App\Models\CommercialBankWebhookEvent;
 use Carbon\CarbonImmutable;
 use InvalidArgumentException;
@@ -16,6 +17,23 @@ final class TochkaWebhookService
     {
         $payload = $this->verifier->verify($jwt);
         $type = $payload['webhookType'] ?? null;
+        if ($type === 'incomingSbpB2BPayment') {
+            if (($payload['customerCode'] ?? null) !== config('bank_billing.customer_code')
+                || ! is_string($payload['qrcId'] ?? null)) {
+                return;
+            }
+            $qr = CommercialBankQrCode::query()->where('qrc_id', $payload['qrcId'])
+                ->where('customer_code', config('bank_billing.customer_code'))->where('account_id', config('bank_billing.account_id'))->first();
+            if ($qr === null) {
+                return;
+            }
+            CommercialBankWebhookEvent::query()->firstOrCreate(['fingerprint' => hash('sha256', $jwt)], [
+                'event_type' => $type, 'payment_id' => $qr->qrc_id,
+                'operation_date' => CarbonImmutable::now('Europe/Moscow')->toDateString(),
+            ]);
+
+            return;
+        }
         if (! in_array($type, ['incomingPayment', 'outgoingPayment'], true)) {
             return;
         }

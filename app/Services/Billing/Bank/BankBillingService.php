@@ -31,6 +31,7 @@ final class BankBillingService
         }
 
         return ['provider' => config('bank_billing.default_provider', 'tochka'), 'ready' => $ready,
+            'sbp_b2b_enabled' => $ready && app(BankQrService::class)->enabled(),
             'buyer_ready' => $buyerReady, 'card_payments_enabled' => config('bank_billing.default_provider') === 'yookassa' && config('services.yookassa.payments_enabled') === true,
             'auto_invoice_enabled' => (bool) OrganizationCommercialAccount::query()->where('organization_id', $organizationId)->value('bank_auto_invoice')];
     }

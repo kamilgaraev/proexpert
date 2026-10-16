@@ -46,6 +46,11 @@ final class BankBillingController
         });
     }
 
+    public function qr(Request $request, string $invoice): Response
+    {
+        return $this->respond($request, fn (User $actor, int $org): array => app(\App\Services\Billing\Bank\BankQrService::class)->get($actor, $org, $invoice));
+    }
+
     public function refund(BankRefundRequest $request, string $invoice): Response
     {
         return $this->respond($request, function (User $actor, int $org) use ($request, $invoice): array {
