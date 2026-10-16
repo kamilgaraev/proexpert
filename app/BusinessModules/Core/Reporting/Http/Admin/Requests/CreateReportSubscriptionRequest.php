@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Requests;
 
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CreateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
 use DateTimeZone;
+use Illuminate\Validation\Rule;
 
 final class CreateReportSubscriptionRequest extends ReportFormRequest
 {
@@ -19,7 +21,8 @@ final class CreateReportSubscriptionRequest extends ReportFormRequest
             'day_of_month' => ['present', 'nullable', 'integer', 'between:1,31'],
             'local_time' => ['required', 'date_format:H:i'],
             'timezone' => ['required', 'timezone'],
-            'period_policy' => ['required', 'array', 'min:1'],
+            'period_policy' => ['required', 'array:mode', 'min:1'],
+            'period_policy.mode' => ['required', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['required', 'in:csv,xlsx,pdf'],
             ...$this->subscriptionForbiddenClientFieldsRules(),
         ];

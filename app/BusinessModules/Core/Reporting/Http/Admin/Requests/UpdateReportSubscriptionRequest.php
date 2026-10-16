@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Requests;
 
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
 use App\BusinessModules\Core\Reporting\Domain\DTO\UpdateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
 use DateTimeZone;
+use Illuminate\Validation\Rule;
 
 final class UpdateReportSubscriptionRequest extends ReportSubscriptionRouteRequest
 {
@@ -20,7 +22,8 @@ final class UpdateReportSubscriptionRequest extends ReportSubscriptionRouteReque
             'day_of_month' => ['sometimes', 'nullable', 'integer', 'between:1,31'],
             'local_time' => ['sometimes', 'date_format:H:i'],
             'timezone' => ['sometimes', 'timezone'],
-            'period_policy' => ['sometimes', 'array', 'min:1'],
+            'period_policy' => ['sometimes', 'array:mode', 'min:1'],
+            'period_policy.mode' => ['required_with:period_policy', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['sometimes', 'in:csv,xlsx,pdf'],
         ];
     }

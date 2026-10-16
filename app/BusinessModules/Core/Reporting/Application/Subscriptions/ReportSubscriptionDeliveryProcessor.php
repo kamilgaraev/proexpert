@@ -77,7 +77,7 @@ final readonly class ReportSubscriptionDeliveryProcessor
 
                     $run = $this->runs->handle(
                         $context,
-                        $input->runData($this->periods->asOf($input, $delivery->scheduledFor)),
+                        $this->periods->runData($input, $delivery->scheduledFor),
                         $delivery->runIdempotencyKey(),
                     );
 
@@ -136,6 +136,10 @@ final readonly class ReportSubscriptionDeliveryProcessor
                     $export = $this->getExports->handle($context, (string) $delivery->exportId);
                     $key = $delivery->notificationIdempotencyKey();
                     $receipt = $this->notifier->notify($context, $subscription, $delivery, $export, $key);
+
+                    if ($receipt === null) {
+                        return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
+                    }
 
                     $this->deliveries->markNotifiedLocked(
                         $delivery,

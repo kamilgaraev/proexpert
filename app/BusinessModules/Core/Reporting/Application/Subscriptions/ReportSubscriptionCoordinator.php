@@ -349,7 +349,7 @@ final readonly class ReportSubscriptionCoordinator
             $this->invalid();
         }
 
-        return new ReportSubscriptionExecutionInput(
+        $input = new ReportSubscriptionExecutionInput(
             $definition->code,
             $view->filters,
             $view->comparison,
@@ -363,6 +363,9 @@ final readonly class ReportSubscriptionCoordinator
             $definition->contractVersion,
             $definition->definitionHash,
         );
+        (new ReportSubscriptionPeriodResolver)->validate($input);
+
+        return $input;
     }
 
     private function nextRun(ReportSubscription $subscription, DateTimeImmutable $after): DateTimeImmutable

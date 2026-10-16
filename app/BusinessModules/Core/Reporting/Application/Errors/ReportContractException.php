@@ -49,6 +49,7 @@ final class ReportContractException extends RuntimeException
         'visibility',
         'is_default',
         'saved_view_id',
+        'period_policy',
     ];
 
     public readonly ReportErrorCode $errorCode;

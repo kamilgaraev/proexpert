@@ -11,10 +11,12 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionNotificationReceipt;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
+use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 final readonly class PersistedInAppReportSubscriptionNotifier implements InAppReportSubscriptionNotifier
 {
@@ -26,17 +28,20 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
         ReportSubscriptionDelivery $delivery,
         ReportExport $export,
         IdempotencyKey $key,
-    ): ReportSubscriptionNotificationReceipt {
-        return DB::transaction(function () use ($context, $subscription, $delivery, $export, $key): ReportSubscriptionNotificationReceipt {
+    ): ?ReportSubscriptionNotificationReceipt {
+        return DB::transaction(function () use ($context, $subscription, $delivery, $export, $key): ?ReportSubscriptionNotificationReceipt {
             $receipt = DB::table('report_subscription_notification_receipts')
                 ->where('idempotency_key_hash', $key->hash)
+                ->where('delivery_id', $delivery->id)
+                ->where('owner_id', $subscription->ownerId)
+                ->where('organization_id', $subscription->organizationId)
                 ->lockForUpdate()
                 ->first();
 
             if ($receipt !== null) {
-                return new ReportSubscriptionNotificationReceipt(
-                    (string) $receipt->id,
-                    new DateTimeImmutable((string) $receipt->created_at),
+                return $this->deliveredReceipt(
+                    (string) $receipt->id, new DateTimeImmutable((string) $receipt->created_at),
+                    (string) $receipt->notification_id, $subscription,
                 );
             }
 
@@ -55,6 +60,9 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 requiredPermissions: ['reports.view'],
                 interfaces: ['admin'],
             );
+            if (! $notification->exists || ! in_array('in_app', $notification->channels ?? [], true)) {
+                throw new RuntimeException('report_subscription_notification_unavailable');
+            }
 
             $now = now();
             DB::table('report_subscription_notification_receipts')->insert([
@@ -68,7 +76,30 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 'updated_at' => $now,
             ]);
 
-            return new ReportSubscriptionNotificationReceipt($id, DateTimeImmutable::createFromInterface($now));
+            return $this->deliveredReceipt($id, DateTimeImmutable::createFromInterface($now), (string) $notification->id, $subscription);
         });
+    }
+
+    private function deliveredReceipt(
+        string $id,
+        DateTimeImmutable $createdAt,
+        string $notificationId,
+        ReportSubscription $subscription,
+    ): ?ReportSubscriptionNotificationReceipt {
+        $notification = Notification::query()
+            ->whereKey($notificationId)
+            ->where('notifiable_type', User::class)
+            ->where('notifiable_id', $subscription->ownerId)
+            ->where('organization_id', $subscription->organizationId)
+            ->first();
+        if (! $notification instanceof Notification || ! in_array('in_app', $notification->channels ?? [], true)) {
+            throw new RuntimeException('report_subscription_notification_unavailable');
+        }
+        if (! in_array($notification->delivery_status['in_app'] ?? null, ['sent', 'delivered'], true)
+            || ! $notification->analytics()->where('channel', 'in_app')->where('status', 'delivered')->exists()) {
+            return null;
+        }
+
+        return new ReportSubscriptionNotificationReceipt($id, $createdAt);
     }
 }
