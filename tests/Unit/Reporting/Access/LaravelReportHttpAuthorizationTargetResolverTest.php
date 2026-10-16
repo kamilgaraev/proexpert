@@ -9,6 +9,9 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -17,6 +20,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositePublishedReportDefinitionRegistry;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
@@ -29,6 +33,81 @@ final class LaravelReportHttpAuthorizationTargetResolverTest extends TestCase
     private const RUN_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 
     private const EXPORT_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
+
+    public function test_catalog_reads_definitions_in_bulk_and_preserves_sorted_initial_codes(): void
+    {
+        $alpha = $this->definition('alpha_report', 'a');
+        $zeta = $this->definition('zeta_report', 'f');
+        $registry = $this->createMock(PublishedReportDefinitionCatalog::class);
+        $registry->expects(self::once())->method('publishedCodes')->willReturn(['zeta_report', 'alpha_report']);
+        $registry->expects(self::once())->method('publishedDefinitions')->willReturn([
+            'zeta_report' => new PublishedReportDefinition($zeta),
+            'later_report' => new PublishedReportDefinition($this->definition('later_report')),
+            'alpha_report' => new PublishedReportDefinition($alpha),
+        ]);
+        $registry->expects(self::never())->method('published');
+
+        $targets = (new LaravelReportHttpAuthorizationTargetResolver($registry, new StubSubjectReader))->catalog();
+
+        self::assertSame([$alpha, $zeta], array_column($targets, 'definition'));
+        self::assertSame([ReportOperation::VIEW, ReportOperation::VIEW], array_column($targets, 'operation'));
+        self::assertSame([null, null], array_column($targets, 'snapshot'));
+    }
+
+    public function test_catalog_rereads_publications_and_rejects_a_definition_disabled_on_the_next_call(): void
+    {
+        $registry = $this->createMock(PublishedReportDefinitionCatalog::class);
+        $registry->expects(self::exactly(2))->method('publishedCodes')->willReturn(['alpha_report']);
+        $registry->expects(self::exactly(2))->method('publishedDefinitions')->willReturnOnConsecutiveCalls(
+            ['alpha_report' => new PublishedReportDefinition($this->definition('alpha_report'))],
+            [],
+        );
+        $registry->expects(self::never())->method('published');
+        $resolver = new LaravelReportHttpAuthorizationTargetResolver($registry, new StubSubjectReader);
+        self::assertCount(1, $resolver->catalog());
+
+        try {
+            $resolver->catalog();
+            self::fail('A missing publication must fail closed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_NOT_FOUND, $exception->errorCode);
+        }
+    }
+
+    public function test_empty_catalog_does_not_resolve_definition_payloads(): void
+    {
+        $registry = $this->createMock(PublishedReportDefinitionCatalog::class);
+        $registry->expects(self::once())->method('publishedCodes')->willReturn([]);
+        $registry->expects(self::never())->method('publishedDefinitions');
+        $registry->expects(self::never())->method('published');
+
+        self::assertSame([], (new LaravelReportHttpAuthorizationTargetResolver($registry, new StubSubjectReader))->catalog());
+    }
+
+    public function test_composite_with_a_legacy_database_preserves_the_builtin_collision_check(): void
+    {
+        $definition = $this->definition('alpha_report');
+        $database = $this->createMock(ReportDefinitionRegistry::class);
+        $database->method('publishedCodes')->willReturn([]);
+        $database->expects(self::once())->method('published')->with('alpha_report')->willReturn(new PublishedReportDefinition($definition));
+        $registry = new CompositePublishedReportDefinitionRegistry(new StubDefinitionRegistry([$definition]), $database);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('report_published_definition_conflict');
+        (new LaravelReportHttpAuthorizationTargetResolver($registry, new StubSubjectReader))->catalog();
+    }
+
+    public function test_composite_with_a_legacy_database_propagates_a_non_missing_publication_error(): void
+    {
+        $database = $this->createMock(ReportDefinitionRegistry::class);
+        $database->method('publishedCodes')->willReturn([]);
+        $database->expects(self::once())->method('published')->with('alpha_report')->willThrowException(new InvalidArgumentException('legacy_publication_error'));
+        $registry = new CompositePublishedReportDefinitionRegistry(new StubDefinitionRegistry([$this->definition('alpha_report')]), $database);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('legacy_publication_error');
+        (new LaravelReportHttpAuthorizationTargetResolver($registry, new StubSubjectReader))->catalog();
+    }
 
     public function test_create_run_and_catalog_use_only_published_registry_snapshot(): void
     {
