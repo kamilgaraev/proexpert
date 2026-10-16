@@ -169,7 +169,7 @@ class PaymentRequestControllerWorkflowTest extends TestCase
             'name' => 'Other Request Contractor',
             'inn' => '7700000020',
         ]);
-        foreach ([['amount' => 450], ['currency' => 'USD'], ['payee_contractor_id' => $otherContractor->id]] as $changes) {
+        foreach ([['amount' => 450], ['currency' => 'USD'], ['payee_contractor_id' => $otherContractor->id], ['direction' => 'incoming']] as $changes) {
             $this->withHeaders($context->authHeaders())
                 ->postJson('/api/v1/admin/payments/documents', array_replace($payload, $changes))
                 ->assertUnprocessable();

@@ -265,7 +265,12 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
-    public function test_accepting_a_legacy_existing_order_releases_the_request_reservation(): void
+    #[DataProvider('legacyRequestOrders')]
+    public function test_accepting_a_legacy_existing_order_checks_compatibility_before_releasing_reservation(
+        PaymentDocumentStatus $orderStatus,
+        ?string $mismatch,
+        bool $accepted,
+    ): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
         \Illuminate\Support\Facades\Notification::fake();
@@ -288,15 +293,70 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'due_date' => now()->addDays(3)->toDateString(),
         ])->save();
         $this->service()->syncReservation($request->fresh(), $context->user);
-        $existingOrder = $this->createDocument($context, $budget, 900.0);
+        $orderBudget = $budget;
+        $orderContractId = $contract->id;
+        if ($mismatch === 'article') {
+            $orderBudget['article'] = BudgetArticle::query()->create([
+                'organization_id' => $context->organization->id,
+                'code' => 'OTHER-PAY-'.uniqid(),
+                'name' => 'Другая статья',
+                'budget_kind' => 'bdds',
+                'flow_direction' => 'outflow',
+                'is_leaf' => true,
+                'is_active' => true,
+            ]);
+        }
+        if ($mismatch === 'center') {
+            $orderBudget['center'] = ResponsibilityCenter::query()->create([
+                'organization_id' => $context->organization->id,
+                'center_type' => 'project',
+                'code' => 'OTHER-CFO-'.uniqid(),
+                'name' => 'Другой ЦФО',
+                'is_active' => true,
+            ]);
+        }
+        if ($mismatch === 'contract') {
+            $orderContractId = Contract::query()->create([
+                'organization_id' => $context->organization->id,
+                'project_id' => $contract->project_id,
+                'contractor_id' => $contract->contractor_id,
+                'number' => 'OTHER-LIMIT-'.uniqid(),
+                'date' => now()->toDateString(),
+                'status' => 'active',
+                'total_amount' => 100000,
+            ])->id;
+        }
+        if ($mismatch === 'missing_contract') {
+            $orderContractId = null;
+        }
+        $hasBudgetMismatch = in_array($mismatch, ['article', 'center', 'contract', 'missing_contract'], true);
+        if ($hasBudgetMismatch) {
+            $orderBudget['line'] = BudgetLine::query()->create([
+                'budget_version_id' => $budget['line']->budget_version_id,
+                'project_id' => $contract->project_id,
+                'contract_id' => $orderContractId,
+                'budget_article_id' => $orderBudget['article']->id,
+                'responsibility_center_id' => $orderBudget['center']->id,
+                'currency' => 'RUB',
+            ]);
+            BudgetAmount::query()->create([
+                'budget_line_id' => $orderBudget['line']->id,
+                'month' => now()->startOfMonth()->toDateString(),
+                'plan_amount' => 100000,
+                'forecast_amount' => 100000,
+                'currency' => 'RUB',
+            ]);
+        }
+        $existingOrder = $this->createDocument($context, $orderBudget, 900.0);
         $existingOrder->forceFill([
             'document_type' => PaymentDocumentType::PAYMENT_ORDER,
-            'status' => PaymentDocumentStatus::APPROVED,
+            'status' => $orderStatus,
+            'direction' => $mismatch === 'direction' ? InvoiceDirection::INCOMING : InvoiceDirection::OUTGOING,
             'project_id' => $contract->project_id,
             'payer_organization_id' => $context->organization->id,
             'payee_contractor_id' => $contract->contractor_id,
-            'invoiceable_type' => Contract::class,
-            'invoiceable_id' => $contract->id,
+            'invoiceable_type' => $orderContractId !== null ? Contract::class : null,
+            'invoiceable_id' => $orderContractId,
             'source_type' => PaymentDocument::class,
             'source_id' => $request->id,
             'currency' => 'RUB',
@@ -304,16 +364,35 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         ])->save();
         $this->service()->syncReservation($existingOrder->fresh(), $context->user);
 
-        $this->withHeaders($context->authHeaders())
-            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
-            ->assertOk()->assertJsonPath('data.payment_order.id', $existingOrder->id);
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept");
+        if ($accepted) {
+            $response->assertOk()->assertJsonPath('data.payment_order.id', $existingOrder->id);
+        } else {
+            $response->assertUnprocessable();
+        }
         $this->assertDatabaseHas('budget_limit_reservations', [
             'payment_document_id' => $request->id,
-            'status' => BudgetLimitReservation::STATUS_RELEASED,
+            'status' => $accepted ? BudgetLimitReservation::STATUS_RELEASED : BudgetLimitReservation::STATUS_RESERVED,
         ]);
-        self::assertSame(900.0, (float) BudgetLimitReservation::query()
+        self::assertSame($hasBudgetMismatch ? 1800.0 : 900.0, (float) BudgetLimitReservation::query()
             ->where('status', BudgetLimitReservation::STATUS_RESERVED)->sum('amount'));
         self::assertSame(2, PaymentDocument::query()->count());
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public static function legacyRequestOrders(): array
+    {
+        return [
+            'compatible' => [PaymentDocumentStatus::APPROVED, null, true],
+            'different_article' => [PaymentDocumentStatus::APPROVED, 'article', false],
+            'different_center' => [PaymentDocumentStatus::APPROVED, 'center', false],
+            'different_contract' => [PaymentDocumentStatus::APPROVED, 'contract', false],
+            'missing_contract' => [PaymentDocumentStatus::APPROVED, 'missing_contract', false],
+            'incoming_order' => [PaymentDocumentStatus::APPROVED, 'direction', false],
+            'cancelled' => [PaymentDocumentStatus::CANCELLED, null, false],
+            'rejected' => [PaymentDocumentStatus::REJECTED, null, false],
+        ];
     }
 
     public function test_act_budget_limit_does_not_use_a_different_contracts_line(): void

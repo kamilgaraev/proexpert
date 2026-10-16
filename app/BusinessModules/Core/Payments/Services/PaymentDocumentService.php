@@ -167,7 +167,7 @@ class PaymentDocumentService
                                 return $existingOrder;
                             }
 
-                            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+                            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                         });
                     }
                     $existingDocument = PaymentDocument::query()
@@ -248,6 +248,11 @@ class PaymentDocumentService
             throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));
         }
         $data['currency'] = ($data['currency'] ?? '') ?: $request->currency;
+        $direction = $request->direction?->value ?? InvoiceDirection::OUTGOING->value;
+        if (isset($data['direction']) && $data['direction'] !== $direction) {
+            throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+        }
+        $data['direction'] = $direction;
         if (! BigDecimal::of((string) ($data['amount'] ?? 0))->isEqualTo(BigDecimal::of((string) $request->amount))
             || ($data['currency'] ?? null) !== $request->currency) {
             throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
@@ -272,18 +277,21 @@ class PaymentDocumentService
             ->limit(2)
             ->get();
         if ($existingOrders->count() > 1) {
-            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
         }
         $existingOrder = $existingOrders->first();
         if ($existingOrder instanceof PaymentDocument
-            && (! BigDecimal::of((string) $existingOrder->amount)->isEqualTo(BigDecimal::of((string) $data['amount']))
-                || $existingOrder->currency !== $data['currency'])) {
-            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+            && (in_array($existingOrder->status, [PaymentDocumentStatus::CANCELLED, PaymentDocumentStatus::REJECTED], true)
+                || ! BigDecimal::of((string) $existingOrder->amount)->isEqualTo(BigDecimal::of((string) $data['amount']))
+                || $existingOrder->currency !== $data['currency']
+                || ($existingOrder->direction?->value ?? InvoiceDirection::OUTGOING->value) !== $data['direction']
+                || $this->budgetLimitService->contractId($existingOrder) !== $contractId)) {
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
         }
         if ($existingOrder instanceof PaymentDocument) {
-            foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id'] as $field) {
+            foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
                 if ((int) $existingOrder->{$field} !== (int) $data[$field]) {
-                    throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+                    throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                 }
             }
         }
