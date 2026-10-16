@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContext
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -61,9 +62,9 @@ use Tests\TestCase;
 final class ReportSubscriptionRunCreationTest extends TestCase
 {
     #[DataProvider('creationStates')]
-    public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt): void
+    public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt, bool $holding = false): void
     {
-        $fixture = $this->fixture($status, $attempt);
+        $fixture = $this->fixture($status, $attempt, $holding);
         [$context, $delivery, , $input] = $fixture;
         DB::table('report_subscriptions')->where('id', $delivery->subscriptionId)->update(['report_code' => 'new_report', 'timezone' => 'UTC']);
         $run = (new ReportRunBuilder)->queued();
@@ -93,7 +94,7 @@ final class ReportSubscriptionRunCreationTest extends TestCase
 
     public static function creationStates(): array
     {
-        return [['scheduled', 0], ['building_run', 1]];
+        return [['scheduled', 0], ['building_run', 1], ['scheduled', 0, true]];
     }
 
     public function test_interrupted_attach_recovers_same_run_without_new_attempt(): void
@@ -210,6 +211,10 @@ final class ReportSubscriptionRunCreationTest extends TestCase
         $registry->method('published')->with($definition->code)->willReturn(new PublishedReportDefinition($definition));
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
         $authorizer->expects(self::never())->method('authorizeForOrganization');
+        $projectScopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $projectScopes->expects(self::once())->method('resolveForProject')
+            ->with($context->actor->id, $context->scope->organizationId, $context->scope->projectIds[0], $context->scope->timezone)
+            ->willReturn($context->scope);
         $authorizer->expects(self::once())->method('authorizeExact')->willReturnCallback(
             static function (int $actorId, ReportScope $scope, CurrentReportAuthorizationTarget $target) use ($context): CurrentReportAuthorization {
                 self::assertSame($context->actor->id, $actorId);
@@ -233,23 +238,29 @@ final class ReportSubscriptionRunCreationTest extends TestCase
 
         return new ReportSubscriptionDeliveryProcessor(
             $store ?? app(EloquentReportSubscriptionDeliveryStore::class),
-            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry),
+            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry, $projectScopes),
             $dispatcher, $runs, $this->createMock(GetReportRunAction::class), $this->createMock(CreateReportExportAction::class),
             $this->createMock(GetReportExportAction::class), $this->createMock(InAppReportSubscriptionNotifier::class),
             $events, new ReportSubscriptionPeriodResolver,
         );
     }
 
-    private function fixture(string $status = 'scheduled', int $attempt = 0): array
+    private function fixture(string $status = 'scheduled', int $attempt = 0, bool $holding = false): array
     {
         $organization = Organization::factory()->verified()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
-        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $projectOrganization = $organization;
+        if ($holding) {
+            $organization->update(['is_holding' => true]);
+            $projectOrganization = Organization::factory()->verified()->create(['parent_organization_id' => $organization->id]);
+        }
+        $holdingIds = array_values(array_unique([(int) $organization->id, (int) $projectOrganization->id]));
+        $project = Project::factory()->create(['organization_id' => $projectOrganization->id]);
         $timezone = new DateTimeZone('Europe/Moscow');
-        $scope = new ReportScope((int) $organization->id, [(int) $organization->id], [(int) $project->id], [], $timezone);
+        $scope = new ReportScope((int) $organization->id, $holdingIds, [(int) $project->id], [], $timezone);
         $context = (new ReportExecutionContextBuilder)
             ->actor(new ReportActor((int) $user->id, 'active', ['reports.view', 'reports.run']))->scope($scope)
-            ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, [(int) $organization->id], [(int) $project->id], [], $timezone, 'subscription-creation-test', null))->build();
+            ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, $holdingIds, [(int) $project->id], [], $timezone, 'subscription-creation-test', null))->build();
         $definition = (new ReportDefinitionBuilder)->payload();
         $viewId = (string) Str::ulid();
         $now = new DateTimeImmutable;

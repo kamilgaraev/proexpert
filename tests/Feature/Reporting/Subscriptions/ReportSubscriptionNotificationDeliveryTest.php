@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContext
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -210,6 +211,14 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->method('published')->willReturn(new PublishedReportDefinition($definition));
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $projectScopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        if ($context->scope->projectIds !== []) {
+            $projectScopes->method('resolveForProject')
+                ->with($context->actor->id, $context->scope->organizationId, $context->scope->projectIds[0], $context->scope->timezone)
+                ->willReturn($context->scope);
+        } else {
+            $projectScopes->expects(self::never())->method('resolveForProject');
+        }
         $authorizationMethod = $context->scope->projectIds === [] ? 'authorizeForOrganization' : 'authorizeExact';
         if ($authorizationMethod === 'authorizeExact') {
             $authorizer->expects(self::never())->method('authorizeForOrganization');
@@ -247,7 +256,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
 
         return new ReportSubscriptionDeliveryProcessor(
             app(EloquentReportSubscriptionDeliveryStore::class),
-            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry),
+            new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry, $projectScopes),
             $dispatcher,
             $runs,
             $this->createMock(GetReportRunAction::class),

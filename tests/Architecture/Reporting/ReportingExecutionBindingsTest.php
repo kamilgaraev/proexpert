@@ -30,6 +30,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportA
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportCompletedArtifactRecoveryStore;
@@ -564,6 +565,7 @@ final class ReportingExecutionBindingsTest extends TestCase
             [ReportHttpAuthorizationTargetResolver::class, LaravelReportHttpAuthorizationTargetResolver::class],
             [CurrentReportAbacEvaluator::class, LaravelCurrentReportAbacEvaluator::class],
             [CurrentReportScopeAuthorizer::class, LaravelCurrentReportScopeAuthorizer::class],
+            'current_project_scope_resolver' => [CurrentReportProjectScopeResolver::class, LaravelCurrentReportScopeAuthorizer::class],
             [CurrentReportExactManyAuthorizer::class, LaravelCurrentReportScopeAuthorizer::class],
             [ReportMaterializationDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportMaterializationDispatcher::class],
             [ReportExportDispatcher::class, \App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportExportDispatcher::class],

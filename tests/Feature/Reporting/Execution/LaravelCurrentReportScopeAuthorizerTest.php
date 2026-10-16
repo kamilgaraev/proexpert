@@ -25,6 +25,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -144,7 +145,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_holding_scope_contains_anchor_and_active_direct_child(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $child = $this->organization(['parent_organization_id' => $holding->id]);
 
         $authorization = $this->authorizeForOrganization($actor, $holding);
@@ -155,9 +156,75 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         );
     }
 
+    public function test_project_scope_keeps_current_holding_and_authorizes_only_selected_child_project(): void
+    {
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
+        $child = $this->organization(['parent_organization_id' => $holding->id]);
+        $selected = $this->project($child);
+        $this->project($holding);
+        $this->project($child);
+        $checks = 0;
+        $evaluator = $this->createMock(CurrentReportAbacEvaluator::class);
+        $evaluator->method('evaluate')->willReturnCallback(
+            static function (int $actorId, string $permission, CurrentReportAuthorizationFacts $facts) use ($selected, &$checks): CurrentReportPermissionDecision {
+                self::assertTrue($facts->projectId === null || $facts->projectId === (int) $selected->id);
+                $checks++;
+
+                return new CurrentReportPermissionDecision($actorId, $permission, $facts->organizationId, $facts->projectId, $facts->resource, true);
+            },
+        );
+        $authorizer = $this->authorizer($evaluator);
+        $timezone = new DateTimeZone('Europe/Moscow');
+        $scope = $authorizer->resolveForProject((int) $actor->id, (int) $holding->id, (int) $selected->id, $timezone);
+
+        self::assertSame(0, $checks);
+        self::assertSame($this->sortedIds($holding, $child), $scope->holdingOrganizationIds);
+        self::assertSame([(int) $selected->id], $scope->projectIds);
+        self::assertSame('Europe/Moscow', $scope->timezone->getName());
+        $authorization = $authorizer->authorizeExact((int) $actor->id, $scope, $this->target());
+        self::assertSame($scope->holdingOrganizationIds, $authorization->decision->holdingOrganizationIds);
+        self::assertSame($scope->projectIds, $authorization->decision->projectIds);
+        self::assertTrue($authorization->visibility->canRun);
+        self::assertGreaterThan(0, $checks);
+    }
+
+    public function test_project_scope_denies_child_detached_after_resolution(): void
+    {
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
+        $child = $this->organization(['parent_organization_id' => $holding->id]);
+        $selected = $this->project($child);
+        $authorizer = $this->authorizer();
+        $scope = $authorizer->resolveForProject((int) $actor->id, (int) $holding->id, (int) $selected->id, new DateTimeZone('UTC'));
+        $child->update(['parent_organization_id' => null]);
+
+        try {
+            $authorizer->resolveForProject((int) $actor->id, (int) $holding->id, (int) $selected->id, new DateTimeZone('UTC'));
+            self::fail('Detached child project was resolved.');
+        } catch (ReportContractException) {
+            self::assertTrue(true);
+        }
+
+        $this->expectException(ReportContractException::class);
+        $authorizer->authorizeExact((int) $actor->id, $scope, $this->target());
+    }
+
+    public function test_project_scope_denies_revoked_assignment_in_current_holding(): void
+    {
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ASSIGNED_PROJECTS, ['is_holding' => true]);
+        $child = $this->organization(['parent_organization_id' => $holding->id]);
+        $selected = $this->project($child);
+        $this->assign($actor, $selected);
+        $authorizer = $this->authorizer();
+        $authorizer->resolveForProject((int) $actor->id, (int) $holding->id, (int) $selected->id, new DateTimeZone('UTC'));
+        $actor->assignedProjects()->updateExistingPivot($selected->id, ['is_active' => false]);
+
+        $this->expectException(ReportContractException::class);
+        $authorizer->resolveForProject((int) $actor->id, (int) $holding->id, (int) $selected->id, new DateTimeZone('UTC'));
+    }
+
     public function test_detached_child_is_not_inherited(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $child = $this->organization(['parent_organization_id' => $holding->id]);
         $child->update(['parent_organization_id' => null]);
 
@@ -169,7 +236,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_child_of_foreign_holding_is_not_inherited(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $foreignHolding = $this->organization(['is_holding' => true]);
         $this->organization(['parent_organization_id' => $foreignHolding->id]);
 
@@ -181,7 +248,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_grandchild_is_not_inherited(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $child = $this->organization(['parent_organization_id' => $holding->id]);
         $this->organization(['parent_organization_id' => $child->id]);
 
@@ -193,7 +260,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_inactive_and_deleted_children_are_not_inherited(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $inactive = $this->organization([
             'parent_organization_id' => $holding->id,
             'is_active' => false,
@@ -210,7 +277,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_child_access_is_inherited_only_through_current_holding_parent(): void
     {
-        [$actor, $holding] = $this->actorFixture('all', ['is_holding' => true]);
+        [$actor, $holding] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS, ['is_holding' => true]);
         $child = $this->organization(['parent_organization_id' => $holding->id]);
         $scope = new ReportScope(
             (int) $holding->id,
@@ -232,7 +299,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_all_project_mode_includes_every_accessible_active_project(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $first = $this->project($organization);
         $second = $this->project($organization);
 
@@ -244,7 +311,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_assigned_project_mode_includes_only_active_assignments(): void
     {
-        [$actor, $organization] = $this->actorFixture('assigned');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ASSIGNED_PROJECTS);
         $assigned = $this->project($organization);
         $this->project($organization);
         $this->assign($actor, $assigned);
@@ -257,7 +324,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_inactive_project_assignment_is_excluded(): void
     {
-        [$actor, $organization] = $this->actorFixture('assigned');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ASSIGNED_PROJECTS);
         $project = $this->project($organization);
         $this->assign($actor, $project, false);
 
@@ -266,7 +333,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_archived_project_is_excluded(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $this->project($organization, ['is_archived' => true]);
 
         self::assertSame([], $this->authorizeForOrganization($actor, $organization)->decision->projectIds);
@@ -274,7 +341,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_owner_and_active_participant_projects_are_included(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $owned = $this->project($organization);
         $foreign = $this->organization();
         $participating = $this->project($foreign);
@@ -292,7 +359,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_foreign_project_is_excluded(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $foreign = $this->organization();
         $this->project($foreign);
 
@@ -301,7 +368,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_exact_selected_project_subset_is_preserved(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $selected = $this->project($organization);
         $this->project($organization);
         $scope = new ReportScope(
@@ -320,7 +387,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_newly_accessible_unrelated_project_does_not_widen_exact_scope(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $selected = $this->project($organization);
         $scope = new ReportScope(
             (int) $organization->id,
@@ -339,7 +406,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_each_base_and_definition_permission_flips_only_its_dependent_visibility_bits(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $scope = new ReportScope(
             (int) $organization->id,
             [(int) $organization->id],
@@ -395,7 +462,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_all_seven_visibility_bits_are_evaluated_before_operation_admission(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $scope = new ReportScope(
             (int) $organization->id,
             [(int) $organization->id],
@@ -419,7 +486,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_catalog_reuses_one_ambient_scope_and_builds_independent_visibility_vectors(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $alpha = (new ReportDefinitionBuilder)
             ->code('alpha')
             ->definitionHash(new Sha256Hash(str_repeat('a', 64)))
@@ -488,7 +555,7 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
 
     public function test_catalog_checks_each_source_module_once_and_rechecks_it_in_the_next_decision(): void
     {
-        [$actor, $organization] = $this->actorFixture('all');
+        [$actor, $organization] = $this->actorFixture(UserProjectAccessMode::ALL_PROJECTS);
         $entitlements = new MutableCurrentReportModuleEntitlement([
             'act-reporting' => true,
             'reports' => true,
@@ -578,14 +645,14 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         );
     }
 
-    private function actorFixture(string $projectAccessMode = 'all', array $organizationAttributes = []): array
+    private function actorFixture(UserProjectAccessMode $projectAccessMode = UserProjectAccessMode::ALL_PROJECTS, array $organizationAttributes = []): array
     {
         $organization = $this->organization($organizationAttributes);
         $actor = User::factory()->create(['is_active' => true]);
         $actor->organizations()->attach($organization->id, [
             'is_owner' => false,
             'is_active' => true,
-            'project_access_mode' => $projectAccessMode,
+            'project_access_mode' => $projectAccessMode->value,
         ]);
 
         return [$actor, $organization];

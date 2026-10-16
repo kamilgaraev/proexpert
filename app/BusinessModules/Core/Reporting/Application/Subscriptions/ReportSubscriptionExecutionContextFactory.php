@@ -6,10 +6,10 @@ namespace App\BusinessModules\Core\Reporting\Application\Subscriptions;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
@@ -21,6 +21,7 @@ final readonly class ReportSubscriptionExecutionContextFactory
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
         private ReportDefinitionRegistry $definitions,
+        private CurrentReportProjectScopeResolver $projectScopes,
     ) {}
 
     public function forSubscription(
@@ -43,7 +44,7 @@ final readonly class ReportSubscriptionExecutionContextFactory
             }
             $authorization = $this->authorizer->authorizeExact(
                 $subscription->ownerId,
-                new ReportScope($subscription->organizationId, [$subscription->organizationId], [$projectId], [], $input->timezone),
+                $this->projectScopes->resolveForProject($subscription->ownerId, $subscription->organizationId, $projectId, $input->timezone),
                 $target,
             );
         } else {

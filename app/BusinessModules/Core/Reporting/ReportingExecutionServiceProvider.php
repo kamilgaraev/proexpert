@@ -31,6 +31,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportA
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportCompletedArtifactRecoveryStore;
@@ -297,6 +298,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
         });
         $this->app->scoped(LaravelCurrentReportScopeAuthorizer::class);
         $this->app->scoped(CurrentReportScopeAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
+        $this->app->scoped(CurrentReportProjectScopeResolver::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
         $this->app->scoped(CurrentReportExactManyAuthorizer::class, static fn (Container $app) => $app->make(LaravelCurrentReportScopeAuthorizer::class));
         $this->app->scoped(ReportHttpAuthorizationOrchestrator::class, function (Container $app): ReportHttpAuthorizationOrchestrator {
             return new ReportHttpAuthorizationOrchestrator(
