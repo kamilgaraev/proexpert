@@ -20,15 +20,21 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDelive
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\DTO\CreateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
+use App\BusinessModules\Core\Reporting\Domain\DTO\UpdateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionWindow;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionDeliveryStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionStatus;
@@ -44,6 +50,64 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportSubscriptionCoordinatorTest extends TestCase
 {
+    public function test_create_and_update_freeze_versioned_policy_and_reject_unknown_mode(): void
+    {
+        $subscription = $this->subscription();
+        $subscriptions = new FakeReportSubscriptionStore($subscription);
+        $coordinator = new ReportSubscriptionCoordinator(
+            $subscriptions,
+            new FakeReportSubscriptionDeliveryStore,
+            new FakeReportSubscriptionDeliveryDispatcher,
+            static fn (callable $callback): mixed => $callback(),
+            new FakeReportDefinitionRegistry($this->definition($subscription)),
+            new FakeReportSchedulingCapabilityRegistry,
+            new FakeReportSavedViewStore($this->savedView($subscription)),
+            $this->access($subscription),
+            new ReportSubscriptionScheduleCalculator,
+        );
+        $context = $this->context($subscription);
+        $created = $coordinator->create($context, new CreateReportSubscriptionData(
+            $subscription->savedViewId, ReportSubscriptionFrequency::DAILY, null, null,
+            '10:00', new DateTimeZone('UTC'), ['mode' => 'fixed_filters'], 'csv',
+        ));
+
+        self::assertSame(1, ReportSubscriptionExecutionInput::fromCanonicalBytes($created->executionInputBytes)->periodPolicyVersion);
+        $coordinator->update($context, $created->id, new UpdateReportSubscriptionData(['format' => 'csv']));
+        self::assertSame(1, ReportSubscriptionExecutionInput::fromCanonicalBytes($subscriptions->updates['execution_input_bytes'])->periodPolicyVersion);
+
+        $this->expectException(ReportContractException::class);
+        $coordinator->update($context, $created->id, new UpdateReportSubscriptionData(['period_policy' => ['mode' => 'whenever']]));
+    }
+
+    public function test_legacy_policy_survives_update_without_explicit_policy_change(): void
+    {
+        $legacy = new ReportSubscriptionExecutionInput(
+            'budget_plan_fact', new ReportFilterSet([]), [], 'ru', '01J00000000000000000000002',
+            'csv', ['name'], new ReportWindowSort('name', ReportSortDirection::ASC), new DateTimeZone('UTC'),
+            ['mode' => 'legacy_mode', 'extra_option' => true], '1.0.0', new Sha256Hash(str_repeat('a', 64)),
+        );
+        $subscription = $this->subscription(input: $legacy);
+        $subscriptions = new FakeReportSubscriptionStore($subscription);
+        $coordinator = new ReportSubscriptionCoordinator(
+            $subscriptions,
+            new FakeReportSubscriptionDeliveryStore,
+            new FakeReportSubscriptionDeliveryDispatcher,
+            static fn (callable $callback): mixed => $callback(),
+            new FakeReportDefinitionRegistry($this->definition($subscription)),
+            new FakeReportSchedulingCapabilityRegistry,
+            new FakeReportSavedViewStore($this->savedView($subscription)),
+            $this->access($subscription),
+            new ReportSubscriptionScheduleCalculator,
+        );
+
+        $coordinator->update($this->context($subscription), $subscription->id, new UpdateReportSubscriptionData(['local_time' => '11:00']));
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscriptions->updates['execution_input_bytes']);
+
+        self::assertNull($input->periodPolicyVersion);
+        self::assertSame(['extra_option' => true, 'mode' => 'legacy_mode'], $input->periodPolicy);
+        self::assertSame('11:00', $subscriptions->updates['local_time']);
+    }
+
     public function test_manual_run_is_idempotent_and_dispatches_only_new_delivery(): void
     {
         $subscription = $this->subscription();
@@ -161,8 +225,9 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
     private function subscription(
         int $transitionVersion = 1,
         ReportSubscriptionStatus $status = ReportSubscriptionStatus::ACTIVE,
+        ?ReportSubscriptionExecutionInput $input = null,
     ): ReportSubscription {
-        $bytes = '{"report":"budget"}';
+        $bytes = $input?->canonicalBytes() ?? '{"report":"budget"}';
         $now = new DateTimeImmutable('2026-07-26T09:00:00+00:00');
 
         return new ReportSubscription(
@@ -176,8 +241,8 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
             null,
             '10:00',
             new DateTimeZone('UTC'),
-            ['mode' => 'previous_day'],
-            'xlsx',
+            $input?->periodPolicy ?? ['mode' => 'previous_day'],
+            $input?->format ?? 'xlsx',
             $status,
             null,
             0,
@@ -266,6 +331,8 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
 
 final class FakeReportSubscriptionStore implements ReportSubscriptionStore
 {
+    public array $updates = [];
+
     public function __construct(public ReportSubscription $subscription) {}
 
     public function list(int $organizationId, int $ownerId, ReportSubscriptionWindow $window): ReportSubscriptionPage
@@ -290,6 +357,8 @@ final class FakeReportSubscriptionStore implements ReportSubscriptionStore
 
     public function updateLocked(ReportSubscription $subscription, array $changes): ReportSubscription
     {
+        $this->updates = $changes;
+
         return $this->subscription;
     }
 

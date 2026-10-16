@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use DateTimeZone;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -70,14 +71,65 @@ final class ReportSubscriptionPeriodResolverTest extends TestCase
         self::assertSame(['period_end' => '2026-10-15', 'period_start' => '2026-10-15'], $data->filters->values);
     }
 
-    private function input(array $policy, string $timezone = 'UTC', ?array $filters = null): ReportSubscriptionExecutionInput
+    #[DataProvider('legacyPolicies')]
+    public function test_legacy_frozen_input_keeps_unsupported_policy_and_existing_dates(array $policy, array $filters): void
+    {
+        $legacy = $this->input($policy, 'UTC', $filters, null);
+        $bytes = $legacy->canonicalBytes();
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($bytes);
+        $scheduledFor = new DateTimeImmutable('2026-10-16T09:00:00Z');
+        $data = (new ReportSubscriptionPeriodResolver)->runData($input, $scheduledFor);
+
+        self::assertNull($input->periodPolicyVersion);
+        self::assertSame($bytes, $input->canonicalBytes());
+        self::assertSame($legacy->digest()->value, $input->digest()->value);
+        self::assertSame($legacy->filters->values, $data->filters->values);
+        self::assertSame($scheduledFor, $data->asOf);
+    }
+
+    public static function legacyPolicies(): array
+    {
+        $dates = ['period_from' => '2026-09-01', 'period_to' => '2026-09-30'];
+
+        return [
+            [['mode' => 'previous_day', 'offset' => 2], $dates],
+            [['mode' => 'whenever'], $dates],
+            [['mode' => 'previous_week'], ['project_id' => 52]],
+        ];
+    }
+
+    public function test_known_legacy_period_with_dates_is_resolved(): void
+    {
+        $input = $this->input(['mode' => 'previous_week'], 'UTC', null, null);
+        $data = (new ReportSubscriptionPeriodResolver)->runData($input, new DateTimeImmutable('2026-10-16T09:00:00Z'));
+
+        self::assertSame('2026-10-05', $data->filters->values['period_from']);
+        self::assertSame('2026-10-11', $data->filters->values['period_to']);
+    }
+
+    public function test_new_version_round_trips_and_rejects_unknown_version(): void
+    {
+        $input = $this->input(['mode' => 'previous_week']);
+        self::assertSame(1, ReportSubscriptionExecutionInput::fromCanonicalBytes($input->canonicalBytes())->periodPolicyVersion);
+
+        $this->expectException(InvalidArgumentException::class);
+        ReportSubscriptionExecutionInput::fromCanonicalBytes(str_replace('"period_policy_version":1', '"period_policy_version":2', $input->canonicalBytes()));
+    }
+
+    public function test_new_invalid_policy_cannot_use_the_legacy_fallback(): void
+    {
+        $this->expectException(ReportContractException::class);
+        (new ReportSubscriptionPeriodResolver)->runData($this->input(['mode' => 'whenever']), new DateTimeImmutable);
+    }
+
+    private function input(array $policy, string $timezone = 'UTC', ?array $filters = null, ?int $version = 1): ReportSubscriptionExecutionInput
     {
         return new ReportSubscriptionExecutionInput(
             'accepted_production_progress',
             new ReportFilterSet($filters ?? ['period_from' => '2026-09-01', 'period_to' => '2026-09-30', 'project_id' => 52]),
             [], 'ru', '01J00000000000000000000002', 'xlsx', ['recognized_on'],
             new ReportWindowSort('recognized_on', ReportSortDirection::DESC), new DateTimeZone($timezone),
-            $policy, '1.0.0', new Sha256Hash(str_repeat('a', 64)),
+            $policy, '1.0.0', new Sha256Hash(str_repeat('a', 64)), $version,
         );
     }
 }

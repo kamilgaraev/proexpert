@@ -30,7 +30,15 @@ final class ReportSubscriptionPeriodResolver
 
     public function runData(ReportSubscriptionExecutionInput $input, DateTimeImmutable $scheduledFor): CreateReportRunData
     {
-        $this->validate($input);
+        try {
+            $this->validate($input);
+        } catch (ReportContractException $exception) {
+            if ($input->periodPolicyVersion !== null) {
+                throw $exception;
+            }
+
+            return $input->runData($scheduledFor);
+        }
         if ($input->periodPolicy['mode'] === 'fixed_filters') {
             return $input->runData($scheduledFor);
         }
