@@ -113,9 +113,13 @@ final class EstimatorProcessingPlanTest extends TestCase
     public function test_text_reserve_uses_a_frozen_enforced_byte_bound_and_the_effective_output_limit(): void
     {
         config()->set('ai-assistant-credits.profiles.normal', ['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4]);
+        config()->set('estimate-generation.estimate_composer.max_output_tokens', 4096);
+        config()->set('estimate-generation.estimate_auditor.max_output_tokens', 4096);
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
         self::assertSame(65536, $plan['roles']['estimate_composition']['input_ceiling']);
         self::assertSame(8192, $plan['roles']['estimate_composition']['output_ceiling']);
+        self::assertSame(8192, $plan['roles']['estimate_audit']['output_ceiling']);
+        self::assertSame(8192, $plan['roles']['estimate_composer_correction']['output_ceiling']);
         self::assertSame(['input_tokens' => 16384, 'output_tokens' => 8192, 'max_calls' => 4], $plan['text_payload_policy']['token_limits']);
         config()->set('ai-assistant-credits.profiles.normal', ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6]);
         self::assertSame(8192, $plan['text_payload_policy']['token_limits']['output_tokens']);

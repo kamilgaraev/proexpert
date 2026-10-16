@@ -476,6 +476,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $permissions->allows('canCurrent')->andReturn(true);
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
         config(['estimate-generation.estimate_composer.max_input_bytes' => 5000,
+            'estimate-generation.estimate_composer.max_output_tokens' => 4096,
+            'estimate-generation.estimate_auditor.max_output_tokens' => 4096,
             'ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
             'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
         $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);

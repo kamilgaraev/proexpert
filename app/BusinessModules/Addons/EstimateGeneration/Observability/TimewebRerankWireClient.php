@@ -43,6 +43,9 @@ final class TimewebRerankWireClient implements RerankWireClient
                 (string) ($identity['operation'] ?? ''));
             if ($policy !== null) {
                 $options['estimate_generation_frozen_text_policy'] = $policy;
+                if (in_array($identity['operation'] ?? null, ['estimate_composition', 'estimate_audit', 'estimate_composer_correction'], true)) {
+                    $options['max_completion_tokens'] = $policy['token_limits']['output_tokens'];
+                }
             }
             $payload = $this->payloadFactory->make($model, $messages, $options);
             $timeout = min(3600, max(1, (int) ($options['timeout'] ?? config('ai-assistant.llm.timeweb.timeout', 25))));
