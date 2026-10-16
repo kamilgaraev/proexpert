@@ -208,7 +208,7 @@ class FileService
                 'Bucket' => $this->reportBucket(),
                 'Key' => $organizationPath,
                 'ContentType' => $mime,
-                'Metadata' => $metadata,
+                'Metadata' => $this->reportWireMetadata($organizationPath, $metadata),
                 '@http' => $this->s3HttpOptions(),
             ]);
         } catch (AwsException $exception) {
@@ -890,6 +890,20 @@ class FileService
         return $conditions['ApplicationChecksumSHA256'];
     }
 
+    private function reportWireMetadata(string $path, array $metadata): array
+    {
+        $keys = array_keys($metadata);
+        $expected = self::REPORT_METADATA_KEYS;
+        sort($keys, SORT_STRING);
+        sort($expected, SORT_STRING);
+        if ($keys !== $expected || preg_match('/^org-([1-9][0-9]*)\/reports\//D', $path, $match) !== 1) {
+            return $metadata;
+        }
+        $this->assertClosedReportMetadata($metadata, (int) $match[1]);
+
+        return array_combine(array_map(static fn (string $key): string => str_replace('_', '-', $key), array_keys($metadata)), array_values($metadata));
+    }
+
     private function normalizeReportMetadata(array $metadata): array
     {
         $normalized = [];
@@ -898,6 +912,10 @@ class FileService
                 throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
             }
             $normalizedKey = strtolower($key);
+            $canonicalKey = str_replace('-', '_', $normalizedKey);
+            if (in_array($canonicalKey, self::REPORT_METADATA_KEYS, true)) {
+                $normalizedKey = $canonicalKey;
+            }
             if (array_key_exists($normalizedKey, $normalized)) {
                 throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
             }

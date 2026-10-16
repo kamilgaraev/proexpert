@@ -4,18 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
-use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\AssistantDomainTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool;
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
 use App\Models\User;
-use App\Support\AI\TokenCounter;
 use App\Support\AI\TokenBudgetService;
-use Illuminate\Container\Container;
+use App\Support\AI\TokenCounter;
 use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Facade;
@@ -23,13 +23,14 @@ use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
 use Illuminate\Validation\Factory;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
-use InvalidArgumentException;
 
 final class AssistantToolSchemaBudgetTest extends TestCase
 {
     private ?Container $previousApplication = null;
+
     private ?Container $previousContainer = null;
 
     protected function setUp(): void
@@ -120,7 +121,9 @@ final class AssistantToolSchemaBudgetTest extends TestCase
                 $measurements[$name]['relevance'][$intent] += ['before' => $counter->tools($before), 'after' => $counter->tools($relevant), 'tools' => count($relevant), 'preserved_message_tokens' => $counter->messages($messages)];
             }
             foreach ($registry->getTools() as $tool) {
-                if (! $tool instanceof AssistantDomainTool) { continue; }
+                if (! $tool instanceof AssistantDomainTool) {
+                    continue;
+                }
                 $source = $tool->getParametersSchema();
                 $wire = $registry->getToolsDefinitions([$tool->getName()], true)[0]['parameters'];
                 $this->assertCount(count($types), $source['properties']['entity_type']['enum']);
@@ -157,7 +160,11 @@ final class AssistantToolSchemaBudgetTest extends TestCase
     {
         $tool = $this->discovery(new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
         $calls = 0;
-        $page = $tool->describe([], static fn (): bool => true, static fn (): bool => true, static function () use (&$calls): bool { $calls++; return false; });
+        $page = $tool->describe([], static fn (): bool => true, static fn (): bool => true, static function () use (&$calls): bool {
+            $calls++;
+
+            return false;
+        });
         $this->assertSame(12, $calls);
         $this->assertSame(12, $page['next_offset']);
         $this->assertSame([], $page['capabilities']);
@@ -196,7 +203,32 @@ final class AssistantToolSchemaBudgetTest extends TestCase
         $class = new ReflectionClass(DiscoverAssistantDomainCapabilitiesTool::class);
         $tool = $class->newInstanceWithoutConstructor();
         $class->getProperty('catalog')->setValue($tool, $catalog);
+
         return $tool;
+    }
+
+    public function test_custom_report_native_schema_with_domain_tools_fits_short_profile(): void
+    {
+        $registry = $this->registry(new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
+        foreach ([\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateCustomReportTool::class,
+            \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\DescribeCustomReportSourceTool::class] as $class) {
+            $registry->registerTool((new ReflectionClass($class))->newInstanceWithoutConstructor());
+        }
+        $query = 'Сделай Excel: договоры по подрядчикам с суммами и статусами';
+        $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query, []);
+        $names = \App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface::names($registry->getToolNames(),
+            ['request' => ['message' => $query], 'request_understanding' => $understanding->toArray()]);
+        $definitions = $registry->getToolsDefinitions($names, true);
+
+        self::assertContains('generate_custom_report', array_column($definitions, 'name'));
+        self::assertContains('describe_custom_report_source', array_column($definitions, 'name'));
+        self::assertLessThan(6500, (new TokenCounter)->tools($definitions));
+        $tool = $registry->getTool('generate_custom_report');
+        (new \App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator)->validate([
+            'title' => 'Договоры', 'format' => 'xlsx', 'sections' => [['title' => 'Реестр', 'domain' => 'contracts', 'entity_type' => 'contract',
+                'project_id' => null, 'row_limit' => 5, 'columns' => ['number'], 'group_by' => [], 'metrics' => [], 'order_by' => [],
+                'filters' => [['field' => 'id', 'operator' => 'in', 'value' => ['1', '2']]]]],
+        ], $tool->getParametersSchema());
     }
 
     private function registry(AssistantDomainCatalog $catalog): AIToolRegistry
@@ -222,6 +254,7 @@ final class AssistantToolSchemaBudgetTest extends TestCase
             }
             $registry->registerTool($tool);
         }
+
         return $registry;
     }
 }

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\Assistant
 final class AssistantToolEligibilityPolicy
 {
     private const READ_TOOLS = [
+        'describe_custom_report_source',
         'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities',
         'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
         'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
@@ -34,11 +35,13 @@ final class AssistantToolEligibilityPolicy
         'generate_contractor_settlements_report', 'generate_warehouse_stock_report', 'generate_time_tracking_report',
         'generate_contract_payments_report', 'generate_project_timelines_report',
         'generate_operational_pdf_report', 'generate_rag_pdf_report',
+        'generate_custom_report',
     ];
 
     private const PAYMENT_ONLY_TOOLS = [
         'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
         'approve_payment_request', 'generate_contract_payments_report',
+        'generate_custom_report', 'describe_custom_report_source', 'assistant_domain_discover_capabilities',
     ];
 
     private const MUTATION_TOOLS = [
@@ -108,6 +111,14 @@ final class AssistantToolEligibilityPolicy
         if ($category === 'report' && $understanding->primaryIntent !== 'generate_report') {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_explicit_only'));
         }
+        if ($category === 'report' && in_array($understanding->outputFormat, ['xlsx', 'csv'], true) && $toolName !== 'generate_custom_report') {
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_format_disabled'));
+        }
+        if ($category === 'report' && $execute && $toolName === 'generate_custom_report'
+            && in_array($understanding->outputFormat, ['xlsx', 'csv', 'pdf'], true)
+            && ($arguments['format'] ?? null) !== $understanding->outputFormat) {
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_format_disabled'));
+        }
 
         if ($this->isPaymentOnlyRequest($understanding) && $this->blocksPaymentOnlyTool($toolName, $execute, $arguments)) {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_payment_scope_disabled'));
@@ -144,7 +155,13 @@ final class AssistantToolEligibilityPolicy
             return true;
         }
 
-        if (! in_array($toolName, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'], true)) {
+        if ($toolName === 'generate_custom_report' && $execute) {
+            $sections = $arguments['sections'] ?? [];
+
+            return $sections === [] || array_filter($sections, static fn (array $section): bool => ($section['domain'] ?? null) !== 'finance'
+                || ($section['entity_type'] ?? null) !== 'payment_document') !== [];
+        }
+        if (! in_array($toolName, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'describe_custom_report_source'], true)) {
             return false;
         }
 

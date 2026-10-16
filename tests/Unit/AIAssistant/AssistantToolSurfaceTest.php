@@ -13,6 +13,19 @@ final class AssistantToolSurfaceTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_arbitrary_excel_selects_schema_and_builder_without_pdf_fallback(): void
+    {
+        $query = 'Сделай Excel: договоры по подрядчикам с суммами и статусами';
+        $registered = [...self::READ_TOOLS, ...self::REPORT_TOOLS, 'generate_custom_report', 'describe_custom_report_source'];
+        $names = AssistantToolSurface::names($registered, ['request' => ['message' => $query],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query, [])->toArray()]);
+
+        self::assertContains('generate_custom_report', $names);
+        self::assertContains('describe_custom_report_source', $names);
+        self::assertContains('assistant_domain_discover_capabilities', $names);
+        self::assertSame([], array_values(array_intersect(self::REPORT_TOOLS, $names)));
+    }
+
     public function test_handover_question_exposes_native_read_tool_without_actions(): void
     {
         $names = AssistantToolSurface::names(['assistant_domain_search', 'get_project_handover_summary', 'approve_payment_request'],
@@ -105,7 +118,7 @@ final class AssistantToolSurfaceTest extends TestCase
     {
         $names = AssistantToolSurface::names([...self::READ_TOOLS, 'get_procurement_snapshot', 'get_project_snapshot',
             'get_schedule_snapshot', ...self::REPORT_TOOLS, 'approve_payment_request'], ['capability' => ['id' => 'procurement'],
-            'request' => ['allow_actions' => false]]);
+                'request' => ['allow_actions' => false]]);
 
         self::assertContains('get_procurement_snapshot', $names);
         self::assertContains('get_project_snapshot', $names);
@@ -124,7 +137,9 @@ final class AssistantToolSurfaceTest extends TestCase
 
         foreach (['get_project_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'get_material_stock',
             'search_materials', 'search_warehouse', 'get_estimate_answer', 'get_estimate_positions',
-            'get_estimate_financial_snapshot'] as $tool) { self::assertContains($tool, $names); }
+            'get_estimate_financial_snapshot'] as $tool) {
+            self::assertContains($tool, $names);
+        }
         self::assertNotContains('get_bim_model_elements', $names);
         self::assertNotContains('approve_payment_request', $names);
         self::assertNotContains('create_schedule_task', $names);
@@ -135,8 +150,8 @@ final class AssistantToolSurfaceTest extends TestCase
     {
         $names = AssistantToolSurface::names([...self::READ_TOOLS, 'get_schedule_snapshot', 'get_project_snapshot',
             ...self::REPORT_TOOLS, 'approve_payment_request'], ['capability' => ['id' => 'reports'],
-            'request' => ['context' => ['ui_state' => ['assistant_report_focus' => 'schedules']]],
-            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Сделай отчёт по графику работ', [])->toArray()]);
+                'request' => ['context' => ['ui_state' => ['assistant_report_focus' => 'schedules']]],
+                'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Сделай отчёт по графику работ', [])->toArray()]);
 
         self::assertContains('get_schedule_snapshot', $names);
         self::assertContains('get_project_snapshot', $names);
@@ -196,7 +211,7 @@ final class AssistantToolSurfaceTest extends TestCase
         foreach ([false, true] as $allowActions) {
             $names = AssistantToolSurface::names([...self::READ_TOOLS, ...self::REPORT_TOOLS, 'approve_payment_request',
                 'create_schedule_task'], ['capability' => ['id' => 'reports'], 'request' => ['message' => $query, 'allow_actions' => $allowActions],
-                'request_understanding' => $understanding]);
+                    'request_understanding' => $understanding]);
 
             self::assertNotContains('approve_payment_request', $names);
             self::assertNotContains('create_schedule_task', $names);

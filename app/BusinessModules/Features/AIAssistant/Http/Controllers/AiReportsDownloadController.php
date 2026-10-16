@@ -20,20 +20,21 @@ class AiReportsDownloadController extends Controller
     {
         $user = $request->user();
         if ($user === null) {
-            throw new AccessDeniedHttpException();
+            throw new AccessDeniedHttpException;
         }
         try {
             $report = $this->access->resolve($token, $user);
         } catch (DecryptException) {
-            throw new AccessDeniedHttpException();
+            throw new AccessDeniedHttpException;
         }
         $stream = $this->files->readCurrent($report->storage_path);
+
         return response()->streamDownload(static function () use ($stream): void {
             try {
                 fpassthru($stream);
             } finally {
                 fclose($stream);
             }
-        }, basename($report->storage_path), ['Content-Type' => 'application/pdf', 'Cache-Control' => 'no-store']);
+        }, basename($report->filename), ['Content-Type' => $report->mime_type, 'Cache-Control' => 'no-store', 'X-Content-Type-Options' => 'nosniff']);
     }
 }

@@ -204,7 +204,31 @@ final class FileServiceMultipartTest extends TestCase
         $headed = $files->headCurrent($path);
         $link = $files->createTemporaryLink($path, 60);
         $files->abortMultipart($upload);
-        $files->deleteCurrent($path);
+        $connection = new class(null) extends \Illuminate\Database\PostgresConnection
+        {
+            public array $guardBindings = [];
+
+            public function select($query, $bindings = [], $useReadPdo = true, array $fetchUsing = [])
+            {
+                $this->guardBindings = $bindings;
+
+                return [];
+            }
+        };
+        $previousResolver = \Illuminate\Database\Eloquent\Model::getConnectionResolver();
+        $resolver = new \Illuminate\Database\ConnectionResolver(['offline' => $connection]);
+        $resolver->setDefaultConnection('offline');
+        \Illuminate\Database\Eloquent\Model::setConnectionResolver($resolver);
+        try {
+            $files->deleteCurrent($path);
+        } finally {
+            if ($previousResolver === null) {
+                \Illuminate\Database\Eloquent\Model::unsetConnectionResolver();
+            } else {
+                \Illuminate\Database\Eloquent\Model::setConnectionResolver($previousResolver);
+            }
+        }
+        self::assertSame([$path], $connection->guardBindings);
 
         self::assertSame($checksum, $completed->sha256);
         self::assertSame($checksum, $headed->sha256);
@@ -214,7 +238,7 @@ final class FileServiceMultipartTest extends TestCase
             array_column($commands, 0),
         );
         self::assertSame('reports-test', $commands[0][1]['Bucket']);
-        self::assertSame($metadata, $commands[0][1]['Metadata']);
+        self::assertSame(array_combine(array_map(static fn (string $key): string => str_replace('_', '-', $key), array_keys($metadata)), array_values($metadata)), $commands[0][1]['Metadata']);
         self::assertSame('*', $commands[2][1]['IfNoneMatch']);
         foreach ($commands as [, $arguments]) {
             self::assertArrayNotHasKey('VersionId', $arguments);
@@ -294,6 +318,59 @@ final class FileServiceMultipartTest extends TestCase
         $description = $this->files($handler)->describeCurrent('org-7/reports/export.csv', 100);
 
         self::assertSame($this->metadata(), $description['metadata']);
+    }
+
+    public function test_current_report_metadata_with_hyphens_round_trips_to_canonical_keys(): void
+    {
+        $metadata = [];
+        foreach ($this->metadata() as $key => $value) {
+            $metadata[str_replace('_', '-', $key)] = $value;
+        }
+        $handler = new MockHandler([new Result(['ETag' => '"etag"', 'ContentLength' => 4, 'ContentType' => 'text/csv', 'Metadata' => $metadata]),
+            new Result(['Body' => Utils::streamFor('body')])]);
+
+        self::assertSame($this->metadata(), $this->files($handler)->describeCurrent('org-7/reports/export.csv', 100)['metadata']);
+    }
+
+    public function test_report_metadata_alias_collision_is_rejected(): void
+    {
+        $metadata = $this->metadata();
+        $metadata['organization-id'] = $metadata['organization_id'];
+        $handler = new MockHandler([new Result(['ETag' => '"etag"', 'ContentLength' => 4, 'ContentType' => 'text/csv', 'Metadata' => $metadata])]);
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->files($handler)->describeCurrent('org-7/reports/export.csv', 100);
+    }
+
+    public function test_report_multipart_uses_hyphenated_wire_headers_without_mutating_upload_identity(): void
+    {
+        $commands = [];
+        $handler = new MockHandler([function ($command) use (&$commands): Result {
+            $commands[] = $command->toArray();
+
+            return new Result(['UploadId' => 'upload-wire']);
+        }]);
+        $upload = $this->files($handler)->startMultipart('org-7/reports/export.csv', 'text/csv', self::PART_SIZE, $this->metadata());
+
+        self::assertSame($this->metadata(), $upload->metadata);
+        self::assertSame('7', $commands[0]['Metadata']['organization-id']);
+        foreach (array_keys($commands[0]['Metadata']) as $key) {
+            self::assertStringNotContainsString('_', $key);
+        }
+    }
+
+    public function test_generic_design_multipart_metadata_is_preserved(): void
+    {
+        $metadata = ['organization-id' => '7', 'project-id' => '52', 'upload-id' => 'design-upload'];
+        $commands = [];
+        $handler = new MockHandler([function ($command) use (&$commands): Result {
+            $commands[] = $command->toArray();
+
+            return new Result(['UploadId' => 'upload-design']);
+        }]);
+        $upload = $this->files($handler)->startMultipart('org-7/design/models/large.ifc', 'application/octet-stream', self::PART_SIZE, $metadata);
+
+        self::assertSame($metadata, $commands[0]['Metadata']);
+        self::assertSame($metadata, $upload->metadata);
     }
 
     public function test_negative_max_bytes_streams_current_object_without_retaining_body(): void

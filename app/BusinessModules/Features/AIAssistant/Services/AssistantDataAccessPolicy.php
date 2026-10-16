@@ -267,6 +267,10 @@ final class AssistantDataAccessPolicy
         if ($type === AssistantDomainSearchCountEvidence::TYPE) {
             return app(AssistantDomainSearchCountEvidence::class)->canReadReference($user, $organizationId, $reference);
         }
+        if ($type === \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::class)
+                ->canReadReference($user, $organizationId, $reference));
+        }
         if (isset($reference['source_id'])) {
             $source = $sourceLookup === null ? RagSource::query()->where('organization_id', $organizationId)->find($reference['source_id'])
                 : $sourceLookup($reference['source_id']);

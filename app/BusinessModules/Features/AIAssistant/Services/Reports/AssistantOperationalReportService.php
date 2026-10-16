@@ -15,6 +15,7 @@ use InvalidArgumentException;
 final class AssistantOperationalReportService
 {
     private const TABLE_COLUMN_VALUE_LABELS = [
+        'contracts.status.terminated' => 'Расторгнут',
         'purchase_requests.status.draft' => 'Черновик',
         'purchase_requests.status.pending' => 'На рассмотрении',
         'purchase_requests.status.approved' => 'Одобрена',
@@ -220,7 +221,7 @@ final class AssistantOperationalReportService
     public function build(string $reportType, Organization $organization, ?User $user, array $filters = []): array
     {
         if ($user === null || ! app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->canReadDomain($user, (int) $organization->id, 'reports')) {
-            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
         }
         $definition = $this->definitions()[$reportType] ?? null;
         if (! is_array($definition)) {
@@ -251,7 +252,9 @@ final class AssistantOperationalReportService
             $section = $this->buildSection($sectionConfig, (int) $organization->id, $dateFrom, $dateTo, $projectId, $user);
             array_push($sourceRefs, ...($section['_source_refs'] ?? []));
             unset($section['_source_refs']);
-            if (($section['amount_label'] ?? null) !== null) { $requiredDomains[] = 'finance'; }
+            if (($section['amount_label'] ?? null) !== null) {
+                $requiredDomains[] = 'finance';
+            }
             $sections[] = $section;
             $totalRecords += (int) ($section['total'] ?? 0);
             $totalAmount += (float) ($section['amount_total'] ?? 0);

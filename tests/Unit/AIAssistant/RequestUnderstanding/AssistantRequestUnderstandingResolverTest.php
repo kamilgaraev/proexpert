@@ -11,6 +11,27 @@ use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
+    public function test_excel_and_csv_requests_are_explicit_files_and_respect_no_file_constraints(): void
+    {
+        $resolver = new AssistantRequestUnderstandingResolver;
+        foreach (['Сделай Excel: договоры по подрядчикам с суммами и статусами' => 'xlsx',
+            'Выгрузи CSV с просроченными платежами' => 'csv', 'Сформируй таблицу в XLSX по проектам' => 'xlsx',
+            'Сделай Excel по договорам, без PDF' => 'xlsx', 'Из Excel сделай CSV с платежами' => 'csv',
+            'Сделай PDF по проектам, не Excel' => 'pdf'] as $query => $format) {
+            $understanding = $resolver->resolve($query, []);
+            self::assertSame('generate_report', $understanding->primaryIntent);
+            self::assertSame($format, $understanding->outputFormat);
+        }
+        $negative = $resolver->resolve('Объясни Excel простым текстом, без файлов и без отчётов', []);
+        self::assertNotSame('generate_report', $negative->primaryIntent);
+        self::assertTrue($negative->blocksFileGeneration());
+        $understanding = $resolver->resolve('Сделай Excel по договорам, без PDF', []);
+        $policy = new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+        self::assertTrue($policy->canExecuteTool('generate_custom_report', $understanding, false, ['format' => 'xlsx'])->allowed);
+        self::assertFalse($policy->canExecuteTool('generate_custom_report', $understanding, false, ['format' => 'pdf'])->allowed);
+        self::assertFalse($policy->canExecuteTool('generate_operational_pdf_report', $understanding)->allowed);
+    }
+
     use UsesAssistantUnitTranslations;
 
     public function test_settings_toggles_require_confirmation(): void
