@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersi
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Connectors\PostgresConnector;
 use Illuminate\Database\DatabaseManager;
@@ -42,6 +43,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->app->make(AssistantIndexingState::class)->beginMigration();
         $database = $this->app->make('db');
         $this->connectionName = $database->getDefaultConnection();
         config()->set(
@@ -257,6 +259,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $database->purge($this->connectionName);
             $database->forgetExtension($this->connectionName);
         }
+        $this->app->make(AssistantIndexingState::class)->endMigration();
         parent::tearDown();
     }
 
@@ -417,7 +420,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $item = $package->items()->sole();
         self::assertNotNull($item->pricing_finalized_at);
         self::assertSame($workItem['specialization_scenario'], data_get($item->metadata, 'specialization_scenario'));
-        self::assertSame('supplementary_project_material:v4', data_get($item->price_snapshot, 'coefficients.pricing_formula_version'));
+        self::assertSame('supplementary_project_material:v5', data_get($item->price_snapshot, 'coefficients.pricing_formula_version'));
         self::assertSame('321.00', (string) $item->total_cost);
         self::assertSame('321.00', (string) data_get($package->fresh()->totals, 'total_cost'));
         self::assertSame(501, (int) DB::table('estimate_generation_package_item_project_price_inputs')->value('project_material_rule_id'));
@@ -438,7 +441,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $item->forceFill([
             'pricing_finalized_at' => null,
             'total_cost' => '0.00',
-            'price_snapshot' => ['coefficients' => ['pricing_formula_version' => 'supplementary_project_material:v4']],
+            'price_snapshot' => ['coefficients' => ['pricing_formula_version' => 'supplementary_project_material:v5']],
         ])->save();
         $this->expectException(\DomainException::class);
         $this->expectExceptionMessage('authoritative pricing boundary');
@@ -500,7 +503,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertSame(2, $package->items()->count());
         self::assertSame(2, FinalizerTrackingPostgresConnection::$finalizerCalls);
         self::assertSame(
-            ['1:norm_measurement:v1', '2:semantic_project_resource:v8'],
+            ['1:norm_measurement:v1', '2:semantic_project_resource:v9'],
             $package->items()->orderBy('revision')->get()->map(
                 static fn ($revision): string => $revision->revision.':'.data_get($revision->price_snapshot, 'coefficients.pricing_formula_version'),
             )->all(),
@@ -641,8 +644,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         string $version,
         string $key = 'must-not-price',
         ?string $evidenceKey = null,
-    ): array
-    {
+    ): array {
         $context = new PipelineContext((int) $session->id, 10, 20, 1, 'sha256:'.str_repeat('f', 64), 'generating', baseInputVersion: $version);
         $quantity = QuantityData::fromArray([
             'key' => 'wall_area', 'unit' => 'm2', 'amount' => '1.000000', 'formula_key' => 'wall.area',
@@ -686,8 +688,8 @@ final class FinalizerTrackingPostgresConnection extends PostgresConnection
                 ->where('package_item_id', (int) $bindings[0])
                 ->exists();
             $snapshot = ['coefficients' => ['pricing_formula_version' => $hasProjectMaterial
-                ? 'supplementary_project_material:v4'
-                : 'semantic_project_resource:v8']];
+                ? 'supplementary_project_material:v5'
+                : 'semantic_project_resource:v9']];
             $this->table('estimate_generation_package_items')->where('id', (int) $bindings[0])->update([
                 'pricing_finalized_at' => '2026-07-13 00:00:00',
                 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),

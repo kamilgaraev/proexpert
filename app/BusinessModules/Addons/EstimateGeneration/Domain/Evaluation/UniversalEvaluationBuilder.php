@@ -214,8 +214,12 @@ final readonly class UniversalEvaluationBuilder
             || ! is_array($price['coefficients']['resource_evidence'] ?? null) || $price['coefficients']['resource_evidence'] === []) {
             return null;
         }
+        $resources = (new NormativePriceEvidenceProjector)->resources($price, $quantity);
+        if ($resources === null) {
+            return null;
+        }
         $basis = ['kind' => 'normative_resource_sum', 'quantity' => $quantity,
-            'work_cost' => $price['coefficients']['work_cost'] ?? '0.00', 'resources' => $price['coefficients']['resource_evidence'],
+            'work_cost' => $price['coefficients']['work_cost'] ?? '0.00', 'resources' => $resources,
             'source_hash' => hash('sha256', CanonicalPipelineJson::encode($price))];
         $regionalOnly = array_filter($basis['resources'], static fn ($resource): bool => ! is_array($resource)
             || ($resource['source_type'] ?? null) !== 'regional_catalog'

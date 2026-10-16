@@ -135,6 +135,10 @@ final readonly class AssembleMatchedResources
             'price_source_kind' => $resource['price_source_kind'] ?? null,
             'price_provenance' => $resource['price_provenance'] ?? null,
         ]];
+        $workItem['validation_flags'] = array_values(array_diff($workItem['validation_flags'] ?? [], ['project_material_price_missing']));
+        if (($workItem['pricing_blocker'] ?? null) === 'project_material_price_missing') {
+            unset($workItem['pricing_blocker'], $workItem['pricing_blocker_message']);
+        }
 
         return $workItem;
     }
