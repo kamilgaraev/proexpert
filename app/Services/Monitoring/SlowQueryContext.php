@@ -11,7 +11,7 @@ final class SlowQueryContext
 {
     public function __construct(private readonly TracingService $tracing) {}
 
-    public function forQuery(QueryExecuted $query): array
+    public function forQuery(QueryExecuted $query, ?array $connectionState = null): array
     {
         $fingerprint = hash('sha256', $query->sql);
         $key = app()->bound('config') ? config('app.key') : null;
@@ -33,10 +33,29 @@ final class SlowQueryContext
             'bindings_count' => count($query->bindings),
             'bindings_truncated' => false,
             'transaction_level' => $query->connection->transactionLevel(),
+            'connection_state' => self::safeConnectionState($connectionState),
             'execution_context' => $this->tracing->executionContext(),
             'source' => self::source(),
             ...$this->tracing->slowQueryTrace($query),
         ];
+    }
+
+    private static function safeConnectionState(?array $state): array
+    {
+        $fields = ['observed', 'write_lazy_before', 'read_lazy_before', 'write_ready_before', 'read_ready_before',
+            'write_ready_after', 'read_ready_after', 'manager_connection_event_during_run'];
+        if (($state['observed'] ?? null) !== true) {
+            return ['observed' => false];
+        }
+        $safe = [];
+        foreach ($fields as $field) {
+            if (! is_bool($state[$field] ?? null)) {
+                return ['observed' => false];
+            }
+            $safe[$field] = $state[$field];
+        }
+
+        return $safe;
     }
 
     public static function safeBindings(string $sql, array $bindings): array

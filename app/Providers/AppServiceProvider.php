@@ -258,12 +258,19 @@ class AppServiceProvider extends ServiceProvider
     {
         $slowQueryThreshold = (float) config('monitoring.slow_query_threshold_ms', 500);
         if (App::isProduction() && $slowQueryThreshold > 0) {
-            DB::listen(static function (QueryExecuted $query) use ($slowQueryThreshold): void {
+            $connectionState = new \App\Services\Monitoring\SqlConnectionState;
+            Event::listen(\Illuminate\Database\Events\ConnectionEstablished::class,
+                static fn (\Illuminate\Database\Events\ConnectionEstablished $event) => $connectionState->established($event->connection));
+            foreach (DB::getConnections() as $connection) {
+                $connectionState->watch($connection);
+            }
+            DB::listen(static function (QueryExecuted $query) use ($slowQueryThreshold, $connectionState): void {
+                $state = $connectionState->finish($query);
                 if ($query->time < $slowQueryThreshold) {
                     return;
                 }
 
-                Log::channel('slow_queries')->warning('slow_database_query', app(\App\Services\Monitoring\SlowQueryContext::class)->forQuery($query));
+                Log::channel('slow_queries')->warning('slow_database_query', app(\App\Services\Monitoring\SlowQueryContext::class)->forQuery($query, $state));
             });
         }
 
