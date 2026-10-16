@@ -17,7 +17,9 @@ final class BudgetPeriodRequest extends BudgetingFormRequest
             'period_type' => ['required', 'string', Rule::in(['month', 'quarter', 'year', 'project'])],
             'starts_at' => ['required', 'date'],
             'ends_at' => ['required', 'date', 'after_or_equal:starts_at'],
-            'status' => ['sometimes', 'string', Rule::in(['open', 'soft_closed', 'closed', 'reopened_for_adjustment', 'archived'])],
+            'status' => ['sometimes', 'string', Rule::in($this->isMethod('POST')
+                ? ['open']
+                : ['open', 'soft_closed', 'closed', 'reopened_for_adjustment', 'archived'])],
         ];
     }
 }

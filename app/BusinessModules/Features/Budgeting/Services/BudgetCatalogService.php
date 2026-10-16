@@ -113,24 +113,37 @@ final class BudgetCatalogService
     public function storePeriod(User $user, array $input): BudgetPeriod
     {
         $organizationId = $this->organizationId($user, $input);
+        if (array_key_exists('status', $input) && $input['status'] !== BudgetPeriodClosureService::STATUS_OPEN) {
+            throw new \DomainException(trans_message('budgeting.periods.workflow_status_read_only'));
+        }
         $this->assertUniqueCode(BudgetPeriod::query(), $organizationId, (string) $input['code']);
 
         return BudgetPeriod::create([
             ...$input,
             'organization_id' => $organizationId,
-            'status' => $input['status'] ?? 'open',
+            'status' => BudgetPeriodClosureService::STATUS_OPEN,
         ]);
     }
 
     public function updatePeriod(User $user, string $uuid, array $input): BudgetPeriod
     {
-        $input = Arr::only($input, ['code', 'name', 'period_type', 'starts_at', 'ends_at', 'status']);
-        $period = $this->findPeriod($user, $uuid);
-        $this->periodClosureService->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_PERIOD_SETTINGS);
-        $this->assertUniqueCode(BudgetPeriod::query(), (int) $period->organization_id, (string) $input['code'], (int) $period->id);
-        $period->fill($input)->save();
+        return DB::transaction(function () use ($user, $uuid, $input): BudgetPeriod {
+            $period = $this->findByUuid(
+                BudgetPeriod::query()->lockForUpdate(),
+                $this->organizationId($user),
+                $uuid,
+                trans_message('budgeting.periods.not_found')
+            );
+            if (array_key_exists('status', $input) && $input['status'] !== (string) $period->status) {
+                throw new \DomainException(trans_message('budgeting.periods.workflow_status_read_only'));
+            }
+            $input = Arr::only($input, ['code', 'name', 'period_type', 'starts_at', 'ends_at']);
+            $this->periodClosureService->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_PERIOD_SETTINGS);
+            $this->assertUniqueCode(BudgetPeriod::query(), (int) $period->organization_id, (string) $input['code'], (int) $period->id);
+            $period->fill($input)->save();
 
-        return $period->refresh();
+            return $period->refresh();
+        }, 3);
     }
 
     public function storeScenario(User $user, array $input): BudgetScenario
