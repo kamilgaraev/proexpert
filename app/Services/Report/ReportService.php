@@ -1202,10 +1202,10 @@ class ReportService
             ->where('warehouse_balances.organization_id', $organizationId)
             ->select(
                 'warehouse_balances.id',
+                'warehouse_balances.warehouse_id',
                 'materials.name as material_name',
                 'materials.code as material_code',
                 'materials.category',
-                'organization_warehouses.name as warehouse_name',
                 'warehouse_balances.available_quantity',
                 'warehouse_balances.reserved_quantity',
                 'warehouse_balances.unit_price',
@@ -1250,7 +1250,13 @@ class ReportService
             $query->whereBetween('warehouse_balances.expiry_date', [now(), now()->addDays($days)]);
         }
 
-        $stocks = $query->get()->map(function ($stock) {
+        $stocks = $query->get();
+        $warehouses = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::query()->withTrashed()->where('organization_id', $organizationId)
+            ->whereKey($stocks->pluck('warehouse_id')->unique()->all())
+            ->with(['project' => static fn ($relation) => $relation->withTrashed()])->get();
+        $warehouseNames = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class)
+            ->applyReadableCustodyWarehouseNames($organizationId, $warehouses)->pluck('name', 'id');
+        $stocks = $stocks->map(function ($stock) use ($warehouseNames) {
             $is_critical = $stock->min_stock_level && $stock->available_quantity <= $stock->min_stock_level;
             $is_expired = $stock->expiry_date && Carbon::parse($stock->expiry_date)->isPast();
             
@@ -1259,7 +1265,7 @@ class ReportService
                 'material_name' => $stock->material_name,
                 'material_code' => $stock->material_code,
                 'category' => $stock->category,
-                'warehouse' => $stock->warehouse_name,
+                'warehouse' => $warehouseNames->get($stock->warehouse_id),
                 'available_quantity' => (float)$stock->available_quantity,
                 'reserved_quantity' => (float)$stock->reserved_quantity,
                 'total_quantity' => (float)$stock->total_quantity,
