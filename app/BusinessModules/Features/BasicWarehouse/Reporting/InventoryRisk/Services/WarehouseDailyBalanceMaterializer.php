@@ -89,6 +89,7 @@ final readonly class WarehouseDailyBalanceMaterializer
             ...InventoryDemandSnapshot::query()
                 ->where('organization_id', $context->scope->organizationId)
                 ->where('effective_from', '<=', $eventCutoff)
+                ->where('approved_at', '<=', $eventCutoff)
                 ->where(fn (Builder $builder): Builder => $builder
                     ->whereNull('effective_to')
                     ->orWhere('effective_to', '>', $eventCutoff))

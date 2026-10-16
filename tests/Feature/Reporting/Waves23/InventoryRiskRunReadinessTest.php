@@ -150,21 +150,26 @@ final class InventoryRiskRunReadinessTest extends TestCase
                 'effective_from' => $query->asOf,
             ];
             foreach ([
-                'inventory_demand_snapshots' => [
+                ['inventory_demand_snapshots', [
                     'horizon_days' => 7, 'approved_quantity' => '100.000000',
                     'source_type' => 'test_demand', 'source_id' => $materialId, 'source_version' => 1,
-                    'approved_at' => $query->asOf,
-                ],
-                'inventory_reorder_policy_versions' => [
+                    'effective_from' => $eventAt, 'approved_at' => $query->asOf,
+                ]],
+                ['inventory_demand_snapshots', [
+                    'horizon_days' => 7, 'approved_quantity' => '100.000000',
+                    'source_type' => 'test_demand', 'source_id' => $materialId, 'source_version' => 2,
+                    'approved_at' => $eventAt,
+                ]],
+                ['inventory_reorder_policy_versions', [
                     'policy_version' => 1, 'minimum_quantity' => '1.000000',
                     'reorder_point_quantity' => '20.000000', 'target_quantity' => '100.000000',
                     'lead_time_days' => 2, 'safety_stock_quantity' => '3.000000',
                     'freshness_ttl_seconds' => 86400,
-                ],
-            ] as $table => $planning) {
+                ]],
+            ] as [$table, $planning]) {
                 DB::table($table)->insert([
                     ...$planningGrain, ...$planning,
-                    'source_hash' => hash('sha256', $table.'-'.$organization->id),
+                    'source_hash' => hash('sha256', $table.'-'.$organization->id.'-'.($planning['source_version'] ?? $planning['policy_version'])),
                 ]);
                 $replay = $provider->materialize($context, $query, new ReportProgress(0));
                 self::assertSame($baseline->materializedSourceHash->value, $replay->materializedSourceHash->value, $table);

@@ -20,7 +20,7 @@ final readonly class InventoryRiskCandidateContract
     public const CODE = 'inventory_risk';
     public const SOURCE_SCHEMA_VERSION = 'inventory-planning.v2';
     public const FORMULA_HASH = '38ab50fe5b126ce090eb54f73fd230136c4bae9623c04eb60710680786a4fcd3';
-    public const SOURCE_HASH = '200e105b0a3319df3c7391b077fd3cbea7039e8743e23b5a986168a2257b36f0';
+    public const SOURCE_HASH = '284855a2344118493f0d63eb70e233882f95a685fe0298b2b17f163a5f5d40c8';
 
     public function filters(): array
     {
