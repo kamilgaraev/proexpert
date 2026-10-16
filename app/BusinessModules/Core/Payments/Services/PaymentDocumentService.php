@@ -15,6 +15,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\User;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -255,6 +256,11 @@ class PaymentDocumentService
             ->firstOrFail();
         if ($request->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
             return $data;
+        }
+        if ($user === null || ! app(PaymentDocumentAccessService::class)
+            ->query((int) $request->organization_id, $user, 'payments.transaction.approve')
+            ->whereKey($request->getKey())->exists()) {
+            throw new AuthorizationException(trans_message('payments.blockers.permission_required'));
         }
         if ($request->requiresApproval() && $request->status !== PaymentDocumentStatus::APPROVED) {
             throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));

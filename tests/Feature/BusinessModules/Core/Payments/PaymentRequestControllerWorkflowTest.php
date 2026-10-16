@@ -9,9 +9,14 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\CounterpartyAccount;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Contractor;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -178,6 +183,94 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_linked_request_orders_require_approval_permission_for_every_write_path(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activatePaymentsModule($context->organization->id);
+        $this->assignPaymentPermissions($context, [
+            'payments.invoice.view', 'payments.invoice.create', 'payments.invoice.edit', 'payments.invoice.issue',
+        ]);
+        self::assertFalse(app(AuthorizationService::class)->canCurrent($context->user, 'payments.transaction.approve', [
+            'organization_id' => $context->organization->id,
+        ]));
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(),
+            'due_date' => $request->due_date->toDateString(),
+            'amount' => 900,
+            'currency' => 'RUB',
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contractor->id,
+        ];
+        $ordinary = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->putJson('/api/v1/admin/payments/documents/'.$ordinary->json('data.id'), ['description' => 'Allowed ordinary edit'])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + [
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ])->assertForbidden();
+        self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+            ->where('source_id', $request->id)->count());
+
+        $legacy = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::DRAFT);
+        $legacy->update([
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            'description' => 'Legacy draft',
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + [
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ])->assertForbidden();
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$legacy->id}", ['description' => 'Forbidden linked edit'])
+            ->assertForbidden();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/documents/{$legacy->id}/submit")
+            ->assertForbidden();
+        self::assertSame(PaymentDocumentStatus::DRAFT, $legacy->fresh()->status);
+        self::assertSame('Legacy draft', $legacy->fresh()->description);
+        self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_generic_acceptance_honors_the_approval_project_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $this->assignPaymentPermissions($context, ['payments.invoice.create']);
+        $this->assignPaymentPermissions($context, ['payments.transaction.approve'], $project->id, false);
+        $contractor = $this->createContractor($context);
+
+        foreach ([$otherProject, $project] as $sourceProject) {
+            $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            $request->update(['project_id' => $sourceProject->id]);
+            $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(), 'amount' => 900, 'currency' => 'RUB',
+                'project_id' => $sourceProject->id,
+                'payer_organization_id' => $context->organization->id,
+                'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ]);
+            if ($sourceProject->is($otherProject)) {
+                $response->assertForbidden();
+                self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                    ->where('source_id', $request->id)->count());
+            } else {
+                $response->assertCreated()->assertJsonPath('data.project.id', $project->id);
+            }
+        }
+    }
+
     public function test_accept_rejects_a_document_that_is_not_a_payment_request(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
@@ -330,6 +423,28 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         ]);
     }
 
+    private function assignPaymentPermissions(AdminApiTestContext $context, array $permissions, ?int $projectId = null, bool $replaceExisting = true): void
+    {
+        if ($replaceExisting) {
+            UserRoleAssignment::query()->where('user_id', $context->user->id)->delete();
+        }
+        $role = OrganizationCustomRole::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Request order permission regression',
+            'slug' => 'request-order-permissions-'.uniqid(),
+            'system_permissions' => [],
+            'module_permissions' => ['payments' => $permissions],
+            'interface_access' => ['admin', 'mobile'],
+            'conditions' => null, 'is_active' => true, 'created_by' => $context->user->id,
+        ]);
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $role->slug,
+            context: $projectId !== null ? AuthorizationContext::getProjectContext($projectId, (int) $context->organization->id)
+                : AuthorizationContext::getOrganizationContext((int) $context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
+    }
+
     private function activatePaymentsModule(int $organizationId): void
     {
         $module = Module::query()->firstOrCreate(
@@ -343,6 +458,8 @@ class PaymentRequestControllerWorkflowTest extends TestCase
                 'permissions' => [
                     'payments.invoice.view',
                     'payments.invoice.create',
+                    'payments.invoice.edit',
+                    'payments.invoice.issue',
                     'payments.transaction.approve',
                     'payments.transaction.reject',
                 ],
