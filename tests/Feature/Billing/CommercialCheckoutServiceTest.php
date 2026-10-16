@@ -1765,6 +1765,8 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->prepareBankBilling();
         $this->checkout(['machinery']);
         $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $transaction = $this->bankTransaction($invoice, 'statement-payment', $invoice->amount_minor);
+        unset($transaction['CreditorAccount']);
         $date = now('Europe/Moscow')->toDateString();
         config(['bank_billing.start_date' => $date]);
         $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
@@ -1772,7 +1774,7 @@ class CommercialCheckoutServiceTest extends TestCase
         $client->shouldReceive('initializeStatement')->with($date)->once()->andReturn('statement-1');
         $client->shouldReceive('statement')->with('statement-1')->once()->andReturn(['Data' => ['Statement' => [[
             'accountId' => config('bank_billing.account_id'), 'statementId' => 'statement-1', 'status' => 'Ready',
-            'startDateTime' => $date, 'endDateTime' => $date, 'Transaction' => [$this->bankTransaction($invoice, 'statement-payment', $invoice->amount_minor)],
+            'startDateTime' => $date, 'endDateTime' => $date, 'Transaction' => [$transaction],
         ]]]]);
         $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
         $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
@@ -1785,6 +1787,152 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame(0, $again['processed']);
         $this->assertNotNull($invoice->refresh()->activated_at);
         $this->assertDatabaseCount('commercial_bank_allocations', 1);
+    }
+
+    public function test_bank_statement_context_supplies_only_the_missing_own_account_and_replays_safely(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        foreach (['Credit', 'Debit'] as $direction) {
+            foreach ([null, '', '  '] as $index => $missing) {
+                $transaction = $this->bankTransaction($invoice, $direction.'-missing-'.$index, 100);
+                $transaction['creditDebitIndicator'] = $direction;
+                $ownParty = $direction === 'Credit' ? 'CreditorAccount' : 'DebtorAccount';
+                $transaction[$ownParty]['identification'] = $missing;
+                $operation = $settlement->ingestFromStatement($transaction, (string) config('bank_billing.account_id'));
+                $this->assertSame(config('bank_billing.seller_account'), $operation->getAttribute($direction === 'Credit' ? 'recipient_account' : 'payer_account'));
+                $this->assertSame(strtolower($direction), $operation->direction);
+                $transaction[$ownParty]['identification'] = config('bank_billing.seller_account');
+                $this->assertSame($operation->id, $settlement->ingest($transaction)->id);
+                $this->assertNull($operation->refresh()->review_reason);
+            }
+        }
+        $this->assertDatabaseCount('commercial_bank_operations', 6);
+        $this->assertDatabaseCount('commercial_bank_allocations', 3);
+        $this->assertSame(300, $invoice->refresh()->paid_minor);
+        $this->assertNull($invoice->activated_at);
+    }
+
+    public function test_bank_missing_own_account_without_statement_context_is_rejected(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $transaction = $this->bankTransaction($invoice, 'unscoped-missing-account', $invoice->amount_minor);
+        unset($transaction['CreditorAccount']);
+        try {
+            app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($transaction);
+            $this->fail('An unscoped transaction without our account must be rejected.');
+        } catch (\InvalidArgumentException $exception) {
+            $this->assertSame('tochka_transaction_account_mismatch', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertNull($invoice->refresh()->activated_at);
+    }
+
+    public function test_bank_statement_context_rejects_another_account_and_never_overwrites_an_explicit_account(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        $transaction = $this->bankTransaction($invoice, 'invalid-context', $invoice->amount_minor);
+        unset($transaction['CreditorAccount']);
+        foreach (['', '40802810000000000002/044525104', '40802810000000000001/044525105'] as $accountId) {
+            try {
+                $settlement->ingestFromStatement($transaction, $accountId);
+                $this->fail('A foreign or empty statement context must be rejected.');
+            } catch (\InvalidArgumentException $exception) {
+                $this->assertSame('tochka_statement_account_mismatch', $exception->getMessage());
+            }
+        }
+        foreach (['Credit', 'Debit'] as $direction) {
+            foreach (['40702810000000000002', 'invalid-account'] as $explicitAccount) {
+                $transaction['creditDebitIndicator'] = $direction;
+                $transaction[$direction === 'Credit' ? 'CreditorAccount' : 'DebtorAccount']['identification'] = $explicitAccount;
+                try {
+                    $settlement->ingestFromStatement($transaction, (string) config('bank_billing.account_id'));
+                    $this->fail('An explicit foreign or malformed own account must be rejected.');
+                } catch (\InvalidArgumentException $exception) {
+                    $this->assertSame('tochka_transaction_account_mismatch', $exception->getMessage());
+                }
+            }
+        }
+        config(['bank_billing.seller_account' => '40802810000000000002']);
+        try {
+            $settlement->ingestFromStatement($transaction, (string) config('bank_billing.account_id'));
+            $this->fail('A configured account inconsistent with the statement must be rejected.');
+        } catch (\InvalidArgumentException $exception) {
+            $this->assertSame('tochka_statement_account_mismatch', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertNull($invoice->refresh()->activated_at);
+    }
+
+    public function test_bank_statement_context_never_fabricates_payer_details_or_settles_personal_transfers(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $settlement = app(\App\Services\Billing\Bank\BankSettlementService::class);
+        foreach (['payer_not_b2b', 'payer_mismatch'] as $reason) {
+            $transaction = $this->bankTransaction($invoice, $reason, $invoice->amount_minor);
+            unset($transaction['CreditorAccount']);
+            $transaction['DebtorAccount']['identification'] = '40817810000000000002';
+            if ($reason === 'payer_mismatch') {
+                unset($transaction['DebtorParty']);
+            }
+            $operation = $settlement->ingestFromStatement($transaction, (string) config('bank_billing.account_id'));
+            $this->assertSame($reason, $operation->review_reason);
+            $this->assertSame('40817810000000000002', $operation->payer_account);
+            $this->assertSame($reason === 'payer_not_b2b' ? $this->organization->tax_number : null, $operation->payer_inn);
+        }
+        $this->assertDatabaseCount('commercial_bank_operations', 2);
+        $this->assertDatabaseCount('commercial_bank_allocations', 0);
+        $this->assertSame(0, $invoice->refresh()->paid_minor);
+        $this->assertNull($invoice->paid_at);
+        $this->assertNull($invoice->activated_at);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidBankStatementScopes')]
+    public function test_bank_statement_scope_is_validated_before_supplying_a_missing_own_account(string $field, string $invalid): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $date = now('Europe/Moscow')->toDateString();
+        config(['bank_billing.start_date' => $date]);
+        $transaction = $this->bankTransaction($invoice, 'untrusted-scope', $invoice->amount_minor);
+        unset($transaction['CreditorAccount']);
+        $row = ['accountId' => config('bank_billing.account_id'), 'statementId' => 'verified-scope', 'status' => 'Ready',
+            'startDateTime' => $date, 'endDateTime' => $date, 'Transaction' => [$transaction]];
+        $row[$field] = $invalid;
+        $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('initializeStatement')->with($date)->once()->andReturn('verified-scope');
+        $client->shouldReceive('statement')->with('verified-scope')->once()->andReturn(['Data' => ['Statement' => [$row]]]);
+        $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
+        $documents = \Mockery::mock(\App\Services\Billing\Bank\BankDocumentService::class)->makePartial();
+        $documents->shouldReceive('store')->andReturnUsing(fn ($document) => $document);
+        $this->app->instance(\App\Services\Billing\Bank\BankDocumentService::class, $documents);
+        $result = app(\App\Services\Billing\Bank\BankSyncService::class)->process();
+        $this->assertSame($field === 'status' ? 0 : 1, $result['failed']);
+        $this->assertSame(0, $result['processed']);
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertNull($invoice->refresh()->activated_at);
+    }
+
+    public static function invalidBankStatementScopes(): array
+    {
+        return [
+            'foreign account' => ['accountId', '40802810000000000002/044525104'],
+            'foreign statement' => ['statementId', 'another-statement'],
+            'wrong start date' => ['startDateTime', '2020-01-01'],
+            'wrong end date' => ['endDateTime', '2020-01-01'],
+            'not ready' => ['status', 'Processing'],
+        ];
     }
 
     public function test_bank_unexpected_pagination_is_visible_and_never_marks_an_incomplete_statement_done(): void
