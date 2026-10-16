@@ -1256,9 +1256,16 @@ final class WipForecastReportService
             INNER JOIN contracts AS act_contract ON act_contract.id = payment_act.contract_id
             WHERE payment_act.id = payment_documents.{$referenceColumn}
                 AND act_contract.organization_id = payment_documents.organization_id
+                AND act_contract.deleted_at IS NULL
                 AND (payment_documents.project_id IS NULL
-                    OR COALESCE(payment_act.project_id, act_contract.project_id) IS NULL
-                    OR COALESCE(payment_act.project_id, act_contract.project_id) = payment_documents.project_id))";
+                    OR payment_act.project_id = payment_documents.project_id
+                    OR (payment_act.project_id IS NULL
+                        AND ((act_contract.is_multi_project = FALSE
+                                AND act_contract.project_id = payment_documents.project_id)
+                            OR (act_contract.is_multi_project = TRUE
+                                AND EXISTS (SELECT 1 FROM contract_project AS act_contract_project
+                                    WHERE act_contract_project.contract_id = act_contract.id
+                                        AND act_contract_project.project_id = payment_documents.project_id))))))";
     }
 
     /**

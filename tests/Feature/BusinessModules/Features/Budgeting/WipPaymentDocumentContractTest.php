@@ -147,6 +147,65 @@ class WipPaymentDocumentContractTest extends TestCase
         $this->assertSame($originalMetadata, $unassigned->fresh()->metadata);
     }
 
+    public function test_legacy_multi_project_act_requires_contract_project_membership(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $unlinkedProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contract = $this->contract($context, $project);
+        $contract->forceFill(['is_multi_project' => true, 'project_id' => null])->saveQuietly();
+        $contract->projects()->sync([$project->id, $secondProject->id]);
+        $act = $this->act($contract, null);
+        $this->document($context, $project->id, 100, [
+            'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+        ]);
+        $this->document($context, $secondProject->id, 200, [
+            'source_type' => ContractPerformanceAct::class, 'source_id' => $act->id,
+        ]);
+        $this->document($context, $unlinkedProject->id, 300, [
+            'source_type' => ContractPerformanceAct::class, 'source_id' => $act->id,
+        ]);
+
+        $service = app(WipForecastReportService::class);
+        foreach ([[$project->id, 100.0], [$secondProject->id, 200.0]] as [$projectId, $cost]) {
+            $report = $service->report($this->filters($context, $projectId), $context->user);
+            $this->assertCount(1, $report['rows']);
+            $this->assertSame($contract->id, (int) $report['rows'][0]['contract']['id']);
+            $this->assertSame($cost, (float) $report['rows'][0]['metrics']['ac']);
+        }
+        $filters = $this->filters($context, $unlinkedProject->id);
+        $unlinked = $service->report($filters, $context->user);
+        $this->assertCount(1, $unlinked['rows']);
+        $this->assertNull($unlinked['rows'][0]['contract']);
+        $this->assertSame(300.0, (float) $unlinked['rows'][0]['metrics']['ac']);
+        $filtered = $service->report([...$filters, 'contract_id' => $contract->id], $context->user);
+        $this->assertSame([], $filtered['rows']);
+        $all = $service->report($this->filters($context, null), $context->user);
+        $this->assertSame(600.0, collect($all['rows'])->sum(fn (array $row): float => (float) $row['metrics']['ac']));
+    }
+
+    public function test_deleted_act_contract_is_not_resolved_but_cost_remains_visible(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $contract = $this->contract($context, $project);
+        $act = $this->act($contract, $project->id);
+        $this->document($context, $project->id, 100, [
+            'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+        ]);
+        $contract->deleteQuietly();
+
+        $service = app(WipForecastReportService::class);
+        $filters = $this->filters($context, $project->id);
+        $report = $service->report($filters, $context->user);
+        $this->assertCount(1, $report['rows']);
+        $this->assertNull($report['rows'][0]['contract']);
+        $this->assertSame(100.0, (float) $report['rows'][0]['metrics']['ac']);
+        $filtered = $service->report([...$filters, 'contract_id' => $contract->id], $context->user);
+        $this->assertSame([], $filtered['rows']);
+    }
+
     private function contract(AdminApiTestContext $context, Project $project): Contract
     {
         $contractor = Contractor::query()->create([
