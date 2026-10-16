@@ -35,6 +35,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Illuminate\Support\Testing\Fakes\QueueFake;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\IsolatedPostgresTestDatabase;
 
@@ -65,7 +66,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             || ! str_ends_with(DB::getDatabaseName(), '_testing')) {
             throw new BenchmarkContractException('recorded_replay_test_namespace_required');
         }
-        if (! in_array($case->sourceType, [BenchmarkSourceType::TextDescription, BenchmarkSourceType::SitePhoto, BenchmarkSourceType::Spreadsheet], true)) {
+        if (! in_array($case->sourceType, [BenchmarkSourceType::TextDescription, BenchmarkSourceType::SitePhoto, BenchmarkSourceType::Spreadsheet, BenchmarkSourceType::Dxf], true)) {
             return BenchmarkPipelineResultData::unsupported();
         }
         $recording = file_get_contents($this->recordingPath);
@@ -75,7 +76,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $fixture = json_decode($recording, true, 32, JSON_THROW_ON_ERROR);
         if (($fixture['schema_version'] ?? null) !== 1 || ($fixture['provenance'] ?? null) !== 'synthetic_transport_fixture'
             || ($fixture['accuracy_calibrated'] ?? null) !== false || count($fixture['recordings'] ?? []) < 2
-            || count($fixture['recordings']) > 6) {
+            || count($fixture['recordings']) > 16) {
             throw new BenchmarkContractException('recorded_replay_descriptor_invalid');
         }
         $initialInput = $fixture['initial_input'] ?? [];
@@ -123,7 +124,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         if (count($descriptionFacts) !== ($description === null ? 0 : 1)) {
             throw new BenchmarkContractException('recorded_replay_description_fact_missing');
         }
-        if (in_array($case->sourceType, [BenchmarkSourceType::SitePhoto, BenchmarkSourceType::Spreadsheet], true)) {
+        if (in_array($case->sourceType, [BenchmarkSourceType::SitePhoto, BenchmarkSourceType::Spreadsheet, BenchmarkSourceType::Dxf], true)) {
             $session = $this->processDocument($session, $actor, $source, $fixture, $documentRun, $case->sourceType);
         }
         $historyStart = count($this->history);
@@ -176,7 +177,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $quote = $this->app->make(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, (int) $session->state_version, $operationId, 'generation');
         $request = $this->app->make(RequestEstimateGeneration::class)->handle($session, (int) $session->state_version, 'ai_assisted', $actor,
             creditApproval: ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]);
-        $job = Queue::pushed(GenerateEstimateDraftJob::class)->first();
+        $job = $this->queue()->pushed(GenerateEstimateDraftJob::class)->first();
         if (! $job instanceof GenerateEstimateDraftJob) {
             $summary = $request->context['documents_summary'] ?? [];
             throw new BenchmarkContractException('recorded_replay_generation_not_queued:'.json_encode([
@@ -249,7 +250,11 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $session->refresh();
         $evaluation = $session->draft_payload['evaluation_result'] ?? null;
         if (! is_array($evaluation) || count($this->history) - $historyStart !== count($fixture['recordings'])) {
-            throw new BenchmarkContractException('recorded_replay_result_missing');
+            throw new BenchmarkContractException('recorded_replay_result_missing:'.json_encode([
+                'evaluation_exists' => is_array($evaluation), 'request_count' => count($this->history) - $historyStart,
+                'recording_count' => count($fixture['recordings']), 'status' => $session->status->value,
+                'stage' => $session->processing_stage,
+            ], JSON_THROW_ON_ERROR));
         }
         $usage = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->get();
         $cost = BigDecimal::zero();
@@ -292,7 +297,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         $job->handle($this->app->make(RunEstimateGenerationDraft::class));
         $this->lastRun['requests_after_replay'] = count($this->history) - $historyStart;
         $this->lastRun['usage_after_replay'] = DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count();
-        if (in_array($case->sourceType, [BenchmarkSourceType::TextDescription, BenchmarkSourceType::Spreadsheet], true)) {
+        if (in_array($case->sourceType, [BenchmarkSourceType::TextDescription, BenchmarkSourceType::Spreadsheet, BenchmarkSourceType::Dxf], true)) {
             Http::assertNothingSent();
         }
 
@@ -317,16 +322,22 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             }]);
         }
         $path = tempnam(sys_get_temp_dir(), 'most-document-replay-');
+        $filename = match ($sourceType) {
+            BenchmarkSourceType::SitePhoto => 'room.png', BenchmarkSourceType::Dxf => 'dimensions.dxf', default => 'dimensions.xlsx'
+        };
+        $mimeType = match ($sourceType) {
+            BenchmarkSourceType::SitePhoto => 'image/png', BenchmarkSourceType::Dxf => 'application/dxf', default => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        };
         try {
             file_put_contents($path, $source);
             $upload = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments::class)
                 ->handle($session, (int) $session->state_version, [new \Illuminate\Http\UploadedFile($path,
-                    $photo ? 'room.png' : 'dimensions.xlsx', $photo ? 'image/png' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true)], $actor, (string) Str::uuid());
+                    $filename, $mimeType, null, true)], $actor, (string) Str::uuid());
         } finally {
             unlink($path);
         }
         $document = $upload->documents->sole();
-        $manifestJob = Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob::class)->first();
+        $manifestJob = $this->queue()->pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob::class)->first();
         $manifestJob->handle($this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessEstimateGenerationDocument::class));
         $session->refresh();
         $id = null;
@@ -346,7 +357,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
                 $processor->handle((int) $unit->id, $unit->source_version);
             }
         } else {
-            $queued = Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob::class)->first();
+            $queued = $this->queue()->pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob::class)->first();
             if (! $queued instanceof \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob
                 || $queued->rateLimitKey() !== 'unit:'.$units->sole()->id) {
                 throw new BenchmarkContractException('recorded_replay_native_free_job_missing');
@@ -381,6 +392,16 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
         }
 
         return $session;
+    }
+
+    private function queue(): QueueFake
+    {
+        $queue = Queue::getFacadeRoot();
+        if (! $queue instanceof QueueFake) {
+            throw new BenchmarkContractException('recorded_replay_fake_queue_required');
+        }
+
+        return $queue;
     }
 
     /** Bind canned model references to actual production-published facts, never oracle or invented dimensions. */
@@ -440,7 +461,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             'timeouts' => ['vision' => 60, 'classification' => 60, 'normative_matching' => 60],
             'retries' => ['vision' => 0, 'classification' => 0, 'normative_matching' => 0],
             'confidence' => ['classification' => '0.7100', 'geometry' => '0.7200', 'normative_matching' => '0.7300'],
-            'enabled_formats' => ['pdf', 'png', 'xlsx'], 'manual_review' => ['low_confidence' => true],
+            'enabled_formats' => ['pdf', 'png', 'xlsx', 'dxf'], 'manual_review' => ['low_confidence' => true],
             'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
         ])->snapshot();
         $hash = SettingsSnapshotHash::calculate($snapshot);

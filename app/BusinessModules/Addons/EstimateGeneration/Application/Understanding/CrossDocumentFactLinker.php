@@ -12,9 +12,9 @@ use InvalidArgumentException;
 
 final readonly class CrossDocumentFactLinker
 {
-    private const STRATEGY_VERSION = 5;
+    private const STRATEGY_VERSION = 6;
 
-    public const CONTRACT = 'cross-document-sources:v5';
+    public const CONTRACT = 'cross-document-sources:v6';
 
     public const MAX_EVIDENCE_PER_FACT = 20;
 
@@ -42,6 +42,8 @@ final readonly class CrossDocumentFactLinker
             }
         }
         [$entityById, $factList, $evidenceById] = $this->validate($entities, $facts, $evidence);
+        $nativeRooms = new NativeRoomFactSourceDescriptor;
+        $roomSources = $nativeRooms->index($entityById, $factList, $evidenceById);
         $groups = [];
         $limitations = [];
         foreach ($factList as $fact) {
@@ -56,7 +58,7 @@ final readonly class CrossDocumentFactLinker
             $entity = $entityById[$fact->entityId.'|'.$fact->sourceVersion];
             $descriptor = $fact->type === 'room_number'
                 ? (new RoomNumberSourceDescriptor)->describe($fact, $entity, $evidenceById, $factList)
-                : $this->descriptor($entity);
+                : ($this->descriptor($entity) ?? $nativeRooms->describe($fact, $roomSources, $evidenceById));
             if ($descriptor === null) {
                 if ($fact->type === 'room_number') {
                     $limitations[] = $this->conflictResolver->insufficientEvidence();

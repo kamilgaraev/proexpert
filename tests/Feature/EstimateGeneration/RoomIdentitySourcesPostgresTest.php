@@ -425,8 +425,12 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             self::assertSame($number->sourceVersion, $proof->sourceVersion);
         }
         $run = (new CrossDocumentFactLinker(new TargetedConflictResolver))->link($capture['source_entities'], $snapshot->facts, $snapshot->evidence);
-        self::assertCount(1, $run->links);
-        self::assertSame('room_number', $run->links[0]['strategy']);
+        self::assertCount(2, $run->links);
+        self::assertSame(['room_number'], array_values(array_unique(array_column($run->links, 'strategy'))));
+        $factsById = array_column($snapshot->facts, null, 'id');
+        $linkedTypes = array_map(static fn (array $link): string => $factsById[$link['left_fact_id']]->type, $run->links);
+        sort($linkedTypes, SORT_STRING);
+        self::assertSame(['length', 'room_number'], $linkedTypes);
         self::assertNotSame($numbers[0]->entityId, $numbers[1]->entityId);
         self::assertSame(0, $run->providerCalls);
         foreach ($capture['source_entities'] as $entity) {
@@ -439,7 +443,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             $run->links, $run->conflicts, $run->questions, $run->limitations, 0]));
         self::assertEquals($run->links, $models->currentUnderstanding(...$scope)['links']);
         self::assertNotNull($models->replayUnderstanding(...[...$scope, $version, $fingerprint, $capture['token']]));
-        self::assertSame(1, DB::table('estimate_generation_project_model_cross_document_links')->where('session_id', $scope[2])->count());
+        self::assertSame(2, DB::table('estimate_generation_project_model_cross_document_links')->where('session_id', $scope[2])->count());
         self::assertEquals($snapshot->facts, $models->snapshot(...$scope)->facts);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope[2])->count());
     }

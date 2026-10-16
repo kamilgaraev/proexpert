@@ -27,6 +27,19 @@ final class ScopeCompletenessEvaluator
         'equipment' => ['equipment_specification', 'equipment_purchase', 'delivery', 'installation', 'commissioning'],
     ];
 
+    public static function workRequirement(string $section, string $workKey): string
+    {
+        if ($section !== 'finishing') {
+            return $workKey;
+        }
+
+        return match ($workKey) {
+            'rough.floor', 'rough.walls', 'rough.ceiling' => 'preparation',
+            'finish.floor', 'finish.paint', 'finish.ceiling', 'finish.baseboard', 'office.ceiling' => 'finishing',
+            default => $workKey,
+        };
+    }
+
     public static function requirementsFor(mixed $section, string $constructionType, string $profile): array
     {
         $requirements = is_string($section) ? (self::REQUIREMENTS[$section] ?? []) : [];
@@ -78,7 +91,9 @@ final class ScopeCompletenessEvaluator
             if (($position['included'] ?? true) !== true || ($position['selected'] ?? true) !== true) {
                 continue;
             }
-            $requirement = $position['coverage_requirement'] ?? $position['work_key'] ?? null;
+            $workKey = $position['work_key'] ?? null;
+            $requirement = $position['coverage_requirement'] ?? (is_string($workKey) && is_string($position['section'] ?? null)
+                ? self::workRequirement($position['section'], $workKey) : null);
             if (is_string($position['entity_id'] ?? null) && is_string($position['section'] ?? null) && is_string($requirement)) {
                 $coveredWorks[$position['section']][$position['entity_id']][$requirement] = $position['key'];
             }

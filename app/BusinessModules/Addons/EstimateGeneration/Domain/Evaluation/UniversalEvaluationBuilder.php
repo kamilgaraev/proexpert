@@ -17,7 +17,8 @@ final readonly class UniversalEvaluationBuilder
 {
     public function __construct(private ScenarioEstimateCalculator $calculator = new ScenarioEstimateCalculator,
         private ScopeCompletenessEvaluator $completeness = new ScopeCompletenessEvaluator,
-        private EvaluationQuestionPrioritizer $questions = new EvaluationQuestionPrioritizer) {}
+        private EvaluationQuestionPrioritizer $questions = new EvaluationQuestionPrioritizer,
+        private EvaluationSourceConflictProjector $sourceConflicts = new EvaluationSourceConflictProjector) {}
 
     public function build(array $draft, ProjectModelSnapshot $snapshot, array $decisions = [], array $technologies = []): array
     {
@@ -60,7 +61,8 @@ final readonly class UniversalEvaluationBuilder
                     $position = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'], 'section' => $sectionKey,
                         'package_key' => $estimate['key'], 'entity_id' => $entityId, 'unit' => $item['unit'] ?? null,
                         'work_key' => $item['work_key'] ?? $item['key'],
-                        'coverage_requirement' => $item['metadata']['requirement_key'] ?? $item['work_key'] ?? $item['key'],
+                        'coverage_requirement' => $item['metadata']['requirement_key']
+                            ?? ScopeCompletenessEvaluator::workRequirement($sectionKey, $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key']),
                         'quantity' => $item['quantity'] ?? null, 'quantity_status' => $item['quantity_status'] ?? 'unknown',
                         'quantity_formula' => $quantity['formula_key'] ?? null, 'quantity_basis' => $quantity,
                         'quantity_evidence_details' => $this->quantityEvidenceDetails($quantity, $factsById, $proofsById),
@@ -128,6 +130,10 @@ final readonly class UniversalEvaluationBuilder
                 'easy_to_answer' => false, 'next_action' => $requirement['reason'] === 'document_requirement_missing' ? 'provide_required_document' : 'confirm_work_scope',
                 'effect' => 'Ответ уточнит выбранный состав работ и статус полноты этого раздела.'];
         }
+        $conflicts = $this->sourceConflicts->project($positions, $snapshot);
+        $positions = $conflicts['positions'];
+        array_push($requirements, ...$conflicts['requirements']);
+        array_push($questionCandidates, ...$conflicts['questions']);
         foreach ($draft['audit_review_items'] ?? [] as $finding) {
             $requirements[] = ['requirement' => 'audit_finding', 'reason' => $finding['reason'] ?? 'audit_review_required',
                 'position_keys' => isset($finding['item_key']) ? [$finding['item_key']] : []];

@@ -16,6 +16,32 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function unresolved_project_conflict_blocks_a_confirmed_operand_until_the_sources_are_resolved(): void
+    {
+        $version = 'sha256:'.str_repeat('b', 64);
+        $snapshot = $this->snapshot([$this->entity('room:1', 'room'), $this->entity('room:2', 'room')], [
+            $this->fact('length', 'room:1', 'length', '2', 'm', ['evidence:length']),
+            $this->fact('width', 'room:1', 'width', '3', 'm', ['evidence:width']),
+            $this->fact('alternative-length', 'room:2', 'length', '4', 'm', ['evidence:alternative'], sourceVersion: $version),
+        ], [$this->evidence('evidence:length', 'native:length'), $this->evidence('evidence:width', 'native:width'),
+            new Evidence('evidence:alternative', 1, 2, 3, $version, 'artifact:2', 'document', nativeReference: 'native:length', producerName: 'native_numeric_parser')]);
+        $request = $this->request('floor_area', 'room:1', ['length' => 'length', 'width' => 'width']);
+        $factory = new DerivedQuantityFactory;
+        self::assertTrue($factory->derive($snapshot, [], $request)->isReady());
+        $conflict = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict::betweenSources('conflict:length',
+            [$snapshot->facts[0], $snapshot->facts[2]], 'cross_document_incompatible_values', 'sha256:'.str_repeat('c', 64));
+        $conflicted = new ProjectModelSnapshot($snapshot->entities, $snapshot->facts, $snapshot->evidence, [$conflict]);
+        $result = $factory->derive($conflicted, [], $request);
+
+        self::assertFalse($result->isReady());
+        self::assertNull($result->quantity);
+        self::assertSame('operand_source_conflict', $result->unresolvedInputs[0]['code']);
+        self::assertTrue($factory->derive($snapshot, [], $request)->isReady());
+        $stale = new ProjectModelSnapshot($snapshot->entities, array_slice($snapshot->facts, 0, 2), $snapshot->evidence, [$conflict]);
+        self::assertTrue($factory->derive($stale, [], $request)->isReady());
+    }
+
+    #[Test]
     public function engineering_formula_cannot_take_a_different_entity_wrong_parameter_or_unproved_number(): void
     {
         $entity = $this->entity('electrical_circuit:e1', 'equipment', ['properties' => ['semantic_type' => 'electrical_circuit']]);
