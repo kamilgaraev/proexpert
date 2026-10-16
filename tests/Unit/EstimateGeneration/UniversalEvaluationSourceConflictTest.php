@@ -52,7 +52,20 @@ final class UniversalEvaluationSourceConflictTest extends TestCase
         self::assertNull($result['scenarios'][0]['positions'][0]['quantity']);
         self::assertSame('review_source_questions', $result['priority_questions'][0]['next_action']);
         $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
-        unset($item['metadata']['scope_entity_id'], $item['quantity_basis_details']);
+        unset($item['quantity_basis_details']);
+        $item['commercial_price_snapshot'] = ['unit_price' => '100', 'unit' => 'm2', 'currency' => 'RUB', 'verified' => true,
+            'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10'];
+        foreach ([['fact:plan'], [['fact_id' => 'fact:plan', 'role' => 'quantity_operand']]] as $references) {
+            $item['source_refs'] = $references;
+            $withoutConflict = $builder->build($draft, new ProjectModelSnapshot($entities, $facts, $proofs, []));
+            self::assertSame(['RUB' => '2000.00'], $withoutConflict['scenarios'][0]['known_subtotals']);
+            $legacy = $builder->build($draft, $snapshot);
+            self::assertNull($legacy['scenarios'][0]['positions'][0]['quantity']);
+            self::assertNull($legacy['scenarios'][0]['positions'][0]['price_snapshot']);
+            self::assertNull($legacy['scenarios'][0]['positions'][0]['total_cost']);
+            self::assertSame([], $legacy['scenarios'][0]['known_subtotals']);
+        }
+        unset($item['metadata']['scope_entity_id']);
         $item['source_refs'] = [];
         $unbound = $builder->build($draft, $snapshot);
         self::assertContains('source_conflict', array_column($unbound['missing_requirements'], 'requirement'));

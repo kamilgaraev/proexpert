@@ -57,7 +57,7 @@ final readonly class EvaluationSourceConflictProjector
                     continue;
                 }
                 $affected[] = $position['key'];
-                if (array_intersect($operands, $factIds) !== []) {
+                if (array_intersect([...$operands, ...$sources], $factIds) !== []) {
                     $positions[$index]['quantity'] = null;
                     $positions[$index]['quantity_status'] = 'unknown';
                     $positions[$index]['price_snapshot'] = null;
