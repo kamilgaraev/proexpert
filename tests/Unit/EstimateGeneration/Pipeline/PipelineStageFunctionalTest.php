@@ -219,6 +219,26 @@ final class PipelineStageFunctionalTest extends TestCase
     }
 
     #[Test]
+    public function an_unaccepted_document_candidate_can_receive_a_quantity_confirmation(): void
+    {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->build($this->unknownDocumentPlan());
+        $candidate = $draft['stage6_candidate_rows'][0];
+        $feedback = new \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService(
+            $this->createMock(EstimateValidationService::class),
+            $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class),
+            static fn (string $key): string => $key,
+            static function (array $errors): \Illuminate\Validation\ValidationException {
+                throw new \LogicException(json_encode($errors, JSON_THROW_ON_ERROR));
+            },
+        );
+        $confirmed = $feedback->applyQuantityConfirmationToDraft($draft, $candidate['key'], [
+            'quantity' => 12, 'unit' => 'm2', 'quantity_basis' => 'Измерено пользователем.',
+        ]);
+        self::assertSame(12.0, $confirmed['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        self::assertFalse($confirmed['is_complete']);
+    }
+
+    #[Test]
     public function non_payable_rows_keep_zero_cost_when_reviewed_or_over_budget(): void
     {
         foreach (['operation', 'resource_note', 'review_note'] as $type) {

@@ -88,7 +88,9 @@ final class BuildMostEstimateDraft
                     if ($processedRows >= $limits['max_rows']) {
                         $reviewItems[] = $this->reviewItem('draft_budget', 'draft_row_budget_exceeded');
                         if (is_array($workItem) && count($candidateRows) < self::MAX_CANDIDATE_ROWS) {
-                            $candidateRows[] = $this->budgetCandidate($workItem);
+                            $candidate = $this->budgetCandidate($workItem);
+                            $candidate['metadata']['stage6_review_origin'] = ['local_estimate_key' => $localEstimate['key'] ?? '', 'section_key' => $section['key'] ?? ''];
+                            $candidateRows[] = $candidate;
                         }
 
                         break;
@@ -101,6 +103,7 @@ final class BuildMostEstimateDraft
                     if ($rowReviewItems === []) {
                         $rows[] = $row;
                     } elseif (count($candidateRows) < self::MAX_CANDIDATE_ROWS) {
+                        $row['metadata']['stage6_review_origin'] = ['local_estimate_key' => $localEstimate['key'] ?? '', 'section_key' => $section['key'] ?? ''];
                         $candidateRows[] = $row;
                     }
                     array_push($reviewItems, ...$rowReviewItems);
@@ -185,6 +188,7 @@ final class BuildMostEstimateDraft
             $workItem['pricing_blocker'] = $reviewItems[0]['code'];
             $workItem['total_cost'] = $this->unresolvedTotalCost($workItem);
         } else {
+            unset($workItem['metadata']['stage6_review_pending']);
             $workItem['pricing_status'] = 'calculated';
             $workItem['pricing_blocker'] = null;
             $workItem['total_cost'] = BigDecimal::of((string) $price['final_amount'])->strippedOfTrailingZeros()->__toString();

@@ -55,7 +55,8 @@ class NormativeCandidateSelectionService
         int $normId,
         bool $allowCatalogSelection,
     ): array {
-        $draft = $session->draft_payload ?? [];
+        $reviews = new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates;
+        $draft = $reviews->restore($session->draft_payload ?? [], $workItemKey);
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $found = false;
         $updated = false;
@@ -90,6 +91,7 @@ class NormativeCandidateSelectionService
 
                     $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId, $context);
                     if ($confirmedCurrentSelection !== null) {
+                        $confirmedCurrentSelection = $this->withCurrentRetrieval($confirmedCurrentSelection);
                         $learningSelection = [$originalWorkItem, $confirmedCurrentSelection, $context];
                         $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $confirmedCurrentSelection;
                         $updated = true;
@@ -108,6 +110,7 @@ class NormativeCandidateSelectionService
                     $this->assertMatchPassesHardGate($workItem, $context, $match);
 
                     $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match, $context);
+                    $workItem = $this->withCurrentRetrieval($workItem);
                     $workItem = $this->pricingService->price([$workItem], is_array($regionalContext) ? $regionalContext : [])[0];
                     $learningSelection = [$originalWorkItem, $workItem, $context];
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $workItem;
@@ -130,8 +133,14 @@ class NormativeCandidateSelectionService
             ]);
         }
 
+        if ($reviews->pending($draft)) {
+            $draft = $reviews->stash($draft);
+        }
         $draft = $this->readinessProjector->project($this->validationService->validate($draft));
-        if (! $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
+        if ($reviews->pending($draft)) {
+            unset($draft['independent_audit']);
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft);
+        } elseif (! $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
         }
         if ($learningSelection !== null) {
@@ -241,6 +250,14 @@ class NormativeCandidateSelectionService
             'hard_gate_passed' => true,
             'selection_source' => 'confirmed_current_after_hard_gate',
         ];
+
+        return $workItem;
+    }
+
+    private function withCurrentRetrieval(array $workItem): array
+    {
+        $workItem['normative_retrieval'] = [...(is_array($workItem['normative_retrieval'] ?? null) ? $workItem['normative_retrieval'] : []),
+            'status' => 'matched', 'blocking_issues' => [], 'selection_source' => 'user_selection'];
 
         return $workItem;
     }
