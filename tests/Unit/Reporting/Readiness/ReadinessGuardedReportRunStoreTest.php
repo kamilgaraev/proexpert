@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Readiness;
 
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunCreationStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Readiness\ReportCandidateReadinessGate;
@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSourceReadinessStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReadinessGuardedReportRunStore;
 use Carbon\CarbonImmutable;
+use Closure;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
@@ -39,13 +40,16 @@ final class ReadinessGuardedReportRunStoreTest extends TestCase
         $key = new IdempotencyKey('direct-readiness-guard');
         $probe = $this->createMock(ReportRunReadinessProbe::class);
         $inspection = $probe->expects(self::once())->method('assertReady')->with($context, $query);
-        $delegate = $this->createMock(ReportRunStore::class);
+        $delegate = $this->createMock(ReportRunCreationStore::class);
         $run = (new ReportRunBuilder)->queued();
-        if ($available) {
-            $delegate->expects(self::once())->method('createOrReuse')->with($context, $query, null, $key)->willReturn($run);
-        } else {
+        $delegate->expects(self::once())->method('createOrReuse')
+            ->with($context, $query, null, $key, self::isInstanceOf(Closure::class))
+            ->willReturnCallback(static function ($context, $query, $view, $key, Closure $beforeCreate) use ($run) {
+                $beforeCreate();
+                return $run;
+            });
+        if (! $available) {
             $inspection->willThrowException(ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
-            $delegate->expects(self::never())->method('createOrReuse');
             $this->expectException(ReportContractException::class);
         }
         $binding = new ReportDefinitionBinding(
@@ -91,8 +95,10 @@ final class ReadinessGuardedReportRunStoreTest extends TestCase
         );
         $probe = $this->createMock(ReportSourceReadinessProbe::class);
         $probe->expects(self::once())->method('inspect')->with($context, $query)->willReturn($readiness);
-        $delegate = $this->createMock(ReportRunStore::class);
-        $delegate->expects(self::never())->method('createOrReuse');
+        $delegate = $this->createMock(ReportRunCreationStore::class);
+        $delegate->expects(self::once())->method('createOrReuse')->willReturnCallback(static function ($context, $query, $view, $key, Closure $beforeCreate) {
+            $beforeCreate();
+        });
         $binding = new ReportDefinitionBinding(
             $definition->code,
             $definition->definitionHash,

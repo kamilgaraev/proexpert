@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
@@ -13,6 +17,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\Models\Organization;
@@ -23,6 +30,7 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\Providers\AcceptedPr
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 use Tests\TestCase;
@@ -75,5 +83,30 @@ final class AcceptedProductionEmptyRunTest extends TestCase
         self::assertSame(ReportRunStatus::READY, $ready->status);
         self::assertSame(0, $ready->rowCount);
         self::assertSame($sourceHash->value, $ready->sourceHash?->value);
+
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->method('authorizeExactMany')->willReturnCallback(
+            static fn (int $actorId, ReportScope $requestedScope, array $targets): array => array_map(
+                static fn ($target): CurrentReportAuthorization => new CurrentReportAuthorization(
+                    $context->actor, $context->authorization, $context->visibility, $target,
+                ),
+                $targets,
+            ),
+        );
+        $this->app->instance(CurrentReportScopeAuthorizer::class, $authorizer);
+        foreach (['xlsx', 'csv'] as $format) {
+            $data = new CreateReportExportData(
+                $format, ['recognized_on', 'accepted_quantity', 'event_status'],
+                new ReportWindowSort('recognized_on', ReportSortDirection::DESC), 'ru-RU', $timezone,
+            );
+            $key = new IdempotencyKey('empty-native-export-'.$format.'-'.Str::uuid());
+            $export = app(CreateReportExportAction::class)->handle($context, $run->id, $data, $key);
+            self::assertSame(ReportExportStatus::QUEUED, $export->status);
+            self::assertSame(['accepted_quantity', 'event_status', 'recognized_on'], $export->columns);
+            $audit = DB::table('report_audit_intents')->where('event_key', 'reports:export:'.$export->id.':queued')->sole();
+            self::assertSame($export->columns, json_decode((string) $audit->subject, true, 512, JSON_THROW_ON_ERROR)['columns']);
+            self::assertSame($export->id, app(CreateReportExportAction::class)->handle($context, $run->id, $data, $key)->id);
+            self::assertSame(1, DB::table('report_audit_intents')->where('event_key', 'reports:export:'.$export->id.':queued')->count());
+        }
     }
 }

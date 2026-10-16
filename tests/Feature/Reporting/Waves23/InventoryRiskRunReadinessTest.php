@@ -72,9 +72,13 @@ final class InventoryRiskRunReadinessTest extends TestCase
             'period_start' => '2026-08-09', 'period_end' => '2026-08-09',
         ]), [], new DateTimeImmutable('2026-08-10T00:00:00Z'), 'ru-RU');
         $before = DB::table('report_runs')->count();
+        $auditBefore = DB::table('report_audit_intents')->count();
+        $dispatchBefore = DB::table('report_dispatch_intents')->count();
+        $store = app(ReportRunStore::class);
+        $key = new IdempotencyKey('inventory-readiness-'.Str::uuid());
 
         try {
-            $run = app(ReportRunStore::class)->createOrReuse($context, $query, null, new IdempotencyKey('inventory-readiness-'.Str::uuid()));
+            $run = $store->createOrReuse($context, $query, null, $key);
             self::assertTrue($hasOpening, 'Missing opening evidence must prevent persistence.');
             self::assertSame(ReportRunStatus::QUEUED, $run->status);
             self::assertSame($before + 1, DB::table('report_runs')->count());
@@ -86,7 +90,41 @@ final class InventoryRiskRunReadinessTest extends TestCase
                 'invalid_transfer_pair_count' => 0, 'invalid_version_count' => 0, 'invalid_hash_count' => 0,
             ], $exception->sourceIssues?->toArray());
             self::assertSame($before, DB::table('report_runs')->count());
+            self::assertSame($auditBefore, DB::table('report_audit_intents')->count());
+            self::assertSame($dispatchBefore, DB::table('report_dispatch_intents')->count());
+
+            return;
         }
+
+        $auditAfter = DB::table('report_audit_intents')->count();
+        $dispatchAfter = DB::table('report_dispatch_intents')->count();
+        $lateMovement = $movement->replicate();
+        $lateMovement->metadata = array_replace($movement->metadata, [
+            'unit_conversion_version' => 'kg:v2', 'reporting_opening_basis' => null,
+        ]);
+        $lateMovement->save();
+        app(WarehouseInventoryEventRecorder::class)->record($lateMovement, 'receipt', null);
+
+        self::assertSame($run->id, $store->createOrReuse($context, $query, null, $key)->id);
+        $differentQuery = new ReportQuery($definition, $scope, new ReportFilterSet([
+            'period_start' => '2026-08-08', 'period_end' => '2026-08-09',
+        ]), [], $query->asOf, 'ru-RU');
+        try {
+            $store->createOrReuse($context, $differentQuery, null, $key);
+            self::fail('A different payload must conflict before readiness inspection.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT, $exception->errorCode);
+        }
+        try {
+            $store->createOrReuse($context, $query, null, new IdempotencyKey('inventory-new-'.Str::uuid()));
+            self::fail('A new request must inspect the late incomplete source.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, $exception->errorCode);
+            self::assertSame(1, $exception->sourceIssues?->missingOpeningCount);
+        }
+        self::assertSame($before + 1, DB::table('report_runs')->count());
+        self::assertSame($auditAfter, DB::table('report_audit_intents')->count());
+        self::assertSame($dispatchAfter, DB::table('report_dispatch_intents')->count());
     }
 
     public static function openingEvidence(): array

@@ -104,9 +104,9 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 $parentRun->correlation_lineage_id,
                 $now,
             );
-            $columns = array_keys($payload);
+            $insertColumns = array_keys($payload);
             $inserted = DB::selectOne(
-                'INSERT INTO report_exports ('.implode(', ', $columns).') VALUES ('.implode(', ', array_fill(0, count($columns), '?')).') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id',
+                'INSERT INTO report_exports ('.implode(', ', $insertColumns).') VALUES ('.implode(', ', array_fill(0, count($insertColumns), '?')).') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id',
                 array_values($payload),
             );
             if ($inserted === null) {
@@ -144,7 +144,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                     'snapshot_classification' => $source->snapshot->classification->value,
                     'data_classification' => $source->dataClassification->value,
                     'format' => $data->format,
-                    'columns' => $payload['selected_columns'],
+                    'columns' => $columns,
                     'locale' => $data->locale,
                     'timezone' => $data->timezone->getName(),
                     'renderer_version' => $source->rendererVersion,

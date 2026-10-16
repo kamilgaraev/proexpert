@@ -7,7 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunCreationStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
@@ -26,14 +26,16 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use Throwable;
 
-final class EloquentReportRunStore implements ReportRunStore
+final class EloquentReportRunStore implements ReportRunCreationStore
 {
     public function __construct(
         private readonly ReportExecutionClock $clock,
@@ -50,7 +52,7 @@ final class EloquentReportRunStore implements ReportRunStore
         }
     }
 
-    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey): ReportRun
+    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey, ?Closure $beforeCreate = null): ReportRun
     {
         if ($query->scope->organizationId !== $context->scope->organizationId) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
@@ -81,6 +83,22 @@ final class EloquentReportRunStore implements ReportRunStore
             $definitionSnapshotHash,
             $now,
         );
+
+        if ($beforeCreate !== null) {
+            $existing = $this->reuseForKey($context, $idempotencyKey, $fingerprint);
+            if ($existing !== null) {
+                return $existing;
+            }
+            try {
+                $beforeCreate();
+            } catch (Throwable $exception) {
+                $existing = $this->reuseForKey($context, $idempotencyKey, $fingerprint);
+                if ($existing !== null) {
+                    return $existing;
+                }
+                throw $exception;
+            }
+        }
 
         return DB::transaction(function () use ($context, $query, $savedView, $idempotencyKey, $fingerprint, $id, $payload, $now): ReportRun {
             $columns = array_keys($payload);
@@ -138,6 +156,22 @@ final class EloquentReportRunStore implements ReportRunStore
 
             return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
         });
+    }
+
+    private function reuseForKey(ReportExecutionContext $context, IdempotencyKey $key, string $fingerprint): ?ReportRun
+    {
+        $record = ReportRunRecord::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('idempotency_key_hash', $key->hash)
+            ->first();
+        if (! $record instanceof ReportRunRecord) {
+            return null;
+        }
+        if (! hash_equals((string) $record->input_fingerprint, $fingerprint)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
+        }
+
+        return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
     }
 
     public function get(ReportExecutionContext $context, string $runId): ReportRun
