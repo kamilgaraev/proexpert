@@ -27,6 +27,7 @@ use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdf
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -341,6 +342,8 @@ class PurchaseOrderController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 403);
         } catch (\DomainException) {
             return AdminResponse::error(trans_message('procurement.purchase_orders.operation_rejected'), 422);
         } catch (\Exception $e) {

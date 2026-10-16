@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentLink;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
 use App\Models\User;
+use App\Services\LegalArchive\Access\ContractDossierReplayAccess;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
@@ -32,6 +33,7 @@ final class ContractLegalDossierService
         private readonly LegalDocumentAuthorizer $authorizer,
         private readonly LegalDocumentProfileRegistry $profiles,
         private readonly LegalDocumentProfileValidator $profileValidator,
+        private readonly ContractDossierReplayAccess $replayAccess,
         private readonly ContractDossierCounterpartyResolver $counterparties = new ContractDossierCounterpartyResolver,
     ) {}
 
@@ -61,6 +63,8 @@ final class ContractLegalDossierService
                 $bound = $this->boundDocument($contract, $organizationId);
                 if ($bound instanceof LegalArchiveDocument) {
                     if ($this->isExactCreateReplay($bound, $contract, $idempotencyKey)) {
+                        $this->replayAccess->authorizeContract($actor, $organizationId, $projectId, $contract, $bound);
+
                         return new ContractLegalDossierMutationResult($contract, $bound, 'replayed');
                     }
 
@@ -104,7 +108,7 @@ final class ContractLegalDossierService
                 return new ContractLegalDossierMutationResult($updated, $document, 'created');
             });
         } catch (QueryException $exception) {
-            return $this->resolveConcurrentBinding($organizationId, $projectId, $contractId, null, $idempotencyKey, $exception);
+            return $this->resolveConcurrentBinding($actor, $organizationId, $projectId, $contractId, null, $idempotencyKey, $exception);
         }
     }
 
@@ -137,6 +141,8 @@ final class ContractLegalDossierService
                 $bound = $this->boundDocument($contract, $organizationId);
                 if ($bound instanceof LegalArchiveDocument) {
                     if ((int) $bound->id === (int) $document->id) {
+                        $this->replayAccess->authorizeContract($actor, $organizationId, $projectId, $contract, $bound);
+
                         return new ContractLegalDossierMutationResult($contract, $bound, 'replayed');
                     }
 
@@ -155,7 +161,7 @@ final class ContractLegalDossierService
                 return new ContractLegalDossierMutationResult($updated, $document, 'attached');
             });
         } catch (QueryException $exception) {
-            return $this->resolveConcurrentBinding($organizationId, $projectId, $contractId, $documentId, null, $exception);
+            return $this->resolveConcurrentBinding($actor, $organizationId, $projectId, $contractId, $documentId, null, $exception);
         }
     }
 
@@ -448,6 +454,7 @@ final class ContractLegalDossierService
     }
 
     private function resolveConcurrentBinding(
+        User $actor,
         int $organizationId,
         int $projectId,
         int $contractId,
@@ -455,25 +462,28 @@ final class ContractLegalDossierService
         ?string $idempotencyKey,
         QueryException $exception,
     ): ContractLegalDossierMutationResult {
-        $contract = Contract::query()
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->whereKey($contractId)
-            ->first();
-        if (! $contract instanceof Contract || $contract->legal_archive_document_id === null) {
-            throw $exception;
-        }
-        $document = $this->boundDocument($contract, $organizationId);
-        if (! $document instanceof LegalArchiveDocument) {
-            throw $exception;
-        }
-        if ($expectedDocumentId !== null && (int) $document->id === $expectedDocumentId) {
-            return new ContractLegalDossierMutationResult($contract, $document, 'replayed');
-        }
-        if ($idempotencyKey !== null && $this->isExactCreateReplay($document, $contract, $idempotencyKey)) {
-            return new ContractLegalDossierMutationResult($contract, $document, 'replayed');
-        }
+        return $this->connection->transaction(function () use ($actor, $organizationId, $projectId, $contractId, $expectedDocumentId, $idempotencyKey, $exception): ContractLegalDossierMutationResult {
+            $contract = Contract::query()
+                ->where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->whereKey($contractId)
+                ->lockForUpdate()
+                ->first();
+            if (! $contract instanceof Contract || $contract->legal_archive_document_id === null) {
+                throw $exception;
+            }
+            $document = $this->boundDocument($contract, $organizationId);
+            if (! $document instanceof LegalArchiveDocument) {
+                throw $exception;
+            }
+            if (($expectedDocumentId !== null && (int) $document->id === $expectedDocumentId)
+                || ($idempotencyKey !== null && $this->isExactCreateReplay($document, $contract, $idempotencyKey))) {
+                $this->replayAccess->authorizeContract($actor, $organizationId, $projectId, $contract, $document);
 
-        throw new DomainException('contract_legal_dossier_already_bound');
+                return new ContractLegalDossierMutationResult($contract, $document, 'replayed');
+            }
+
+            throw new DomainException('contract_legal_dossier_already_bound');
+        });
     }
 }

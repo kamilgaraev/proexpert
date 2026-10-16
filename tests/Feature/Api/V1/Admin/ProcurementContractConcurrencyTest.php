@@ -17,6 +17,7 @@ use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierCreationService;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\Contract\ContractSideMutationService;
+use App\Services\LegalArchive\Access\ContractDossierReplayAccess;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -111,7 +112,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
             Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
             $this->database
         );
-        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers, Mockery::mock(ContractDossierReplayAccess::class)])->makePartial();
         $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
 
         $first = $service->createFromOrder($order);
@@ -208,7 +209,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
             Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
             $this->database
         );
-        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers, Mockery::mock(ContractDossierReplayAccess::class)])->makePartial();
         $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
 
         $first = $service->createFromOrder($order);
@@ -267,7 +268,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
             Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
             $this->database
         );
-        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers, Mockery::mock(ContractDossierReplayAccess::class)])->makePartial();
         $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
 
         try {
