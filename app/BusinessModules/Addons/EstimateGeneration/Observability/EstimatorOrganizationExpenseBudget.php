@@ -45,8 +45,11 @@ FROM estimate_generation_vision_physical_attempts attempts
 LEFT JOIN estimate_generation_ai_usage usages ON usages.attempt_id=attempts.attempt_id
   AND usages.organization_id=attempts.organization_id AND usages.project_id=attempts.project_id AND usages.session_id=attempts.session_id
 WHERE attempts.wire_started_at IS NOT NULL
-  AND (usages.usage_status IS DISTINCT FROM 'measured' OR usages.pricing_status IS DISTINCT FROM 'available'
-    OR usages.currency IS DISTINCT FROM 'RUB' OR usages.cost_amount IS NULL OR usages.created_at >= ?)
+  AND CASE
+    WHEN usages.usage_status='measured' AND usages.pricing_status='available' AND usages.currency='RUB'
+      AND usages.cost_amount IS NOT NULL THEN usages.created_at
+    ELSE attempts.wire_started_at
+  END >= ?
 SQL;
                 $arguments = [(string) BigDecimal::of($limits[$period])->plus(1), $start];
                 if ($owner !== null) {
