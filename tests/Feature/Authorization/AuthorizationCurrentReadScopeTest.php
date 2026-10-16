@@ -347,6 +347,7 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
     private function effectiveModuleListReads(array $queries): array
     {
         return array_values(array_filter($queries, static fn (array $query): bool =>
-            str_contains(strtolower($query['query']), 'select * from "modules"')));
+            str_contains(strtolower($query['query']), 'select * from "modules"')
+                || str_contains(strtolower($query['query']), 'select "slug" from "modules"')));
     }
 }
