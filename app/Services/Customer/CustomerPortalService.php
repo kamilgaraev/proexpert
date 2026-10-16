@@ -171,16 +171,18 @@ class CustomerPortalService
         $accessibleContracts = collect($contracts->items())
             ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
             ->values();
-        $balances = $this->financialBalances->forContracts(
-            $organizationId,
-            $accessibleContracts->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
-        );
+        $balances = $this->canViewFinance($user, $organizationId)
+            ? $this->financialBalances->forContracts(
+                $organizationId,
+                $accessibleContracts->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+            )
+            : [];
 
         return [
             'items' => $accessibleContracts
                 ->map(fn (Contract $contract): array => $this->mapCustomerContract(
                     $contract,
-                    $balances[(int) $contract->id]
+                    $balances[(int) $contract->id] ?? null
                 ))
                 ->all(),
             'meta' => $this->buildContractsMeta($contracts, $appliedFilters),
@@ -198,7 +200,6 @@ class CustomerPortalService
             'supplier:id,name',
             'agreements:id,contract_id,number,agreement_date,change_amount',
             'performanceActs:id,contract_id,amount,is_approved',
-            'payments:id,invoiceable_id,invoiceable_type,amount,paid_amount,document_date,invoice_type,metadata,document_number',
             'stateEvents:id,contract_id,event_type,metadata,created_at',
         ]);
 
@@ -206,10 +207,15 @@ class CustomerPortalService
             return null;
         }
 
+        $canViewFinance = $this->canViewFinance($user, $organizationId);
+        if ($canViewFinance) {
+            $contract->loadMissing('payments:id,invoiceable_id,invoiceable_type,amount,paid_amount,document_date,invoice_type,metadata,document_number');
+        }
+
         return [
             'contract' => $this->mapCustomerContractDetails(
                 $contract,
-                $this->financialBalances->forContract($contract),
+                $canViewFinance ? $this->financialBalances->forContract($contract) : null,
             ),
         ];
     }
@@ -242,7 +248,9 @@ class CustomerPortalService
     {
         $project->loadMissing(['projectAddress', 'organization', 'organizations']);
         $resolvedCustomer = $this->projectCustomerResolverService->resolve($project);
-        $financeSummary = $this->buildProjectFinancePayload($organizationId, $project, $user);
+        $financeSummary = $this->canViewFinance($user, $organizationId)
+            ? $this->buildProjectFinancePayload($organizationId, $project, $user)
+            : null;
 
         return [
             'project' => [
@@ -392,17 +400,28 @@ class CustomerPortalService
         ];
     }
 
+    public function canViewFinance(?User $user, int $organizationId): bool
+    {
+        return $user !== null && $this->authorizationService->forCurrentChecks()->can($user, 'customer.finance.view', [
+            'organization_id' => $organizationId,
+        ]);
+    }
+
     public function getFinanceSummary(int $organizationId, ?User $user = null): array
     {
         return [
-            'summary' => $this->buildFinanceSummaryPayload($organizationId, $user),
+            'summary' => $this->canViewFinance($user, $organizationId)
+                ? $this->buildFinanceSummaryPayload($organizationId, $user)
+                : null,
         ];
     }
 
     public function getProjectFinanceSummary(int $organizationId, Project $project, ?User $user = null): array
     {
         return [
-            'summary' => $this->buildProjectFinancePayload($organizationId, $project, $user),
+            'summary' => $this->canViewFinance($user, $organizationId)
+                ? $this->buildProjectFinancePayload($organizationId, $project, $user)
+                : null,
         ];
     }
 
@@ -1189,7 +1208,7 @@ class CustomerPortalService
         ];
     }
 
-    private function mapCustomerContract(Contract $contract, FinancialBalance $balance): array
+    private function mapCustomerContract(Contract $contract, ?FinancialBalance $balance): array
     {
         $project = $contract->project;
         $contractSide = $this->contractSideResolverService->resolve($contract);
@@ -1228,11 +1247,11 @@ class CustomerPortalService
             'end_date' => optional($contract->end_date)?->format('Y-m-d'),
             'total_amount' => $totalAmount !== null ? (string) $totalAmount : null,
             'performed_amount' => (string) $performedAmount,
-            'invoiced_amount' => $balance->invoicedAmount,
-            'paid_amount' => $balance->paidAmount,
-            'refunded_amount' => $balance->refundedAmount,
-            'debt_amount' => $balance->debtAmount,
-            'overpayment_amount' => $balance->overpaymentAmount,
+            'invoiced_amount' => $balance?->invoicedAmount,
+            'paid_amount' => $balance?->paidAmount,
+            'refunded_amount' => $balance?->refundedAmount,
+            'debt_amount' => $balance?->debtAmount,
+            'overpayment_amount' => $balance?->overpaymentAmount,
             'remaining_amount' => $remainingAmount !== null ? (string) $remainingAmount : null,
             'is_self_execution' => (bool) $contract->is_self_execution,
             'contract_category' => $contract->contract_category,
@@ -1242,12 +1261,12 @@ class CustomerPortalService
         ];
     }
 
-    private function mapCustomerContractDetails(Contract $contract, FinancialBalance $balance): array
+    private function mapCustomerContractDetails(Contract $contract, ?FinancialBalance $balance): array
     {
         $base = $this->mapCustomerContract($contract, $balance);
         $agreements = $contract->relationLoaded('agreements') ? $contract->agreements : collect();
         $acts = $contract->relationLoaded('performanceActs') ? $contract->performanceActs : collect();
-        $payments = $contract->relationLoaded('payments') ? $contract->payments : collect();
+        $payments = $balance !== null && $contract->relationLoaded('payments') ? $contract->payments : collect();
         $events = $contract->relationLoaded('stateEvents') ? $contract->stateEvents : collect();
         $supplementary = \Illuminate\Support\Facades\DB::table('contract_supplementary_documents')
             ->where('contract_id', $contract->id)->where('status', 'applied')
@@ -1277,7 +1296,7 @@ class CustomerPortalService
                 'debt_amount' => $base['debt_amount'],
                 'overpayment_amount' => $base['overpayment_amount'],
                 'remaining_amount' => $base['remaining_amount'],
-                'advance_amount' => $contract->actual_advance_amount !== null
+                'advance_amount' => $balance !== null && $contract->actual_advance_amount !== null
                     ? (string) $this->money($contract->actual_advance_amount)
                     : null,
                 'planned_advance_amount' => $contract->planned_advance_amount !== null
@@ -1301,7 +1320,7 @@ class CustomerPortalService
                     'status' => $act->is_approved ? 'approved' : 'pending',
                 ])->values()->all(),
             ],
-            'payments_summary' => [
+            'payments_summary' => $balance !== null ? [
                 'count' => $payments->count(),
                 'items' => $payments->map(fn ($payment): array => [
                     'id' => $payment->id,
@@ -1310,7 +1329,7 @@ class CustomerPortalService
                     'type' => $payment->metadata['contract_payment_type'] ?? $payment->invoice_type?->value,
                     'reference' => $payment->metadata['reference_document_number'] ?? $payment->document_number,
                 ])->values()->all(),
-            ],
+            ] : null,
             'timeline' => $this->buildContractTimeline($contract, $agreements, $acts, $payments, $events, $supplementary),
         ]);
     }
@@ -1759,13 +1778,6 @@ class CustomerPortalService
         };
     }
 
-    private function canViewFinance(User $user, int $organizationId): bool
-    {
-        return $this->authorizationService->can($user, 'customer.finance.view', [
-            'organization_id' => $organizationId,
-        ]);
-    }
-
     private function buildAttentionFeed(int $organizationId, ?User $user = null): array
     {
         $contracts = $this->baseCustomerContractQuery($organizationId, [], null, $user)
@@ -1848,7 +1860,7 @@ class CustomerPortalService
     private function buildFinanceSummaryPayload(int $organizationId, ?User $user = null): array
     {
         $contracts = $this->baseCustomerContractQuery($organizationId, [], null, $user)
-            ->with(['project:id,name', 'performanceActs:id,contract_id,amount,is_approved', 'payments:id,contract_id,amount'])
+            ->with(['project:id,name', 'performanceActs:id,contract_id,amount,is_approved'])
             ->get();
         $projects = $this->baseProjectQuery($organizationId, $user)->get();
 
