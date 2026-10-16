@@ -178,6 +178,10 @@ final readonly class EstimatorCreditOperations
         if ($parameters !== []) {
             $plan['operation_parameters'] = $parameters;
         }
+        $qaBudget = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->quoteBudget();
+        if ($qaBudget !== null) {
+            $plan = $this->plans->capForQaBudget($plan, $qaBudget);
+        }
         $manifestHash = hash('sha256', CanonicalPipelineJson::encode($manifest));
         $identity = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,
             'session_id' => (int) $session->id, 'actor_user_id' => (int) $actor->id, 'operation_id' => $operationId, 'operation_kind' => $kind,

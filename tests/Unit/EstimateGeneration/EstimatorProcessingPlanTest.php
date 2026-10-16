@@ -65,6 +65,40 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(8294400, $new['maximum_provider_cost_micro_rub'] - $old['maximum_provider_cost_micro_rub']);
     }
 
+    public function test_qa_cap_preserves_the_full_role_plan_and_carried_document_cost(): void
+    {
+        $builder = new EstimatorProcessingPlan;
+        $plan = $builder->build('generation', 0, 128, false, $this->tariff());
+        $plan['document_costs'] = ['cost_micro_rub' => 180000];
+        $budget = ['maximum_provider_cost_micro_rub' => 900000];
+        $capped = $builder->capForQaBudget($plan, $budget);
+
+        self::assertSame(900000, $capped['maximum_provider_cost_micro_rub']);
+        self::assertSame($plan['roles'], $capped['roles']);
+        self::assertSame($plan['maximum_calls'], $capped['maximum_calls']);
+        self::assertSame($plan['work_item_limit'], $capped['work_item_limit']);
+        self::assertSame($plan['document_costs'], $capped['document_costs']);
+        self::assertSame($budget, $capped['qa_expense_budget']);
+        self::assertGreaterThan(900000, $plan['maximum_provider_cost_micro_rub']);
+    }
+
+    public function test_qa_budget_cannot_drop_already_incured_document_costs(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
+        $plan['document_costs'] = ['cost_micro_rub' => 180000];
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached::class);
+        $this->expectExceptionMessage('estimator_live_qa_expense_limit_reached');
+        (new EstimatorProcessingPlan)->capForQaBudget($plan, ['maximum_provider_cost_micro_rub' => 180000]);
+    }
+
+    public function test_qa_cap_does_not_increase_a_smaller_operation_reserve(): void
+    {
+        $builder = new EstimatorProcessingPlan;
+        $plan = $builder->build('documents', 1, 32, false, $this->tariff());
+        $capped = $builder->capForQaBudget($plan, ['maximum_provider_cost_micro_rub' => 90000000]);
+        self::assertSame($plan['maximum_provider_cost_micro_rub'], $capped['maximum_provider_cost_micro_rub']);
+    }
+
     public function test_text_reserve_uses_a_frozen_enforced_byte_bound_and_the_effective_output_limit(): void
     {
         config()->set('ai-assistant-credits.profiles.normal', ['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4]);
