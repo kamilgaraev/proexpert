@@ -726,6 +726,96 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abort($session->fresh(), $id, 'fixture_finished'));
     }
 
+    #[DataProvider('physicalComposerCeilings')]
+    public function test_composer_filters_physical_duplicates_before_the_frozen_ceiling(bool $multipart, bool $duplicate): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:physical-composer-ceiling');
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['selected_sections' => $multipart ? ['roofing', 'structures', 'equipment'] : ['roofing']]]);
+        $id = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+        $limit = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, $id);
+        self::assertSame($multipart ? 96 : 32, $limit);
+        $items = array_map(static fn (int $i): array => ['key' => 'work:'.$i, 'name' => 'Работа '.$i,
+            'metadata' => ['scope_entity_id' => 'roof:1', 'composition_work_key' => $i === 1 ? 'roof_underlay' : 'work:'.$i]], range(1, $limit));
+        $estimates = [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]];
+        $candidates = array_map(static fn (array $item): array => ['candidate_id' => 'candidate:'.$item['key'],
+            'work_key' => $item['key'], 'name' => $item['name'], 'unit' => null, 'quantity' => null, 'quantity_formula' => null,
+            'source_fact_ids' => ['fact:room'], 'technology_package_candidate' => null], $items);
+        $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64),
+            [['id' => 'fact:room', 'entity_id' => 'roof:1', 'entity_type' => 'roof', 'type' => 'plan_area',
+                'value' => '50', 'unit' => 'm2', 'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['proof:roof']]], [], [], $candidates, [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $id), allowedWorkSections: ['roofing']);
+        $model = new class($duplicate) implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function __construct(private bool $duplicate) {}
+
+            public function compose(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                $onPhysicalAttemptReserved((string) Str::uuid());
+
+                return ['work_intents' => [['kind' => 'supplementary', 'work_key' => $this->duplicate ? 'roof_underlay' : 'roof_covering',
+                    'name' => 'Работа', 'entity_id' => 'roof:1', 'unit' => 'm2', 'work_section' => 'roofing',
+                    'derived_quantity_id' => null, 'source_fact_ids' => ['fact:room'], 'technology_package_candidate' => null,
+                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []]]];
+            }
+        };
+        $stored = [];
+        $runs = \Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository::class);
+        $runs->allows('claim')->andReturnUsing(static function ($input, $owner) use (&$stored) {
+            return isset($stored[$input->subjectVersion])
+                ? new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim(1, 'replay', result: $stored[$input->subjectVersion])
+                : new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim(count($stored) + 1, 'owned', $owner);
+        });
+        $versions = array_column((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner)->plan($input), 'batchKey');
+        $runs->allows('startPhysicalAttempt')->andReturnNull();
+        $runs->allows('complete')->andReturnUsing(static function ($runId, $owner, $result) use (&$stored, $versions, $input): void {
+            $key = $versions[$runId - 1] === null ? $input->snapshotToken : hash('sha256', $input->snapshotToken.'|'.$versions[$runId - 1]);
+            $stored[$key] = $result;
+        });
+        $composer = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer(
+            $runs, $model, 'openai/gpt-6-luna', allowance: app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class));
+        if ($duplicate) {
+            $result = $composer->runDetailed($input, $estimates);
+            self::assertCount($limit, $result['intents']);
+            self::assertCount($multipart ? 3 : 1, $result['quarantined']);
+            self::assertSame(['estimate_composer_physical_duplicate_covered'], array_values(array_unique(array_column($result['quarantined'], 'reason'))));
+            self::assertSame(['work:1'], array_values(array_unique(array_column($result['quarantined'], 'covered_by_position_key'))));
+            self::assertSame($result, $composer->runDetailed($input, $estimates));
+            self::assertSame($multipart ? 3 : 1, $model->calls);
+        } else {
+            try {
+                $composer->runDetailed($input, $estimates);
+                self::fail('A unique supplementary work exceeded the frozen ceiling.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_work_items_exceed_approved_plan', $exception->getMessage());
+                self::assertSame(1, $model->calls);
+            }
+        }
+        self::assertSame($limit, \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::forOperation(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, $id));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abort($session->fresh(), $id, 'fixture_finished'));
+    }
+
+    public static function physicalComposerCeilings(): array
+    {
+        return ['single duplicate' => [false, true], 'multipart duplicate' => [true, true],
+            'single unique overflow' => [false, false], 'multipart unique overflow' => [true, false]];
+    }
+
     public function test_additions_in_two_audit_parts_share_one_frozen_work_ceiling_and_stop_before_the_next_audit(): void
     {
         $this->seedGlobalSettings();

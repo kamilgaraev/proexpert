@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\SupplementaryWorkPhysicalGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -34,7 +33,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private EstimateCompositionProjector $compositionProjector = new EstimateCompositionProjector,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
         private CanonicalTechnologyWorkItemPlanner $technologyWorkItems = new CanonicalTechnologyWorkItemPlanner,
-        private SupplementaryWorkPhysicalGuard $physicalGuard = new SupplementaryWorkPhysicalGuard,
     ) {}
 
     public function stage(): ProcessingStage
@@ -159,8 +157,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId, $context->creditOperationId),
             ($payload['evaluation_policy']['mode'] ?? null) === 'universal' ? ($payload['evaluation_policy']['selected_sections'] ?? []) : [],
         );
-        $composition = $this->composer->runDetailed($composerInput);
-        $composition = $this->physicalGuard->filter($payload['local_estimates'], $composition, $composerInput->derivedQuantities, $composerInput->facts);
+        $composition = $this->composer->runDetailed($composerInput, $payload['local_estimates']);
         $intents = $composition['intents'];
         $payload['local_estimates'] = $this->compositionProjector->apply(
             $payload['local_estimates'],

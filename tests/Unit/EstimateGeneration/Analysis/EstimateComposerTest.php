@@ -621,10 +621,10 @@ final class EstimateComposerTest extends TestCase
             }
         };
         $composer = new RunEstimateComposer(new MultipartComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
-        $composition = $composer->runDetailed($input);
+        $composition = $composer->runDetailed($input, $estimates);
         self::assertSame(3, $model->calls);
-        self::assertCount(3, array_filter($composition['intents'], static fn (array $intent): bool => $intent['kind'] === 'supplementary'));
-        self::assertSame($composition, $composer->runDetailed($input));
+        self::assertCount(2, array_filter($composition['intents'], static fn (array $intent): bool => $intent['kind'] === 'supplementary'));
+        self::assertSame($composition, $composer->runDetailed($input, $estimates));
         self::assertSame(3, $model->calls);
         $filtered = (new SupplementaryWorkPhysicalGuard)->filter($estimates, $composition, [], $facts);
         self::assertCount(67, $filtered['intents']);

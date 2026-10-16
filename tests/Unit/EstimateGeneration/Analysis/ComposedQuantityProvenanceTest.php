@@ -37,7 +37,7 @@ final class ComposedQuantityProvenanceTest extends TestCase
         $intent = ['work_key' => 'paint-walls', 'name' => 'Окраска стен', 'entity_id' => 'room:1',
             'unit' => 'm2', 'derived_quantity_id' => null, 'source_fact_ids' => ['room:area'], 'technology_package_candidate' => null];
         $method = new \ReflectionMethod(EstimateCompositionProjector::class, 'supplementaryItems');
-        $items = $method->invoke(new EstimateCompositionProjector, ['supplementary:paint' => $intent], [], $facts);
+        $items = $method->invoke(new EstimateCompositionProjector, ['supplementary:paint' => $intent], [], $facts, ['supplementary:paint' => 'paint-walls']);
         self::assertNull($items[0]['quantity']);
         self::assertNull($items[0]['quantity_formula']);
         self::assertSame('m2', $items[0]['unit']);
@@ -55,7 +55,7 @@ final class ComposedQuantityProvenanceTest extends TestCase
         $intent = ['work_key' => 'finish.paint', 'name' => 'Окраска стен', 'entity_id' => 'wall:1', 'unit' => 'm2',
             'derived_quantity_id' => 'wall:area', 'source_fact_ids' => ['description'], 'technology_package_candidate' => null];
         $method = new \ReflectionMethod(EstimateCompositionProjector::class, 'supplementaryItems');
-        $items = $method->invoke(new EstimateCompositionProjector, ['supplementary:paint' => $intent], [$quantity], $facts);
+        $items = $method->invoke(new EstimateCompositionProjector, ['supplementary:paint' => $intent], [$quantity], $facts, ['supplementary:paint' => 'finish.paint']);
         self::assertSame('24', $items[0]['quantity']);
         self::assertSame('wall:1', $items[0]['metadata']['scope_entity_id']);
         self::assertSame(['length', 'height'], $items[0]['metadata']['quantity_operand_fact_ids']);
