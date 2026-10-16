@@ -105,6 +105,7 @@ final readonly class AssistantCustomReportBuilder
         if ($counterpartyProjection) {
             $selected[] = '_report_counterparty_id';
             $selected[] = '_report_counterparty_supplier_id';
+            $selected[] = '_report_counterparty_customer_project_id';
         }
         foreach (['currency', 'budget_currency', 'material_unit', 'unit_dimension', 'unit_code', 'unit'] as $dimension) {
             if (isset($source['fields'][$dimension])) {
@@ -200,6 +201,13 @@ final readonly class AssistantCustomReportBuilder
         }
         if ($outputLimited) {
             $data['filter_summary'] .= '; '.trans_message('ai_custom_reports.output_limit', ['count' => count($values)]);
+        }
+        if ($counterpartyProjection) {
+            $customerProjectIds = array_values(array_unique(array_map('intval', array_filter($rows->pluck('_report_counterparty_customer_project_id')->all()))));
+            if ($customerProjectIds !== []) {
+                $scope['customer_project_ids'] = $customerProjectIds;
+                $labelDomains[] = 'projects';
+            }
         }
         $scope['plan'] = $section;
         $reference = $this->references->create($actor, $organizationId, $scope, array_values(array_unique($fields)),

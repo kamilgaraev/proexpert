@@ -743,6 +743,58 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertSame([[null, 'RUB', 7, '50.60']], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
     }
 
+    public function test_legacy_general_contract_uses_current_project_customer_and_keeps_external_contractor(): void
+    {
+        $this->extraModules = ['catalog-management'];
+        [$org, $actor, $project] = $this->fixture();
+        $customer = \App\Models\Counterparty::query()->create(['organization_id' => $org->id,
+            'name' => 'Заказчик проекта', 'email' => 'project-customer-private@example.test']);
+        $project->update(['customer_counterparty_id' => $customer->id, 'customer' => 'Старое имя заказчика']);
+        $contracts = [];
+        foreach (['general_contract', 'customer_to_general_contractor'] as $index => $type) {
+            $contract = $this->contract($org, $project, $index === 0 ? '0.10' : '0.20');
+            $contract->parties()->delete();
+            $contract->contractor->update(['source_organization_id' => $org->id]);
+            DB::table('contracts')->where('id', $contract->id)->update(['contract_side_type' => $type,
+                'contractor_id' => $index === 0 ? $contract->contractor_id : null]);
+            $contracts[] = $contract;
+        }
+        $external = $this->contract($org, $project, '1.00');
+        $external->parties()->delete();
+        DB::table('contracts')->where('id', $external->id)->update(['contract_side_type' => 'general_contract']);
+        $section = $this->contractsSection(['columns' => ['counterparty_name', 'currency'],
+            'group_by' => ['counterparty_name', 'currency'], 'metrics' => [
+                ['field' => null, 'operation' => 'count', 'label' => 'Договоров'],
+                ['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Сумма'],
+            ], 'order_by' => [['field' => 'counterparty_name', 'direction' => 'asc']]]);
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Заказчик проекта', 'RUB', 2, '0.30'], ['Подрядчик', 'RUB', 1, '1.00']], $report['sections'][0]['rows']);
+        self::assertStringNotContainsString('project-customer-private', json_encode($report, JSON_THROW_ON_ERROR));
+        self::assertSame([$project->id], $report['source_refs'][0]['_report_scope']['customer_project_ids']);
+        $project->update(['customer_counterparty_id' => null, 'customer' => 'Заказчик текстом']);
+        $textCustomer = array_replace($section, ['filters' => [['field' => 'counterparty_name', 'operator' => 'contains', 'value' => 'текстом']]]);
+        self::assertSame([['Заказчик текстом', 'RUB', 2, '0.30']], $this->builder->build($this->plan($textCustomer), $actor, $org->id)['sections'][0]['rows']);
+        $project->update(['customer' => null]);
+        self::assertSame([['Подрядчик', 'RUB', 1, '1.00'], [null, 'RUB', 2, '0.30']], $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
+        $registered = Organization::factory()->create(['name' => 'Заказчик из реестра']);
+        app(\App\Services\Project\ProjectParticipantService::class)->attach($project, $registered->id, \App\Enums\ProjectOrganizationRole::CUSTOMER);
+        $project->update(['customer_counterparty_id' => $customer->id, 'customer' => 'Старое имя заказчика']);
+        foreach ([...$contracts, $external] as $contract) {
+            $contract->parties()->delete();
+        }
+        $filtered = array_replace($section, ['filters' => [['field' => 'counterparty_name', 'operator' => 'contains', 'value' => 'из реестра']]]);
+        self::assertSame([['Заказчик из реестра', 'RUB', 2, '0.30']], $this->builder->build($this->plan($filtered), $actor, $org->id)['sections'][0]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $single = $this->builder->build($this->plan($this->contractsSection(['columns' => ['number', 'counterparty_name'],
+            'filters' => [['field' => 'number', 'operator' => 'eq', 'value' => $contracts[0]->number]]])), $actor, $org->id);
+        $otherProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($otherProject->id, ['is_active' => true, 'role' => 'member']);
+        $contracts[0]->update(['project_id' => $otherProject->id]);
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $contracts[0]->id));
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $single['source_refs'][0]));
+    }
+
     private function contractsSection(array $override): array
     {
         return array_replace(['domain' => 'contracts', 'entity_type' => 'contract', 'title' => 'Договоры', 'columns' => ['number']], $override);

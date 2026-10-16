@@ -48,6 +48,18 @@ final readonly class AssistantCustomReportReference
                 if (! is_array($ids) || count($ids) > 1000 || count(array_unique($ids)) !== count($ids)) {
                     return false;
                 }
+                if (array_key_exists('customer_project_ids', $scope)) {
+                    $projectIds = $scope['customer_project_ids'];
+                    if ($scope['entity_type'] !== 'contract' || ! in_array('counterparty_name', $reference['checked_fields'], true)
+                        || ! is_array($projectIds) || count($projectIds) > 1000 || count(array_unique($projectIds)) !== count($projectIds)
+                        || array_filter($projectIds, static fn (mixed $id): bool => ! is_int($id) || $id < 1) !== []) {
+                        return false;
+                    }
+                    $projects = $this->sources->resolve($actor, $organizationId, 'projects', 'project', null);
+                    if ($projects['query']->whereKey($projectIds)->count() !== count($projectIds)) {
+                        return false;
+                    }
+                }
 
                 return $ids === [] || $source['query']->whereKey($ids)->count() === count($ids);
             }, true);
