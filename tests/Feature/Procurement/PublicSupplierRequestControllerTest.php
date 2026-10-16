@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -208,6 +209,47 @@ class PublicSupplierRequestControllerTest extends TestCase
         }
     }
 
+    public function test_sent_link_expiry_is_consistent_at_the_deadline_across_public_and_loaded_lifecycle_paths(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplier = $this->createSupplier($organization->id);
+        try {
+            foreach (['public', 'loaded', 'purchase'] as $path) {
+                $purchaseRequest = $this->createPurchaseRequest($organization->id);
+                $supplierRequest = app(SupplierRequestService::class)->send(app(SupplierRequestService::class)->create($organization->id, [
+                    'purchase_request_id' => $purchaseRequest->id, 'supplier_id' => $supplier->id,
+                ]));
+                $expiresAt = $supplierRequest->public_token_expires_at;
+                self::assertNotNull($expiresAt);
+                $url = '/api/v1/procurement/supplier-requests/'.$supplierRequest->public_token;
+                $this->travelTo($expiresAt->copy()->subSecond());
+                self::assertFalse($supplierRequest->hasExpiredPublicToken());
+                self::assertTrue($supplierRequest->canReceivePublicProposal());
+                $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', true);
+                self::assertSame(SupplierRequestStatusEnum::SENT, $supplierRequest->refresh()->status);
+                $this->travelTo($expiresAt);
+                self::assertTrue($supplierRequest->hasExpiredPublicToken());
+                self::assertFalse($supplierRequest->canReceivePublicProposal());
+                if ($path === 'loaded') {
+                    $summary = app(ProcurementLifecycleService::class)
+                        ->forLoadedSupplierRequest($supplierRequest->load('proposals', 'proposalDecision', 'purchaseRequest'));
+                    self::assertSame('supplier_request_expired', $summary->stage);
+                } elseif ($path === 'purchase') {
+                    $summary = app(ProcurementLifecycleService::class)
+                        ->forPurchaseRequest($purchaseRequest->fresh());
+                    self::assertSame('approved_without_supplier_requests', $summary->stage);
+                }
+                $this->getJson($url)->assertStatus(410);
+                self::assertSame(SupplierRequestStatusEnum::EXPIRED, $supplierRequest->refresh()->status);
+                $this->postJson($url.'/proposals', $this->proposalPayload($supplierRequest->lines()->firstOrFail()->id))->assertStatus(410);
+                self::assertSame(0, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
+                $this->travelBack();
+            }
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_legacy_unbounded_links_and_cancelled_link_responses_are_preserved(): void
     {
         $organization = Organization::factory()->create();
@@ -233,6 +275,14 @@ class PublicSupplierRequestControllerTest extends TestCase
             $this->getJson('/api/v1/procurement/supplier-requests/'.$cancelled->public_token)->assertStatus(410)
                 ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.cancelled'));
             self::assertSame(SupplierRequestStatusEnum::CANCELLED, $cancelled->refresh()->status);
+            foreach ([null, now()->addDay()] as $deadline) {
+                $cancelled->update(['status' => SupplierRequestStatusEnum::EXPIRED, 'public_token_expires_at' => $deadline]);
+                $expiredUrl = '/api/v1/procurement/supplier-requests/'.$cancelled->public_token;
+                $this->getJson($expiredUrl)->assertStatus(410)
+                    ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.expired'));
+                $this->postJson($expiredUrl.'/proposals', $this->proposalPayload($cancelled->lines()->firstOrFail()->id))->assertStatus(410);
+                self::assertSame(SupplierRequestStatusEnum::EXPIRED, $cancelled->refresh()->status);
+            }
             $this->getJson('/api/v1/procurement/supplier-requests/'.str_repeat('x', 64))->assertNotFound();
         } finally {
             $this->travelBack();
