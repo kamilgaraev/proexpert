@@ -50,6 +50,9 @@ final class PaymentCalendarContractService
         $calendarItems = array_values(array_filter(
             $items,
             static fn (mixed $item): bool => $item instanceof PaymentCalendarItem
+                && ($item->bucket !== PaymentCalendarItem::BUCKET_BUDGET_PLAN
+                    || $item->direction !== PaymentCalendarItem::DIRECTION_OUTFLOW
+                    || $item->remainingAmount !== '0.00')
         ));
 
         $undated = $this->presentUndated($items, $filters);
