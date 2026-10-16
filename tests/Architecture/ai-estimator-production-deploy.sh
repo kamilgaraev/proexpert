@@ -106,7 +106,7 @@ validate_estimator_runtime_flags
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED" = true ]]
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED" = false ]]
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_ENABLED" = true ]]
-[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT" = 1 ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = string ]]
 apply_estimator_runtime_flags
 cmp -s "$TEST_DIR/before-missing" "$ENV_FILE"
 
@@ -124,7 +124,7 @@ validate_estimator_runtime_flags
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED" = false ]]
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED" = true ]]
 [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_ENABLED" = false ]]
-[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT" = 1 ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = string ]]
 
 cp "$ENV_FILE" "$TEST_DIR/before-invalid"
 export ESTIMATE_GENERATION_UNIVERSAL_ENABLED=TRUE
@@ -240,4 +240,33 @@ fi
 [[ "$(cat "$TEST_DIR/api-calls")" = 24 ]]
 test ! -f "$TEST_DIR/ingress-calls"
 
-echo 'AI estimator production deploy contract passed (10 runtime cases)'
+unset ESTIMATE_GENERATION_UNIVERSAL_ENABLED ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED
+unset ESTIMATE_GENERATION_LIVE_QA_ENABLED ESTIMATE_GENERATION_LIVE_QA_RUN_ID
+for marker in null '(null)' empty '(empty)' true '(true)' false '(false)'; do
+    ENV_FILE="$TEST_DIR/marker.env"
+    printf 'ESTIMATE_GENERATION_LIVE_QA_ENABLED=false\nESTIMATE_GENERATION_LIVE_QA_RUN_ID=%s\n' "$marker" > "$ENV_FILE"
+    initialize_secure_env
+    cp "$ENV_FILE" "$TEST_DIR/before-marker"
+    apply_estimator_runtime_flags
+    cmp -s "$TEST_DIR/before-marker" "$ENV_FILE"
+    case "$marker" in
+        null|'(null)')
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = null ]]
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = '' ]]
+            ;;
+        empty|'(empty)')
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = string ]]
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = '' ]]
+            ;;
+        true|'(true)')
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = boolean ]]
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = true ]]
+            ;;
+        false|'(false)')
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = boolean ]]
+            [[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = false ]]
+            ;;
+    esac
+done
+
+echo 'AI estimator production deploy contract passed (18 runtime cases)'

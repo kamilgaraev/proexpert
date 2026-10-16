@@ -808,7 +808,7 @@ jobs:
                 -e "MOST_EXPECTED_ESTIMATE_GENERATION_UNIVERSAL_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED}" \
                 -e "MOST_EXPECTED_ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED}" \
                 -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_ENABLED=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_ENABLED}" \
-                -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_PRESENT=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT}" \
+                -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_TYPE=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE}" \
                 -e "MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID=${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID}" \
                 "${service}" php -r '
                 require "vendor/autoload.php";
@@ -825,8 +825,16 @@ jobs:
                     exit(1);
                   }
                 }
-                $expectedRunIdPresent = getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_PRESENT") === "1";
-                $expectedRunId = $expectedRunIdPresent ? getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID") : null;
+                $expectedRunId = match (getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID_TYPE")) {
+                  "null" => null,
+                  "string" => getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID"),
+                  "boolean" => match (getenv("MOST_EXPECTED_ESTIMATE_GENERATION_LIVE_QA_RUN_ID")) {
+                    "true" => true,
+                    "false" => false,
+                    default => throw new RuntimeException("Invalid expected QA run ID boolean"),
+                  },
+                  default => throw new RuntimeException("Invalid expected QA run ID type"),
+                };
                 exit(config("estimate-generation.live_qa.run_id") === $expectedRunId ? 0 : 1);
               '
             }

@@ -41,7 +41,7 @@ estimator_runtime_existing_bool() {
 }
 
 validate_estimator_runtime_flags() {
-  local key input existing qa_enabled run_id effective
+  local key input existing qa_enabled run_id effective normalized
   for key in \
     ESTIMATE_GENERATION_UNIVERSAL_ENABLED \
     ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED \
@@ -69,19 +69,28 @@ validate_estimator_runtime_flags() {
 
   estimator_runtime_read_env_value ESTIMATE_GENERATION_LIVE_QA_RUN_ID || return 1
   existing="${ESTIMATOR_RUNTIME_ENV_VALUE}"
-  ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT="${ESTIMATOR_RUNTIME_ENV_PRESENT}"
+  ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=null
   run_id="${ESTIMATE_GENERATION_LIVE_QA_RUN_ID-}"
   if [ -n "${run_id}" ]; then
     [[ "${run_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
       echo 'Invalid estimator live QA run ID; expected a UUID' >&2
       return 1
     }
-    ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID="${run_id}"
-    ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_PRESENT=1
+    ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=string
   else
     run_id="${existing}"
-    ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID="${existing}"
+    if [ "${ESTIMATOR_RUNTIME_ENV_PRESENT}" -eq 1 ]; then
+      normalized="$(printf '%s' "${existing}" | tr '[:upper:]' '[:lower:]')" || return 1
+      case "${normalized}" in
+        null|'(null)') run_id='' ;;
+        empty|'(empty)') run_id=''; ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=string ;;
+        true|'(true)') run_id=true; ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=boolean ;;
+        false|'(false)') run_id=false; ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=boolean ;;
+        *) ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE=string ;;
+      esac
+    fi
   fi
+  ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID="${run_id}"
 
   qa_enabled="${ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_ENABLED}"
   if [ "${qa_enabled}" = true ] && [[ ! "${run_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
