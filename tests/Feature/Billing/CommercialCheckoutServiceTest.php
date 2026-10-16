@@ -758,6 +758,57 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertFalse(OrganizationPackageSubscription::query()->where('status', '!=', 'expired')->exists());
     }
 
+    public function test_bank_transfer_qr_uses_current_remaining_amount_without_bank_calls_or_sbp(): void
+    {
+        $this->prepareBankBilling();
+        config(['bank_billing.sbp_b2b_enabled' => false]);
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $invoice->forceFill(['paid_minor' => 12345, 'status' => 'partially_paid'])->save();
+        $qr = app(\App\Services\Billing\Bank\BankTransferQrService::class)
+            ->get($this->user, (int) $this->organization->id, $invoice->public_id);
+        $this->assertSame($invoice->amount_minor - 12345, $qr['amount_minor']);
+        $this->assertStringContainsString('|Purpose='.$invoice->snapshot['purpose'], $qr['payload']);
+        $this->assertTrue(app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['bank_transfer_qr_available']);
+        $this->assertSame(0, \App\Models\CommercialBankQrCode::query()->count());
+        $this->assertCount(0, $this->gateway->payments);
+        $this->assertSame('pending', $invoice->documents()->sole()->status);
+    }
+
+    public function test_bank_transfer_qr_is_not_offered_when_bank_requisites_cannot_be_encoded(): void
+    {
+        $this->prepareBankBilling();
+        config(['bank_billing.seller_bank' => str_repeat('б', 46)]);
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $this->assertFalse(app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($invoice)['bank_transfer_qr_available']);
+        $this->expectException(\InvalidArgumentException::class);
+        app(\App\Services\Billing\Bank\BankTransferQrService::class)->get($this->user, (int) $this->organization->id, $invoice->public_id);
+    }
+
+    public function test_bank_transfer_qr_cannot_read_an_invoice_from_another_organization(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $other = Organization::withoutEvents(fn () => Organization::create(['name' => 'Other', 'is_active' => true]));
+        DB::table('organization_user')->insert(['user_id' => $this->user->id, 'organization_id' => $other->id, 'is_active' => true]);
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        app(\App\Services\Billing\Bank\BankTransferQrService::class)->get($this->user, (int) $other->id, $invoice->public_id);
+    }
+
+    public function test_bank_transfer_qr_requires_billing_view_even_outside_http(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->with($this->user, 'billing.view', ['organization_id' => $this->organization->id])->andReturn(false);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\Billing\Bank\BankTransferQrService::class)->get($this->user, (int) $this->organization->id, $invoice->public_id);
+    }
+
     public function test_bank_documents_and_cancellation_are_scoped_to_the_buying_organization(): void
     {
         $this->prepareBankBilling();

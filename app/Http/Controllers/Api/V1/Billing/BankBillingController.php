@@ -51,6 +51,14 @@ final class BankBillingController
         return $this->respond($request, fn (User $actor, int $org): array => app(\App\Services\Billing\Bank\BankQrService::class)->get($actor, $org, $invoice));
     }
 
+    public function transferQr(Request $request, string $invoice): Response
+    {
+        $response = $this->respond($request, fn (User $actor, int $org): array => app(\App\Services\Billing\Bank\BankTransferQrService::class)->get($actor, $org, $invoice));
+        $response->headers->set('Cache-Control', 'private, no-store');
+
+        return $response;
+    }
+
     public function refund(BankRefundRequest $request, string $invoice): Response
     {
         return $this->respond($request, function (User $actor, int $org) use ($request, $invoice): array {

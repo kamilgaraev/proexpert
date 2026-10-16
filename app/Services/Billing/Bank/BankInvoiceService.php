@@ -163,6 +163,7 @@ final class BankInvoiceService
             'paid_minor' => $invoice->paid_minor, 'refunded_minor' => $invoice->refunded_minor,
             'remaining_minor' => $invoice->paid_at === null ? max(0, $invoice->amount_minor - $invoice->paid_minor) : 0,
             'currency' => $invoice->currency, 'purpose' => $snapshot['purpose'],
+            'bank_transfer_qr_available' => app(BankTransferQrService::class)->payable($invoice),
             'bank' => $snapshot['bank'], 'seller' => $snapshot['seller'], 'buyer' => $snapshot['buyer'],
             'description' => $snapshot['description'], 'expires_at' => $invoice->expires_at?->toJSON(),
             'paid_at' => $invoice->paid_at?->toJSON(), 'activated_at' => $invoice->activated_at?->toJSON(),
