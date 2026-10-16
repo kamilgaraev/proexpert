@@ -77,21 +77,7 @@ final readonly class EstimatorQaSupplierExpenseGuard
             $costs[$group->operation_key] = (string) $group->supplier_exposure;
             $charged[$group->operation_key] = (int) $group->charged_units_minor;
         }
-        foreach ($this->database->select(<<<'SQL'
-SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor,
-  COALESCE((operations.processing_plan->'qa_expense_budget'->>'carried_document_units_minor')::bigint,0) AS carried_units_minor
-FROM estimate_generation_credit_operations operations
-JOIN ai_credit_reservations reservations ON reservations.id=operations.reservation_id
-WHERE reservations.status='reserved' AND (
-  operations.processing_plan->'qa_expense_budget'->>'run_id'=?
-  OR EXISTS (SELECT 1 FROM estimate_generation_qa_expense_attempts attempts
-    JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
-    WHERE attempts.run_id=? AND physical.credit_operation_id=operations.operation_id))
-SQL, [$runId, $runId]) as $hold) {
-            $costs[$hold->operation_key] ??= '0';
-            $reserved = max(0, (int) $hold->reserved_minor - (int) ($hold->carried_units_minor ?? 0));
-            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, $reserved);
-        }
+        [$costs, $charged] = $this->withActiveReservations($runId, $costs, $charged);
         $remaining = intdiv(max(0, self::MAXIMUM_UNITS_MINOR - self::exposureUnitsMinor($costs, $unitCost, $charged)), 50) * 50;
         if ($remaining < 50) {
             throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
@@ -202,12 +188,34 @@ SQL, [$runId, $runId]) as $hold) {
             $costs[$group->operation_key] = (string) BigDecimal::of($costs[$group->operation_key] ?? '0')->plus((string) $group->supplier_exposure);
             $charged[$group->operation_key] = (int) $group->charged_units_minor;
         }
+        [$costs, $charged] = $this->withActiveReservations($runId, $costs, $charged, $physical->credit_operation_id);
         if ($supplierExposure->isGreaterThan($cap) || self::exposureUnitsMinor($costs, $unitCost, $charged) > self::MAXIMUM_UNITS_MINOR) {
             throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
         }
         $this->database->table('estimate_generation_qa_expense_attempts')->insert([
             'attempt_id' => $attemptId, 'run_id' => $runId, 'maximum_cost_micro_rub' => $next, 'created_at' => now(),
         ]);
+    }
+
+    private function withActiveReservations(string $runId, array $costs, array $charged, ?string $excludedOperationId = null): array
+    {
+        foreach ($this->database->select(<<<'SQL'
+SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor,
+  COALESCE((operations.processing_plan->'qa_expense_budget'->>'carried_document_units_minor')::bigint,0) AS carried_units_minor
+FROM estimate_generation_credit_operations operations
+JOIN ai_credit_reservations reservations ON reservations.id=operations.reservation_id
+WHERE reservations.status='reserved' AND operations.operation_id IS DISTINCT FROM ?::uuid AND (
+  operations.processing_plan->'qa_expense_budget'->>'run_id'=?
+  OR EXISTS (SELECT 1 FROM estimate_generation_qa_expense_attempts attempts
+    JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
+    WHERE attempts.run_id=? AND physical.credit_operation_id=operations.operation_id))
+SQL, [$excludedOperationId, $runId, $runId]) as $hold) {
+            $costs[$hold->operation_key] ??= '0';
+            $reserved = max(0, (int) $hold->reserved_minor - (int) ($hold->carried_units_minor ?? 0));
+            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, $reserved);
+        }
+
+        return [$costs, $charged];
     }
 
     private function exposureGroups(string $runId): array
