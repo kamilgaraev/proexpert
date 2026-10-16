@@ -543,13 +543,24 @@ final class AssistantCustomReportsTest extends TestCase
         $hiddenProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
         $this->contract($org, $hiddenProject, '500.00');
         $this->contract($foreign, $project, '600.00');
+        $counterpartyOnly = $this->contract($foreign, $project, '700.00');
+        $counterpartyOnly->organizationViews()->delete();
+        $counterpartyOnly->contractor->update(['source_organization_id' => $org->id]);
+        $linkedParty = $this->contract($foreign, $project, '800.00');
+        $linkedParty->organizationViews()->delete();
+        \App\Models\ContractParty::withoutEvents(static fn () => \App\Models\ContractParty::query()->create([
+            'contract_id' => $linkedParty->id, 'side' => 'second', 'party_key' => 'second',
+            'role' => 'contractor', 'linked_organization_id' => $org->id, 'name' => $org->name, 'snapshot' => [],
+        ]));
         $source = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null);
-        self::assertSame([$own->id, $shared->id], $source['query']->orderBy('contracts.id')->pluck('contracts.id')->all());
+        self::assertSame([$own->id, $shared->id, $linkedParty->id], $source['query']->orderBy('contracts.id')->pluck('contracts.id')->all());
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $linkedParty->id));
         self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $shared->id));
         self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $archived->id));
         self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'contract', $revoked->id));
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'contract', $counterpartyOnly->id));
         $report = $this->builder->build($this->plan($this->contractsSection(['columns' => ['number']])), $actor, $org->id);
-        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        self::assertSame(3, $report['sections'][0]['source_row_count']);
         self::assertTrue($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
         $sharedView->update(['access_revoked_at' => now()]);
         self::assertFalse($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
