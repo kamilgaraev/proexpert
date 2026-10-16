@@ -203,6 +203,11 @@ return [
             'source_types' => ['change_request' => 'Изменение', 'manual_adjustment' => 'Корректировка резерва', 'opening_balance' => 'Начальный резерв'],
         ],
     ],
+    'subscriptions' => [
+        'ready_title' => 'Отчёт по подписке готов',
+        'ready_message' => 'Файл сформирован. Откройте его, чтобы скачать отчёт.',
+        'open_file' => 'Открыть файл',
+    ],
     'errors' => [
         'report_not_found' => 'Отчёт не найден.',
         'report_scope_forbidden' => 'Отчёт недоступен в текущей организации.',

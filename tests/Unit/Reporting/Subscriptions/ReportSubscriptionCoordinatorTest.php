@@ -8,10 +8,16 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionVisibilityResolver;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceAccessResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewStore;
@@ -19,21 +25,23 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSchedulingCapabili
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore;
-use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CreateReportSubscriptionData;
+use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSchedulingCapability;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
-use App\BusinessModules\Core\Reporting\Domain\DTO\UpdateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionWindow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\DTO\UpdateReportSubscriptionData;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionDeliveryStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
@@ -44,6 +52,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use DateTimeZone;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Tests\Support\Reporting\DeterministicReportModuleEntitlement;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
@@ -224,12 +233,160 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
         self::assertSame([], $dispatcher->calls);
     }
 
+    public function test_create_update_preserve_and_replace_frozen_project_with_fresh_management_checks(): void
+    {
+        $subscription = $this->subscription();
+        $checked = [];
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::exactly(3))->method('resolveForProject')->willReturnCallback(
+            function (int $actorId, int $organizationId, int $projectId, DateTimeZone $timezone) use ($subscription, &$checked): ReportScope {
+                self::assertSame([20, 10, 'UTC'], [$actorId, $organizationId, $timezone->getName()]);
+                $checked[] = $projectId;
+
+                return $this->context($subscription, [$projectId])->scope;
+            },
+        );
+        [$coordinator, $store] = $this->scopedCoordinator($subscription, $scopes);
+        $created = $coordinator->create($this->context($subscription), new CreateReportSubscriptionData(
+            $subscription->savedViewId, ReportSubscriptionFrequency::DAILY, null, null,
+            '10:00', new DateTimeZone('UTC'), ['mode' => 'fixed_filters'], 'csv', projectScopeId: 52,
+        ));
+        self::assertSame(52, ReportSubscriptionExecutionInput::fromCanonicalBytes($created->executionInputBytes)->projectScopeId);
+        $coordinator->update($this->context($subscription), $created->id, new UpdateReportSubscriptionData(['local_time' => '11:00']));
+        self::assertSame(52, ReportSubscriptionExecutionInput::fromCanonicalBytes($store->updates['execution_input_bytes'])->projectScopeId);
+        $coordinator->update($this->context($subscription), $created->id, new UpdateReportSubscriptionData(['project_id' => 53]));
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($store->updates['execution_input_bytes']);
+        self::assertSame(53, $input->projectScopeId);
+        self::assertSame([], $input->filters->values);
+        self::assertSame([52, 52, 53], $checked);
+    }
+
+    public function test_scoped_create_without_fresh_authorization_collaborator_fails_closed(): void
+    {
+        $subscription = $this->subscription();
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::never())->method('resolveForProject');
+        [$coordinator] = $this->scopedCoordinator($subscription, $scopes, false);
+        try {
+            $coordinator->create($this->context($subscription), new CreateReportSubscriptionData(
+                $subscription->savedViewId, ReportSubscriptionFrequency::DAILY, null, null,
+                '10:00', new DateTimeZone('UTC'), ['mode' => 'fixed_filters'], 'csv', projectScopeId: 52,
+            ));
+            self::fail('Expected missing project authorization rejection.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        }
+    }
+
+    public function test_accepted_subscription_requires_explicit_frozen_project_before_creation(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(null, 'accepted_production_progress'));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::never())->method('resolveForProject');
+        [$coordinator] = $this->scopedCoordinator($subscription, $scopes);
+        try {
+            $coordinator->create($this->context($subscription), new CreateReportSubscriptionData(
+                $subscription->savedViewId, ReportSubscriptionFrequency::DAILY, null, null,
+                '10:00', new DateTimeZone('UTC'), ['mode' => 'fixed_filters'], 'csv',
+            ));
+            self::fail('Expected missing accepted project rejection.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        }
+    }
+
+    public function test_revoked_project_prevents_manual_run_before_delivery_dispatch(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(52));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::once())->method('resolveForProject')->willThrowException(new RuntimeException('project_scope_revoked'));
+        [$coordinator, , $dispatcher] = $this->scopedCoordinator($subscription, $scopes);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('project_scope_revoked');
+        try {
+            $coordinator->runManual($this->context($subscription), $subscription->id, new IdempotencyKey('revoked-project'));
+        } finally {
+            self::assertSame([], $dispatcher->calls);
+        }
+    }
+
+    public function test_revoked_project_prevents_resume_but_own_subscription_can_be_paused(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(52));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::once())->method('resolveForProject')->willThrowException(new RuntimeException('project_scope_revoked'));
+        [$coordinator, $store] = $this->scopedCoordinator($subscription, $scopes);
+        $coordinator->pause($this->context($subscription), $subscription->id);
+        self::assertSame('paused', $store->updates['status']);
+        $store->subscription = $this->subscription(status: ReportSubscriptionStatus::PAUSED, input: $this->executionInput(52));
+        $store->updates = [];
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('project_scope_revoked');
+        try {
+            $coordinator->resume($this->context($subscription), $subscription->id);
+        } finally {
+            self::assertSame([], $store->updates);
+        }
+    }
+
+    public function test_created_delivery_keeps_original_project_after_subscription_changes(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(52));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::once())->method('resolveForProject')->with(20, 10, 52, self::anything())
+            ->willReturn($this->context($subscription, [52])->scope);
+        [$coordinator, $store] = $this->scopedCoordinator($subscription, $scopes);
+        $delivery = $coordinator->runManual($this->context($subscription), $subscription->id, new IdempotencyKey('frozen-project'));
+        $store->subscription = $this->subscription(transitionVersion: 2, input: $this->executionInput(53));
+        self::assertSame(52, $delivery->executionInput()->projectScopeId);
+        self::assertSame(53, ReportSubscriptionExecutionInput::fromCanonicalBytes($store->subscription->executionInputBytes)->projectScopeId);
+    }
+
+    private function scopedCoordinator(ReportSubscription $subscription, CurrentReportProjectScopeResolver $scopes, bool $withAuthorizer = true): array
+    {
+        $store = new FakeReportSubscriptionStore($subscription);
+        $dispatcher = new FakeReportSubscriptionDeliveryDispatcher;
+        $definitions = new FakeReportDefinitionRegistry($this->definition($subscription));
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->method('authorizeForOrganization')->willThrowException(new RuntimeException('unexpected_organization_fallback'));
+        $authorizer->method('authorizeExact')->willReturnCallback(
+            function (int $actorId, ReportScope $scope, CurrentReportAuthorizationTarget $target) use ($subscription): CurrentReportAuthorization {
+                self::assertSame($subscription->ownerId, $actorId);
+                self::assertSame(ReportOperation::MANAGE, $target->operation);
+                $context = $this->context($subscription, $scope->projectIds);
+
+                return new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target);
+            },
+        );
+        $factory = new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $definitions, $scopes);
+        $coordinator = new ReportSubscriptionCoordinator(
+            $store, new FakeReportSubscriptionDeliveryStore, $dispatcher,
+            static fn (callable $callback): mixed => $callback(), $definitions,
+            new FakeReportSchedulingCapabilityRegistry, new FakeReportSavedViewStore($this->savedView($subscription)),
+            $this->access($subscription), new ReportSubscriptionScheduleCalculator,
+            executionContexts: $withAuthorizer ? $factory : null,
+        );
+
+        return [$coordinator, $store, $dispatcher];
+    }
+
+    private function executionInput(?int $projectId = null, string $code = 'budget_plan_fact'): ReportSubscriptionExecutionInput
+    {
+        return new ReportSubscriptionExecutionInput(
+            $code, new ReportFilterSet([]), [], 'ru', '01J00000000000000000000002',
+            'xlsx', ['name'], new ReportWindowSort('name', ReportSortDirection::ASC), new DateTimeZone('UTC'),
+            ['mode' => 'previous_day'], '1.0.0', new Sha256Hash(str_repeat('a', 64)),
+            projectScopeId: $projectId,
+        );
+    }
+
     private function subscription(
         int $transitionVersion = 1,
         ReportSubscriptionStatus $status = ReportSubscriptionStatus::ACTIVE,
         ?ReportSubscriptionExecutionInput $input = null,
     ): ReportSubscription {
-        $bytes = $input?->canonicalBytes() ?? '{"report":"budget"}';
+        $input ??= $this->executionInput();
+        $bytes = $input->canonicalBytes();
         $now = new DateTimeImmutable('2026-07-26T09:00:00+00:00');
 
         return new ReportSubscription(
@@ -237,14 +394,14 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
             10,
             20,
             '01J00000000000000000000002',
-            'budget_plan_fact',
+            $input->reportCode,
             ReportSubscriptionFrequency::DAILY,
             null,
             null,
             '10:00',
             new DateTimeZone('UTC'),
-            $input?->periodPolicy ?? ['mode' => 'previous_day'],
-            $input?->format ?? 'xlsx',
+            $input->periodPolicy,
+            $input->format,
             $status,
             null,
             0,
@@ -259,7 +416,7 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
         );
     }
 
-    private function context(ReportSubscription $subscription): ReportExecutionContext
+    private function context(ReportSubscription $subscription, array $projectIds = []): ReportExecutionContext
     {
         $timezone = new DateTimeZone('UTC');
 
@@ -268,7 +425,7 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
             ->scope(new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope(
                 $subscription->organizationId,
                 [$subscription->organizationId],
-                [],
+                $projectIds,
                 [],
                 $timezone,
             ))
@@ -276,7 +433,7 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
                 'http',
                 $subscription->organizationId,
                 [$subscription->organizationId],
-                [],
+                $projectIds,
                 [],
                 $timezone,
                 'report-subscription-test',
@@ -313,6 +470,7 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
     {
         return (new ReportDefinitionBuilder)
             ->code($subscription->reportCode)
+            ->contractVersion($subscription->contractVersion)
             ->supportsSubscriptions(true)
             ->published();
     }

@@ -50,6 +50,7 @@ final readonly class ReportSubscriptionCoordinator
         private ?ReportAccessService $access = null,
         private ?ReportSubscriptionScheduleCalculator $schedule = null,
         private ?ReportExecutionClock $clock = null,
+        private ?ReportSubscriptionExecutionContextFactory $executionContexts = null,
     ) {
         $this->transaction = $transaction ?? static fn (callable $callback): mixed => DB::transaction($callback);
     }
@@ -58,6 +59,7 @@ final readonly class ReportSubscriptionCoordinator
     {
         return ($this->transaction)(function () use ($context, $data): ReportSubscription {
             [$view, $definition] = $this->currentSavedView($context, $data->savedViewId);
+            $this->authorizeProject($context, $definition, $data);
             $now = $this->now();
             $subscription = $this->subscriptionFromData($context, $view, $definition, $data, $now);
 
@@ -72,11 +74,13 @@ final readonly class ReportSubscriptionCoordinator
     ): ReportSubscription {
         return ($this->transaction)(function () use ($context, $subscriptionId, $data): ReportSubscription {
             $subscription = $this->currentSubscription($context, $subscriptionId);
-            $values = $this->updatedValues($subscription, $data);
+            $currentInput = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes);
+            $values = $this->updatedValues($subscription, $data, $currentInput);
             $preserveLegacyPolicy = ! array_key_exists('period_policy', $data->changes)
-                && ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes)->periodPolicyVersion === null;
+                && $currentInput->periodPolicyVersion === null;
             [$view, $definition] = $this->currentSavedView($context, $values['saved_view_id']);
             $scheduleData = $this->scheduleData($values);
+            $this->authorizeProject($context, $definition, $scheduleData);
             $nextRun = $subscription->status === ReportSubscriptionStatus::ACTIVE
                 ? $this->nextRun($this->subscriptionFromData($context, $view, $definition, $scheduleData, $this->now(), $preserveLegacyPolicy), $this->now())
                 : null;
@@ -130,6 +134,7 @@ final readonly class ReportSubscriptionCoordinator
             if ($subscription->status !== ReportSubscriptionStatus::PAUSED) {
                 $this->invalid();
             }
+            $this->authorizeStoredScope($subscription);
 
             return $this->subscriptions->updateLocked($subscription, [
                 'status' => ReportSubscriptionStatus::ACTIVE->value,
@@ -158,6 +163,7 @@ final readonly class ReportSubscriptionCoordinator
             if ($subscription->status !== ReportSubscriptionStatus::ACTIVE) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
             }
+            $this->authorizeStoredScope($subscription);
 
             $triggerKeyHash = new Sha256Hash(hash(
                 'sha256',
@@ -194,6 +200,31 @@ final readonly class ReportSubscriptionCoordinator
         }
 
         return $delivery;
+    }
+
+    private function authorizeProject(ReportExecutionContext $context, ReportDefinition $definition, CreateReportSubscriptionData $data): void
+    {
+        if ($data->projectScopeId === null && $definition->code !== 'accepted_production_progress') {
+            return;
+        }
+        if ($data->projectScopeId === null || $this->executionContexts === null) {
+            $this->invalid();
+        }
+        $this->executionContexts->forProject($context->actor->id, $context->scope->organizationId,
+            $data->projectScopeId, $data->timezone, $definition, ReportOperation::MANAGE);
+    }
+
+    private function authorizeStoredScope(ReportSubscription $subscription): void
+    {
+        if ($this->executionContexts !== null) {
+            $this->executionContexts->forSubscription($subscription, ReportOperation::MANAGE);
+
+            return;
+        }
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes);
+        if ($input->projectScopeId !== null || $subscription->reportCode === 'accepted_production_progress') {
+            $this->invalid();
+        }
     }
 
     private function currentSubscription(ReportExecutionContext $context, string $subscriptionId): ReportSubscription
@@ -240,7 +271,7 @@ final readonly class ReportSubscriptionCoordinator
     }
 
     /** @return array<string, mixed> */
-    private function updatedValues(ReportSubscription $subscription, UpdateReportSubscriptionData $data): array
+    private function updatedValues(ReportSubscription $subscription, UpdateReportSubscriptionData $data, ReportSubscriptionExecutionInput $input): array
     {
         $values = [
             'saved_view_id' => $subscription->savedViewId,
@@ -251,6 +282,7 @@ final readonly class ReportSubscriptionCoordinator
             'timezone' => $subscription->timezone,
             'period_policy' => $subscription->periodPolicy,
             'format' => $subscription->format,
+            'project_id' => $input->projectScopeId,
         ];
 
         return array_replace($values, $data->changes);
@@ -276,6 +308,7 @@ final readonly class ReportSubscriptionCoordinator
                 $timezone,
                 is_array($values['period_policy']) ? $values['period_policy'] : [],
                 (string) $values['format'],
+                $values['project_id'] ?? null,
             );
         } catch (\Throwable $exception) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, previous: $exception);
@@ -369,6 +402,7 @@ final readonly class ReportSubscriptionCoordinator
             $definition->definitionHash,
             periodPolicyVersion: $preserveLegacyPolicy ? null : 1,
             savedViewReference: ReportSavedViewRef::fromView($view),
+            projectScopeId: $data->projectScopeId,
         );
         if (! $preserveLegacyPolicy) {
             (new ReportSubscriptionPeriodResolver)->validate($input);

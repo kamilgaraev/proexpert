@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Application\Actions\Handlers;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHistoricalReadCompatibility;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
@@ -34,6 +35,7 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
         private ReportExecutionClock $clock,
         private ReportExecutionContextFactory $contexts,
         private ReportAuthorizationSubjectReader $subjects,
+        private ?ReportHistoricalReadCompatibility $historicalRead = null,
     ) {}
 
     public function handle(
@@ -45,7 +47,10 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
         $export = $this->exports->get($context, $data->exportId);
         $definition = $this->definitions->published($subject->definition->code)->definition;
         if (! hash_equals($definition->definitionHash->value, $subject->definition->definitionHash->value)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            if ($this->historicalRead === null || ! $this->historicalRead->allows($subject->definition, $definition)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+            $definition = $subject->definition;
         }
 
         $operations = [ReportOperation::DOWNLOAD];

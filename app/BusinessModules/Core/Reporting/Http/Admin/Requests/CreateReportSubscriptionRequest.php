@@ -24,13 +24,14 @@ final class CreateReportSubscriptionRequest extends ReportFormRequest
             'period_policy' => ['required', 'array:mode', 'min:1'],
             'period_policy.mode' => ['required', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['required', 'in:csv,xlsx,pdf'],
+            'project_id' => ['sometimes', 'integer', 'min:1'],
             ...$this->subscriptionForbiddenClientFieldsRules(),
         ];
     }
 
     protected function acceptedBodyFields(): array
     {
-        return ['saved_view_id', 'frequency', 'weekday', 'day_of_month', 'local_time', 'timezone', 'period_policy', 'format'];
+        return ['saved_view_id', 'frequency', 'weekday', 'day_of_month', 'local_time', 'timezone', 'period_policy', 'format', 'project_id'];
     }
 
     public function toData(): CreateReportSubscriptionData
@@ -44,6 +45,7 @@ final class CreateReportSubscriptionRequest extends ReportFormRequest
             new DateTimeZone((string) $this->validated('timezone')),
             $this->validated('period_policy'),
             (string) $this->validated('format'),
+            $this->validated('project_id') === null ? null : (int) $this->validated('project_id'),
         );
     }
 }

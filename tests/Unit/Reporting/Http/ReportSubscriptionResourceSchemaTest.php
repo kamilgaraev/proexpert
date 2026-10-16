@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Http;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionPage;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionDeliveryStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionStatus;
@@ -69,6 +73,27 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         self::assertFalse($this->validator()->validate($wrongType, $this->schema())->isValid());
     }
 
+    public function test_resources_keep_legacy_organization_scope_nullable(): void
+    {
+        self::assertNull((new ReportSubscriptionResource($this->subscription(null)))->toArray(Request::create('/'))['project_id']);
+        self::assertNull((new ReportSubscriptionDeliveryResource($this->delivery(null)))->toArray(Request::create('/'))['project_id']);
+    }
+
+    #[DataProvider('invalidProjectIds')]
+    public function test_schema_rejects_invalid_frozen_project(mixed $projectId): void
+    {
+        foreach (['subscription', 'delivery'] as $branch) {
+            $value = $this->fixtureObject($branch);
+            $value->data->project_id = $projectId;
+            self::assertFalse($this->validator()->validate($value, $this->schema())->isValid());
+        }
+    }
+
+    public static function invalidProjectIds(): array
+    {
+        return [[0], [-1], ['52'], [true], [[]]];
+    }
+
     private function resource(string $branch): ReportSubscriptionResource|ReportSubscriptionDeliveryResource|ReportSubscriptionPageResource
     {
         $subscription = $this->subscription();
@@ -80,9 +105,9 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         };
     }
 
-    private function subscription(): ReportSubscription
+    private function subscription(?int $projectId = 52): ReportSubscription
     {
-        $input = '{"report":"budget"}';
+        $input = $this->executionInput($projectId);
 
         return new ReportSubscription(
             '01J00000000000000000000001',
@@ -111,9 +136,9 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         );
     }
 
-    private function delivery(): ReportSubscriptionDelivery
+    private function delivery(?int $projectId = 52): ReportSubscriptionDelivery
     {
-        $input = '{"report":"budget"}';
+        $input = $this->executionInput($projectId);
 
         return new ReportSubscriptionDelivery(
             '01J00000000000000000000003',
@@ -139,6 +164,16 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
             new DateTimeImmutable('2026-07-26T10:00:00+00:00'),
             new DateTimeImmutable('2026-07-26T10:01:00+00:00'),
         );
+    }
+
+    private function executionInput(?int $projectId): string
+    {
+        return (new ReportSubscriptionExecutionInput(
+            'budget_plan_fact', new ReportFilterSet([]), [], 'ru', '01J00000000000000000000002',
+            'xlsx', ['name'], new ReportWindowSort('name', ReportSortDirection::ASC), new DateTimeZone('UTC'),
+            ['mode' => 'previous_day'], '1.0.0', new Sha256Hash(str_repeat('a', 64)),
+            projectScopeId: $projectId,
+        ))->canonicalBytes();
     }
 
     private function fixtures(): array

@@ -18,13 +18,17 @@ final class ReportDefinitionModuleAccessDecision
 
     public function allows(int $organizationId, ReportDefinition $definition): bool
     {
+        return $this->allowsModule($organizationId, $definition->sourceModule);
+    }
+
+    public function allowsModule(int $organizationId, string $module): bool
+    {
         if ($organizationId !== $this->organizationId || $organizationId <= 0) {
             return false;
         }
 
-        $module = $definition->sourceModule;
         if (! array_key_exists($module, $this->accessByModule)) {
-            $this->accessByModule[$module] = $this->authorizer->allows($organizationId, $definition);
+            $this->accessByModule[$module] = $this->authorizer->allowsModule($organizationId, $module);
         }
 
         return $this->accessByModule[$module];

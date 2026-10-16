@@ -4,19 +4,24 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting;
 
-use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
-use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardCandidateContract;
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceBuiltinPublishedReport;
 use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowBuiltinPublishedReport;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAccessService;
 use App\BusinessModules\Core\Reporting\Application\Catalog\GetReportCatalogHandler;
 use App\BusinessModules\Core\Reporting\Application\Catalog\ImmutableReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Application\Catalog\StrictReportDefinitionCandidateValidator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHistoricalReadCompatibility;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReportFilterInputNormalizer;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\ReportSavedViewVersionHasher;
 use App\BusinessModules\Core\Reporting\Application\SavedViews\StoredReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionCoordinator;
+use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
@@ -41,6 +46,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Infrastructure\Audit\LogReportSubscriptionEventRecorder;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportCatalogMetadataRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportHistoricalReadCompatibility;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinReportSchedulingCapabilityRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositePublishedReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\CompositeReportCatalogMetadataRegistry;
@@ -61,36 +67,30 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Publication\EloquentReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Queue\LaravelReportSubscriptionDeliveryDispatcher;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityCandidateContract;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthBuiltinPublishedReport;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
-use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\ChangeClaimBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastBuiltinPublishedReport;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginBuiltinPublishedReport;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\ChangeClaimBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureBuiltinPublishedReport;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureCandidateContract;
-use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
-use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskCandidateContract;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
-use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Award\SupplierAwardCandidateContract;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleBuiltinPublishedReport;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\ProcurementCycleCandidateContract;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityBuiltinPublishedReport;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\SupplyReliabilityCandidateContract;
-use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
-use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
-use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowBuiltinPublishedReport;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\QualityDefectFlowCandidateContract;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\WorkforceAdmissionBuiltinPublishedReport;
@@ -100,14 +100,19 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Safe
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceBuiltinPublishedReport;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceCandidateContract;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\LookaheadReadinessBuiltinPublishedReport;
-use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
-use App\Services\Customer\Reporting\Sla\CustomerSlaCandidateContract;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostBuiltinPublishedReport;
+use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\AttendanceExecutionCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityBuiltinPublishedReport;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionBuiltinPublishedReport;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\AcceptedProductionCandidateContract;
-use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessBuiltinPublishedReport;
-use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\HandoverReadinessCandidateContract;
-use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardBuiltinPublishedReport;
-use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\ContractorScorecardCandidateContract;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFilterInputNormalizer;
+use App\Services\Customer\Reporting\Sla\CustomerSlaBuiltinPublishedReport;
+use App\Services\Customer\Reporting\Sla\CustomerSlaCandidateContract;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 
@@ -115,6 +120,7 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(ReportFilterInputNormalizer::class, AcceptedProductionFilterInputNormalizer::class);
         $this->app->singleton(
             LoadedReportManifest::class,
             fn (Application $app): LoadedReportManifest => $app
@@ -313,8 +319,10 @@ final class ReportingCatalogServiceProvider extends ServiceProvider
                 $app->make(ReportAccessService::class),
                 $app->make(ReportSubscriptionScheduleCalculator::class),
                 $app->make(ReportExecutionClock::class),
+                $app->make(ReportSubscriptionExecutionContextFactory::class),
             ),
         );
+        $this->app->singleton(ReportHistoricalReadCompatibility::class, BuiltinReportHistoricalReadCompatibility::class);
         $this->app->singleton(InAppReportSubscriptionNotifier::class, PersistedInAppReportSubscriptionNotifier::class);
         $this->app->singleton(ReportSubscriptionEventRecorder::class, LogReportSubscriptionEventRecorder::class);
         $this->app->singleton(SignedReportSavedViewCursorCodec::class, fn (): SignedReportSavedViewCursorCodec => new SignedReportSavedViewCursorCodec((string) config('app.key')));

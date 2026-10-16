@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Input;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReportFilterInputNormalizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
@@ -39,6 +40,7 @@ final class ReportFilterNormalizer
 
     public function __construct(
         private readonly ReportFilterReferenceResolver $referenceResolver,
+        private readonly ?ReportFilterInputNormalizer $specificNormalizer = null,
     ) {}
 
     public function normalize(
@@ -50,30 +52,35 @@ final class ReportFilterNormalizer
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
+        $specific = $this->specificNormalizer?->normalize($context, $definition, $input);
+        if ($specific !== null) {
+            return $specific;
+        }
+
         $definitions = $this->definitionsById($definition);
         $normalized = [];
 
         foreach ($input as $filter => $payload) {
-            if (!is_string($filter) || !isset($definitions[$filter])) {
+            if (! is_string($filter) || ! isset($definitions[$filter])) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
             }
 
-            if (!is_array($payload) || array_is_list($payload)) {
+            if (! is_array($payload) || array_is_list($payload)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
             }
 
             $payloadKeys = array_keys($payload);
             sort($payloadKeys);
 
-            if ($payloadKeys !== ['operator', 'value'] || !is_string($payload['operator'])) {
+            if ($payloadKeys !== ['operator', 'value'] || ! is_string($payload['operator'])) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
             }
 
             $metadata = $definitions[$filter];
             $operator = $payload['operator'];
 
-            if (!in_array($operator, self::OPERATORS, true)
-                || !in_array($operator, $metadata['operators'], true)) {
+            if (! in_array($operator, self::OPERATORS, true)
+                || ! in_array($operator, $metadata['operators'], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
             }
 
@@ -97,18 +104,18 @@ final class ReportFilterNormalizer
         $definitions = [];
 
         foreach ($definition->filters as $metadata) {
-            if (!isset($metadata['type'], $metadata['operators'])
-                || !is_string($metadata['type'])
-                || !in_array($metadata['type'], self::TYPES, true)
-                || !is_array($metadata['operators'])
-                || !array_is_list($metadata['operators'])
+            if (! isset($metadata['type'], $metadata['operators'])
+                || ! is_string($metadata['type'])
+                || ! in_array($metadata['type'], self::TYPES, true)
+                || ! is_array($metadata['operators'])
+                || ! array_is_list($metadata['operators'])
                 || $metadata['operators'] === []
-                || (isset($metadata['multiple']) && !is_bool($metadata['multiple']))) {
+                || (isset($metadata['multiple']) && ! is_bool($metadata['multiple']))) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
             }
 
             foreach ($metadata['operators'] as $operator) {
-                if (!is_string($operator) || !in_array($operator, self::OPERATORS, true)) {
+                if (! is_string($operator) || ! in_array($operator, self::OPERATORS, true)) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
                 }
             }
@@ -127,7 +134,7 @@ final class ReportFilterNormalizer
         mixed $value,
     ): mixed {
         if (in_array($operator, ['in', 'not_in'], true)) {
-            if (!is_array($value) || !array_is_list($value) || $value === []) {
+            if (! is_array($value) || ! array_is_list($value) || $value === []) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
             }
 
@@ -138,7 +145,7 @@ final class ReportFilterNormalizer
         }
 
         if ($operator === 'between') {
-            if (!is_array($value) || !array_is_list($value) || count($value) !== 2) {
+            if (! is_array($value) || ! array_is_list($value) || count($value) !== 2) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
             }
 
@@ -171,7 +178,7 @@ final class ReportFilterNormalizer
 
     private function normalizeString(mixed $value): string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -184,7 +191,7 @@ final class ReportFilterNormalizer
             return $value;
         }
 
-        if (!is_string($value) || preg_match('/^-?(?:0|[1-9][0-9]*)$/', $value) !== 1) {
+        if (! is_string($value) || preg_match('/^-?(?:0|[1-9][0-9]*)$/', $value) !== 1) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -199,7 +206,7 @@ final class ReportFilterNormalizer
 
     private function normalizeDecimal(mixed $value): string
     {
-        if (!is_int($value) && !is_string($value)) {
+        if (! is_int($value) && ! is_string($value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -215,14 +222,14 @@ final class ReportFilterNormalizer
         $integer = ltrim($integer, '0');
         $integer = $integer === '' ? '0' : $integer;
         $fraction = rtrim($fraction, '0');
-        $normalized = $integer . ($fraction === '' ? '' : '.' . $fraction);
+        $normalized = $integer.($fraction === '' ? '' : '.'.$fraction);
 
-        return $negative && $normalized !== '0' ? '-' . $normalized : $normalized;
+        return $negative && $normalized !== '0' ? '-'.$normalized : $normalized;
     }
 
     private function normalizeBoolean(mixed $value): bool
     {
-        if (!is_bool($value)) {
+        if (! is_bool($value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -231,7 +238,7 @@ final class ReportFilterNormalizer
 
     private function normalizeDate(mixed $value): string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -248,7 +255,7 @@ final class ReportFilterNormalizer
 
     private function normalizeDateTime(mixed $value): string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 
@@ -267,7 +274,7 @@ final class ReportFilterNormalizer
         string $filter,
         mixed $value,
     ): int|string {
-        if ((!is_int($value) && !is_string($value)) || (is_string($value) && trim($value) === '')) {
+        if ((! is_int($value) && ! is_string($value)) || (is_string($value) && trim($value) === '')) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
 

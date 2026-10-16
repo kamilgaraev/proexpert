@@ -25,17 +25,21 @@ final class UpdateReportSubscriptionRequest extends ReportSubscriptionRouteReque
             'period_policy' => ['sometimes', 'array:mode', 'min:1'],
             'period_policy.mode' => ['required_with:period_policy', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['sometimes', 'in:csv,xlsx,pdf'],
+            'project_id' => ['sometimes', 'integer', 'min:1'],
         ];
     }
 
     protected function acceptedBodyFields(): array
     {
-        return ['saved_view_id', 'frequency', 'weekday', 'day_of_month', 'local_time', 'timezone', 'period_policy', 'format'];
+        return ['saved_view_id', 'frequency', 'weekday', 'day_of_month', 'local_time', 'timezone', 'period_policy', 'format', 'project_id'];
     }
 
     public function toData(): UpdateReportSubscriptionData
     {
         $changes = $this->safe()->only($this->acceptedBodyFields());
+        if (array_key_exists('project_id', $changes)) {
+            $changes['project_id'] = (int) $changes['project_id'];
+        }
 
         if (isset($changes['frequency'])) {
             $changes['frequency'] = ReportSubscriptionFrequency::from((string) $changes['frequency']);
