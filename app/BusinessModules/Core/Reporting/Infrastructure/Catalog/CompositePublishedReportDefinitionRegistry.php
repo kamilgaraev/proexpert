@@ -73,9 +73,13 @@ final readonly class CompositePublishedReportDefinitionRegistry implements Publi
 
     public function manifestSha256(): Sha256Hash
     {
+        $codes = $this->publishedCodes();
+        $definitions = $codes !== [] && $this->database instanceof PublishedReportDefinitionCatalog
+            ? $this->publishedDefinitions() : null;
         $entries = [];
-        foreach ($this->publishedCodes() as $code) {
-            $published = $this->published($code);
+        foreach ($codes as $code) {
+            $published = $definitions === null ? $this->published($code)
+                : ($definitions[$code] ?? throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND));
             $entries[] = ['code' => $code, 'definition_sha256' => $published->definitionHash->value];
         }
 
