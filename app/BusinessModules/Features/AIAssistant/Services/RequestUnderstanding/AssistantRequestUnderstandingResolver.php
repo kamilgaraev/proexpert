@@ -550,7 +550,7 @@ final class AssistantRequestUnderstandingResolver
     {
         $formats = '(xlsx|excel|эксель|csv|pdf|пдф)';
         $positive = str_replace($this->negativeCreationScopes($normalized), ' ', $normalized);
-        $positive = preg_replace('/(?<!\pL)(?:не|без)\s+(?:в\s+)?(?:формате\s+)?'.$formats.'(?!\pL)/u', ' ', $positive);
+        $positive = preg_replace('/(?<!\pL)(?:не\s+(?:нужен|нужна|нужно|нужны)|не|без)\s+(?:в\s+)?(?:формате\s+)?'.$formats.'(?!\pL)/u', ' ', $positive);
         if (preg_match('/(?<!\pL)(?:в\s+(?:формате\s+)?|(?:сделай|создай|выгрузи|сформируй|подготовь|пришли)\s+(?:мне\s+)?)'.$formats.'(?!\pL)/u', $positive, $match) !== 1
             && preg_match('/(?<![\pL\pN])'.$formats.'(?![\pL\pN])/u', $positive, $match) !== 1) {
             return null;
@@ -607,6 +607,10 @@ final class AssistantRequestUnderstandingResolver
     {
         $value = mb_strtolower(trim($value));
         $value = str_replace('ё', 'е', $value);
+        $formats = '(xlsx|excel|эксель|csv|pdf|пдф)';
+        $fileNames = '(?:файл(?:а|ы|ов)?|документ(?:а|ы|ов)?|отчет(?:а|ы|ов)?|выгрузк[ауи])';
+        $value = preg_replace('/(?<!\pL)'.$fileNames.'[\s\p{Pd}]+(?:(?:в\s+)?формат[ае]\s+|в\s+)?'.$formats.'(?!\pL)/u', '$1', $value) ?? $value;
+        $value = preg_replace('/(?<!\pL)'.$formats.'[\s\p{Pd}]+'.$fileNames.'(?!\pL)/u', '$1', $value) ?? $value;
         $value = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value) ?? $value;
 
         return preg_replace('/\s+/u', ' ', trim($value)) ?? '';

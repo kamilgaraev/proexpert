@@ -200,6 +200,52 @@ final class AssistantCustomReportsTest extends TestCase
             'metrics' => [['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Сумма']]])), $actor, $org->id);
     }
 
+    public function test_stock_and_minor_currency_metrics_reject_mixed_dimensions_before_totals(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        \Illuminate\Support\Facades\Schema::table('contracts', static function (\Illuminate\Database\Schema\Blueprint $table): void {
+            $table->decimal('opening_on_hand', 20, 4)->nullable();
+            $table->bigInteger('consumption_value_minor')->nullable();
+            $table->bigInteger('unit_price_minor')->nullable();
+            $table->string('unit_code')->nullable();
+            $table->string('unit_dimension')->nullable();
+        });
+        $first = $this->contract($org, $project, '1.00', 'RUB');
+        $second = $this->contract($org, $project, '2.00', 'USD');
+        $first->getConnection()->table('contracts')->where('id', $first->id)->update([
+            'opening_on_hand' => '10', 'consumption_value_minor' => 100, 'unit_price_minor' => 10, 'unit_code' => 'unit', 'unit_dimension' => 'mass']);
+        $second->getConnection()->table('contracts')->where('id', $second->id)->update([
+            'opening_on_hand' => '3', 'consumption_value_minor' => 200, 'unit_price_minor' => 20, 'unit_code' => 'unit', 'unit_dimension' => 'count']);
+        $definition = (new AssistantDomainCatalog(AssistantDomainCatalog::defaults()))->definition('contracts');
+        $catalog = new AssistantDomainCatalog([new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition(
+            $definition->domain, $definition->module, $definition->entityType, $definition->permissions,
+            [...$definition->fields, 'opening_on_hand', 'consumption_value_minor', 'unit_price_minor', 'unit_code', 'unit_dimension'],
+            $definition->schemas, $definition->operations, $definition->navigation, $definition->sourceType,
+            $definition->entityTypes, $definition->fieldPermissions, $definition->entityPermissions)]);
+        $sources = new AssistantCustomReportSource($catalog, $this->policy);
+        $builder = new AssistantCustomReportBuilder($sources, new AssistantCustomReportReference($sources, $this->policy), $this->policy);
+        self::assertSame(['unit_code', 'unit_dimension'], $sources->resolve($actor, $org->id, 'contracts', 'contract', null)['fields']['opening_on_hand']['dimensions']);
+        foreach (['opening_on_hand', 'consumption_value_minor'] as $field) {
+            try {
+                $builder->build($this->plan($this->contractsSection(['columns' => [], 'metrics' => [['field' => $field, 'operation' => 'sum', 'label' => 'Итог']]])), $actor, $org->id);
+                self::fail('Mixed dimensions must not produce a total: '.$field);
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('metrics', $exception->errors());
+            }
+        }
+        DB::table('contracts')->where('id', $second->id)->update(['currency' => 'RUB']);
+        try {
+            $builder->build($this->plan($this->contractsSection(['columns' => [], 'metrics' => [['field' => 'unit_price_minor', 'operation' => 'avg', 'label' => 'Цена']]])), $actor, $org->id);
+            self::fail('Prices with mixed quantity dimensions must not be averaged');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('metrics', $exception->errors());
+        }
+        $section = $this->contractsSection(['columns' => ['unit_dimension', 'unit_code'], 'group_by' => ['unit_dimension', 'unit_code'],
+            'metrics' => [['field' => 'opening_on_hand', 'operation' => 'sum', 'label' => 'Остаток']],
+            'order_by' => [['field' => 'unit_dimension', 'direction' => 'asc']]]);
+        self::assertSame([['count', 'unit', '3.0000'], ['mass', 'unit', '10.0000']], $builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows']);
+    }
+
     public function test_empty_selection_has_zero_count_and_verified_scope(): void
     {
         [$org, $actor] = $this->fixture();

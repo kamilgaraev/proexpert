@@ -73,6 +73,7 @@ final readonly class AssistantCustomReportSource
         }
         foreach ($fields as $field => $metadata) {
             $fields[$field]['aggregations'] = AssistantCustomReportMeasure::aggregations($field, $metadata['type'], $fields);
+            $fields[$field]['dimensions'] = $metadata['type'] === 'number' ? AssistantCustomReportMeasure::dimensions($field, $fields) : [];
         }
 
         return ['query' => $query, 'fields' => $fields, 'domain' => $policyDomain];

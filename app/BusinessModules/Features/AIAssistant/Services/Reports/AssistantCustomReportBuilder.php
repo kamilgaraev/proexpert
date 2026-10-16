@@ -101,7 +101,7 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $selected = array_values(array_unique([$model->getKeyName(), ...$fields]));
-        foreach (['currency', 'budget_currency', 'material_unit', 'unit_code', 'unit'] as $dimension) {
+        foreach (['currency', 'budget_currency', 'material_unit', 'unit_dimension', 'unit_code', 'unit'] as $dimension) {
             if (isset($source['fields'][$dimension])) {
                 $selected[] = $dimension;
                 $fields[] = $dimension;
@@ -271,17 +271,18 @@ final readonly class AssistantCustomReportBuilder
 
     private function assertUnits(string $field, array $groupBy, array $rows, array $fields): void
     {
-        $dimension = AssistantCustomReportMeasure::dimension($field, $fields);
-        if ($dimension === null || $rows === []) {
+        if ($rows === []) {
             return;
         }
-        if (isset($fields[$dimension])) {
-            $units = array_unique(array_map(static fn (array $row): string => (string) ($row[$dimension] ?? ''), $rows));
-            if (! in_array('', $units, true) && (in_array($dimension, $groupBy, true) || count($units) === 1)) {
-                return;
+        foreach (AssistantCustomReportMeasure::dimensions($field, $fields) as $dimension) {
+            if (isset($fields[$dimension])) {
+                $units = array_unique(array_map(static fn (array $row): string => (string) ($row[$dimension] ?? ''), $rows));
+                if (! in_array('', $units, true) && (in_array($dimension, $groupBy, true) || count($units) === 1)) {
+                    continue;
+                }
             }
+            throw ValidationException::withMessages(['metrics' => trans_message('ai_custom_reports.mixed_units')]);
         }
-        throw ValidationException::withMessages(['metrics' => trans_message('ai_custom_reports.mixed_units')]);
     }
 
     private function tabulate(array $section, array $fields, array $rows): array

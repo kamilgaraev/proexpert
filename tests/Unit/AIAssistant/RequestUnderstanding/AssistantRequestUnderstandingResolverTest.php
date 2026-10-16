@@ -61,7 +61,12 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             'Не формируй PDF, сделай CSV по проектам' => 'csv',
             'Не создавай ПДФ, подготовь сводку в Excel' => 'xlsx',
             'Не выгружай PDF, нужен CSV по платежам' => 'csv',
-            'Сделай CSV по платежам, не генерируй PDF' => 'csv'] as $query => $format) {
+            'Сделай CSV по платежам, не генерируй PDF' => 'csv',
+            'Не делай файл PDF, сделай Excel по платежам' => 'xlsx',
+            'Не формируй PDF-файл, нужен CSV по проектам' => 'csv',
+            'Без файла PDF, подготовь сводку в Excel' => 'xlsx',
+            'Не нужен файл PDF, нужен CSV по платежам' => 'csv',
+            'Не делай отчет в PDF, сделай Excel по договорам' => 'xlsx'] as $query => $format) {
             $result = $resolver->resolve($query);
             self::assertSame('generate_report', $result->primaryIntent, $query);
             self::assertSame($format, $result->outputFormat, $query);
@@ -72,7 +77,8 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         }
         foreach (['Не делай PDF, файл или отчет. Сделай сводку текстом.',
             'Не формируй файлы, сделай сводку по платежам в Excel',
-            'Не создавай отчет, покажи данные в CSV'] as $query) {
+            'Не создавай отчет, покажи данные в CSV',
+            'Не делай PDF, файл или отчет. Сделай сводку в Excel.'] as $query) {
             self::assertTrue($resolver->resolve($query)->blocksFileGeneration(), $query);
         }
     }

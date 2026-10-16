@@ -50,7 +50,9 @@ final readonly class AssistantCustomReportSourceHints
                     $hints[] = ['domain' => $domain, 'entity_type' => $definition->entityType,
                         'fields' => array_map(static fn (array $field): string => $field['type'], $fields),
                         'metrics' => array_map(static fn (array $field): array => $field['aggregations'],
-                            array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1))];
+                            array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1)),
+                        'dimensions' => array_map(static fn (array $field): array => $field['dimensions'],
+                            array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1 && $field['dimensions'] !== []))];
                 } catch (AccessDeniedHttpException|ValidationException) {
                     continue;
                 }
