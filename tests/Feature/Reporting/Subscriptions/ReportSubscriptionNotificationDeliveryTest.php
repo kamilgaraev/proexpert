@@ -156,7 +156,31 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         return [[false], [true]];
     }
 
-    private function processor(array $fixture, int $pendingDispatches, bool $recordDelivery, bool $accessDenied = false): ReportSubscriptionDeliveryProcessor
+    public function test_event_recording_failure_rolls_back_notified_and_can_be_retried(): void
+    {
+        $fixture = $this->fixture();
+        [$context, $subscription, $delivery, $export] = $fixture;
+        app(PersistedInAppReportSubscriptionNotifier::class)->notify(
+            $context, $subscription, $delivery, $export, $delivery->notificationIdempotencyKey(),
+        );
+        (new SendNotificationJob(Notification::query()->sole()))->handle(app(NotificationService::class));
+
+        try {
+            $this->processor($fixture, 0, true, false, true)->process($delivery->id);
+            self::fail('The event recording failure must roll back the transaction.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('event_recorder_unavailable', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('report_subscription_deliveries', [
+            'id' => $delivery->id, 'status' => 'ready', 'notified_at' => null, 'notification_receipt_id' => null,
+        ]);
+        $this->processor($fixture, 0, true)->process($delivery->id);
+        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'notified']);
+        self::assertSame(1, Notification::query()->count());
+    }
+
+    private function processor(array $fixture, int $pendingDispatches, bool $recordDelivery, bool $accessDenied = false, bool $failRecording = false): ReportSubscriptionDeliveryProcessor
     {
         [$context, , $delivery, $export, $definition] = $fixture;
         $registry = $this->createMock(ReportDefinitionRegistry::class);
@@ -179,7 +203,10 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         $dispatcher = $this->createMock(ReportSubscriptionDeliveryDispatcher::class);
         $dispatcher->expects(self::exactly($pendingDispatches))->method('dispatch')->with($delivery->id, self::greaterThan(0));
         $events = $this->createMock(ReportSubscriptionEventRecorder::class);
-        $events->expects(self::exactly($recordDelivery ? 1 : 0))->method('record')->with('report_subscription_notified', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything());
+        $record = $events->expects(self::exactly($recordDelivery ? 1 : 0))->method('record')->with('report_subscription_notified', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything());
+        if ($failRecording) {
+            $record->willThrowException(new RuntimeException('event_recorder_unavailable'));
+        }
 
         return new ReportSubscriptionDeliveryProcessor(
             app(EloquentReportSubscriptionDeliveryStore::class),

@@ -8,11 +8,14 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportA
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\InAppReportSubscriptionNotifier;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryDispatcher;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionDeliveryStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionEventRecorder;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionDelivery;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
@@ -21,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionDeliverySt
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 final readonly class ReportSubscriptionDeliveryProcessor
@@ -68,6 +72,10 @@ final readonly class ReportSubscriptionDeliveryProcessor
                 && $delivery->retryAt > $now
             ) {
                 return [[$delivery->id, max(1, $delivery->retryAt->getTimestamp() - $now->getTimestamp())]];
+            }
+
+            if ($delivery->status === ReportSubscriptionDeliveryStatus::READY) {
+                return $this->notifyReady($delivery, $subscription);
             }
 
             try {
@@ -134,28 +142,9 @@ final readonly class ReportSubscriptionDeliveryProcessor
                     return [[$delivery->id, 0]];
                 }
 
-                if ($delivery->status === ReportSubscriptionDeliveryStatus::READY) {
-                    $export = $this->getExports->handle($context, (string) $delivery->exportId);
-                    $key = $delivery->notificationIdempotencyKey();
-                    $receipt = $this->notifier->notify($context, $subscription, $delivery, $export, $key);
-
-                    if ($receipt === null) {
-                        return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
-                    }
-
-                    $this->deliveries->markNotifiedLocked(
-                        $delivery,
-                        $receipt->id,
-                        new Sha256Hash($key->hash),
-                    );
-                    $this->record($context, 'report_subscription_notified', $delivery);
-                }
-
                 return [];
-            } catch (Throwable) {
-                if ($delivery->status === ReportSubscriptionDeliveryStatus::READY) {
-                    return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
-                }
+            } catch (Throwable $exception) {
+                $this->logFailure($delivery, $exception);
 
                 return $this->retry($delivery, 'REPORT_INTERNAL_ERROR');
             }
@@ -164,6 +153,40 @@ final readonly class ReportSubscriptionDeliveryProcessor
         foreach ($dispatches as [$deliveryId, $delaySeconds]) {
             $this->dispatcher->dispatch($deliveryId, $delaySeconds);
         }
+    }
+
+    private function notifyReady(ReportSubscriptionDelivery $delivery, ReportSubscription $subscription): array
+    {
+        try {
+            $context = $this->contexts->forSubscription($subscription, ReportOperation::RUN);
+            $export = $this->getExports->handle($context, (string) $delivery->exportId);
+            $key = $delivery->notificationIdempotencyKey();
+            $receipt = $this->notifier->notify($context, $subscription, $delivery, $export, $key);
+        } catch (Throwable $exception) {
+            $this->logFailure($delivery, $exception);
+
+            return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
+        }
+
+        if ($receipt === null) {
+            return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
+        }
+
+        $this->deliveries->markNotifiedLocked($delivery, $receipt->id, new Sha256Hash($key->hash));
+        $this->record($context, 'report_subscription_notified', $delivery);
+
+        return [];
+    }
+
+    private function logFailure(ReportSubscriptionDelivery $delivery, Throwable $exception): void
+    {
+        Log::warning('report_subscription_delivery_failed', [
+            'delivery_id' => $delivery->id,
+            'subscription_id' => $delivery->subscriptionId,
+            'error_code' => $exception instanceof ReportContractException
+                ? $exception->errorCode->value
+                : ReportErrorCode::REPORT_INTERNAL_ERROR->value,
+        ]);
     }
 
     private function delay(?int $ms): int
