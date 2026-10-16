@@ -370,7 +370,8 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
             : $base->processingProgress;
         $quota = $base->aiEstimateQuota;
-        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'estimate', 'sources', 'quota');
+        $creditPolicy = $base->creditPolicy;
+        $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'estimate', 'sources', 'quota', 'creditPolicy');
         $operationalVersion = OperationalSnapshotRevision::fromSources($revisionSources);
 
         return new SessionSnapshotData(
