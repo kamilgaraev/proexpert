@@ -200,9 +200,51 @@ class PublicSupplierRequestControllerTest extends TestCase
                     ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.expired'))
                     ->assertJsonMissingPath('data.lines')->assertJsonMissingPath('data.comment')->assertJsonMissingPath('data.supplier');
                 $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertStatus(410);
+                $this->postJson($url.'/proposals', [])->assertStatus(410)->assertJsonMissingPath('errors');
                 self::assertSame($before, $supplierRequest->refresh()->getRawOriginal());
                 self::assertSame($proposalBefore, $proposal->refresh()->getRawOriginal());
                 self::assertSame(1, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
+            }
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_expired_link_is_rejected_before_payload_and_line_membership_validation(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplier = $this->createSupplier($organization->id);
+        $service = app(SupplierRequestService::class);
+        $supplierRequest = $service->send($service->create($organization->id, [
+            'purchase_request_id' => $this->createPurchaseRequest($organization->id)->id, 'supplier_id' => $supplier->id,
+        ]));
+        $otherRequest = $service->send($service->create($organization->id, [
+            'purchase_request_id' => $this->createPurchaseRequest($organization->id)->id, 'supplier_id' => $supplier->id,
+        ]));
+        $line = $supplierRequest->lines()->firstOrFail();
+        $foreignLine = $otherRequest->lines()->firstOrFail();
+        $url = '/api/v1/procurement/supplier-requests/'.$supplierRequest->public_token.'/proposals';
+        $invalidOwn = $this->proposalPayload($line->id, ['subtotal_amount' => 'invalid']);
+        $invalidForeign = $this->proposalPayload($foreignLine->id, ['subtotal_amount' => 'invalid']);
+        $invalidMissing = $this->proposalPayload(max($line->id, $foreignLine->id) + 1000000, ['subtotal_amount' => 'invalid']);
+        $this->postJson($url, [])->assertStatus(422)->assertJsonValidationErrors('items');
+        $this->postJson($url, $invalidOwn)->assertStatus(422)->assertJsonValidationErrors('subtotal_amount')
+            ->assertJsonMissingValidationErrors('items.0.supplier_request_line_id');
+        $this->postJson($url, $invalidForeign)->assertStatus(422)
+            ->assertJsonValidationErrors(['subtotal_amount', 'items.0.supplier_request_line_id']);
+        $this->postJson($url, $invalidMissing)->assertStatus(422)
+            ->assertJsonValidationErrors(['subtotal_amount', 'items.0.supplier_request_line_id']);
+        self::assertSame(SupplierRequestStatusEnum::SENT, $supplierRequest->refresh()->status);
+        $expiresAt = $supplierRequest->public_token_expires_at;
+        self::assertNotNull($expiresAt);
+        try {
+            $this->travelTo($expiresAt);
+            foreach ([[], $invalidOwn, $invalidForeign, $invalidMissing] as $payload) {
+                $response = $this->postJson($url, $payload)->assertStatus(410)
+                    ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.expired'));
+                self::assertSame([], $response->json('errors') ?? []);
+                self::assertSame(SupplierRequestStatusEnum::EXPIRED, $supplierRequest->refresh()->status);
+                self::assertSame(0, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
             }
         } finally {
             $this->travelBack();
@@ -275,15 +317,20 @@ class PublicSupplierRequestControllerTest extends TestCase
             $this->getJson('/api/v1/procurement/supplier-requests/'.$cancelled->public_token)->assertStatus(410)
                 ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.cancelled'));
             self::assertSame(SupplierRequestStatusEnum::CANCELLED, $cancelled->refresh()->status);
+            $this->postJson('/api/v1/procurement/supplier-requests/'.$cancelled->public_token.'/proposals', [])->assertStatus(410)
+                ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.cancelled'))->assertJsonMissingPath('errors');
             foreach ([null, now()->addDay()] as $deadline) {
                 $cancelled->update(['status' => SupplierRequestStatusEnum::EXPIRED, 'public_token_expires_at' => $deadline]);
                 $expiredUrl = '/api/v1/procurement/supplier-requests/'.$cancelled->public_token;
                 $this->getJson($expiredUrl)->assertStatus(410)
                     ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.expired'));
                 $this->postJson($expiredUrl.'/proposals', $this->proposalPayload($cancelled->lines()->firstOrFail()->id))->assertStatus(410);
+                $this->postJson($expiredUrl.'/proposals', [])->assertStatus(410)->assertJsonMissingPath('errors');
                 self::assertSame(SupplierRequestStatusEnum::EXPIRED, $cancelled->refresh()->status);
             }
             $this->getJson('/api/v1/procurement/supplier-requests/'.str_repeat('x', 64))->assertNotFound();
+            $this->postJson('/api/v1/procurement/supplier-requests/'.str_repeat('x', 64).'/proposals', [])->assertNotFound()->assertJsonMissingPath('errors');
+            $this->postJson('/api/v1/procurement/supplier-requests/short-token/proposals', [])->assertNotFound()->assertJsonMissingPath('errors');
         } finally {
             $this->travelBack();
         }
