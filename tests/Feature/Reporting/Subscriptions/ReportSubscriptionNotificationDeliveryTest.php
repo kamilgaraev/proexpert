@@ -47,6 +47,7 @@ use DateTimeZone;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
@@ -89,12 +90,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         $this->app->instance(PreferenceManager::class, $preferences);
         $notifier = app(PersistedInAppReportSubscriptionNotifier::class);
 
-        try {
-            $notifier->notify($context, $subscription, $delivery, $export, $delivery->notificationIdempotencyKey());
-            self::fail('A suppressed notification must not acknowledge delivery.');
-        } catch (RuntimeException $exception) {
-            self::assertSame('report_subscription_notification_unavailable', $exception->getMessage());
-        }
+        self::assertNull($notifier->notify($context, $subscription, $delivery, $export, $delivery->notificationIdempotencyKey()));
 
         self::assertSame(0, DB::table('report_subscription_notification_receipts')->count());
         self::assertSame(0, Notification::query()->count());
@@ -106,12 +102,7 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         [$context, $subscription, $delivery, $export] = $this->fixture(false);
         $notifier = app(PersistedInAppReportSubscriptionNotifier::class);
 
-        try {
-            $notifier->notify($context, $subscription, $delivery, $export, $delivery->notificationIdempotencyKey());
-            self::fail('A skipped recipient must not acknowledge delivery.');
-        } catch (RuntimeException $exception) {
-            self::assertSame('report_subscription_notification_unavailable', $exception->getMessage());
-        }
+        self::assertNull($notifier->notify($context, $subscription, $delivery, $export, $delivery->notificationIdempotencyKey()));
 
         self::assertSame(0, DB::table('report_subscription_notification_receipts')->count());
         self::assertSame(0, Notification::query()->count());
@@ -120,14 +111,65 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
 
     public function test_processor_keeps_ready_until_worker_delivery_without_rebuilding_export(): void
     {
-        [$context, $subscription, $delivery, $export, $definition] = $this->fixture();
+        $fixture = $this->fixture();
+        [, , $delivery] = $fixture;
+        $processor = $this->processor($fixture, 1, true);
+
+        $processor->process($delivery->id);
+        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'ready', 'attempt' => 0, 'notified_at' => null]);
+        (new SendNotificationJob(Notification::query()->sole()))->handle(app(NotificationService::class));
+        $processor->process($delivery->id);
+        $processor->process($delivery->id);
+        $this->processor($fixture, 0, false, true)->process($delivery->id);
+
+        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'notified', 'attempt' => 0]);
+        self::assertSame(1, Notification::query()->count());
+        self::assertSame(1, DB::table('notification_analytics')->where('channel', 'in_app')->where('status', 'delivered')->count());
+    }
+
+    #[DataProvider('unavailableChannels')]
+    public function test_processor_preserves_ready_export_when_notifications_are_unavailable(bool $accessDenied): void
+    {
+        $fixture = $this->fixture();
+        [, $subscription, $delivery] = $fixture;
+        if (! $accessDenied) {
+            $this->mock(PreferenceManager::class)->shouldReceive('canSend')->andReturn(false);
+        }
+        $processor = $this->processor($fixture, 2, false, $accessDenied);
+
+        $processor->process($delivery->id);
+        $processor->process($delivery->id);
+
+        $this->assertDatabaseHas('report_subscription_deliveries', [
+            'id' => $delivery->id, 'status' => 'ready', 'attempt' => 0,
+            'run_id' => $delivery->runId, 'export_id' => $delivery->exportId,
+            'notified_at' => null, 'notification_receipt_id' => null,
+        ]);
+        $this->assertDatabaseHas('report_subscriptions', ['id' => $subscription->id, 'consecutive_failures' => 0]);
+        self::assertSame(0, Notification::query()->count());
+        self::assertSame(0, DB::table('report_subscription_notification_receipts')->count());
+        Queue::assertNotPushed(SendNotificationJob::class);
+    }
+
+    public static function unavailableChannels(): array
+    {
+        return [[false], [true]];
+    }
+
+    private function processor(array $fixture, int $pendingDispatches, bool $recordDelivery, bool $accessDenied = false): ReportSubscriptionDeliveryProcessor
+    {
+        [$context, , $delivery, $export, $definition] = $fixture;
         $registry = $this->createMock(ReportDefinitionRegistry::class);
         $registry->method('published')->willReturn(new PublishedReportDefinition($definition));
         $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
-        $authorizer->method('authorizeForOrganization')->willReturnCallback(
-            static fn (int $actorId, int $organizationId, DateTimeZone $timezone, CurrentReportAuthorizationTarget $target): CurrentReportAuthorization =>
-                new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target),
-        );
+        if ($accessDenied) {
+            $authorizer->method('authorizeForOrganization')->willThrowException(new RuntimeException('authorization_denied'));
+        } else {
+            $authorizer->method('authorizeForOrganization')->willReturnCallback(
+                static fn (int $actorId, int $organizationId, DateTimeZone $timezone, CurrentReportAuthorizationTarget $target): CurrentReportAuthorization =>
+                    new CurrentReportAuthorization($context->actor, $context->authorization, $context->visibility, $target),
+            );
+        }
         $getExport = $this->createMock(GetReportExportAction::class);
         $getExport->method('handle')->willReturn($export);
         $runs = $this->createMock(CreateReportRunAction::class);
@@ -135,10 +177,11 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
         $exports = $this->createMock(CreateReportExportAction::class);
         $exports->expects(self::never())->method('handle');
         $dispatcher = $this->createMock(ReportSubscriptionDeliveryDispatcher::class);
-        $dispatcher->expects(self::once())->method('dispatch')->with($delivery->id, self::greaterThan(0));
+        $dispatcher->expects(self::exactly($pendingDispatches))->method('dispatch')->with($delivery->id, self::greaterThan(0));
         $events = $this->createMock(ReportSubscriptionEventRecorder::class);
-        $events->expects(self::once())->method('record')->with('report_subscription_notified', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything());
-        $processor = new ReportSubscriptionDeliveryProcessor(
+        $events->expects(self::exactly($recordDelivery ? 1 : 0))->method('record')->with('report_subscription_notified', self::anything(), self::anything(), $delivery->id, self::anything(), self::anything());
+
+        return new ReportSubscriptionDeliveryProcessor(
             app(EloquentReportSubscriptionDeliveryStore::class),
             new ReportSubscriptionExecutionContextFactory($authorizer, new ReportExecutionContextFactory, $registry),
             $dispatcher,
@@ -150,16 +193,6 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
             $events,
             new ReportSubscriptionPeriodResolver,
         );
-
-        $processor->process($delivery->id);
-        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'ready', 'attempt' => 0, 'notified_at' => null]);
-        (new SendNotificationJob(Notification::query()->sole()))->handle(app(NotificationService::class));
-        $processor->process($delivery->id);
-        $processor->process($delivery->id);
-
-        $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'notified', 'attempt' => 0]);
-        self::assertSame(1, Notification::query()->count());
-        self::assertSame(1, DB::table('notification_analytics')->where('channel', 'in_app')->where('status', 'delivered')->count());
     }
 
     private function fixture(bool $authorized = true): array

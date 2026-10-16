@@ -44,18 +44,20 @@ final readonly class ReportSubscriptionDeliveryProcessor
             [$delivery, $subscription] = $this->deliveries->lockWithSubscription($id);
             $now = new DateTimeImmutable;
 
+            if (in_array(
+                $delivery->status,
+                [
+                    ReportSubscriptionDeliveryStatus::NOTIFIED,
+                    ReportSubscriptionDeliveryStatus::FAILED,
+                    ReportSubscriptionDeliveryStatus::EXPIRED,
+                ],
+                true,
+            )) {
+                return [];
+            }
+
             if ($delivery->executionExpiresAt <= $now) {
-                if (! in_array(
-                    $delivery->status,
-                    [
-                        ReportSubscriptionDeliveryStatus::NOTIFIED,
-                        ReportSubscriptionDeliveryStatus::FAILED,
-                        ReportSubscriptionDeliveryStatus::EXPIRED,
-                    ],
-                    true,
-                )) {
-                    $this->deliveries->markExpiredLocked($delivery);
-                }
+                $this->deliveries->markExpiredLocked($delivery);
 
                 return [];
             }
@@ -151,6 +153,10 @@ final readonly class ReportSubscriptionDeliveryProcessor
 
                 return [];
             } catch (Throwable) {
+                if ($delivery->status === ReportSubscriptionDeliveryStatus::READY) {
+                    return [[$delivery->id, $this->delay((int) config('reporting_subscriptions.poll_max_ms'))]];
+                }
+
                 return $this->retry($delivery, 'REPORT_INTERNAL_ERROR');
             }
         });

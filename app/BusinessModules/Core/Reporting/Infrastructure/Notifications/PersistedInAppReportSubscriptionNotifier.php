@@ -16,13 +16,26 @@ use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 final readonly class PersistedInAppReportSubscriptionNotifier implements InAppReportSubscriptionNotifier
 {
     public function __construct(private NotificationService $notifications) {}
 
     public function notify(
+        ReportExecutionContext $context,
+        ReportSubscription $subscription,
+        ReportSubscriptionDelivery $delivery,
+        ReportExport $export,
+        IdempotencyKey $key,
+    ): ?ReportSubscriptionNotificationReceipt {
+        try {
+            return $this->persistOrInspect($context, $subscription, $delivery, $export, $key);
+        } catch (ReportSubscriptionNotificationUnavailable) {
+            return null;
+        }
+    }
+
+    private function persistOrInspect(
         ReportExecutionContext $context,
         ReportSubscription $subscription,
         ReportSubscriptionDelivery $delivery,
@@ -60,8 +73,11 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
                 requiredPermissions: ['reports.view'],
                 interfaces: ['admin'],
             );
-            if (! $notification->exists || ! in_array('in_app', $notification->channels ?? [], true)) {
-                throw new RuntimeException('report_subscription_notification_unavailable');
+            if (! $notification->exists) {
+                return null;
+            }
+            if (! in_array('in_app', $notification->channels ?? [], true)) {
+                throw new ReportSubscriptionNotificationUnavailable('report_subscription_notification_unavailable');
             }
 
             $now = now();
@@ -93,7 +109,7 @@ final readonly class PersistedInAppReportSubscriptionNotifier implements InAppRe
             ->where('organization_id', $subscription->organizationId)
             ->first();
         if (! $notification instanceof Notification || ! in_array('in_app', $notification->channels ?? [], true)) {
-            throw new RuntimeException('report_subscription_notification_unavailable');
+            throw new ReportSubscriptionNotificationUnavailable('report_subscription_notification_unavailable');
         }
         if (! in_array($notification->delivery_status['in_app'] ?? null, ['sent', 'delivered'], true)
             || ! $notification->analytics()->where('channel', 'in_app')->where('status', 'delivered')->exists()) {
