@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Publication;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\BatchReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPublicationFeatureConfiguration;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -12,18 +12,40 @@ use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
 use LogicException;
 
-final class EloquentReportPublicationFeatureStore implements ReportPublicationFeatureStore
+final class EloquentReportPublicationFeatureStore implements BatchReportPublicationFeatureStore
 {
     public function __construct(private readonly ConnectionInterface $connection) {}
 
     public function current(string $code): ?ReportPublicationFeatureConfiguration
     {
-        if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $code) !== 1) {
-            throw new InvalidArgumentException('report_publication_feature_code_invalid');
-        }
+        $this->assertCode($code);
         $row = $this->connection->table('public.report_publication_features')->where('code', $code)->first();
 
         return $row === null ? null : $this->hydrate((array) $row);
+    }
+
+    public function currentMany(array $codes): array
+    {
+        foreach ($codes as $code) {
+            $this->assertCode($code);
+        }
+        if ($codes === []) {
+            return [];
+        }
+
+        $features = [];
+        foreach ($this->connection->table('public.report_publication_features')->whereIn('code', $codes)->get() as $row) {
+            $features[(string) $row->code] = $this->hydrate((array) $row);
+        }
+
+        return $features;
+    }
+
+    private function assertCode(string $code): void
+    {
+        if (preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $code) !== 1) {
+            throw new InvalidArgumentException('report_publication_feature_code_invalid');
+        }
     }
 
     private function hydrate(array $row): ReportPublicationFeatureConfiguration
