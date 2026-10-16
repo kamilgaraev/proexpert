@@ -190,6 +190,10 @@
             <directory>tests/Unit/DesignManagement</directory>
             <file>tests/Unit/Authorization/PermissionTranslatorTest.php</file>
         </testsuite>
+        <testsuite name="IfcReadMaintenance">
+            <file>tests/Feature/AIAssistant/AssistantIfcInsertAutovacuumMigrationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantIfcVisibilityPlanTest.php</file>
+        </testsuite>
         <testsuite name="SlowSqlRegression">
             <file>tests/Feature/AIAssistant/SlowSqlQueryPlanTest.php</file>
             <file>tests/Feature/AIAssistant/RagForeignKeyLockTest.php</file>
