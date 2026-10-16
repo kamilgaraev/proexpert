@@ -36,9 +36,10 @@ final readonly class AssistantProjectMachineryReader
             preg_match_all('/'.$code.'/u', $mention, $found);
             foreach ($found[0] as $value) { $codes[] = preg_replace('/^[«"“]|[»"”]$/u', '', $value) ?? $value; }
         }
-        preg_match_all('/(?:техник[а-яё]*|машин[а-яё]*|механизм[а-яё]*)\s+(?:с\s+)?(?:id|№|#)\s*(\d+)(?!\pN)/iu', $query, $ids);
-        if ($ids[1] !== []) { preg_match_all('/(?:#|№|(?<!\pL)id)\s*(\d+)(?!\pN)/iu', $query, $ids); }
-        $codes = array_values(array_unique($codes)); $ids = array_values(array_unique($ids[1]));
+        preg_match_all('/(?:техник[а-яё]*|машин[а-яё]*|механизм[а-яё]*)\s+(?:с\s+)?(?:id|№|#)\s*\d+(?:\s*(?:,|и|или)\s*(?:(?:id|№|#)\s*)?\d+)*/iu', $query, $mentions);
+        $ids = [];
+        foreach ($mentions[0] as $mention) { preg_match_all('/\d+/u', $mention, $found); $ids = [...$ids, ...$found[0]]; }
+        $codes = array_values(array_unique($codes)); $ids = array_values(array_unique($ids));
         if (count($codes) + count($ids) > 1) { return null; }
         if ($codes !== []) { return mb_strlen($codes[0]) <= 128 ? ['asset_code' => $codes[0]] : null; }
         if ($ids !== []) { return strlen($ids[0]) <= 18 && (int) $ids[0] > 0 ? ['asset_id' => (int) $ids[0]] : null; }
@@ -59,7 +60,7 @@ final readonly class AssistantProjectMachineryReader
             if ($project === null || $assetQuery === null) { throw new AuthorizationException; }
             $this->scope->apply($assetQuery, $actor, $organizationId, $projectId);
             if (isset($filter['asset_id'])) { $assetQuery->whereKey($filter['asset_id']); }
-            if (isset($filter['asset_code'])) { $assetQuery->where('asset_code', $filter['asset_code']); }
+            if (isset($filter['asset_code'])) { $assetQuery->whereRaw('LOWER(asset_code) = LOWER(?)', [$filter['asset_code']]); }
             $assets = $assetQuery->orderBy('id')->limit(1001)->select(['id', 'name', 'asset_code', 'status', 'organization_asset_id', 'current_project_id', 'updated_at'])->get();
             $sections = []; $rows = [];
             foreach ([

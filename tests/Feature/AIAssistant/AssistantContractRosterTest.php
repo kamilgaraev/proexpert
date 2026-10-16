@@ -132,6 +132,27 @@ final class AssistantContractRosterTest extends TestCase
         self::assertStringContainsString('дата уже прошла', mb_strtolower($read['server_formatted_answer']));
         foreach (['DRAFT', 'ARCHIVED-VIEW', 'FOREIGN-NOT-SHARED', 'total_amount', '100.00'] as $excluded) { self::assertStringNotContainsString($excluded, json_encode($read)); }
         self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($fixture->owner, $fixture->organization->id, $read['source_refs']));
+        $supplier = \App\Models\Supplier::withoutEvents(fn () => \App\Models\Supplier::query()->create([
+            'organization_id' => $fixture->organization->id, 'name' => 'Поставщик для проверки ролей',
+        ]));
+        foreach (\App\Enums\Contract\ContractSideTypeEnum::cases() as $type) {
+            $own->updateQuietly(['contract_side_type' => $type, 'supplier_id' => $type->requiresSupplier() ? $supplier->id : null,
+                'contractor_id' => $type->requiresSupplier() ? null : $counterparty->id, 'is_self_execution' => false]);
+            foreach ([null, $fixture->organization->id] as $sourceOrganization) {
+                \Illuminate\Support\Facades\DB::table('contractors')->where('id', $counterparty->id)->update(['source_organization_id' => $sourceOrganization]);
+                $legacy = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+                $native = app(\App\Services\Contract\ContractSideResolverService::class)->resolve($own->fresh(), $fixture->organization->id);
+                $row = array_column($legacy['data']['items'], null, 'id')[$own->id];
+                $ours = $native[$native['is_income'] ? 'second_party_role_label' : 'first_party_role_label'];
+                $otherRole = $native[$native['is_income'] ? 'first_party_role_label' : 'second_party_role_label'];
+                self::assertSame($ours, trans_message('ai_assistant_contract_roster.role_'.$row['our_role']));
+                self::assertSame($otherRole, trans_message('ai_assistant_contract_roster.role_'.$row['counterparty_role']));
+                self::assertStringContainsString('Наша роль: '.$ours.'; роль второй стороны: '.$otherRole, $legacy['server_formatted_answer']);
+            }
+        }
+        $own->updateQuietly(['contract_side_type' => 'contract', 'supplier_id' => null, 'contractor_id' => $counterparty->id]);
+        \Illuminate\Support\Facades\DB::table('contractors')->where('id', $counterparty->id)->update(['source_organization_id' => null]);
+        $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
         $view->update(['access_revoked_at' => now()]);
         self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $read['source_refs'][0]));
         for ($i = 0; $i < 21; $i++) { Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'EXTRA-'.$i] + $base)); }

@@ -186,6 +186,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             'Сделай машину нашего объекта свободной и сводку по её назначениям',
             'Сделай сводку по назначенной технике нашего объекта и сделай машину свободной',
             'Какие машины OA-35 и OA-36 нашего объекта назначены?',
+            'Какие машины #26 и #27 нашего объекта назначены?',
         ] as $write) {
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($write)), $write);
             self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $write), $write);
@@ -197,6 +198,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             ['Почему техника нашего объекта по-прежнему назначена?', []],
             ['Техника по-прежнему назначена на наш объект?', []],
             ['Почему машина #26 нашего объекта назначена?', ['asset_id' => 26]],
+            ['Почему машина #26 нашего проекта в смене #52 всё ещё назначена?', ['asset_id' => 26]],
         ] as [$query, $filter]) {
             $expected = ['project_id' => 52] + $filter;
             $target = $this->plan($query);

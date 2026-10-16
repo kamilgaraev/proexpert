@@ -131,6 +131,10 @@ final class AssistantMachinerySummaryTest extends TestCase
         self::assertSame($targetRead['server_formatted_answer'], $reader->verifiedAnswer($targetRead, $fixture->owner, $fixture->organization->id)['text']);
         $byId = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $targetProject->id, 'asset_id' => $target->id]);
         self::assertSame($target->id, $byId['data']['assets'][0]['id']);
+        $lowercase = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $targetProject->id, 'asset_code' => 'target-335']);
+        self::assertSame(1, $lowercase['data']['asset_count']);
+        self::assertSame($target->id, $lowercase['data']['assets'][0]['id']);
+        self::assertNotNull($reader->verifiedAnswer($lowercase, $fixture->owner, $fixture->organization->id));
         self::assertSame(0, $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $other->id, 'asset_id' => $target->id])['data']['asset_count']);
         $forged = $targetRead['source_refs'][0]; $forged['asset_filter'] = ['asset_id' => $legacy->id];
         self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $forged));
