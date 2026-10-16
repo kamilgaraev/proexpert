@@ -1,16 +1,53 @@
 #!/usr/bin/env bash
 
 ESTIMATOR_RUNTIME_FLAGS_STAGE_FILE=''
+ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT=''
+ESTIMATOR_RUNTIME_COMPOSE_VALUES=()
 
 cleanup_estimator_runtime_flags() {
   if [ -n "${ESTIMATOR_RUNTIME_FLAGS_STAGE_FILE}" ]; then
     rm -f -- "${ESTIMATOR_RUNTIME_FLAGS_STAGE_FILE}"
     ESTIMATOR_RUNTIME_FLAGS_STAGE_FILE=''
   fi
+  if [ -n "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}" ]; then
+    rm -f -- "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}"
+    ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT=''
+  fi
+}
+
+estimator_runtime_load_compose_env() {
+  ESTIMATOR_RUNTIME_COMPOSE_VALUES=()
+  ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/most-estimator-config.XXXXXX")" || return 1
+  if ! (
+    set -o pipefail
+    docker compose --env-file "${ENV_FILE}" config --format json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    environment = json.load(sys.stdin)["services"]["api"].get("environment", {})
+    values = []
+    for key in ["ESTIMATE_GENERATION_UNIVERSAL_ENABLED", "ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED", "ESTIMATE_GENERATION_LIVE_QA_ENABLED", "ESTIMATE_GENERATION_LIVE_QA_RUN_ID"]:
+        value = environment.get(key)
+        if value is not None and (not isinstance(value, str) or "\0" in value):
+            raise ValueError()
+        values.extend(["0" if value is None else "1", "" if value is None else value])
+    sys.stdout.write("\0".join(values) + "\0")
+except Exception:
+    sys.exit(1)
+' > "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}"
+  ); then
+    echo 'Cannot resolve estimator runtime settings through Compose' >&2
+    rm -f -- "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}" || return 1
+    ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT=''
+    return 1
+  fi
+  mapfile -d '' -t ESTIMATOR_RUNTIME_COMPOSE_VALUES < "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}" || return 1
+  rm -f -- "${ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT}" || return 1
+  ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT=''
+  [ "${#ESTIMATOR_RUNTIME_COMPOSE_VALUES[@]}" -eq 8 ] || return 1
 }
 
 estimator_runtime_read_env_value() {
-  local key="$1" count value
+  local key="$1" count index
   ESTIMATOR_RUNTIME_ENV_VALUE=''
   ESTIMATOR_RUNTIME_ENV_PRESENT=0
   count="$(awk -F= -v key="${key}" '$1 == key { count++ } END { print count + 0 }' "${ENV_FILE}")" || return 1
@@ -18,16 +55,15 @@ estimator_runtime_read_env_value() {
     echo "Duplicate estimator runtime setting: ${key}" >&2
     return 1
   }
-  if [ "${count}" -eq 1 ]; then
-    value="$(awk -F= -v key="${key}" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "${ENV_FILE}")" || return 1
-    value="$(printf '%s' "${value}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')" || return 1
-    case "${value}" in
-      \"*\") value="${value:1:${#value}-2}" ;;
-      \'*\') value="${value:1:${#value}-2}" ;;
-    esac
-    ESTIMATOR_RUNTIME_ENV_VALUE="${value}"
-    ESTIMATOR_RUNTIME_ENV_PRESENT=1
-  fi
+  case "${key}" in
+    ESTIMATE_GENERATION_UNIVERSAL_ENABLED) index=0 ;;
+    ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED) index=2 ;;
+    ESTIMATE_GENERATION_LIVE_QA_ENABLED) index=4 ;;
+    ESTIMATE_GENERATION_LIVE_QA_RUN_ID) index=6 ;;
+    *) return 1 ;;
+  esac
+  ESTIMATOR_RUNTIME_ENV_PRESENT="${ESTIMATOR_RUNTIME_COMPOSE_VALUES[index]}"
+  ESTIMATOR_RUNTIME_ENV_VALUE="${ESTIMATOR_RUNTIME_COMPOSE_VALUES[index + 1]}"
 }
 
 estimator_runtime_existing_bool() {
@@ -42,6 +78,7 @@ estimator_runtime_existing_bool() {
 
 validate_estimator_runtime_flags() {
   local key input existing qa_enabled run_id effective normalized
+  estimator_runtime_load_compose_env || return 1
   for key in \
     ESTIMATE_GENERATION_UNIVERSAL_ENABLED \
     ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED \

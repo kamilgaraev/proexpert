@@ -76,6 +76,15 @@ fi
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 ENV_FILE="$TEST_DIR/.env"
+export ENV_FILE
+export COMPOSE_FILE="$TEST_DIR/compose.yml"
+export COMPOSE_PROJECT_NAME=estimator-runtime-fixture
+cat > "$COMPOSE_FILE" <<'COMPOSE'
+services:
+  api:
+    image: fixture
+    env_file: ${ENV_FILE}
+COMPOSE
 cat > "$ENV_FILE" <<'ENVVARS'
 KEEP=value
 ESTIMATE_GENERATION_UNIVERSAL_ENABLED=false
@@ -269,4 +278,57 @@ for marker in null '(null)' empty '(empty)' true '(true)' false '(false)'; do
     esac
 done
 
-echo 'AI estimator production deploy contract passed (18 runtime cases)'
+ENV_FILE="$TEST_DIR/comments.env"
+cat > "$ENV_FILE" <<'ENVVARS'
+ESTIMATE_GENERATION_UNIVERSAL_ENABLED=false # temporarily disabled
+ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED=true # wallet
+ESTIMATE_GENERATION_LIVE_QA_ENABLED=false # not running
+ESTIMATE_GENERATION_LIVE_QA_RUN_ID=null # no run
+ENVVARS
+initialize_secure_env
+cp "$ENV_FILE" "$TEST_DIR/before-comments"
+apply_estimator_runtime_flags
+cmp -s "$TEST_DIR/before-comments" "$ENV_FILE"
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED" = false ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED" = true ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = null ]]
+
+cat > "$ENV_FILE" <<'ENVVARS'
+ESTIMATE_GENERATION_UNIVERSAL_ENABLED="false" # quoted
+ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED='0' # quoted
+ESTIMATE_GENERATION_LIVE_QA_ENABLED=false
+ESTIMATE_GENERATION_LIVE_QA_RUN_ID="literal # retained" # discarded
+ENVVARS
+initialize_secure_env
+cp "$ENV_FILE" "$TEST_DIR/before-quoted-comments"
+apply_estimator_runtime_flags
+cmp -s "$TEST_DIR/before-quoted-comments" "$ENV_FILE"
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_UNIVERSAL_ENABLED" = false ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_SHARED_CREDITS_ENABLED" = false ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID_TYPE" = string ]]
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = 'literal # retained' ]]
+
+cat > "$ENV_FILE" <<'ENVVARS'
+BASE_QA_RUN=123e4567-e89b-12d3-a456-426614174000
+ESTIMATE_GENERATION_UNIVERSAL_ENABLED=false
+ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED=false
+ESTIMATE_GENERATION_LIVE_QA_ENABLED=false
+ESTIMATE_GENERATION_LIVE_QA_RUN_ID=${BASE_QA_RUN}
+ENVVARS
+initialize_secure_env
+apply_estimator_runtime_flags
+[[ "$ESTIMATOR_RUNTIME_EXPECTED_LIVE_QA_RUN_ID" = 123e4567-e89b-12d3-a456-426614174000 ]]
+
+cp "$ENV_FILE" "$TEST_DIR/before-compose-failure"
+saved_compose_file="$COMPOSE_FILE"
+export COMPOSE_FILE="$TEST_DIR/invalid-compose.yml"
+printf 'services: []\n' > "$COMPOSE_FILE"
+if apply_estimator_runtime_flags; then
+    echo 'invalid Compose configuration must abort before environment changes' >&2
+    exit 1
+fi
+cmp -s "$TEST_DIR/before-compose-failure" "$ENV_FILE"
+[[ "$ESTIMATOR_RUNTIME_COMPOSE_SNAPSHOT" = '' ]]
+export COMPOSE_FILE="$saved_compose_file"
+
+echo 'AI estimator production deploy contract passed (22 runtime cases)'
