@@ -1756,7 +1756,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     public static function customReportRequests(): array
     {
-        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF']];
+        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF'], ['Не делай PDF, сделай Excel со списком сотрудников']];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

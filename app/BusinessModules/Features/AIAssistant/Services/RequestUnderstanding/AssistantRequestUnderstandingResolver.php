@@ -10,6 +10,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassif
 
 final class AssistantRequestUnderstandingResolver
 {
+    private const NEGATIVE_CREATION_VERBS = 'создавай|формируй|делай|генерируй|выгружай|подготавливай';
+
     public function __construct(private readonly AssistantCapabilityRegistry $capabilities = new AssistantCapabilityRegistry) {}
 
     public function resolve(string $message, array $context = []): AssistantRequestUnderstanding
@@ -62,32 +64,27 @@ final class AssistantRequestUnderstandingResolver
     private function resolveConstraints(string $normalized): array
     {
         $constraints = [];
-        $negativeCreation = $this->containsAnyWholePhrase($normalized, [
-            'не создавай',
-            'не формируй',
-            'не делай',
-            'не генерируй',
-            'не выгружай',
-            'не подготавливай',
-        ]);
+        $negativeScopes = $this->negativeCreationScopes($normalized);
+        $negativeCreation = $negativeScopes !== [];
+        $negativeObjects = implode(' ', $negativeScopes);
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без pdf', 'не нужен pdf', 'не нужно pdf', 'не pdf', 'не файл pdf'])
-            || ($negativeCreation && $this->hasPdfMarker($normalized))
+            || $this->hasPdfMarker($negativeObjects)
         ) {
             $constraints[] = 'no_pdf';
         }
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без файла', 'без файлов', 'не нужен файл', 'не нужны файлы', 'не файл', 'не файлы', 'не нужен никакой файл'])
-            || ($negativeCreation && $this->hasFileMarker($normalized))
+            || $this->containsAny($negativeObjects, ['файл', 'выгрузк', 'документ'])
         ) {
             $constraints[] = 'no_file';
         }
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без отчета', 'без отчетов', 'не нужен отчет', 'не нужны отчеты', 'не отчет', 'не создавай отчет'])
-            || ($negativeCreation && $this->hasReportMarker($normalized))
+            || $this->hasReportMarker($negativeObjects)
         ) {
             $constraints[] = 'no_report';
         }
@@ -541,10 +538,19 @@ final class AssistantRequestUnderstandingResolver
             || in_array($this->requestedFileFormat($normalized), ['xlsx', 'csv'], true);
     }
 
+    private function negativeCreationScopes(string $normalized): array
+    {
+        $commands = self::NEGATIVE_CREATION_VERBS.'|создай|сформируй|сделай|сгенерируй|выгрузи|подготовь|пришли|отправь|покажи|нужен|нужна|нужно|найди|перечисли|проанализируй';
+        preg_match_all('/(?<!\pL)не\s+(?:'.self::NEGATIVE_CREATION_VERBS.')(?!\pL).*?(?=\s+(?:не\s+)?(?:'.$commands.')(?!\pL)|$)/u', $normalized, $matches);
+
+        return $matches[0];
+    }
+
     private function requestedFileFormat(string $normalized): ?string
     {
         $formats = '(xlsx|excel|эксель|csv|pdf|пдф)';
-        $positive = preg_replace('/(?<!\pL)(?:не|без)\s+(?:в\s+)?(?:формате\s+)?'.$formats.'(?!\pL)/u', ' ', $normalized);
+        $positive = str_replace($this->negativeCreationScopes($normalized), ' ', $normalized);
+        $positive = preg_replace('/(?<!\pL)(?:не|без)\s+(?:в\s+)?(?:формате\s+)?'.$formats.'(?!\pL)/u', ' ', $positive);
         if (preg_match('/(?<!\pL)(?:в\s+(?:формате\s+)?|(?:сделай|создай|выгрузи|сформируй|подготовь|пришли)\s+(?:мне\s+)?)'.$formats.'(?!\pL)/u', $positive, $match) !== 1
             && preg_match('/(?<![\pL\pN])'.$formats.'(?![\pL\pN])/u', $positive, $match) !== 1) {
             return null;
