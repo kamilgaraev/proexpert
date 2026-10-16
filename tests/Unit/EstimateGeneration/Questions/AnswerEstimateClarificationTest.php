@@ -232,6 +232,39 @@ final class AnswerEstimateClarificationTest extends TestCase
         );
     }
 
+    public function test_a_choice_from_another_question_cannot_create_a_decision_or_trigger_reanalysis(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $models->saveSourceModel([$this->entity()], [$this->targetFact()], []);
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $reanalysis = new RecordingPlanningReanalysisTrigger;
+        $service = new AnswerEstimateClarification(
+            $authorization,
+            new FixedClarificationSource(new CurrentEstimateClarification(
+                $this->question(), self::SOURCE_VERSION, str_repeat('b', 64), str_repeat('c', 64), 'fact:wall-material',
+            )),
+            $models,
+            new ApplyProjectModelDecision($models),
+            $reanalysis,
+            static fn (string $key): string => $key,
+        );
+
+        try {
+            $service->handle(
+                $this->actor(), $this->session(),
+                new ActorContext(10, 20, 30, 'wrong-question-choice', self::SOURCE_VERSION, str_repeat('c', 64)),
+                'wall_material_required', 'include_supply_and_installation',
+            );
+            self::fail('Choice not offered by this question must be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('estimate_generation.question_response_invalid', $exception->getMessage());
+        }
+
+        self::assertSame([], $models->decisions);
+        self::assertSame(0, $reanalysis->calls);
+    }
+
     private function question(): EstimateClarificationQuestion
     {
         return new EstimateClarificationQuestion(

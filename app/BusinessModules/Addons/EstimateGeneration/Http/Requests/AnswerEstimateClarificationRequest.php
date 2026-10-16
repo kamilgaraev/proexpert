@@ -19,7 +19,7 @@ final class AnswerEstimateClarificationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'response' => ['required', 'string', 'regex:/^(?:select:[a-f0-9]{64}|other|leave_unresolved)$/D'],
+            'response' => ['required', 'string', 'max:160'],
             'other' => ['nullable', 'string', 'max:500', 'required_if:response,other', 'prohibited_unless:response,other'],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/^[A-Za-z0-9][A-Za-z0-9._:-]+$/D'],
             'expected_source_version' => ['required', 'string', 'regex:/^sha256:[a-f0-9]{64}$/D'],
