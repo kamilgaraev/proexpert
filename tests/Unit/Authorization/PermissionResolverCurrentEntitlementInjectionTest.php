@@ -53,7 +53,7 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         $this->application->bind(OrganizationEntitlementService::class,
             static function (): never { throw new LogicException('global_entitlement_resolution_forbidden'); });
         $injected = Mockery::mock(OrganizationEntitlementService::class);
-        $injected->shouldReceive('getEffectiveModules')->once()->with(37)->andReturn(collect([['slug' => 'ai-assistant']]));
+        $injected->shouldReceive('getEffectiveModuleSlugs')->once()->with(37)->andReturn(['ai-assistant']);
         $resolver = $this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks()
             ->forReadScope(new Repository(new ArrayStore()));
         self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
@@ -62,10 +62,10 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
     public function testClonePreservesSourceAcrossCurrentAndReadScopesWithoutMutatingOriginal(): void
     {
         $default = Mockery::mock(OrganizationEntitlementService::class);
-        $default->shouldReceive('getEffectiveModules')->with(37)->andReturn(collect([]));
+        $default->shouldReceive('getEffectiveModuleSlugs')->with(37)->andReturn([]);
         $this->application->instance(OrganizationEntitlementService::class, $default);
         $injected = Mockery::mock(OrganizationEntitlementService::class);
-        $injected->shouldReceive('getEffectiveModules')->with(37)->andReturn(collect([['slug' => 'ai-assistant']]));
+        $injected->shouldReceive('getEffectiveModuleSlugs')->with(37)->andReturn(['ai-assistant']);
         $original = $this->resolver();
         $selected = $original->withCurrentEntitlementSource($injected);
         self::assertNotSame($original, $selected);
@@ -77,7 +77,7 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
     public function testNewCurrentCloneReloadsChangedEntitlementsInsteadOfReusingDecision(): void
     {
         $injected = Mockery::mock(OrganizationEntitlementService::class);
-        $injected->shouldReceive('getEffectiveModules')->with(37)->andReturn(collect([['slug' => 'ai-assistant']]), collect([]));
+        $injected->shouldReceive('getEffectiveModuleSlugs')->with(37)->andReturn(['ai-assistant'], []);
         $selected = $this->resolver()->withCurrentEntitlementSource($injected);
         self::assertTrue($selected->forCurrentChecks()->forReadScope(new Repository(new ArrayStore()))
             ->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
@@ -89,6 +89,7 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
     {
         $injected = Mockery::mock(OrganizationEntitlementService::class);
         $injected->shouldNotReceive('getEffectiveModules');
+        $injected->shouldNotReceive('getEffectiveModuleSlugs');
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(37, 'ai_assistant')->andReturn(true);
         $resolver = $this->resolver(new ModulePermissionChecker($access))->withCurrentEntitlementSource($injected);

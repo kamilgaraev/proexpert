@@ -280,7 +280,7 @@ class PermissionResolver
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
                         fn (): array => ($this->currentEntitlementSource ?? app(OrganizationEntitlementService::class))
-                            ->getEffectiveModules($organizationId)->pluck('slug')->all());
+                            ->getEffectiveModuleSlugs($organizationId));
 
                     return in_array($moduleToCheck, $activeModules, true);
                 }
