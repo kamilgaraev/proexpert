@@ -40,8 +40,12 @@ final class AcceptedDocumentFactProjector
         }
 
         $documentContext = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
-        $engineering = $numeric ? FactVocabulary::engineeringObservation($claim->entityKey, $claim->factType, $value, $claim->unit) : null;
-        $type = $documentContext !== null ? 'work_scope' : ($engineering !== null ? 'dimension' : match ($claim->factType) {
+        $roomDimension = $numeric ? FactVocabulary::roomDimensionObservation($claim->entityKey, $claim->factType, $value, $claim->unit) : null;
+        if (in_array($claim->factType, ['length', 'width', 'height'], true) && $roomDimension === null) {
+            return null;
+        }
+        $measurement = $roomDimension ?? ($numeric ? FactVocabulary::engineeringObservation($claim->entityKey, $claim->factType, $value, $claim->unit) : null);
+        $type = $documentContext !== null ? 'work_scope' : ($measurement !== null ? 'dimension' : match ($claim->factType) {
             'area' => $numeric
                 ? ($this->isBuildingTotalArea($claim->entityKey)
                     ? 'total_area'
@@ -62,7 +66,7 @@ final class AcceptedDocumentFactProjector
 
         return [
             'fact_type' => $type,
-            'label_key' => $documentContext !== null ? $claim->factType : ($engineering !== null ? $engineering['parameter'] : match ($type) {
+            'label_key' => $documentContext !== null ? $claim->factType : ($measurement !== null ? $measurement['parameter'] : match ($type) {
                 'room_area', 'zone_area' => 'area',
                 'height' => 'elevation',
                 default => $type,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
 use Brick\Math\BigDecimal;
 
 final class FactVocabulary
@@ -34,6 +35,18 @@ final class FactVocabulary
     public static function engineeringParameters(): array
     {
         return array_values(array_unique(array_column(self::ENGINEERING_MEASUREMENTS, 'parameter')));
+    }
+
+    public static function roomDimensionObservation(string $entityKey, string $parameter, mixed $value, ?string $unit): ?array
+    {
+        if (preg_match('/^room[:._-][a-z0-9][a-z0-9._:-]{0,119}$/iD', $entityKey) !== 1
+            || ! in_array($parameter, ['length', 'width', 'height'], true)
+            || (! is_string($value) && ! is_int($value)) || ! CanonicalSourceDecimal::isPositive((string) $value)
+            || self::factor('length', $unit) === null) {
+            return null;
+        }
+
+        return ['parameter' => $parameter, 'unit' => self::unit($unit)];
     }
 
     /** Validates the stated measurement, without deriving quantities from a photograph or context. */

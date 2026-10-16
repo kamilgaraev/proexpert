@@ -401,17 +401,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             $plan = $plan->escalateForCrossDocumentReference();
         }
         $this->assertAnalysisPlanBudget($plan);
-        $regionSourceImage = $image;
-        if ($plan->usesSemanticRegions && $routing->semanticRegions !== []) {
-            $regionSourceImage = $this->reader->read(
-                $context->organizationId,
-                $storageKey,
-                max(1, (int) config('estimate-generation.vision.preprocessing.max_bytes', 20_000_000)),
-                $sourceBytes,
-                $sourceSha256,
-            )->body;
-        }
-        $imageDimensions = getimagesizefromstring($regionSourceImage);
+        $imageDimensions = getimagesizefromstring($image);
         if (! is_array($imageDimensions)) {
             throw new DocumentUnitProcessingException('vision_page_image_invalid');
         }
@@ -421,11 +411,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             (int) $imageDimensions[1],
         );
         if ($plan->usesSemanticRegions && $regionSet->regions !== []) {
-            $regionImages = $this->semanticRegionCropper->crop($regionSourceImage, $regionSet);
+            $regionImages = $this->semanticRegionCropper->crop($image, $regionSet);
             $regionSet = $this->renderedRegionSet($regionSet, $regionImages);
             $input = $input->withRegionImages($regionImages);
         }
-        unset($regionSourceImage);
         $remainingProfiles = array_values(array_filter(
             $plan->observers,
             static fn (ObserverProfile $profile): bool => $profile !== ObserverProfile::Literal,
