@@ -173,6 +173,16 @@ class PaymentRequestService
         DB::beginTransaction();
 
         try {
+            $document = PaymentDocument::query()
+                ->forOrganization((int) $document->organization_id)
+                ->whereKey($document->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($document->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
+                throw new \DomainException(trans_message('payments.validation.request_accept_only_payment_requests'));
+            }
+
             // Утверждаем документ (если требуется workflow)
             if ($document->requiresApproval()) {
                 // Workflow утверждения был инициирован при submit
@@ -180,6 +190,20 @@ class PaymentRequestService
                 if ($document->status->value !== 'approved') {
                     throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));
                 }
+            }
+
+            $existingOrder = PaymentDocument::query()
+                ->forOrganization((int) $document->organization_id)
+                ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+                ->where('source_type', $document->getMorphClass())
+                ->where('source_id', $document->getKey())
+                ->orderBy('id')
+                ->first();
+
+            if ($existingOrder instanceof PaymentDocument) {
+                DB::commit();
+
+                return $existingOrder;
             }
 
             // Создаем платежное поручение на основе требования
@@ -305,9 +329,13 @@ class PaymentRequestService
      */
     private function createPaymentOrderFromRequest(PaymentDocument $request, array $additionalData = []): PaymentDocument
     {
+        $contractId = $this->budgetLimitService->contractId($request);
+
         $orderData = [
             'organization_id' => $request->organization_id,
             'project_id' => $request->project_id,
+            'invoiceable_type' => $contractId !== null ? Contract::class : null,
+            'invoiceable_id' => $contractId,
             'budget_article_id' => $request->budgetArticle?->uuid,
             'responsibility_center_id' => $request->responsibilityCenter?->uuid,
             'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,

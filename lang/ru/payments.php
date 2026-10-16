@@ -91,6 +91,7 @@ return [
         'estimate_split_source_required' => 'Позиции сметы можно добавлять только к платежному документу, связанному с договором или актом.',
         'estimate_item_not_found' => 'Позиция сметы #%d не найдена или не принадлежит текущему документу.',
         'request_submit_only_payment_requests' => 'Отправлять можно только платежные требования.',
+        'request_accept_only_payment_requests' => 'Создать поручение можно только по платёжному требованию.',
         'request_must_be_approved' => 'Платежное требование должно быть утверждено.',
         'request_reject_only_payment_requests' => 'Отклонять можно только платежные требования.',
         'transaction_duplicate_reference' => 'Платеж с таким номером уже существует.',

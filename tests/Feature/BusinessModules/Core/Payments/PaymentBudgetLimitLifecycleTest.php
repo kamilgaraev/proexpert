@@ -163,6 +163,58 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_request_order_retains_its_contract_scoped_budget_on_accept_and_retry(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $contract = $this->createApprovedAct($context)->contract;
+        $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
+        $request = $this->createDocument($context, $budget, 900.0);
+        $request->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'source_type' => Contract::class,
+            'source_id' => $contract->id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'currency' => 'RUB',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ])->save();
+
+        $this->service()->syncReservation($request->fresh(), $context->user);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept");
+        $response->assertOk();
+        $orderId = $response->json('data.payment_order.id');
+        $order = PaymentDocument::query()->findOrFail($orderId);
+        self::assertSame(Contract::class, $order->invoiceable_type);
+        self::assertSame($contract->id, (int) $order->invoiceable_id);
+        self::assertSame(PaymentDocument::class, $order->source_type);
+        self::assertSame($request->id, (int) $order->source_id);
+        $this->assertDatabaseHas('budget_limit_checks', [
+            'payment_document_id' => $orderId,
+            'contract_id' => $contract->id,
+            'accepted' => true,
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+            ->assertOk()->assertJsonPath('data.payment_order.id', $orderId);
+        self::assertSame(2, PaymentDocument::query()->count());
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id,
+            'status' => BudgetLimitReservation::STATUS_RELEASED,
+        ]);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_act_budget_limit_does_not_use_a_different_contracts_line(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

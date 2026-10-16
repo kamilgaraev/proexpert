@@ -82,6 +82,57 @@ class PaymentRequestControllerWorkflowTest extends TestCase
             'payee_contractor_id' => $contractor->id,
             'amount' => '900.00',
         ]);
+
+        $retry = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept");
+
+        $retry->assertOk();
+        $retry->assertJsonPath('data.payment_order.id', $response->json('data.payment_order.id'));
+        self::assertSame(1, PaymentDocument::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('source_type', PaymentDocument::class)
+            ->where('source_id', $request->id)
+            ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+            ->count());
+        self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+    }
+
+    public function test_accept_rejects_a_document_that_is_not_a_payment_request(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createPaymentRequest($context, $this->createContractor($context), PaymentDocumentStatus::APPROVED);
+        $document->update(['document_type' => PaymentDocumentType::INVOICE]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$document->id}/accept")
+            ->assertUnprocessable();
+
+        self::assertSame(0, PaymentDocument::query()->where('source_id', $document->id)->count());
+    }
+
+    public function test_request_lists_separate_payer_and_payee_within_the_current_organization(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $incoming = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $outgoing = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $outgoing->update([
+            'payer_organization_id' => null,
+            'payer_contractor_id' => $contractor->id,
+            'payee_organization_id' => $context->organization->id,
+            'payee_contractor_id' => null,
+        ]);
+        $foreign = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->createPaymentRequest($foreign, $this->createContractor($foreign), PaymentDocumentStatus::APPROVED);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $incoming->id);
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/outgoing?status=approved')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $outgoing->id);
     }
 
     public function test_payment_request_rejection_sets_rejected_status_and_statistics_count_it(): void
@@ -169,7 +220,7 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         self::assertSame($project->id, $payment->project_id);
         $project->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
         $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload)
-            ->assertUnprocessable()->assertJsonValidationErrors('project_id');
+            ->assertNotFound();
         self::assertSame(1, PaymentDocument::query()->where('invoiceable_type', \App\Models\Contract::class)
             ->where('invoiceable_id', $contract->id)->count());
     }

@@ -864,6 +864,12 @@ class PaymentDocumentService
             $query->byType(PaymentDocumentType::from($filters['document_type']));
         }
 
+        foreach (['payer_organization_id', 'payee_organization_id'] as $partyFilter) {
+            if (isset($filters[$partyFilter])) {
+                $query->where($partyFilter, (int) $filters[$partyFilter]);
+            }
+        }
+
         if (isset($filters['status'])) {
             $query->byStatus(PaymentDocumentStatus::from($filters['status']));
         }

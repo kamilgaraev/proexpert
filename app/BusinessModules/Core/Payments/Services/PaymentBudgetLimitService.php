@@ -888,7 +888,7 @@ final class PaymentBudgetLimitService
             : null;
     }
 
-    private function contractId(PaymentDocument $document): ?int
+    public function contractId(PaymentDocument $document): ?int
     {
         if ($document->invoiceable_type === Contract::class && $document->invoiceable_id) {
             return (int) $document->invoiceable_id;
