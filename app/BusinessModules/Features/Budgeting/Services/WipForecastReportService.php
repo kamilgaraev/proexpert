@@ -1231,15 +1231,34 @@ final class WipForecastReportService
 
     private function paymentDocumentContractExpression(): string
     {
+        $invoiceableActContract = $this->actContractExpression('invoiceable_id');
+        $sourceActContract = $this->actContractExpression('source_id');
+
         return "CASE
             WHEN payment_documents.invoiceable_type = 'App\\Models\\Contract' AND payment_documents.invoiceable_id IS NOT NULL
                 THEN payment_documents.invoiceable_id
+            WHEN payment_documents.invoiceable_type = 'App\\Models\\ContractPerformanceAct' AND payment_documents.invoiceable_id IS NOT NULL
+                THEN {$invoiceableActContract}
             WHEN payment_documents.source_type = 'App\\Models\\Contract' AND payment_documents.source_id IS NOT NULL
                 THEN payment_documents.source_id
+            WHEN payment_documents.source_type = 'App\\Models\\ContractPerformanceAct' AND payment_documents.source_id IS NOT NULL
+                THEN {$sourceActContract}
             WHEN payment_documents.metadata->>'contract_id' ~ '^[0-9]+$'
                 THEN (payment_documents.metadata->>'contract_id')::bigint
             ELSE NULL
         END";
+    }
+
+    private function actContractExpression(string $referenceColumn): string
+    {
+        return "(SELECT payment_act.contract_id
+            FROM contract_performance_acts AS payment_act
+            INNER JOIN contracts AS act_contract ON act_contract.id = payment_act.contract_id
+            WHERE payment_act.id = payment_documents.{$referenceColumn}
+                AND act_contract.organization_id = payment_documents.organization_id
+                AND (payment_documents.project_id IS NULL
+                    OR COALESCE(payment_act.project_id, act_contract.project_id) IS NULL
+                    OR COALESCE(payment_act.project_id, act_contract.project_id) = payment_documents.project_id))";
     }
 
     /**
