@@ -19,7 +19,6 @@ use App\Support\Reporting\ReportSourceAccessPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DateTimeImmutable;
-use DateTimeZone;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -47,11 +46,7 @@ final readonly class WarehouseDailyBalanceMaterializer
             'warehouse',
         );
         [$fromDate, $toDate] = $this->period($query);
-        $periodEnd = (new DateTimeImmutable(
-            $toDate.' 23:59:59.999999',
-            $query->scope->timezone,
-        ))->setTimezone(new DateTimeZone('UTC'));
-        $eventCutoff = $query->asOf < $periodEnd ? $query->asOf : $periodEnd;
+        $eventCutoff = $this->period->cutoff($query);
         $events = WarehouseInventoryEvent::query()
             ->join('materials as balance_event_filter_material', 'balance_event_filter_material.id', '=', 'warehouse_inventory_events.material_id')
             ->where('warehouse_inventory_events.organization_id', $context->scope->organizationId)

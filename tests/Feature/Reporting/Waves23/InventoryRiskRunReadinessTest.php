@@ -11,11 +11,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\InventoryRiskBuiltinPublishedReport;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Providers\InventoryRiskReportProvider;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\WarehouseInventoryEventRecorder;
 use App\Models\Organization;
 use App\Models\Project;
@@ -33,7 +35,7 @@ use Tests\TestCase;
 final class InventoryRiskRunReadinessTest extends TestCase
 {
     #[DataProvider('openingEvidence')]
-    public function test_real_inventory_binding_checks_opening_before_persisting_a_run(bool $hasOpening): void
+    public function test_real_inventory_binding_checks_opening_before_persisting_a_run(bool $hasOpening, bool $outsidePeriod): void
     {
         $organization = Organization::factory()->verified()->create();
         $actor = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -98,7 +100,15 @@ final class InventoryRiskRunReadinessTest extends TestCase
 
         $auditAfter = DB::table('report_audit_intents')->count();
         $dispatchAfter = DB::table('report_dispatch_intents')->count();
+        $provider = app(InventoryRiskReportProvider::class);
+        $baseline = $outsidePeriod ? $provider->materialize($context, $query, new ReportProgress(0)) : null;
+        if ($baseline !== null) {
+            self::assertSame(1, $provider->result($context, $baseline)->metadata->rowCount);
+        }
         $lateMovement = $movement->replicate();
+        if ($outsidePeriod) {
+            $lateMovement->movement_date = new DateTimeImmutable('2026-08-10T00:00:00Z');
+        }
         $lateMovement->metadata = array_replace($movement->metadata, [
             'unit_conversion_version' => 'kg:v2', 'reporting_opening_basis' => null,
         ]);
@@ -116,19 +126,56 @@ final class InventoryRiskRunReadinessTest extends TestCase
             self::assertSame(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT, $exception->errorCode);
         }
         try {
-            $store->createOrReuse($context, $query, null, new IdempotencyKey('inventory-new-'.Str::uuid()));
-            self::fail('A new request must inspect the late incomplete source.');
+            $newRun = $store->createOrReuse($context, $query, null, new IdempotencyKey('inventory-new-'.Str::uuid()));
+            self::assertTrue($outsidePeriod, 'A new request must inspect incomplete events within its period.');
+            self::assertSame(ReportRunStatus::QUEUED, $newRun->status);
         } catch (ReportContractException $exception) {
+            self::assertFalse($outsidePeriod, 'An incomplete event after the reporting period must not block it.');
             self::assertSame(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, $exception->errorCode);
             self::assertSame(1, $exception->sourceIssues?->missingOpeningCount);
         }
-        self::assertSame($before + 1, DB::table('report_runs')->count());
-        self::assertSame($auditAfter, DB::table('report_audit_intents')->count());
-        self::assertSame($dispatchAfter, DB::table('report_dispatch_intents')->count());
+        self::assertSame($before + 1 + (int) $outsidePeriod, DB::table('report_runs')->count());
+        self::assertSame($auditAfter + (int) $outsidePeriod, DB::table('report_audit_intents')->count());
+        self::assertSame($dispatchAfter + (int) $outsidePeriod, DB::table('report_dispatch_intents')->count());
+        if ($outsidePeriod) {
+            self::assertNotNull($baseline);
+            $replay = $provider->materialize($context, $query, new ReportProgress(0));
+            self::assertSame($baseline->materializedSourceHash->value, $replay->materializedSourceHash->value);
+            self::assertSame($baseline->id, $replay->id);
+            self::assertSame(1, $provider->result($context, $replay)->metadata->rowCount);
+            $planningGrain = [
+                'organization_id' => $organization->id, 'warehouse_id' => $warehouseId,
+                'project_id' => $project->id, 'material_id' => $materialId,
+                'unit_dimension' => 'mass', 'unit_code' => 'kg', 'conversion_version' => 'kg:v1',
+                'effective_from' => $query->asOf,
+            ];
+            foreach ([
+                'inventory_demand_snapshots' => [
+                    'horizon_days' => 7, 'approved_quantity' => '100.000000',
+                    'source_type' => 'test_demand', 'source_id' => $materialId, 'source_version' => 1,
+                    'approved_at' => $query->asOf,
+                ],
+                'inventory_reorder_policy_versions' => [
+                    'policy_version' => 1, 'minimum_quantity' => '1.000000',
+                    'reorder_point_quantity' => '20.000000', 'target_quantity' => '100.000000',
+                    'lead_time_days' => 2, 'safety_stock_quantity' => '3.000000',
+                    'freshness_ttl_seconds' => 86400,
+                ],
+            ] as $table => $planning) {
+                DB::table($table)->insert([
+                    ...$planningGrain, ...$planning,
+                    'source_hash' => hash('sha256', $table.'-'.$organization->id),
+                ]);
+                $replay = $provider->materialize($context, $query, new ReportProgress(0));
+                self::assertSame($baseline->materializedSourceHash->value, $replay->materializedSourceHash->value, $table);
+                self::assertSame($baseline->id, $replay->id, $table);
+                self::assertSame(1, $provider->result($context, $replay)->metadata->rowCount, $table);
+            }
+        }
     }
 
     public static function openingEvidence(): array
     {
-        return [[false], [true]];
+        return ['missing_opening' => [false, false], 'complete_opening' => [true, false], 'historical_excludes_later_event' => [true, true]];
     }
 }

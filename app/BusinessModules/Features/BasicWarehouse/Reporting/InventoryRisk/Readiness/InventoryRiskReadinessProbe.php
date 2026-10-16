@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskGrainUniverse;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskPeriod;
 use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
@@ -23,6 +24,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessPr
         private ReportSourceAccessPolicy $sourceAccess,
         private OwnerReportFilterApplier $filters,
         private InventoryRiskGrainUniverse $grainUniverse,
+        private InventoryRiskPeriod $period,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -38,6 +40,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessPr
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
+        $cutoff = $this->period->cutoff($query);
         $projects = $context->scope->projectIds;
         $allowedWarehouseIds = $this->sourceAccess->allowedIds(
             $context->scope->resources,
@@ -51,7 +54,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessPr
                 static fn ($builder) => $builder->whereIn('warehouse_inventory_events.warehouse_id', $allowedWarehouseIds),
             )
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('warehouse_inventory_events.project_id', $projects))
-            ->where('warehouse_inventory_events.occurred_at', '<=', $query->asOf);
+            ->where('warehouse_inventory_events.occurred_at', '<=', $cutoff);
         $this->filters->apply($events, $this->filters->only($query->filters, [
             'organization', 'organization_id', 'warehouse', 'warehouse_id', 'project', 'project_id',
             'material', 'material_id', 'category', 'abc', 'xyz',
@@ -73,7 +76,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessPr
             ->get();
         $grains = $this->grainUniverse->collect(
             $context->scope->organizationId,
-            $query->asOf,
+            $cutoff,
             $allowedWarehouseIds,
             $projects,
             $query->filters,
@@ -119,7 +122,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessPr
             ->fromSub(
                 WarehouseInventoryEvent::query()
                     ->where('organization_id', $context->scope->organizationId)
-                    ->where('occurred_at', '<=', $query->asOf)
+                    ->where('occurred_at', '<=', $cutoff)
                     ->whereIn(
                         'transfer_pair_key',
                         (clone $events)
