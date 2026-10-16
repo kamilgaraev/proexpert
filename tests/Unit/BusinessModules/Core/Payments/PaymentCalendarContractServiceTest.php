@@ -92,6 +92,49 @@ final class PaymentCalendarContractServiceTest extends TestCase
         $this->assertSame('{}', json_encode($foreign['undated']['totals_by_currency'], JSON_THROW_ON_ERROR));
     }
 
+    public function test_fully_covered_outgoing_plan_is_hidden_without_changing_cash_totals_or_source(): void
+    {
+        $plan = $this->calendarItem('covered-plan', '0.00');
+        $original = $plan->toArray();
+        $invoice = $this->calendarItem('invoice', '100000.00', PaymentCalendarItem::BUCKET_SCHEDULED, date: '2026-10-20');
+        $contract = $this->service->fromItems([$plan, $invoice], new PaymentCalendarSourceFilters(
+            organizationId: 42, periodStart: '2026-10-01', periodEnd: '2026-10-31',
+        ), new PaymentCalendarCashGapOptions(openingBalance: 100000));
+
+        $this->assertSame(['invoice'], array_column($contract['items'], 'cash_flow_key'));
+        $this->assertSame(['invoice'], array_column(array_column($contract['events'], 'extendedProps'), 'cashFlowKey'));
+        $this->assertSame(0, $contract['days'][0]['items_count']);
+        $this->assertSame(1, $contract['days'][19]['items_count']);
+        $this->assertSame(1, $contract['summary']['items_count']);
+        $this->assertSame(100000.0, $contract['summary']['outflow']);
+        $this->assertSame(-100000.0, $contract['summary']['net']);
+        $this->assertCount(1, $contract['summary']['by_bucket']);
+        $this->assertSame('0.00', $contract['cash_gap']['forecast']['closing_balance']);
+        $this->assertSame($original, $plan->toArray());
+    }
+
+    public function test_calendar_preserves_nonzero_residuals_and_zero_items_from_other_sources(): void
+    {
+        $items = [
+            $this->calendarItem('positive-residual', '0.01'),
+            $this->calendarItem('negative-adjustment', '-0.01'),
+            $this->calendarItem('incoming-plan', '0.00', direction: PaymentCalendarItem::DIRECTION_INFLOW),
+            $this->calendarItem('manual-adjustment', '0.00', PaymentCalendarItem::BUCKET_MANUAL),
+            $this->calendarItem('scheduled-document', '0.00', PaymentCalendarItem::BUCKET_SCHEDULED),
+        ];
+        $contract = $this->service->fromItems($items, new PaymentCalendarSourceFilters(
+            organizationId: 42, periodStart: '2026-10-01', periodEnd: '2026-10-01',
+        ));
+
+        $keys = array_map(static fn (PaymentCalendarItem $item): string => $item->cashFlowKey, $items);
+        $this->assertSame($keys, array_column($contract['items'], 'cash_flow_key'));
+        $this->assertSame($keys, array_column(array_column($contract['events'], 'extendedProps'), 'cashFlowKey'));
+        $this->assertSame(5, $contract['summary']['items_count']);
+        $this->assertSame(5, $contract['days'][0]['items_count']);
+        $this->assertSame(0.0, $contract['summary']['outflow']);
+        $this->assertSame(0.0, $contract['summary']['inflow']);
+    }
+
     public function test_contract_contains_items_events_daily_aggregates_summary_and_cash_gap_state(): void
     {
         $contract = $this->service->fromItems([
@@ -271,5 +314,24 @@ final class PaymentCalendarContractServiceTest extends TestCase
         $this->assertSame('500.00', $contract['cash_gap']['baseline_forecast']['cash_gap']['max_gap_amount']);
         $this->assertSame(-500.0, $contract['cash_gap']['comparison']['max_gap_amount_delta']);
         $this->assertSame(3, $contract['cash_gap']['scenario_assumptions_count']);
+    }
+
+    private function calendarItem(
+        string $key,
+        string $remaining,
+        string $bucket = PaymentCalendarItem::BUCKET_BUDGET_PLAN,
+        string $direction = PaymentCalendarItem::DIRECTION_OUTFLOW,
+        string $date = '2026-10-01',
+    ): PaymentCalendarItem {
+        return new PaymentCalendarItem(
+            organizationId: 42, date: $date, originalDate: null, direction: $direction, bucket: $bucket,
+            amount: '100000.00', remainingAmount: $remaining, currency: 'RUB', probability: '1', status: 'active',
+            sourceType: match ($bucket) {
+                PaymentCalendarItem::BUCKET_BUDGET_PLAN => 'budget_amount',
+                PaymentCalendarItem::BUCKET_MANUAL => 'manual_adjustment',
+                default => 'payment_document',
+            },
+            sourceId: 1, cashFlowKey: $key,
+        );
     }
 }
