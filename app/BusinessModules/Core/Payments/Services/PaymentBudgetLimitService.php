@@ -597,7 +597,7 @@ final class PaymentBudgetLimitService
             return new BudgetLimitAmounts('0', '0', '0', '0', '0', '0', '0', $requestedAmount);
         }
 
-        $coveredRequestIds = $this->coveredRequestIds($document, $line);
+        $coveredRequestIds = $this->coveredRequestIds($document, $line, $month);
         if ($operationType === self::OPERATION_VIEW && in_array((int) $document->id, $coveredRequestIds, true)) {
             $requestedAmount = '0';
         }
@@ -667,21 +667,7 @@ final class PaymentBudgetLimitService
             ->whereKeyNot($document->getKey())
             ->whereIn('status', $statuses)
             ->whereNotIn('id', $coveredRequestIds)
-            ->where(function (Builder $query) use ($month): void {
-                $from = $month->toDateString();
-                $to = $month->copy()->endOfMonth()->toDateString();
-
-                $query->whereBetween('scheduled_at', [$from, $to])
-                    ->orWhere(function (Builder $dueQuery) use ($from, $to): void {
-                        $dueQuery->whereNull('scheduled_at')
-                            ->whereBetween('due_date', [$from, $to]);
-                    })
-                    ->orWhere(function (Builder $documentDateQuery) use ($from, $to): void {
-                        $documentDateQuery->whereNull('scheduled_at')
-                            ->whereNull('due_date')
-                            ->whereBetween('document_date', [$from, $to]);
-                    });
-            })
+            ->tap(fn (Builder $query) => $this->applyOperationMonthFilter($query, $month))
             ->whereNotExists(function ($query): void {
                 $query->select(DB::raw('1'))
                     ->from('budget_limit_reservations')
@@ -690,6 +676,22 @@ final class PaymentBudgetLimitService
             })
             ->tap(fn (Builder $query) => $this->applyDocumentDimensionFilter($query, $document, $line))
             ->sum('remaining_amount');
+    }
+
+    private function applyOperationMonthFilter(Builder $query, Carbon $month): void
+    {
+        $from = $month->toDateString();
+        $to = $month->copy()->endOfMonth()->toDateString();
+        $query->where(function (Builder $dateQuery) use ($from, $to): void {
+            $dateQuery->whereBetween('scheduled_at', [$from, $to])
+                ->orWhere(function (Builder $dueQuery) use ($from, $to): void {
+                    $dueQuery->whereNull('scheduled_at')->whereBetween('due_date', [$from, $to]);
+                })
+                ->orWhere(function (Builder $documentDateQuery) use ($from, $to): void {
+                    $documentDateQuery->whereNull('scheduled_at')->whereNull('due_date')
+                        ->whereBetween('document_date', [$from, $to]);
+                });
+        });
     }
 
     private function applyDocumentDimensionFilter(Builder $query, PaymentDocument $document, BudgetLine $line): void
@@ -860,13 +862,19 @@ final class PaymentBudgetLimitService
         return $request;
     }
 
-    private function coveredRequestIds(PaymentDocument $document, BudgetLine $line): array
+    private function coveredRequestIds(PaymentDocument $document, BudgetLine $line, Carbon $month): array
     {
         $activeStatuses = [...self::RESERVABLE_STATUSES, PaymentDocumentStatus::DRAFT];
         $orders = PaymentDocument::query()
             ->where('organization_id', $document->organization_id)
             ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
             ->where('source_type', PaymentDocument::class)
+            ->whereHasMorph('source', [PaymentDocument::class], function (Builder $requestQuery) use ($document, $month): void {
+                $requestQuery->where('organization_id', $document->organization_id)
+                    ->where('document_type', PaymentDocumentType::PAYMENT_REQUEST->value)
+                    ->where('status', PaymentDocumentStatus::APPROVED->value);
+                $this->applyOperationMonthFilter($requestQuery, $month);
+            })
             ->whereIn('status', array_map(static fn (PaymentDocumentStatus $status): string => $status->value, [...$activeStatuses, PaymentDocumentStatus::PAID]))
             ->where(function (Builder $query): void {
                 $query->where('status', PaymentDocumentStatus::PAID->value)
@@ -1005,7 +1013,7 @@ final class PaymentBudgetLimitService
         return is_numeric($value) ? (int) $value : null;
     }
 
-    private function counterpartyId(PaymentDocument $document): ?int
+    public function counterpartyId(PaymentDocument $document): ?int
     {
         return $document->contractor_id
             ?? $document->payee_contractor_id

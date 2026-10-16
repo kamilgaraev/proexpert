@@ -76,7 +76,7 @@ class PaymentDocumentService
                     if (($data['direction'] ?? null) !== ($preparedOrder['direction'] ?? null)) {
                         throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                     }
-                    foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id'] as $field) {
+                    foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'contractor_id'] as $field) {
                         if ((int) ($data[$field] ?? null) !== (int) ($preparedOrder[$field] ?? null)) {
                             throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                         }
@@ -275,6 +275,11 @@ class PaymentDocumentService
             }
             $data[$field] = $request->{$field};
         }
+        $counterpartyId = $this->budgetLimitService->counterpartyId($request);
+        if (isset($data['contractor_id']) && (int) $data['contractor_id'] !== $counterpartyId) {
+            throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+        }
+        $data['contractor_id'] = $counterpartyId;
         $data['vat_rate'] = $request->vat_rate;
         $contractId = $this->budgetLimitService->contractId($request);
         $data['invoiceable_type'] = $contractId !== null ? Contract::class : null;
@@ -297,7 +302,8 @@ class PaymentDocumentService
                 || ! BigDecimal::of((string) $existingOrder->amount)->isEqualTo(BigDecimal::of((string) $data['amount']))
                 || $existingOrder->currency !== $data['currency']
                 || ($existingOrder->direction?->value ?? InvoiceDirection::OUTGOING->value) !== $data['direction']
-                || $this->budgetLimitService->contractId($existingOrder) !== $contractId)) {
+                || $this->budgetLimitService->contractId($existingOrder) !== $contractId
+                || $this->budgetLimitService->counterpartyId($existingOrder) !== $counterpartyId)) {
             throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
         }
         if ($existingOrder instanceof PaymentDocument) {

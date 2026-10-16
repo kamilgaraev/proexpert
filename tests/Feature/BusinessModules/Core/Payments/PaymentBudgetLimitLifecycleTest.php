@@ -322,8 +322,8 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseHas('budget_limit_reservations', ['payment_document_id' => $reserved->id, 'amount' => 900, 'status' => BudgetLimitReservation::STATUS_RESERVED]);
     }
 
-    #[DataProvider('changedContractOrganizations')]
-    public function test_order_creation_rejects_changed_contract_organizations(string $change, bool $accept): void
+    #[DataProvider('conflictingContractContexts')]
+    public function test_order_creation_rejects_conflicting_contract_context(string $change, bool $accept): void
     {
         $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
         \Illuminate\Support\Facades\Notification::fake();
@@ -354,11 +354,16 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
             'currency' => 'RUB', 'due_date' => now()->addDays(3)->toDateString(),
         ])->save();
+        if ($change === 'counterparty') {
+            $request->update(['contractor_id' => Contractor::query()->create([
+                'organization_id' => $context->organization->id, 'name' => 'Иной контрагент утверждённого требования',
+            ])->id]);
+        }
         $this->service()->syncReservation($request->fresh(), $context->user);
         if ($change === 'direction') {
             $firstParty->update(['linked_organization_id' => $recipient->id]);
             $secondParty->update(['linked_organization_id' => $context->organization->id]);
-        } else {
+        } elseif ($change === 'recipient') {
             $secondParty->update(['linked_organization_id' => \App\Models\Organization::factory()->create()->id]);
         }
 
@@ -378,13 +383,15 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
-    public static function changedContractOrganizations(): array
+    public static function conflictingContractContexts(): array
     {
         return [
             'recipient_accept' => ['recipient', true],
             'direction_accept' => ['direction', true],
             'recipient_generic' => ['recipient', false],
             'direction_generic' => ['direction', false],
+            'counterparty_accept' => ['counterparty', true],
+            'counterparty_generic' => ['counterparty', false],
         ];
     }
 
@@ -415,6 +422,12 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'currency' => 'RUB',
             'due_date' => now()->addDays(3)->toDateString(),
         ])->save();
+        $otherCounterparty = Contractor::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Другой бюджетный контрагент',
+        ]);
+        if ($mismatch === 'missing_counterparty') {
+            $request->update(['contractor_id' => $otherCounterparty->id]);
+        }
         $this->service()->syncReservation($request->fresh(), $context->user);
         $orderBudget = $budget;
         $orderContractId = $contract->id;
@@ -474,6 +487,9 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $existingOrder->forceFill([
             'document_type' => PaymentDocumentType::PAYMENT_ORDER,
             'status' => $orderStatus,
+            'contractor_id' => $mismatch === 'counterparty'
+                ? $otherCounterparty->id
+                : ($mismatch === 'canonical_counterparty' ? $contract->contractor_id : null),
             'direction' => $mismatch === 'direction' ? InvoiceDirection::INCOMING : InvoiceDirection::OUTGOING,
             'project_id' => $contract->project_id,
             'payer_organization_id' => $context->organization->id,
@@ -506,11 +522,61 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_coverage_query_loads_only_requests_in_the_calculation_month(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 1000.0);
+        $contractor = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Контрагент для проверки периода']);
+        $requests = [];
+        $orders = [];
+        foreach ([true, false] as $historical) {
+            $amount = $historical ? 900.0 : 100.0;
+            $request = $this->createDocument($context, $budget, $amount);
+            $request->forceFill([
+                'document_type' => PaymentDocumentType::PAYMENT_REQUEST, 'status' => PaymentDocumentStatus::APPROVED,
+                'currency' => 'RUB', 'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $contractor->id,
+                'due_date' => $historical ? now()->subMonthNoOverflow()->toDateString() : now()->toDateString(),
+            ])->save();
+            $order = $this->createDocument($context, $budget, $amount);
+            $order->forceFill([
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+                'status' => $historical ? PaymentDocumentStatus::PAID : PaymentDocumentStatus::APPROVED,
+                'currency' => 'RUB', 'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+                'paid_amount' => $historical ? $amount : 0, 'remaining_amount' => $historical ? 0 : $amount,
+            ])->save();
+            if (! $historical) {
+                $this->service()->syncReservation($order->fresh(), $context->user);
+            }
+            $requests[] = $request;
+            $orders[] = $order;
+        }
+        $probe = $this->createDocument($context, $budget, 50.0);
+        $probe->forceFill(['currency' => 'RUB'])->save();
+        $eventName = 'eloquent.retrieved: '.PaymentDocument::class;
+        \Illuminate\Support\Facades\Event::fakeFor(function () use ($probe, $context, $orders, $requests, $eventName): void {
+            self::assertSame('850.00', $this->service()->check($probe, $context->user)['summary']['available_after_request']);
+            \Illuminate\Support\Facades\Event::assertDispatched($eventName, static function ($name, $payload) use ($orders): bool {
+                $model = is_array($payload) ? ($payload[0] ?? null) : $payload;
+                return $model instanceof PaymentDocument && $model->id === $orders[1]->id;
+            });
+            \Illuminate\Support\Facades\Event::assertNotDispatched($eventName, static function ($name, $payload) use ($orders, $requests): bool {
+                $model = is_array($payload) ? ($payload[0] ?? null) : $payload;
+                return $model instanceof PaymentDocument && in_array($model->id, [$orders[0]->id, $requests[0]->id], true);
+            });
+        }, [$eventName]);
+    }
+
     public static function legacyRequestOrders(): array
     {
         return [
             'compatible' => [PaymentDocumentStatus::APPROVED, null, true],
             'compatible_draft' => [PaymentDocumentStatus::DRAFT, null, true],
+            'canonical_counterparty' => [PaymentDocumentStatus::DRAFT, 'canonical_counterparty', true],
+            'different_counterparty' => [PaymentDocumentStatus::DRAFT, 'counterparty', false],
+            'missing_counterparty' => [PaymentDocumentStatus::DRAFT, 'missing_counterparty', false],
             'different_article' => [PaymentDocumentStatus::APPROVED, 'article', false],
             'different_center' => [PaymentDocumentStatus::APPROVED, 'center', false],
             'different_contract' => [PaymentDocumentStatus::APPROVED, 'contract', false],
