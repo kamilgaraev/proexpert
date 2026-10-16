@@ -6,7 +6,10 @@ namespace App\BusinessModules\Core\Mdm\Services;
 
 use App\BusinessModules\Core\Mdm\Models\MdmImportBatch;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
+use App\Models\MeasurementUnit;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class MdmImportService
 {
@@ -86,6 +89,7 @@ class MdmImportService
                     continue;
                 }
 
+                $this->assertScopedReferences($organizationId, $entityType, $data, $index);
                 $data['organization_id'] = $organizationId;
                 $record = $this->findRecordByQuality($organizationId, $entityType, $quality);
 
@@ -130,6 +134,29 @@ class MdmImportService
 
             return $batch->refresh();
         });
+    }
+
+    private function assertScopedReferences(int $organizationId, string $entityType, array $values, int|string $rowIndex): void
+    {
+        foreach ($this->registry->referenceFields($entityType) as $field => $referenceEntityType) {
+            if (! array_key_exists($field, $values) || $values[$field] === null || $values[$field] === '') {
+                continue;
+            }
+
+            $referenceId = (int) $values[$field];
+            $query = $referenceEntityType === 'measurement_unit'
+                ? MeasurementUnit::query()->where(fn (Builder $query) => $query
+                    ->where('organization_id', $organizationId)->orWhere('is_system', true))
+                : $this->registry->query((string) $referenceEntityType, $organizationId);
+
+            if ($query->whereKey($referenceId)->sharedLock()->first(['id']) === null) {
+                throw ValidationException::withMessages([
+                    "rows.{$rowIndex}.{$field}" => [trans_message('mdm.validation.reference_not_found', [
+                        'field' => $this->registry->fieldLabel($entityType, (string) $field),
+                    ])],
+                ]);
+            }
+        }
     }
 
     private function findRecordByQuality(int $organizationId, string $entityType, array $quality): ?MdmRecord

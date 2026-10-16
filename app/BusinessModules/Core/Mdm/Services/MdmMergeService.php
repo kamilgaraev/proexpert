@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Mdm\Models\MdmMergeRun;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class MdmMergeService
 {
@@ -16,22 +17,34 @@ class MdmMergeService
         private readonly MdmMergePlanner $planner,
         private readonly MdmEntityRegistry $registry,
         private readonly MdmChangeLogService $changeLogService
-    ) {
-    }
+    ) {}
 
     public function plan(MdmDuplicateGroup $group, int $masterEntityId): MdmMergeRun
     {
-        $plan = $this->planner->plan($group, $masterEntityId);
+        return DB::transaction(function () use ($group, $masterEntityId): MdmMergeRun {
+            $master = $this->registry->query((string) $group->entity_type, (int) $group->organization_id)
+                ->whereKey($masterEntityId)->sharedLock()->first(['id']);
+            $member = $group->members()->where('entity_type', $group->entity_type)
+                ->where('entity_id', $masterEntityId)->sharedLock()->first(['id']);
 
-        return MdmMergeRun::query()->create([
-            'organization_id' => $group->organization_id,
-            'duplicate_group_id' => $group->id,
-            'entity_type' => $group->entity_type,
-            'master_entity_id' => $masterEntityId,
-            'duplicate_entity_ids' => $plan['duplicate_entity_ids'],
-            'dry_run_plan' => $plan,
-            'status' => 'planned',
-        ]);
+            if ($master === null || $member === null) {
+                throw ValidationException::withMessages([
+                    'master_entity_id' => [trans_message('mdm.validation.merge_master_not_found')],
+                ]);
+            }
+
+            $plan = $this->planner->plan($group, $masterEntityId);
+
+            return MdmMergeRun::query()->create([
+                'organization_id' => $group->organization_id,
+                'duplicate_group_id' => $group->id,
+                'entity_type' => $group->entity_type,
+                'master_entity_id' => $masterEntityId,
+                'duplicate_entity_ids' => $plan['duplicate_entity_ids'],
+                'dry_run_plan' => $plan,
+                'status' => 'planned',
+            ]);
+        });
     }
 
     public function apply(MdmDuplicateGroup $group, int $masterEntityId, ?int $userId): MdmMergeRun
