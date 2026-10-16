@@ -18,8 +18,7 @@ class FinanceController extends CustomerController
 {
     public function __construct(
         private readonly CustomerPortalService $customerPortalService
-    ) {
-    }
+    ) {}
 
     public function summary(Request $request): JsonResponse
     {
@@ -27,7 +26,7 @@ class FinanceController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
             $user = $request->user();
 
-            if (!$this->hasPermission($request, 'customer.finance.view', $organizationId)) {
+            if (! $this->customerPortalService->canViewFinance($user, $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 
@@ -52,11 +51,11 @@ class FinanceController extends CustomerController
             $organizationId = $this->resolveOrganizationId($request);
             $user = $request->user();
 
-            if (!$this->canAccessProject($project, $organizationId, $user)) {
+            if (! $this->canAccessProject($project, $organizationId, $user)) {
                 return CustomerResponse::error(trans_message('customer.project_not_found'), 404);
             }
 
-            if (!$this->hasPermission($request, 'customer.finance.view', $organizationId)) {
+            if (! $this->customerPortalService->canViewFinance($user, $organizationId)) {
                 return CustomerResponse::error(trans_message('customer.forbidden'), 403);
             }
 

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Customer;
 
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\ProjectOrganizationRole;
@@ -11,6 +13,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
 use App\Services\Customer\CustomerPortalService;
 use App\Services\Project\ProjectParticipantService;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +24,13 @@ class CustomerContractsVisibilityTest extends TestCase
     public function test_project_finance_uses_loaded_paid_amount_from_contract_documents(): void
     {
         $organization = Organization::factory()->create();
+        $financier = User::factory()->create(['current_organization_id' => $organization->id]);
+        $financier->organizations()->attach($organization->id, [
+            'is_active' => true,
+            'is_owner' => false,
+            'project_access_mode' => 'all_projects',
+        ]);
+        UserRoleAssignment::assignRole($financier, 'customer_financier', AuthorizationContext::getOrganizationContext($organization->id));
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
             'name' => 'Finance project',
@@ -82,19 +92,20 @@ class CustomerContractsVisibilityTest extends TestCase
 
         $payload = app(CustomerPortalService::class)->getProjectFinanceSummary(
             $organization->id,
-            $project
+            $project,
+            $financier
         );
 
         self::assertSame('300.00', $payload['summary']['totals']['paid_amount']);
         self::assertSame('50.00', $payload['summary']['totals']['refunded_amount']);
         self::assertSame('250.00', $payload['summary']['totals']['debt_amount']);
 
-        $registry = app(CustomerPortalService::class)->getContracts($organization->id);
+        $registry = app(CustomerPortalService::class)->getContracts($organization->id, [], null, $financier);
         self::assertSame('300.00', $registry['items'][0]['paid_amount']);
         self::assertSame('50.00', $registry['items'][0]['refunded_amount']);
         self::assertSame('250.00', $registry['items'][0]['debt_amount']);
 
-        $details = app(CustomerPortalService::class)->getContract($organization->id, $contract);
+        $details = app(CustomerPortalService::class)->getContract($organization->id, $contract, $financier);
         self::assertSame('300.00', $details['contract']['financial_summary']['paid_amount']);
         self::assertSame('50.00', $details['contract']['financial_summary']['refunded_amount']);
         self::assertSame('250.00', $details['contract']['financial_summary']['debt_amount']);
