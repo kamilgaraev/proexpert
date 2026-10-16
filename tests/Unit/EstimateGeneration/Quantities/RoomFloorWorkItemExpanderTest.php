@@ -20,7 +20,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $quantities = $this->quantities();
         $draft = $this->draft([$this->item('rough.floor'), $this->item('finish.floor'), $this->item('rough.walls')]);
         $original = $draft;
-        $expanded = (new RoomFloorWorkItemExpander)->expand($draft, $quantities, 128);
+        $expanded = $this->expand($draft, $quantities, 128);
         $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(7, $items);
         self::assertSame($draft['quantity_coverage_warnings'], $expanded['quantity_coverage_warnings']);
@@ -46,8 +46,8 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $candidates = (new EstimateCompositionProjector)->candidates($expanded['local_estimates']);
         self::assertCount(7, array_unique(array_column($candidates, 'candidate_id')));
         self::assertSame(array_keys($quantities), array_column(array_slice($candidates, 0, 3), 'quantity_formula'));
-        self::assertSame($expanded, (new RoomFloorWorkItemExpander)->expand($draft, array_reverse($quantities, true), 128));
-        self::assertSame($expanded, (new RoomFloorWorkItemExpander)->expand($expanded, $quantities, 128));
+        self::assertSame($expanded, $this->expand($draft, array_reverse($quantities, true), 128));
+        self::assertSame($expanded, $this->expand($expanded, $quantities, 128));
     }
 
     public function test_a_global_quantity_and_already_scoped_source_items_are_preserved(): void
@@ -56,11 +56,11 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $draft = $this->draft([$item]);
         $quantity = new QuantityData('floor_area', 'm2', '40', 'floor_area', '1', [],
             QuantitySource::Evidenced, ['evidence:building'], 'model:1');
-        self::assertSame($draft, (new RoomFloorWorkItemExpander)->expand($draft, ['floor_area' => $quantity], 128));
+        self::assertSame($draft, $this->expand($draft, ['floor_area' => $quantity], 128));
         foreach (['project_document_normative_reference', 'canonical_technology_package'] as $source) {
             $changed = $draft;
             $changed['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['generation_source'] = $source;
-            self::assertSame($changed, (new RoomFloorWorkItemExpander)->expand($changed, $this->quantities(), 128));
+            self::assertSame($changed, $this->expand($changed, $this->quantities(), 128));
         }
     }
 
@@ -84,7 +84,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
                         $quantity->source, $quantity->evidenceIds, $quantity->modelVersion);
                 }
             }
-            $expanded = (new RoomFloorWorkItemExpander)->expand(
+            $expanded = $this->expand(
                 $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), $quantities, 128);
             $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
             self::assertCount(6, $items);
@@ -102,7 +102,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $source = $this->quantities()['quantity:area:room:1'];
         $alias = new QuantityData('floor_area', 'm2', '8.51', 'floor_area', '1', $source->formulaInputs,
             $source->source, $source->evidenceIds, $source->modelVersion);
-        $expanded = (new RoomFloorWorkItemExpander)->expand(
+        $expanded = $this->expand(
             $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), ['floor_area' => $alias], 128);
         $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(2, $items);
@@ -118,7 +118,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $existing['key'] = 'existing:room:1';
         $existing['metadata']['scope_entity_id'] = 'room:1';
         $draft = $this->draft([$this->item('rough.floor'), $existing]);
-        $expanded = (new RoomFloorWorkItemExpander)->expand($draft, $this->quantities(), 128);
+        $expanded = $this->expand($draft, $this->quantities(), 128);
         $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(3, $items);
         self::assertSame($existing, $items[2]);
@@ -135,7 +135,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
                 $item['quantity_evidence'] = ['source' => 'evidenced'];
             }
             $draft = $this->draft([$item]);
-            self::assertSame($draft, (new RoomFloorWorkItemExpander)->expand($draft, $this->quantities(), 128));
+            self::assertSame($draft, $this->expand($draft, $this->quantities(), 128));
         }
     }
 
@@ -148,11 +148,11 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
             [QuantitySource::Evidenced, [], '0']] as [$source, $blockers, $amount]) {
             $invalid = new QuantityData($first->key, $first->unit, $amount, $first->formulaKey,
                 $first->formulaVersion, $first->formulaInputs, $source, $first->evidenceIds, $first->modelVersion, [], $blockers);
-            self::assertSame($draft, (new RoomFloorWorkItemExpander)->expand($draft, [$invalid->key => $invalid], 128));
+            self::assertSame($draft, $this->expand($draft, [$invalid->key => $invalid], 128));
         }
         $conflict = new QuantityData('quantity:conflict', 'm2', '8.52', 'floor_area', '1', $first->formulaInputs,
             QuantitySource::Evidenced, $first->evidenceIds, 'model:1');
-        self::assertSame($draft, (new RoomFloorWorkItemExpander)->expand($draft, [$first->key => $first, $conflict->key => $conflict], 128));
+        self::assertSame($draft, $this->expand($draft, [$first->key => $first, $conflict->key => $conflict], 128));
     }
 
     public function test_floor_preparation_accepts_only_exact_room_geometry_and_keeps_global_coefficient_fallback_blocked(): void
@@ -171,7 +171,27 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('estimate_work_items_exceed_approved_plan');
-        (new RoomFloorWorkItemExpander)->expand($this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), $this->quantities(), 5);
+        $this->expand($this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), $this->quantities(), 5);
+    }
+
+    private function expand(array $draft, array $quantities, ?int $limit, array $rooms = ['room:1', 'room:2', 'room:3']): array
+    {
+        return (new RoomFloorWorkItemExpander)->expand($draft, $quantities, $limit, $rooms);
+    }
+
+    public function test_a_building_floor_and_unclassified_entities_are_never_expanded_as_rooms(): void
+    {
+        $draft = $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]);
+        self::assertSame($draft, $this->expand($draft, $this->quantities(), 128, []));
+        $building = new QuantityData('floor_area', 'm2', '40', 'direct_floor_area', '1',
+            ['entity_id' => 'room:building-floor'], QuantitySource::Evidenced, ['evidence:building'], 'model:1');
+        self::assertSame($draft, $this->expand($draft, ['floor_area' => $building, ...$this->quantities()], 128));
+        $buildingLogical = new QuantityData('quantity:building', 'm2', '40', 'direct_floor_area', '1',
+            $building->formulaInputs, $building->source, $building->evidenceIds, $building->modelVersion);
+        $expanded = $this->expand($draft, [$buildingLogical->key => $buildingLogical, ...$this->quantities()], 128);
+        $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(6, $items);
+        self::assertNotContains('room:building-floor', array_column($items, 'entity_id'));
     }
 
     private function quantities(): array

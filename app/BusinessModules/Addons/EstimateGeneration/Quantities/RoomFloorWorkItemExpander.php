@@ -11,8 +11,9 @@ final readonly class RoomFloorWorkItemExpander
 {
     public function __construct(private WorkItemQuantityMapper $mapper = new WorkItemQuantityMapper) {}
 
-    public function expand(array $draft, array $quantities, ?int $workLimit): array
+    public function expand(array $draft, array $quantities, ?int $workLimit, array $roomEntityIds = []): array
     {
+        $rooms = array_fill_keys($roomEntityIds, true);
         $limit = min($workLimit ?? 10000, 10000);
         $count = 0;
         $existingScopes = $byEntity = [];
@@ -31,7 +32,7 @@ final readonly class RoomFloorWorkItemExpander
         FrozenWorkItemLimit::assertCount($count, $limit);
         $global = $quantities['floor_area'] ?? null;
         if ($global !== null && (! $global instanceof QuantityData
-            || ! is_string($global->formulaInputs['entity_id'] ?? null) || $global->formulaInputs['entity_id'] === '')) {
+            || ! is_string($global->formulaInputs['entity_id'] ?? null) || ! isset($rooms[$global->formulaInputs['entity_id']]))) {
             return $draft;
         }
         foreach ($quantities as $quantity) {
@@ -40,7 +41,7 @@ final readonly class RoomFloorWorkItemExpander
                 continue;
             }
             $entity = $quantity->formulaInputs['entity_id'] ?? null;
-            if (is_string($entity) && $entity !== '') {
+            if (is_string($entity) && isset($rooms[$entity])) {
                 $byEntity[$entity][] = $quantity;
             }
         }
@@ -91,6 +92,7 @@ final readonly class RoomFloorWorkItemExpander
                             static fn (string $flag): bool => ! in_array($flag, ['quantity_unknown', 'unit_requires_confirmation'], true)));
                         unset($scoped['quantity_basis'], $scoped['quantity_basis_details'], $scoped['quantity_status']);
                         $scoped['metadata']['scope_entity_id'] = $entity;
+                        $scoped['metadata']['composition_work_key'] = $work;
                         $scoped['metadata']['quantity_key'] = $quantity->key;
                         $scoped['metadata']['quantity_source'] = $quantity->source->value;
                         $refs = is_array($scoped['source_refs'] ?? null) ? $scoped['source_refs'] : [];
