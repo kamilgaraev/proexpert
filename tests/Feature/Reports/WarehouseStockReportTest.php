@@ -152,6 +152,22 @@ class WarehouseStockReportTest extends TestCase
         $this->assertEqualsCanonicalizing(['Cement M500', 'Screwdriver'], $report['data']->pluck('material_name')->all());
     }
 
+    public function test_report_uses_current_readable_custody_warehouse_name_instead_of_technical_login(): void
+    {
+        [$organization, $warehouse, $material, $tool, $user] = $this->createStockReportContext();
+        $organization->users()->attach($user->id, ['is_owner' => false, 'is_active' => true]);
+        $user->update(['name' => 'technical_stock_login']);
+        $project = \App\Models\Project::factory()->create(['organization_id' => $organization->id, 'name' => 'Объект приёмки']);
+        $warehouse->update(['warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY, 'project_id' => $project->id,
+            'responsible_user_id' => $user->id, 'name' => 'Ответственное хранение: Старый проект, technical_stock_login']);
+        $this->createBalance((int) $organization->id, (int) $warehouse->id, (int) $material->id, 12);
+        $report = $this->reportService->getWarehouseStockReport($this->makeWarehouseStockRequest($organization, $user));
+        $this->assertSame(['Ответственное хранение: Объект приёмки, ФИО не указано'], $report['data']->pluck('warehouse')->all());
+        $html = view('reports.warehouse-stock-pdf', ['data' => $report['data'], 'totals' => $report['totals'], 'generated_at' => '16.10.2026 00:00'])->render();
+        $this->assertStringNotContainsString('technical_stock_login', $html);
+        $this->assertStringContainsString('ФИО не указано', $html);
+    }
+
     private function createStockReportContext(): array
     {
         $organization = Organization::factory()->create();

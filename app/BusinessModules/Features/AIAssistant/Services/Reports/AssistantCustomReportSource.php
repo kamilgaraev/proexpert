@@ -83,6 +83,11 @@ final readonly class AssistantCustomReportSource
                     'label' => \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactLabels::display($entityType, $field, (string) $value)], $values);
             }
         }
+        if ($entityType === 'contract') {
+            $fields['counterparty_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.counterparty_name')];
+            $query = (new AssistantContractReportProjection)->apply($query,
+                $this->policy->entityQuery($actor, $organizationId, 'contractor'), $organizationId);
+        }
         foreach ($fields as $field => $metadata) {
             $fields[$field]['aggregations'] = AssistantCustomReportMeasure::aggregations($field, $metadata['type'], $fields);
             $fields[$field]['dimensions'] = $metadata['type'] === 'number' ? AssistantCustomReportMeasure::dimensions($field, $fields) : [];
