@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -28,6 +29,8 @@ use function trans_message;
 
 class PaymentDocumentService
 {
+    private const REQUEST_ORDER_BANK_FIELDS = ['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'];
+
     public function __construct(
         private readonly PaymentDocumentStateMachine $stateMachine,
         private readonly ApprovalWorkflowService $approvalWorkflow,
@@ -241,7 +244,7 @@ class PaymentDocumentService
         ));
     }
 
-    private function preparePaymentRequestOrder(array $data, ?User $user = null, ?string $overrideReason = null): array|PaymentDocument
+    private function preparePaymentRequestOrder(array $data, ?User $user = null, ?string $overrideReason = null, ?PaymentDocument $updatingDocument = null): array|PaymentDocument
     {
         if (($data['document_type'] ?? null) !== PaymentDocumentType::PAYMENT_ORDER->value
             || ($data['source_type'] ?? null) !== PaymentDocument::class
@@ -281,13 +284,6 @@ class PaymentDocumentService
             }
             $data[$field] = $request->{$field};
         }
-        $bankFields = ['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'];
-        foreach ($bankFields as $field) {
-            if (array_key_exists($field, $data) && $data[$field] !== $request->{$field}) {
-                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
-            }
-            $data[$field] = $request->{$field};
-        }
         $data += ['due_date' => $request->due_date, 'payment_purpose' => $request->payment_purpose];
         $counterpartyId = $this->budgetLimitService->counterpartyId($request);
         if (isset($data['contractor_id']) && (int) $data['contractor_id'] !== $counterpartyId) {
@@ -314,6 +310,7 @@ class PaymentDocumentService
             ->where('source_type', $request->getMorphClass())
             ->where('source_id', $request->getKey())
             ->limit(2)
+            ->lockForUpdate()
             ->get();
         if ($existingOrders->count() > 1) {
             throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
@@ -335,18 +332,72 @@ class PaymentDocumentService
                     throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
                 }
             }
-            foreach ($bankFields as $field) {
-                if ($existingOrder->{$field} !== $data[$field]) {
-                    throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
-                }
+            if ($updatingDocument !== null && ((int) $updatingDocument->id !== (int) $existingOrder->id || ! $existingOrder->canBeEdited())) {
+                throw new \DomainException(trans_message('payments.validation.document_edit_forbidden'));
             }
         }
+        $data = $this->prepareRequestOrderBankDetails($request, $existingOrder, $data, $updatingDocument);
         $this->budgetLimitService->release($request, trans_message('budgeting.limits.request_accepted'));
         if ($existingOrder instanceof PaymentDocument) {
             $this->budgetLimitService->syncReservation($existingOrder->fresh(), $user, $overrideReason);
         }
 
         return $existingOrder ?? $data;
+    }
+
+    private function requestOrderBankValues(?PaymentDocument $document): array
+    {
+        $values = [];
+        foreach (self::REQUEST_ORDER_BANK_FIELDS as $field) {
+            $value = $document?->{$field};
+            $values[$field] = $value === '' ? null : $value;
+        }
+
+        return $values;
+    }
+
+    private function requestOrderBankFingerprint(PaymentDocument $document): string
+    {
+        return hash('sha256', json_encode($this->requestOrderBankValues($document), JSON_THROW_ON_ERROR));
+    }
+
+    private function prepareRequestOrderBankDetails(
+        PaymentDocument $request,
+        ?PaymentDocument $order,
+        array $data,
+        ?PaymentDocument $updatingDocument,
+    ): array {
+        $sourceBanks = $this->requestOrderBankValues($request);
+        $currentBanks = $this->requestOrderBankValues($order);
+        if ($order !== null && $sourceBanks !== $currentBanks
+            && ! PaymentAuditLog::query()->where('organization_id', $order->organization_id)
+                ->where('payment_document_id', $order->id)->where('action', 'updated')
+                ->where('metadata->request_order_bank_completion->request_id', (int) $request->id)
+                ->where('metadata->request_order_bank_completion->fingerprint', $this->requestOrderBankFingerprint($order))
+                ->exists()) {
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+        }
+        $canComplete = $order !== null && $updatingDocument !== null
+            && (int) $updatingDocument->id === (int) $order->id
+            && $order->status === PaymentDocumentStatus::DRAFT;
+        foreach (self::REQUEST_ORDER_BANK_FIELDS as $field) {
+            $source = $sourceBanks[$field];
+            $current = $currentBanks[$field];
+            if ($order !== null && $source !== null && $current !== $source) {
+                throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+            }
+            $expected = $source ?? ($order !== null ? $current : null);
+            if ($source === null && $current === null && $canComplete) {
+                $expected = ($data[$field] ?? null) === '' ? null : ($data[$field] ?? null);
+            }
+            $provided = ($data[$field] ?? null) === '' ? null : ($data[$field] ?? null);
+            if (array_key_exists($field, $data) && $provided !== $expected) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+            $data[$field] = $expected;
+        }
+
+        return $data;
     }
 
     private function canAutomaticallySubmitActInvoice(PaymentDocument $document, ?User $user): bool
@@ -377,11 +428,16 @@ class PaymentDocumentService
         try {
             // Валидация изменений
             $user = auth()->user();
-            $this->preparePaymentRequestOrder(
+            $preparedOrder = $this->preparePaymentRequestOrder(
                 array_merge($document->getAttributes(), $data),
                 $user instanceof User ? $user : null,
-                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+                is_string($budgetOverrideReason) ? $budgetOverrideReason : null,
+                $document,
             );
+            if ($preparedOrder instanceof PaymentDocument) {
+                $document = $preparedOrder;
+            }
+            $previousBanks = $this->requestOrderBankValues($document);
             $this->validator->validate(array_merge($document->toArray(), $data), $document);
 
             // Перерасчет сумм если изменилась amount или vat_rate
@@ -390,20 +446,51 @@ class PaymentDocumentService
             }
 
             $document->update($data);
+            $financialContextChanged = array_intersect(array_keys($document->getChanges()), [
+                'organization_id', 'project_id', 'amount', 'vat_rate', 'vat_amount', 'currency',
+                'paid_amount', 'remaining_amount', 'document_date', 'due_date', 'scheduled_at',
+                'budget_article_id', 'responsibility_center_id', 'source_type', 'source_id',
+                'invoiceable_type', 'invoiceable_id', 'payer_organization_id', 'payer_contractor_id',
+                'payee_organization_id', 'payee_contractor_id', 'contractor_id', 'status', 'metadata',
+            ]) !== [];
             $document->refresh();
+            $effectiveOverrideReason = is_string($budgetOverrideReason) ? $budgetOverrideReason : null;
+            if ($effectiveOverrideReason === null && $preparedOrder instanceof PaymentDocument
+                && ! $financialContextChanged && is_string($document->budget_limit_override_reason)) {
+                $effectiveOverrideReason = $document->budget_limit_override_reason;
+            }
 
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_UPDATE,
                 (string) $document->amount,
                 $user instanceof User ? $user : null,
-                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+                $effectiveOverrideReason,
             );
             $this->budgetLimitService->syncReservation(
                 $document,
                 $user instanceof User ? $user : null,
-                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+                $effectiveOverrideReason,
             );
+            if ($preparedOrder instanceof PaymentDocument && $previousBanks !== $this->requestOrderBankValues($document)) {
+                PaymentAuditLog::query()->create([
+                    'payment_document_id' => $document->id,
+                    'organization_id' => $document->organization_id,
+                    'action' => 'updated',
+                    'entity_type' => PaymentDocument::class,
+                    'entity_id' => $document->id,
+                    'user_id' => $user?->id,
+                    'user_name' => $user?->name,
+                    'old_values' => $previousBanks,
+                    'new_values' => $this->requestOrderBankValues($document),
+                    'changed_fields' => array_keys(array_diff_assoc($this->requestOrderBankValues($document), $previousBanks)),
+                    'description' => trans_message('payments.request_order_bank_details_completed'),
+                    'metadata' => ['request_order_bank_completion' => [
+                        'request_id' => (int) $document->source_id,
+                        'fingerprint' => $this->requestOrderBankFingerprint($document),
+                    ]],
+                ]);
+            }
 
             Log::info('payment_document.updated', [
                 'document_id' => $document->id,
@@ -988,7 +1075,7 @@ class PaymentDocumentService
     /**
      * Получить документы для организации
      */
-    public function getForOrganization(int $organizationId, array $filters = []): Collection
+    public function getForOrganization(int $organizationId, array $filters = [], ?\Closure $queryScope = null): Collection
     {
         $query = PaymentDocument::forOrganization($organizationId)
             ->with([
@@ -1093,6 +1180,8 @@ class PaymentDocumentService
         $sortBy = $filters['sort_by'] ?? 'created_at';
         $sortOrder = $filters['sort_order'] ?? 'desc';
         $query->orderBy($sortBy, $sortOrder);
+
+        $queryScope?->__invoke($query);
 
         return $query->get();
     }

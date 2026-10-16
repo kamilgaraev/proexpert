@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\CounterpartyAccount;
+use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
@@ -203,6 +204,109 @@ class PaymentRequestControllerWorkflowTest extends TestCase
                 self::assertSame($banks['bank_account'], $order->fresh()->bank_account);
             }
         }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_draft_request_order_can_complete_missing_banks_without_changing_source_and_replay(): void
+    {
+        foreach ([false, true] as $partialSource) {
+            $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+            $this->activatePaymentsModule($context->organization->id);
+            $contractor = $this->createContractor($context);
+            $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            if ($partialSource) {
+                $request->update(['bank_name' => 'Учебный банк']);
+            }
+            $sourceBanks = $request->only(['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name']);
+            $created = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+            $order = PaymentDocument::findOrFail($created->json('data.payment_order.id'));
+            $banks = [
+                'bank_account' => '00000000000000000000',
+                'bank_bik' => '000000000',
+                'bank_name' => $partialSource ? 'Учебный банк' : 'Учебные реквизиты — не для оплаты',
+            ];
+
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/payments/documents/{$order->id}", $banks)->assertOk();
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/payments/documents/{$order->id}", $banks)->assertOk();
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+                ->assertOk()->assertJsonPath('data.payment_order.id', $order->id);
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['bank_account' => '00000000000000000001'])
+                ->assertUnprocessable();
+            foreach ($banks as $field => $value) {
+                self::assertSame($value, $order->fresh()->{$field});
+            }
+            self::assertSame($sourceBanks, $request->fresh()->only(array_keys($sourceBanks)));
+            self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+            self::assertSame('0.00', $order->fresh()->paid_amount);
+            self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                ->where('source_id', $request->id)->count());
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/payments/documents/{$order->id}/submit")->assertOk();
+            self::assertNotSame(PaymentDocumentStatus::DRAFT, $order->fresh()->status);
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_legacy_banks_without_controlled_completion_cannot_be_reused_updated_or_submitted(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $legacy = $request->replicate();
+        $legacy->fill([
+            'document_number' => 'LEGACY-'.uniqid(), 'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'status' => PaymentDocumentStatus::DRAFT, 'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            'bank_account' => '00000000000000000000', 'bank_bik' => '000000000',
+            'metadata' => ['request_order_bank_completion' => ['request_id' => $request->id, 'fingerprint' => 'forged']],
+        ])->save();
+
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/payments/documents/{$legacy->id}", ['notes' => 'Changed'])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/payments/documents/{$legacy->id}/submit")
+            ->assertUnprocessable();
+        self::assertNull($legacy->fresh()->notes);
+        self::assertSame(PaymentDocumentStatus::DRAFT, $legacy->fresh()->status);
+        self::assertNull($request->fresh()->bank_account);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_bank_completion_rolls_back_when_its_provenance_cannot_be_written(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+        $order = PaymentDocument::findOrFail($created->json('data.payment_order.id'));
+        $dispatcher = PaymentAuditLog::getEventDispatcher();
+        PaymentAuditLog::setEventDispatcher(clone $dispatcher);
+        try {
+            PaymentAuditLog::creating(static function (PaymentAuditLog $log): void {
+                if (isset($log->metadata['request_order_bank_completion'])) {
+                    throw new \RuntimeException('controlled_bank_completion_audit_unavailable');
+                }
+            });
+            $this->withHeaders($context->authHeaders())
+                ->putJson("/api/v1/admin/payments/documents/{$order->id}", [
+                    'bank_account' => '00000000000000000000', 'bank_bik' => '000000000',
+                ])->assertStatus(500);
+        } finally {
+            PaymentAuditLog::setEventDispatcher($dispatcher);
+        }
+
+        self::assertNull($order->fresh()->bank_account);
+        self::assertNull($order->fresh()->bank_bik);
+        self::assertSame(PaymentDocumentStatus::DRAFT, $order->fresh()->status);
+        self::assertNull($request->fresh()->bank_account);
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
@@ -613,6 +717,68 @@ class PaymentRequestControllerWorkflowTest extends TestCase
             ->getJson('/api/v1/admin/payments/requests/outgoing?status=approved')
             ->assertOk()->assertJsonCount(3, 'data');
         self::assertEqualsCanonicalizing([$outgoing->id, $viaContractor->id, $viaRecipient->id], array_column($response->json('data'), 'id'));
+    }
+
+    public function test_incoming_requests_return_existing_orders_and_hide_ambiguous_or_cross_project_links(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $requests = [];
+        foreach (['linked', 'multiple', 'cross-project', 'foreign-only', 'unlinked'] as $case) {
+            $requests[$case] = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        }
+        $foreign = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $linkedOrder = null;
+        foreach (['linked', 'multiple', 'multiple', 'cross-project', 'foreign-only'] as $case) {
+            $order = $requests[$case]->replicate();
+            $order->fill([
+                'organization_id' => $case === 'foreign-only' ? $foreign->organization->id : $context->organization->id,
+                'project_id' => $case === 'cross-project' ? $otherProject->id : $requests[$case]->project_id,
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+                'document_number' => 'ORDER-'.uniqid(),
+                'status' => PaymentDocumentStatus::DRAFT,
+                'source_type' => PaymentDocument::class,
+                'source_id' => $requests[$case]->id,
+            ])->save();
+            if ($case === 'linked') {
+                $linkedOrder = $order;
+            }
+        }
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved')->assertOk();
+        $rows = collect($response->json('data'))->keyBy('id');
+        $this->assertSame([
+            'id' => $linkedOrder->id,
+            'document_number' => $linkedOrder->document_number,
+            'status' => 'draft',
+        ], $rows[$requests['linked']->id]['payment_order']);
+        $this->assertFalse($rows[$requests['linked']->id]['payment_order_conflict']);
+        foreach (['multiple', 'cross-project'] as $case) {
+            $this->assertNull($rows[$requests[$case]->id]['payment_order']);
+            $this->assertTrue($rows[$requests[$case]->id]['payment_order_conflict']);
+        }
+        foreach (['foreign-only', 'unlinked'] as $case) {
+            $this->assertNull($rows[$requests[$case]->id]['payment_order']);
+            $this->assertFalse($rows[$requests[$case]->id]['payment_order_conflict']);
+        }
+        $requests['unlinked']->forceFill(['created_at' => now()->subYear()])->save();
+        $requests['foreign-only']->forceFill(['created_at' => now()->subYears(2)])->save();
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved&payment_order_state=unlinked&limit=1')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $requests['unlinked']->id);
+        $linked = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=approved&payment_order_state=linked&limit=2')
+            ->assertOk()->assertJsonCount(2, 'data');
+        foreach ($linked->json('data') as $row) {
+            $this->assertTrue($row['payment_order'] !== null || $row['payment_order_conflict']);
+        }
+        foreach (['payment_order_state=invalid', 'limit=0', 'limit=101'] as $invalidFilter) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/payments/requests/incoming?'.$invalidFilter)->assertUnprocessable();
+        }
     }
 
     public function test_payment_request_rejection_sets_rejected_status_and_statistics_count_it(): void

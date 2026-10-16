@@ -862,6 +862,34 @@ final class PaymentBudgetLimitService
         return $request;
     }
 
+    public function isRequestOrderReservation(PaymentDocument $order, BudgetLimitReservation $reservation): bool
+    {
+        return in_array($order->status, [...self::RESERVABLE_STATUSES, PaymentDocumentStatus::DRAFT], true)
+            && $this->paymentRequestForOrder($order) !== null
+            && $this->matchesOrderReservation($order, $reservation);
+    }
+
+    private function matchesOrderReservation(PaymentDocument $order, BudgetLimitReservation $reservation): bool
+    {
+        if ($reservation->status !== BudgetLimitReservation::STATUS_RESERVED
+            || (int) $reservation->payment_document_id !== (int) $order->id
+            || (int) $reservation->organization_id !== (int) $order->organization_id
+            || $reservation->currency !== $order->currency
+            || (int) $reservation->contract_id !== (int) $this->contractId($order)
+            || (int) $reservation->counterparty_id !== (int) $this->counterpartyId($order)
+            || ! BigDecimal::of((string) $reservation->amount)->isEqualTo(BigDecimal::of($this->reservationAmount($order)))
+            || ! Carbon::parse($reservation->period_month)->isSameMonth($this->operationMonth($order))) {
+            return false;
+        }
+        foreach (['project_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
+            if ((int) $reservation->{$field} !== (int) $order->{$field}) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private function coveredRequestIds(PaymentDocument $document, BudgetLine $line, Carbon $month): array
     {
         $activeStatuses = [...self::RESERVABLE_STATUSES, PaymentDocumentStatus::DRAFT];
@@ -904,18 +932,8 @@ final class PaymentBudgetLimitService
                 || ($order->status === PaymentDocumentStatus::PAID
                     && BigDecimal::of((string) $order->paid_amount)->isGreaterThanOrEqualTo(BigDecimal::of((string) $order->amount)));
             foreach ($reservations->get($order->id, collect()) as $reservation) {
-                if ((int) $reservation->organization_id !== (int) $order->organization_id
-                    || $reservation->currency !== $order->currency
-                    || (int) $reservation->contract_id !== (int) $this->contractId($order)
-                    || (int) $reservation->counterparty_id !== (int) $this->counterpartyId($order)
-                    || ! BigDecimal::of((string) $reservation->amount)->isEqualTo(BigDecimal::of($this->reservationAmount($order)))
-                    || ! Carbon::parse($reservation->period_month)->isSameMonth($this->operationMonth($order))) {
+                if (! $this->matchesOrderReservation($order, $reservation)) {
                     continue;
-                }
-                foreach (['project_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
-                    if ((int) $reservation->{$field} !== (int) $order->{$field}) {
-                        continue 2;
-                    }
                 }
                 $covered = true;
             }

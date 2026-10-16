@@ -40,6 +40,79 @@ final class PaymentCalendarRequestOrderNettingTest extends TestCase
         $this->assertSame('100000.00', $order->fresh()->remaining_amount);
     }
 
+    public function test_reserved_draft_order_replaces_request_without_duplicating_its_calendar_reserve(): void
+    {
+        [$request, $order, $filters] = $this->fixture([
+            'status' => PaymentDocumentStatus::DRAFT,
+            'amount' => '1000.00', 'remaining_amount' => '1000.00', 'due_date' => '2026-10-22',
+        ]);
+        $request->update([
+            'amount' => '1000.00', 'remaining_amount' => '1000.00',
+            'document_date' => '2026-10-16', 'due_date' => '2026-10-22',
+        ]);
+        $reservation = $this->reservation($order, ['amount' => '1000.00']);
+        foreach ([$request, $order] as $document) {
+            $document->update([
+                'budget_article_id' => $reservation->budget_article_id,
+                'responsibility_center_id' => $reservation->responsibility_center_id,
+            ]);
+        }
+        $invoice = $request->replicate();
+        $invoice->fill([
+            'document_type' => PaymentDocumentType::INVOICE, 'status' => PaymentDocumentStatus::SCHEDULED,
+            'document_number' => 'УЧ-СЧ-'.uniqid(), 'amount' => '100000.00',
+            'remaining_amount' => '100000.00', 'due_date' => '2026-10-20',
+        ])->save();
+
+        $items = $this->collect($filters);
+
+        $this->assertSame('101000.00', $this->total($items));
+        $this->assertCount(2, $items);
+        $this->assertNotContains($request->id, collect($items)->where('sourceType', 'payment_document')->pluck('sourceId')->all());
+        $this->assertContains($invoice->id, collect($items)->where('sourceType', 'payment_document')->pluck('sourceId')->all());
+        $reservedItem = collect($items)->firstWhere('sourceType', 'budget_limit_reservation');
+        $this->assertSame($reservation->id, $reservedItem?->sourceId);
+        $this->assertSame($order->id, $reservedItem?->drillDown['payment_document_id']);
+        $this->assertSame('1000.00', $reservedItem?->remainingAmount);
+        $this->assertSame('0.00', $order->fresh()->paid_amount);
+        $this->assertSame(PaymentDocumentStatus::DRAFT, $order->fresh()->status);
+        $order->update(['status' => PaymentDocumentStatus::APPROVED]);
+        $approvedItems = $this->collect($filters);
+        $this->assertSame('101000.00', $this->total($approvedItems));
+        $this->assertCount(2, $approvedItems);
+    }
+
+    public static function invalidDraftReservations(): array
+    {
+        return [
+            'different-amount' => [['amount' => '50000.00']],
+            'different-currency' => [['currency' => 'USD']],
+            'different-month' => [['period_month' => '2026-09-01']],
+            'released' => [['status' => BudgetLimitReservation::STATUS_RELEASED]],
+        ];
+    }
+
+    #[DataProvider('invalidDraftReservations')]
+    public function test_draft_with_incompatible_reservation_does_not_cover_request(array $attributes): void
+    {
+        [$request, $order, $filters] = $this->fixture(['status' => PaymentDocumentStatus::DRAFT]);
+        $request->update(['due_date' => '2026-10-20']);
+        $reservation = $this->reservation($order, $attributes);
+        foreach ([$request, $order] as $document) {
+            $document->update([
+                'budget_article_id' => $reservation->budget_article_id,
+                'responsibility_center_id' => $reservation->responsibility_center_id,
+            ]);
+        }
+
+        $item = collect($this->collect($filters))->first(
+            fn ($item): bool => $item->sourceType === 'payment_document' && $item->sourceId === $request->id,
+        );
+
+        $this->assertSame('100000.00', $item?->remainingAmount);
+        $this->assertSame(PaymentDocumentStatus::DRAFT, $order->fresh()->status);
+    }
+
     public static function orderStates(): array
     {
         return [

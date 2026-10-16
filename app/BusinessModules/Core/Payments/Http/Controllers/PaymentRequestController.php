@@ -32,10 +32,14 @@ class PaymentRequestController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $filters = $this->validateListFilters($request, $organizationId);
+            $filters = $this->validateListFilters($request, $organizationId, true);
             $requests = $this->requestService->getIncomingRequests($organizationId, $filters);
 
-            return $this->buildRequestsResponse($requests, trans_message('payments.requests.loaded'));
+            return $this->buildRequestsResponse(
+                $requests,
+                trans_message('payments.requests.loaded'),
+                $this->requestService->incomingOrderStates($organizationId, $requests),
+            );
         } catch (\Illuminate\Validation\ValidationException $e) {
             return AdminResponse::error(trans_message('payments.validation_error'), 422, $e->errors());
         } catch (\Throwable $e) {
@@ -259,7 +263,7 @@ class PaymentRequestController extends Controller
         }
     }
 
-    private function validateListFilters(Request $request, int $organizationId): array
+    private function validateListFilters(Request $request, int $organizationId, bool $incoming = false): array
     {
         $allowedStatuses = array_map(
             fn (PaymentDocumentStatus $status): string => $status->value,
@@ -280,6 +284,10 @@ class PaymentRequestController extends Controller
             ],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+            ...($incoming ? [
+                'payment_order_state' => ['sometimes', 'string', Rule::in(['linked', 'unlinked'])],
+                'limit' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            ] : []),
         ]);
 
         if (($filters['status'] ?? null) === 'pending') {
@@ -289,13 +297,15 @@ class PaymentRequestController extends Controller
         return $filters;
     }
 
-    private function buildRequestsResponse(Collection $requests, string $message): JsonResponse
+    private function buildRequestsResponse(Collection $requests, string $message, array $orderStates = []): JsonResponse
     {
         if ($requests instanceof EloquentCollection) {
             $requests->loadMissing(['payeeContractor', 'project']);
         }
 
-        $items = $requests->map(fn (PaymentDocument $document) => $this->formatRequest($document))->values();
+        $items = $requests->map(fn (PaymentDocument $document) => array_merge(
+            $this->formatRequest($document), $orderStates[$document->id] ?? [],
+        ))->values();
 
         return AdminResponse::paginated(
             $items,
