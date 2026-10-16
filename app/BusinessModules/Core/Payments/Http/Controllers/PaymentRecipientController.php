@@ -33,7 +33,7 @@ class PaymentRecipientController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    new ProjectAccessibleRule($organizationId),
+                    new ProjectAccessibleRule($organizationId, includeArchived: true),
                 ],
                 'date_from' => ['nullable', 'date'],
                 'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],

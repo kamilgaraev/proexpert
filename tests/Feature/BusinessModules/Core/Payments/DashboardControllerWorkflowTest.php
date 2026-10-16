@@ -253,6 +253,38 @@ class DashboardControllerWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/payments/transactions?project_id={$project->id}")->assertNotFound();
     }
 
+    public function test_archived_project_history_remains_readable_but_new_requests_are_rejected(): void
+    {
+        Notification::fake();
+        Queue::fake();
+        foreach ([false, true] as $shared) {
+            $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+            $this->activatePaymentsModule($context->organization->id);
+            $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value]);
+            $project = $shared
+                ? $this->sharedProject($context, AdminApiTestContext::create(roleSlug: 'web_admin')->organization->id)
+                : Project::factory()->create(['organization_id' => $context->organization->id]);
+            $project->forceFill(['is_archived' => true])->save();
+            $document = $this->createDocument($context, [
+                'project_id' => $project->id, 'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+                'payer_organization_id' => $context->organization->id, 'payee_organization_id' => $context->organization->id,
+            ]);
+            $transaction = $this->createTransaction($document, 100);
+            foreach (['dashboard', 'documents', 'approvals/my', 'schedules/upcoming', 'schedules/overdue', 'requests/incoming', 'requests/outgoing', 'incoming/documents'] as $endpoint) {
+                $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/payments/{$endpoint}?project_id={$project->id}")->assertOk();
+            }
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/payments/transactions?project_id={$project->id}")
+                ->assertOk()->assertJsonPath('data.0.id', $transaction->id);
+            $contractor = $this->createContractor($context->organization->id, 'Archived contractor');
+            $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/requests', [
+                'project_id' => $project->id, 'contractor_id' => $contractor->id, 'amount' => 250, 'payment_purpose' => 'Archived request',
+            ])->assertStatus(422);
+            $this->assertSame(1, PaymentDocument::query()->where('organization_id', $context->organization->id)->count());
+        }
+    }
+
     private function sharedProject(AdminApiTestContext $context, int $ownerOrganizationId): Project
     {
         $project = Project::factory()->create(['organization_id' => $ownerOrganizationId]);

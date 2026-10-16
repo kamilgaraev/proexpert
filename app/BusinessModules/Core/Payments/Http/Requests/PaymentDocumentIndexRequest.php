@@ -32,7 +32,7 @@ final class PaymentDocumentIndexRequest extends FormRequest
         return [
             'document_type' => ['nullable', 'string'],
             'status' => ['nullable', 'string'],
-            'project_id' => ['nullable', 'integer', new ProjectAccessibleRule()],
+            'project_id' => ['nullable', 'integer', new ProjectAccessibleRule($organizationId, includeArchived: true)],
             'contract_id' => ['nullable', 'integer', $this->accessibleContractRule($organizationId, $projectId)],
             'purchase_order_id' => [
                 'nullable',

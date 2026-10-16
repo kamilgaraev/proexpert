@@ -577,32 +577,35 @@ class AdvanceAccountService
      * @param int $organizationId
      * @return array
      */
-    public function getStatistics(int $organizationId): array
+    public function getStatistics(int $organizationId, ?int $projectId = null): array
     {
         $startOfMonth = Carbon::now()->startOfMonth();
         $endOfMonth = Carbon::now()->endOfMonth();
+        $query = AdvanceAccountTransaction::query()->where('organization_id', $organizationId);
+        if ($projectId !== null) {
+            $query->where('project_id', $projectId);
+        }
 
         // Общая сумма выданных средств (все время)
-        $totalIssued = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $totalIssued = (clone $query)
             ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
             ->sum('amount');
 
         // Общая сумма расходов (все время)
-        $totalExpenses = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $totalExpenses = (clone $query)
             ->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)
             ->sum('amount');
             
         // Общая сумма возвратов (все время)
-        $totalReturned = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $totalReturned = (clone $query)
             ->where('type', AdvanceAccountTransaction::TYPE_RETURN)
             ->sum('amount');
 
         // Текущий общий баланс на руках у сотрудников
-        // (должен совпадать с суммой current_balance всех пользователей организации)
         $currentBalance = $totalIssued - $totalExpenses - $totalReturned;
 
         // Статистика за текущий месяц
-        $monthlyIssued = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $monthlyIssued = (clone $query)
             ->where('type', AdvanceAccountTransaction::TYPE_ISSUE)
             ->whereRaw(
                 $this->effectiveDateExpression() . ' BETWEEN ? AND ?',
@@ -610,7 +613,7 @@ class AdvanceAccountService
             )
             ->sum('amount');
 
-        $monthlyExpenses = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $monthlyExpenses = (clone $query)
             ->where('type', AdvanceAccountTransaction::TYPE_EXPENSE)
             ->whereRaw(
                 $this->effectiveDateExpression() . ' BETWEEN ? AND ?',
@@ -619,12 +622,12 @@ class AdvanceAccountService
             ->sum('amount');
 
         // Количество транзакций требующих внимания (ожидают утверждения)
-        $pendingApprovalCount = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $pendingApprovalCount = (clone $query)
             ->where('reporting_status', AdvanceAccountTransaction::STATUS_REPORTED)
             ->count();
             
         // Количество транзакций ожидающих отчета
-        $pendingReportCount = AdvanceAccountTransaction::where('organization_id', $organizationId)
+        $pendingReportCount = (clone $query)
             ->where('reporting_status', AdvanceAccountTransaction::STATUS_PENDING)
             ->count();
 

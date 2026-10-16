@@ -7,6 +7,7 @@ use App\Models\AdvanceAccountTransaction;
 use App\Models\User;
 use App\Models\Project;
 use App\Services\AdvanceAccountService;
+use App\Rules\ProjectAccessibleRule;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\ResourceCollection;
@@ -99,8 +100,12 @@ class AdvanceAccountTransactionController extends Controller
             return AdminResponse::error('Organization context not found for the user.');
         }
 
+        $validated = $request->validate([
+            'project_id' => ['nullable', 'integer', 'min:1', new ProjectAccessibleRule((int) $organizationId, includeArchived: true)],
+        ]);
+
         try {
-            $stats = $this->advanceService->getStatistics((int)$organizationId);
+            $stats = $this->advanceService->getStatistics((int) $organizationId, isset($validated['project_id']) ? (int) $validated['project_id'] : null);
             return AdminResponse::success($stats, trans_message('advance_account.stats_loaded'));
         } catch (\Exception $e) {
             return AdminResponse::error(
@@ -118,6 +123,10 @@ class AdvanceAccountTransactionController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        $request->validate([
+            'project_id' => ['nullable', 'integer', 'min:1', new ProjectAccessibleRule((int) $request->user()->current_organization_id, includeArchived: true)],
+        ]);
+
         $filters = $request->only([
             'user_id', 'organization_id', 'project_id', 'type', 
             'reporting_status', 'status', 'date_from', 'date_to'

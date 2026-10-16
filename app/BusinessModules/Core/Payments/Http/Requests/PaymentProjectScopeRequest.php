@@ -17,7 +17,7 @@ final class PaymentProjectScopeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'project_id' => ['nullable', 'integer', 'min:1', new ProjectAccessibleRule((int) $this->attributes->get('current_organization_id'))],
+            'project_id' => ['nullable', 'integer', 'min:1', new ProjectAccessibleRule((int) $this->attributes->get('current_organization_id'), includeArchived: true)],
             'days' => ['nullable', 'integer', 'min:1', 'max:365'],
         ];
     }

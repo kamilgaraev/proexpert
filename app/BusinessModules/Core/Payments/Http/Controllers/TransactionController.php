@@ -48,7 +48,7 @@ class TransactionController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    new ProjectAccessibleRule($organizationId),
+                    new ProjectAccessibleRule($organizationId, includeArchived: true),
                 ],
                 'status' => ['nullable', 'string'],
                 'payment_method' => ['nullable', 'string'],

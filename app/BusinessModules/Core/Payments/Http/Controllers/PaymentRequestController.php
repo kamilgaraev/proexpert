@@ -268,7 +268,7 @@ class PaymentRequestController extends Controller
             'project_id' => [
                 'nullable',
                 'integer',
-                new ProjectAccessibleRule($organizationId),
+                new ProjectAccessibleRule($organizationId, includeArchived: true),
             ],
             'contractor_id' => [
                 'nullable',
