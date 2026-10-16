@@ -103,7 +103,7 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $alias = new QuantityData('floor_area', 'm2', '8.51', 'floor_area', '1', $source->formulaInputs,
             $source->source, $source->evidenceIds, $source->modelVersion);
         $expanded = $this->expand(
-            $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), ['floor_area' => $alias], 128);
+            $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), ['floor_area' => $alias], 128, ['room:1']);
         $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(2, $items);
         foreach ($items as $item) {
@@ -194,6 +194,33 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
         $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
         self::assertCount(6, $items);
         self::assertNotContains('room:building-floor', array_column($items, 'entity_id'));
+    }
+
+    public function test_rooms_without_admissible_quantities_keep_scoped_unknown_work(): void
+    {
+        $draft = $this->draft([$this->item('rough.floor')]);
+        $first = $this->quantities()['quantity:area:room:1'];
+        $second = $this->quantities()['quantity:area:room:2'];
+        $estimated = new QuantityData($second->key, 'm2', '8.51', 'floor_area', '1', $second->formulaInputs,
+            QuantitySource::Estimated, $second->evidenceIds, $second->modelVersion, ['user_assumption']);
+        $quantities = [$first->key => $first, $estimated->key => $estimated];
+        $expanded = $this->expand($draft, $quantities, 128);
+        $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(3, $items);
+        self::assertSame(['room:1', 'room:2', 'room:3'], array_column($items, 'entity_id'));
+        self::assertSame($first, (new WorkItemQuantityResolver)->resolve($items[0], $quantities));
+        foreach (array_slice($items, 1) as $item) {
+            self::assertNull((new WorkItemQuantityResolver)->resolve($item, $quantities));
+            self::assertNull($item['quantity']);
+            self::assertSame('unknown', $item['metadata']['quantity_source']);
+            self::assertSame('rough.floor', $item['metadata']['quantity_key']);
+            self::assertSame($item['entity_id'], $item['metadata']['scope_entity_id']);
+            self::assertTrue($item['skip_normative_matching']);
+            self::assertContains('quantity_unknown', $item['validation_flags']);
+        }
+        self::assertSame($expanded, $this->expand($expanded, $quantities, 128));
+        $this->expectException(InvalidArgumentException::class);
+        $this->expand($draft, $quantities, 2);
     }
 
     private function quantities(): array

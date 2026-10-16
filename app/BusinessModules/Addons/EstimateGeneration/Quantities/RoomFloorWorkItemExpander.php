@@ -14,6 +14,7 @@ final readonly class RoomFloorWorkItemExpander
     public function expand(array $draft, array $quantities, ?int $workLimit, array $roomEntityIds = []): array
     {
         $rooms = array_fill_keys($roomEntityIds, true);
+        ksort($rooms, SORT_STRING);
         $limit = min($workLimit ?? 10000, 10000);
         $count = 0;
         $existingScopes = $byEntity = [];
@@ -73,16 +74,25 @@ final readonly class RoomFloorWorkItemExpander
 
                         continue;
                     }
-                    $newScopes = array_diff_key($matches, $existingScopes[$work] ?? []);
+                    $newScopes = array_diff_key($rooms, $existingScopes[$work] ?? []);
                     $count += count($newScopes) - 1;
                     FrozenWorkItemLimit::assertCount($count, $limit);
-                    foreach ($newScopes as $entity => $quantity) {
+                    foreach (array_keys($newScopes) as $entity) {
                         $scoped = $item;
                         $scoped['key'] = 'room-floor:'.hash('sha256', $item['key']."\0".$entity);
                         if (isset($scoped['logical_key'])) {
                             $scoped['logical_key'] = $scoped['key'];
                         }
                         $scoped['entity_id'] = $entity;
+                        $scoped['metadata']['scope_entity_id'] = $entity;
+                        $scoped['metadata']['composition_work_key'] = $work;
+                        $existingScopes[$work][$entity] = true;
+                        if (! isset($matches[$entity])) {
+                            $items[] = $scoped;
+
+                            continue;
+                        }
+                        $quantity = $matches[$entity];
                         $scoped['quantity_formula'] = $quantity->key;
                         $scoped['skip_normative_matching'] = false;
                         if (($scoped['pricing_blocker'] ?? null) === 'quantity_unknown') {
@@ -91,8 +101,6 @@ final readonly class RoomFloorWorkItemExpander
                         $scoped['validation_flags'] = array_values(array_filter($scoped['validation_flags'] ?? [],
                             static fn (string $flag): bool => ! in_array($flag, ['quantity_unknown', 'unit_requires_confirmation'], true)));
                         unset($scoped['quantity_basis'], $scoped['quantity_basis_details'], $scoped['quantity_status']);
-                        $scoped['metadata']['scope_entity_id'] = $entity;
-                        $scoped['metadata']['composition_work_key'] = $work;
                         $scoped['metadata']['quantity_key'] = $quantity->key;
                         $scoped['metadata']['quantity_source'] = $quantity->source->value;
                         $refs = is_array($scoped['source_refs'] ?? null) ? $scoped['source_refs'] : [];
@@ -105,7 +113,6 @@ final readonly class RoomFloorWorkItemExpander
                             }
                         }
                         $scoped['source_refs'] = $refs;
-                        $existingScopes[$work][$entity] = true;
                         $items[] = $scoped;
                     }
                 }

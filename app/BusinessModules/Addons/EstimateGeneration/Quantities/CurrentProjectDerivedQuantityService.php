@@ -216,7 +216,7 @@ final readonly class CurrentProjectDerivedQuantityService
             'warnings' => $warnings,
             'context' => [
                 ...$this->context($projectModelToken, $technology, $completeness),
-                'room_floor_entity_ids' => $this->roomFloorEntityIds($snapshot, $derived),
+                'room_floor_entity_ids' => $this->roomFloorEntityIds($snapshot),
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];
@@ -833,14 +833,11 @@ final readonly class CurrentProjectDerivedQuantityService
         return $result;
     }
 
-    private function roomFloorEntityIds(ProjectModelSnapshot $snapshot, array $derived): array
+    private function roomFloorEntityIds(ProjectModelSnapshot $snapshot): array
     {
-        $entities = array_column($snapshot->entities, null, 'id');
         $rooms = [];
-        foreach ($derived as $quantity) {
-            $entity = $entities[$quantity->entityId] ?? null;
-            if ($entity instanceof Entity && self::formulaPurpose($quantity->formulaIdentity ?? $quantity->formula) === 'floor_area'
-                && ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type) === 'room'
+        foreach ($snapshot->entities as $entity) {
+            if (($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type) === 'room'
                 && ! $this->isBuildingFloor($entity)) {
                 $rooms[$entity->id] = true;
             }

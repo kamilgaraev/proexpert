@@ -258,7 +258,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             self::assertCount(match ($buildingState) {
                 'conflicting' => 3, 'confirmed', 'partially_confirmed' => 2, default => 1,
             }, $result['quantities']);
-            self::assertSame(['room:area'], $result['context']['room_floor_entity_ids']);
+            self::assertSame(['room:area', 'room:missing-width'], $result['context']['room_floor_entity_ids']);
             self::assertContains('canonical_quantity_unresolved', array_column($result['warnings'], 'code'));
         }
     }
