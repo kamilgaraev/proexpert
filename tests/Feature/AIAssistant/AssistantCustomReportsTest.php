@@ -67,6 +67,17 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertTrue($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
     }
 
+    public function test_source_does_not_offer_project_budget_totals_without_an_available_currency(): void
+    {
+        [$org, $actor] = $this->fixture();
+        $fields = $this->sources->resolve($actor, $org->id, 'projects', 'project', null)['fields'];
+        self::assertArrayHasKey('budget_amount', $fields);
+        self::assertArrayNotHasKey('budget_currency', $fields);
+        self::assertSame(['count'], $fields['budget_amount']['aggregations']);
+        $this->expectException(ValidationException::class);
+        $this->builder->build($this->plan(['columns' => [], 'metrics' => [['field' => 'budget_amount', 'operation' => 'sum', 'label' => 'Бюджет']]]), $actor, $org->id);
+    }
+
     public function test_publication_freshness_accepts_signed_snapshot_and_rechecks_age_actor_and_current_acl(): void
     {
         [$org, $actor, $project] = $this->fixture();

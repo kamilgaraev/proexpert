@@ -69,9 +69,10 @@ final readonly class AssistantCustomReportSource
                 continue;
             }
             $label = trans_message('ai_assistant_facts.fields.'.$field);
-            $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label,
-                'aggregations' => $type === 'number' && ! preg_match('/(^id$|_id$|number$|version$|position_number)/', $field)
-                    ? (preg_match('/price|percent|rate/', $field) ? ['count', 'avg', 'min', 'max'] : ['count', 'sum', 'avg', 'min', 'max']) : ['count']];
+            $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
+        }
+        foreach ($fields as $field => $metadata) {
+            $fields[$field]['aggregations'] = AssistantCustomReportMeasure::aggregations($field, $metadata['type'], $fields);
         }
 
         return ['query' => $query, 'fields' => $fields, 'domain' => $policyDomain];

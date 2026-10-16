@@ -134,7 +134,7 @@ final readonly class AssistantCustomReportBuilder
                 throw ValidationException::withMessages(['metrics' => trans_message('ai_custom_reports.invalid_metric')]);
             }
             if ($field !== null && $metric['operation'] !== 'count') {
-                $this->assertUnits($field, $section['group_by'], $raw, $source['fields'], $metric['operation']);
+                $this->assertUnits($field, $section['group_by'], $raw, $source['fields']);
             }
         }
         [$headers, $values] = $this->tabulate($section, $source['fields'], $raw);
@@ -269,17 +269,9 @@ final readonly class AssistantCustomReportBuilder
         }
     }
 
-    private function assertUnits(string $field, array $groupBy, array $rows, array $fields, string $operation): void
+    private function assertUnits(string $field, array $groupBy, array $rows, array $fields): void
     {
-        if ($operation === 'sum' && preg_match('/price|percent|rate/', $field)) {
-            throw ValidationException::withMessages(['metrics' => trans_message('ai_custom_reports.non_additive')]);
-        }
-        $dimension = match (true) {
-            str_contains($field, 'budget') => 'budget_currency',
-            (bool) preg_match('/amount|price|cost/', $field) => 'currency',
-            (bool) preg_match('/quantity|volume/', $field) => isset($fields['material_unit']) ? 'material_unit' : (isset($fields['unit_code']) ? 'unit_code' : 'unit'),
-            default => null,
-        };
+        $dimension = AssistantCustomReportMeasure::dimension($field, $fields);
         if ($dimension === null || $rows === []) {
             return;
         }
