@@ -92,6 +92,7 @@ return [
         'estimate_item_not_found' => 'Позиция сметы #%d не найдена или не принадлежит текущему документу.',
         'request_submit_only_payment_requests' => 'Отправлять можно только платежные требования.',
         'request_accept_only_payment_requests' => 'Создать поручение можно только по платёжному требованию.',
+        'request_order_details_mismatch' => 'Сумма, валюта, стороны и бюджет поручения должны соответствовать утверждённому требованию.',
         'request_must_be_approved' => 'Платежное требование должно быть утверждено.',
         'request_reject_only_payment_requests' => 'Отклонять можно только платежные требования.',
         'transaction_duplicate_reference' => 'Платеж с таким номером уже существует.',

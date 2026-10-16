@@ -215,6 +215,107 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_generic_request_order_creation_inherits_contract_budget_and_replaces_its_reservation(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $contract = $this->createApprovedAct($context)->contract;
+        $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
+        $request = $this->createDocument($context, $budget, 900.0);
+        $request->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'currency' => 'RUB',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ])->save();
+        $this->service()->syncReservation($request->fresh(), $context->user);
+
+        $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(),
+            'due_date' => $request->due_date->toDateString(),
+            'amount' => 900,
+            'currency' => 'RUB',
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ])->assertCreated();
+        $orderId = $response->json('data.id');
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $orderId, 'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+            'budget_article_id' => $budget['article']->id, 'responsibility_center_id' => $budget['center']->id,
+        ]);
+        $this->assertDatabaseHas('budget_limit_checks', [
+            'payment_document_id' => $orderId, 'contract_id' => $contract->id, 'accepted' => true,
+        ]);
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RELEASED,
+        ]);
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+            ->assertOk()->assertJsonPath('data.payment_order.id', $orderId);
+        $this->assertDatabaseCount('payment_documents', 2);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_accepting_a_legacy_existing_order_releases_the_request_reservation(): void
+    {
+        $this->travelTo(now()->startOfMonth()->addDays(10)->setTime(9, 0));
+        \Illuminate\Support\Facades\Notification::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $budget = $this->createBudgetLine($context->organization->id, 100000.0);
+        $contract = $this->createApprovedAct($context)->contract;
+        $budget['line']->forceFill(['project_id' => $contract->project_id, 'contract_id' => $contract->id])->save();
+        $request = $this->createDocument($context, $budget, 900.0);
+        $request->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'currency' => 'RUB',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ])->save();
+        $this->service()->syncReservation($request->fresh(), $context->user);
+        $existingOrder = $this->createDocument($context, $budget, 900.0);
+        $existingOrder->forceFill([
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'project_id' => $contract->project_id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+            'currency' => 'RUB',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ])->save();
+        $this->service()->syncReservation($existingOrder->fresh(), $context->user);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+            ->assertOk()->assertJsonPath('data.payment_order.id', $existingOrder->id);
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id,
+            'status' => BudgetLimitReservation::STATUS_RELEASED,
+        ]);
+        self::assertSame(900.0, (float) BudgetLimitReservation::query()
+            ->where('status', BudgetLimitReservation::STATUS_RESERVED)->sum('amount'));
+        self::assertSame(2, PaymentDocument::query()->count());
+    }
+
     public function test_act_budget_limit_does_not_use_a_different_contracts_line(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

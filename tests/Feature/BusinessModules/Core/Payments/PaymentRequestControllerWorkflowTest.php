@@ -97,6 +97,87 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
     }
 
+    public function test_generic_creation_and_request_acceptance_reuse_the_same_order(): void
+    {
+        foreach ([true, false] as $acceptFirst) {
+            $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+            $this->activatePaymentsModule($context->organization->id);
+            $contractor = $this->createContractor($context);
+            $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            $payload = [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(),
+                'due_date' => $request->due_date->toDateString(),
+                'amount' => 900,
+                'currency' => 'RUB',
+                'payer_organization_id' => $context->organization->id,
+                'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class,
+                'source_id' => $request->id,
+            ];
+            if (! $acceptFirst) {
+                $request->update(['currency' => 'USD']);
+                unset($payload['currency']);
+            }
+
+            if ($acceptFirst) {
+                $accepted = $this->withHeaders($context->authHeaders())
+                    ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+                    ->assertOk();
+            }
+            $created = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
+            if (! $acceptFirst) {
+                $accepted = $this->withHeaders($context->authHeaders())
+                    ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+                    ->assertOk();
+            }
+
+            self::assertSame($accepted->json('data.payment_order.id'), $created->json('data.id'));
+            self::assertSame(1, PaymentDocument::query()->forOrganization($context->organization->id)
+                ->where('source_type', PaymentDocument::class)->where('source_id', $request->id)->count());
+            $this->assertDatabaseHas('payment_documents', [
+                'id' => $created->json('data.id'),
+                'origin_key' => "payment-request:{$request->id}:order",
+                'currency' => $request->currency,
+            ]);
+        }
+    }
+
+    public function test_generic_order_creation_cannot_bypass_request_approval_or_change_its_obligation(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::PENDING_APPROVAL);
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(),
+            'due_date' => $request->due_date->toDateString(),
+            'amount' => 900,
+            'currency' => 'RUB',
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $contractor->id,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ];
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/payments/documents', $payload)
+            ->assertUnprocessable();
+        $request->update(['status' => PaymentDocumentStatus::APPROVED]);
+        $otherContractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Other Request Contractor',
+            'inn' => '7700000020',
+        ]);
+        foreach ([['amount' => 450], ['currency' => 'USD'], ['payee_contractor_id' => $otherContractor->id]] as $changes) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', array_replace($payload, $changes))
+                ->assertUnprocessable();
+        }
+        self::assertSame(0, PaymentDocument::query()->where('source_id', $request->id)->count());
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_accept_rejects_a_document_that_is_not_a_payment_request(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

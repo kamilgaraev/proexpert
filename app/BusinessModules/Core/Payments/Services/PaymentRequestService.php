@@ -192,22 +192,7 @@ class PaymentRequestService
                 }
             }
 
-            $existingOrder = PaymentDocument::query()
-                ->forOrganization((int) $document->organization_id)
-                ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
-                ->where('source_type', $document->getMorphClass())
-                ->where('source_id', $document->getKey())
-                ->orderBy('id')
-                ->first();
-
-            if ($existingOrder instanceof PaymentDocument) {
-                DB::commit();
-
-                return $existingOrder;
-            }
-
             // Создаем платежное поручение на основе требования
-            $this->budgetLimitService->release($document, trans_message('budgeting.limits.request_accepted'));
             $paymentOrder = $this->createPaymentOrderFromRequest($document, $data);
 
             Log::info('payment_request.accepted', [
@@ -329,13 +314,9 @@ class PaymentRequestService
      */
     private function createPaymentOrderFromRequest(PaymentDocument $request, array $additionalData = []): PaymentDocument
     {
-        $contractId = $this->budgetLimitService->contractId($request);
-
         $orderData = [
             'organization_id' => $request->organization_id,
             'project_id' => $request->project_id,
-            'invoiceable_type' => $contractId !== null ? Contract::class : null,
-            'invoiceable_id' => $contractId,
             'budget_article_id' => $request->budgetArticle?->uuid,
             'responsibility_center_id' => $request->responsibilityCenter?->uuid,
             'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
