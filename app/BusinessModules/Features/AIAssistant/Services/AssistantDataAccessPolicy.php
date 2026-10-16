@@ -625,9 +625,9 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds)[0] ?? null;
     }
 
-    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null): array
+    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $aggregateBranch = null): array
     {
-        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8);
+        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch);
     }
 
     public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null): array
@@ -635,13 +635,13 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8);
     }
 
-    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null): array
+    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null): array
     {
         if ($expectedProjection) { $this->sourceQueries->assertExpectedSourceQuery($query); }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_source_aggregate_during_query_compilation'); }
 
         $compiled = [];
-        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, &$compiled): ?Builder {
+        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, $aggregateBranch, &$compiled): ?Builder {
             $metricsRequest = app()->bound('request') ? app('request') : null;
             $processingPhase = 'rag_acl_discovery';
             $processingCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -702,6 +702,9 @@ final class AssistantDataAccessPolicy
                     if ($sourceColumns !== null) {
                         $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: count($types ?? []) > 1)->select([])->toBase();
                     }
+                    if ($aggregateBranch !== null && $sourceColumns === null) {
+                        throw new \LogicException('assistant_branch_aggregate_requires_source_projection');
+                    }
                     $identitySourceOverrides = [];
                     if ($sourceColumns !== null && $types === ['design_additional']) {
                         $boundedTypes = $this->sourceQueries->boundedIdentityTypes($identityCounts ?? [], 'design_additional');
@@ -711,9 +714,10 @@ final class AssistantDataAccessPolicy
                             $identitySourceOverrides = array_fill_keys($boundedTypes, $boundedSources);
                         }
                     }
-                    $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
+                    $visibleQuery = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
                         splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities, sourceColumns: $sourceColumns,
-                        identitySourceOverrides: $identitySourceOverrides)->select($columns)->toBase();
+                        identitySourceOverrides: $identitySourceOverrides, aggregateBranch: $aggregateBranch);
+                    $visible = ($aggregateBranch === null ? $visibleQuery->select($columns) : $visibleQuery)->toBase();
                     $checkpoint?->__invoke();
                     $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
                     $finishCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -750,7 +754,7 @@ final class AssistantDataAccessPolicy
         return $this->sourceQueries->discoverIdentities($query, $this->finishAclDiscovery(...), $sourceCounts, $identityCounts);
     }
 
-    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null, ?array $sourceColumns = null, array $identitySourceOverrides = []): Builder
+    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null, ?array $sourceColumns = null, array $identitySourceOverrides = [], ?callable $aggregateBranch = null): Builder
     {
         if ($this->aclCompiler === null) {
             if ($preparedCandidates) { throw new \LogicException('assistant_prepared_candidates_require_query_compilation'); }
@@ -759,7 +763,10 @@ final class AssistantDataAccessPolicy
         $table = $query->getModel()->getTable();
         $query->where($table.'.organization_id', $organizationId);
         if (! $this->belongsToOrganization($user, $organizationId)) {
-            return $query->whereRaw('1 = 0');
+            $query->whereRaw('1 = 0');
+
+            return $aggregateBranch === null ? $query : $query->getModel()->newQueryWithoutScopes()
+                ->fromSub($aggregateBranch($query->select($sourceColumns)->toBase()), $table);
         }
         if (! $preparedCandidates) {
             $projects = $this->entityQuery($user, $organizationId, 'project');
@@ -785,6 +792,7 @@ final class AssistantDataAccessPolicy
                 if ($entities === null) { continue; }
                 foreach ($availableSources as $sourceType) {
                     $branch = $this->sourceQueries->identityBranch(clone $entities, $sourceType, $entityType, $identitySourceOverrides[$entityType] ?? $identitySources, $table, $expectedProjection, $sourceColumns);
+                    if ($aggregateBranch !== null) { $branch = $aggregateBranch($branch); }
                     if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
                 }
             }
@@ -794,7 +802,14 @@ final class AssistantDataAccessPolicy
                     ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
                         $documentIdentities->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
                 $branch = $this->sourceQueries->identityBranch($this->accessibleDocuments($user, $organizationId, $documentCandidates), 'file_document', 'assistant_document', $identitySources, $table, $expectedProjection, $sourceColumns);
+                if ($aggregateBranch !== null) { $branch = $aggregateBranch($branch); }
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
+            }
+
+            if ($aggregateBranch !== null) {
+                $union ??= $aggregateBranch((clone $query)->whereRaw('1 = 0')->select($sourceColumns)->toBase());
+
+                return $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table);
             }
 
             if ($union !== null && ($expectedProjection || $sourceColumns !== null) && $identitySources !== null) {

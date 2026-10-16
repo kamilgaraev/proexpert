@@ -275,8 +275,9 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $this->assertTrue($status['coverage_complete']);
         $storedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS stored_count'));
         $expectedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS expected_count'));
-        $this->assertCount(1, $storedQueries);
-        $this->assertCount(1, $expectedQueries);
+        $this->assertStringContainsString('SUM(accessible_sources.stored_count)', array_values($storedQueries)[0]['query']);
+        $this->assertCount(2, $storedQueries);
+        $this->assertCount(2, $expectedQueries);
         foreach ([$storedQueries, $expectedQueries] as $aggregateQueries) {
             $sql = array_values($aggregateQueries)[0]['query'];
             $this->assertStringContainsString('(WITH ', $sql);
@@ -471,7 +472,8 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $this->assertTrue($status['status_available']);
         $this->assertArrayHasKey('document_coverage', $status);
         $this->assertArrayNotHasKey('source_count', $status);
-        $this->assertFalse((bool) preg_grep('/from "ai_rag_(?:sources|chunks)"/i', $queries));
+        $this->assertFalse((bool) preg_grep('/from "ai_rag_(?:status_sources|expected_sources)"/i', $queries));
+        $this->assertFalse((bool) preg_grep('/COUNT\(\*\) AS stored_count/i', $queries));
         Queue::assertNotPushed(RefreshRagCoverageJob::class);
         $this->assertFalse($status['can_manage_document_settings']);
         $actor->organizations()->updateExistingPivot($organization->id, ['is_owner' => true]);

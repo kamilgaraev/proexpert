@@ -347,6 +347,71 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         self::assertSame([], $read());
     }
 
+    public function test_partial_counter_branches_preserve_large_mixed_identity_totals_and_execution_time_access(): void
+    {
+        $this->duplicateProjectRows = true;
+        $estimate = Estimate::withoutEvents(fn () => Estimate::create(['organization_id' => $this->organization->id,
+            'project_id' => $this->visible->id, 'number' => 'partial-counts', 'name' => 'Partial counts', 'estimate_date' => today()]));
+        $section = EstimateSection::withoutEvents(fn () => EstimateSection::create(['estimate_id' => $estimate->id, 'section_number' => '1', 'name' => 'Section', 'sort_order' => 1]));
+        $source = $this->source($this->organization->id, $this->visible->id, 'estimate', 'estimate', $estimate->id);
+        DB::statement('INSERT INTO ai_rag_sources (organization_id, project_id, identity_project_id, source_type, entity_type, entity_id, identity_part_key, title, checksum) '
+            ."SELECT ?, ?, ?, 'estimate', 'estimate_section', ?::text, 'partial-' || n, 'Partial source', md5(n::text) FROM generate_series(1, 20000) n",
+            [$this->organization->id, $this->visible->id, $this->visible->id, $section->id]);
+        $source->replicate()->forceFill(['identity_part_key' => 'second-part'])->saveQuietly();
+        $source->replicate()->forceFill(['project_id' => null, 'identity_project_id' => 0, 'identity_part_key' => 'null-project'])->saveQuietly();
+        $source->replicate()->forceFill(['project_id' => $this->hidden->id, 'identity_part_key' => 'hidden'])->saveQuietly();
+        $source->replicate()->forceFill(['entity_id' => '0'.$estimate->id, 'identity_part_key' => 'invalid-id'])->saveQuietly();
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $source->replicate()->forceFill(['organization_id' => $foreign->id])->saveQuietly();
+        DB::table('ai_rag_chunks')->insert(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'source_id' => $source->id, 'chunk_index' => 0, 'content' => 'Partial chunk', 'content_hash' => hash('sha256', 'Partial chunk')]);
+        $partial = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+        $combine = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, pg_catalog.SUM(accessible_sources.stored_count) AS stored_count, pg_catalog.SUM(accessible_sources.chunk_count) AS chunk_count, pg_catalog.SUM(accessible_sources.indexed_count) AS indexed_count');
+        $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
+        $candidate = RagSource::query()->from('ai_rag_status_sources as ai_rag_sources')->where('source_type', 'estimate');
+        $baseline = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $partial);
+        $optimized = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+        $read = static function (array $batches): array {
+            $result = [];
+            foreach ($batches as $batch) {
+                foreach ($batch->get() as $row) { $result[$row->source_type] = [(int) $row->stored_count, (int) $row->chunk_count, (int) $row->indexed_count]; }
+            }
+            ksort($result);
+
+            return $result;
+        };
+        self::assertSame(['estimate' => [20003, 1, 0]], $read($baseline));
+        self::assertSame($read($baseline), $read($optimized));
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->delete();
+        self::assertSame(['estimate' => [20003, 0, 0]], $read($optimized));
+        self::assertSame($read($baseline), $read($optimized));
+        foreach (['project_assignment', 'inactive_user', 'changed_organization', 'inactive_membership'] as $condition) {
+            if ($condition === 'project_assignment') {
+                $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+            } elseif ($condition === 'inactive_user') {
+                DB::table('users')->where('id', $this->actor->id)->update(['is_active' => false]);
+            } elseif ($condition === 'changed_organization') {
+                DB::table('users')->where('id', $this->actor->id)->update(['current_organization_id' => $foreign->id]);
+            } else {
+                $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+            }
+            self::assertSame([], $read($optimized), $condition);
+            self::assertSame($read($baseline), $read($optimized), $condition);
+            $denied = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+            self::assertSame([], $read($denied), 'Fresh compilation: '.$condition);
+            DB::table('users')->where('id', $this->actor->id)->update(['is_active' => true, 'current_organization_id' => $this->organization->id]);
+            $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+            $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => true]);
+        }
+        $empty = $this->policy->aggregateSourceIdentityBatches((clone $candidate)->whereRaw('1 = 0'), $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+        self::assertSame([], $read($empty));
+        $this->deniedModules = ['budget-estimates'];
+        $revoked = $this->policy->aggregateSourceIdentityBatches(clone $candidate, $this->actor, $this->organization->id, $columns, $combine, aggregateBranch: $partial);
+        self::assertSame([], $read($revoked));
+    }
+
     public function test_present_report_identity_keeps_structured_content_scope_checks(): void
     {
         $base = [
