@@ -371,6 +371,18 @@ class DashboardControllerWorkflowTest extends TestCase
         $context->user->roleAssignments()->delete();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $interfaceRole = OrganizationCustomRole::createRole(
+            organizationId: $context->organization->id,
+            name: 'Dashboard interface test role',
+            modulePermissions: [],
+            interfaceAccess: ['admin'],
+            createdBy: $context->user,
+        );
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $interfaceRole->slug,
+            context: AuthorizationContext::getOrganizationContext($context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
         $role = OrganizationCustomRole::createRole(
             organizationId: $context->organization->id,
             name: 'Project dashboard test role',
@@ -390,6 +402,32 @@ class DashboardControllerWorkflowTest extends TestCase
         $this->assertDashboardServiceDenied($context->user, $context->organization->id, $otherProject->id);
         $result = app(PaymentDashboardQueryService::class)->getDashboard($context->user, $context->organization->id, 30, $project->id);
         $this->assertSame(1, $result['summary']['total_documents_count']);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/payments/dashboard')->assertForbidden();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/dashboard?project_id={$otherProject->id}")->assertForbidden();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/dashboard?project_id={$project->id}")
+            ->assertOk()->assertJsonPath('data.summary.total_documents_count', 1);
+
+        $shared = $this->sharedProject($context, AdminApiTestContext::create(roleSlug: 'web_admin')->organization->id);
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $role->slug,
+            context: AuthorizationContext::getProjectContext($shared->id, $context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
+        Cache::driver('array')->flush();
+        Cache::flush();
+        $this->createDocument($context, ['project_id' => $shared->id]);
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/dashboard?project_id={$shared->id}")
+            ->assertOk()->assertJsonPath('data.summary.total_documents_count', 1);
+        $shared->forceFill(['is_archived' => true])->save();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/dashboard?project_id={$shared->id}")
+            ->assertOk()->assertJsonPath('data.summary.total_documents_count', 1);
+        $shared->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/dashboard?project_id={$shared->id}")->assertStatus(422);
     }
 
     private function assertDashboardServiceDenied(User $actor, int $organizationId, ?int $projectId = null): void

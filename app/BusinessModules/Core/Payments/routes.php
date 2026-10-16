@@ -28,7 +28,7 @@ Route::prefix('api/v1/admin/payments')
     ->middleware(AdminRouteStack::middleware())
     ->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])
-            ->middleware('authorize:payments.dashboard.view')
+            ->middleware('authorize:payments.dashboard.view,project,project_id')
             ->name('dashboard');
 
         Route::get('/cfo-dashboard', [CfoDashboardController::class, 'index'])
