@@ -558,7 +558,10 @@ final class ReportWireDtoContractTest extends TestCase
                 self::assertInstanceOf(ReflectionNamedType::class, $parameter->getType(), $class);
                 self::assertSame($type, $parameter->getType()->getName(), $class);
                 self::assertSame($nullable, $parameter->getType()->allowsNull(), $class);
-                self::assertFalse($parameter->isDefaultValueAvailable(), $class);
+                self::assertSame($parameters[$index][3] ?? false, $parameter->isDefaultValueAvailable(), $class);
+                if ($parameter->isDefaultValueAvailable()) {
+                    self::assertNull($parameter->getDefaultValue(), $class);
+                }
             }
         }
 
@@ -618,7 +621,7 @@ final class ReportWireDtoContractTest extends TestCase
     private function constructorContracts(): array
     {
         return [
-            ReportSnapshotRef::class => [['kind', 'string', false], ['id', 'string', false], ['scope', ReportScope::class, false], ['definitionHash', Sha256Hash::class, false], ['formulaVersion', 'string', false], ['sourceHash', Sha256Hash::class, false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true], ['watermarks', 'array', false], ['classification', ReportSnapshotClassification::class, false], ['seal', ReportSnapshotSeal::class, true]],
+            ReportSnapshotRef::class => [['kind', 'string', false], ['id', 'string', false], ['scope', ReportScope::class, false], ['definitionHash', Sha256Hash::class, false], ['formulaVersion', 'string', false], ['sourceHash', Sha256Hash::class, false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true], ['watermarks', 'array', false], ['classification', ReportSnapshotClassification::class, false], ['seal', ReportSnapshotSeal::class, true], ['materializedSourceHash', Sha256Hash::class, true, true]],
             ReportSourceRef::class => [['source', 'string', false], ['snapshotKind', 'string', false], ['snapshotId', 'string', false], ['schemaVersion', 'string', false], ['watermark', 'string', false], ['rowCount', 'int', false], ['hash', Sha256Hash::class, false]],
             ReportCoverage::class => [['numerator', 'string', false], ['denominator', 'string', false], ['ratio', 'string', true]],
             ReportWarning::class => [['code', 'string', false], ['severity', ReportWarningSeverity::class, false], ['metric', 'string', true], ['affectedRowCount', 'int', false]],

@@ -72,12 +72,14 @@ final readonly class ReportSubscriptionCoordinator
         return ($this->transaction)(function () use ($context, $subscriptionId, $data): ReportSubscription {
             $subscription = $this->currentSubscription($context, $subscriptionId);
             $values = $this->updatedValues($subscription, $data);
+            $preserveLegacyPolicy = ! array_key_exists('period_policy', $data->changes)
+                && ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes)->periodPolicyVersion === null;
             [$view, $definition] = $this->currentSavedView($context, $values['saved_view_id']);
             $scheduleData = $this->scheduleData($values);
             $nextRun = $subscription->status === ReportSubscriptionStatus::ACTIVE
-                ? $this->nextRun($this->subscriptionFromData($context, $view, $definition, $scheduleData, $this->now()), $this->now())
+                ? $this->nextRun($this->subscriptionFromData($context, $view, $definition, $scheduleData, $this->now(), $preserveLegacyPolicy), $this->now())
                 : null;
-            $input = $this->executionInput($view, $definition, $scheduleData);
+            $input = $this->executionInput($view, $definition, $scheduleData, $preserveLegacyPolicy);
 
             return $this->subscriptions->updateLocked($subscription, [
                 'saved_view_id' => $view->id,
@@ -285,8 +287,9 @@ final readonly class ReportSubscriptionCoordinator
         ReportDefinition $definition,
         CreateReportSubscriptionData $data,
         DateTimeImmutable $now,
+        bool $preserveLegacyPolicy = false,
     ): ReportSubscription {
-        $input = $this->executionInput($view, $definition, $data);
+        $input = $this->executionInput($view, $definition, $data, $preserveLegacyPolicy);
         $subscription = new ReportSubscription(
             (string) Str::ulid(),
             $context->scope->organizationId,
@@ -344,12 +347,13 @@ final readonly class ReportSubscriptionCoordinator
         ReportSavedView $view,
         ReportDefinition $definition,
         CreateReportSubscriptionData $data,
+        bool $preserveLegacyPolicy = false,
     ): ReportSubscriptionExecutionInput {
         if (! in_array($data->format, $definition->formats, true)) {
             $this->invalid();
         }
 
-        return new ReportSubscriptionExecutionInput(
+        $input = new ReportSubscriptionExecutionInput(
             $definition->code,
             $view->filters,
             $view->comparison,
@@ -362,7 +366,13 @@ final readonly class ReportSubscriptionCoordinator
             $data->periodPolicy,
             $definition->contractVersion,
             $definition->definitionHash,
+            periodPolicyVersion: $preserveLegacyPolicy ? null : 1,
         );
+        if (! $preserveLegacyPolicy) {
+            (new ReportSubscriptionPeriodResolver)->validate($input);
+        }
+
+        return $input;
     }
 
     private function nextRun(ReportSubscription $subscription, DateTimeImmutable $after): DateTimeImmutable
