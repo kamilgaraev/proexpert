@@ -548,7 +548,10 @@ final readonly class InventoryRiskSnapshotMaterializer
             (string) $snapshot->source_hash,
             new DateTimeImmutable((string) $snapshot->generated_at),
             $snapshot->stale_at === null ? null : new DateTimeImmutable((string) $snapshot->stale_at),
-            ['as_of' => $snapshot->as_of->format(DATE_ATOM)],
+            [
+                'as_of' => $snapshot->as_of->format(DATE_ATOM),
+                'period_cutoff' => $this->period->cutoff($query)->format('Y-m-d\TH:i:s.uP'),
+            ],
         );
     }
 
