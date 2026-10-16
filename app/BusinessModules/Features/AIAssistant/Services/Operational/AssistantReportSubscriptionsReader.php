@@ -45,7 +45,7 @@ final readonly class AssistantReportSubscriptionsReader extends AssistantOrganiz
             $inputs[$row->id] = ReportSubscriptionExecutionInput::fromCanonicalBytes($row->executionInputBytes);
         }
         $projectIds = array_values(array_unique(array_filter(array_map(
-            static fn (ReportSubscriptionExecutionInput $input): ?int => $input->projectScopeId, $inputs))));
+            static fn (ReportSubscriptionExecutionInput $input): ?int => $input->effectiveProjectId(), $inputs))));
         $projectNames = [];
         if ($projectIds !== [] && $this->access->canCurrentPermission($actor, $organizationId, 'projects.view')) {
             $projectNames = $this->access->entityQuery($actor, $organizationId, 'project', null)
@@ -54,7 +54,7 @@ final readonly class AssistantReportSubscriptionsReader extends AssistantOrganiz
 
         return ['complete' => ! $page->hasMore, 'items' => array_map(static fn (ReportSubscription $row): array => [
             'id' => $row->id, 'report_code' => $row->reportCode, 'title' => trans_message($metadata->published($row->reportCode)->titleKey),
-            'project_id' => $inputs[$row->id]->projectScopeId, 'project_name' => $projectNames[$inputs[$row->id]->projectScopeId] ?? null,
+            'project_id' => $inputs[$row->id]->effectiveProjectId(), 'project_name' => $projectNames[$inputs[$row->id]->effectiveProjectId()] ?? null,
             'frequency' => $row->frequency->value, 'weekday' => $row->weekday, 'day_of_month' => $row->dayOfMonth, 'local_time' => $row->localTime,
             'timezone' => $row->timezone->getName(), 'format' => $row->format, 'status' => $row->status->value,
             'next_run_at' => $row->nextRunAt?->setTimezone($row->timezone)->format(DATE_ATOM)], $page->items)];

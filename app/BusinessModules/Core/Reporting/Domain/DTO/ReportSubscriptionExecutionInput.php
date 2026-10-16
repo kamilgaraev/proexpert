@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeZone;
 use InvalidArgumentException;
+use RuntimeException;
 use Throwable;
 
 final readonly class ReportSubscriptionExecutionInput
@@ -48,6 +49,31 @@ final readonly class ReportSubscriptionExecutionInput
     public function runData(DateTimeImmutable $asOf): CreateReportRunData
     {
         return new CreateReportRunData($this->reportCode, $this->filters, $this->comparison, $asOf, $this->locale, $this->savedViewId, $this->savedViewReference);
+    }
+
+    public function effectiveProjectId(): ?int
+    {
+        $projectId = $this->reportCode === 'accepted_production_progress'
+            ? $this->projectScopeId
+            : ($this->projectScopeId ?? $this->filters->values['project_id'] ?? null);
+        if ($projectId === null) {
+            return null;
+        }
+        if (is_array($projectId)) {
+            if (count($projectId) !== 2 || ($projectId['operator'] ?? null) !== 'eq' || ! array_key_exists('value', $projectId)) {
+                throw new RuntimeException('report_subscription_project_scope_invalid');
+            }
+            $projectId = $projectId['value'];
+        }
+        if (! is_int($projectId) && ! is_string($projectId)) {
+            throw new RuntimeException('report_subscription_project_scope_invalid');
+        }
+        $projectId = filter_var($projectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($projectId === false) {
+            throw new RuntimeException('report_subscription_project_scope_invalid');
+        }
+
+        return $projectId;
     }
 
     public function exportData(): CreateReportExportData

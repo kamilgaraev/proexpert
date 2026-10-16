@@ -282,7 +282,7 @@ final readonly class ReportSubscriptionCoordinator
             'timezone' => $subscription->timezone,
             'period_policy' => $subscription->periodPolicy,
             'format' => $subscription->format,
-            'project_id' => $input->projectScopeId,
+            'project_id' => $input->effectiveProjectId(),
         ];
 
         return array_replace($values, $data->changes);

@@ -94,6 +94,19 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         return [[0], [-1], ['52'], [true], [[]]];
     }
 
+    #[DataProvider('legacyProjectFilters')]
+    public function test_resources_preserve_effective_legacy_project(mixed $filter): void
+    {
+        self::assertSame(53, (new ReportSubscriptionResource($this->subscription(null, ['project_id' => $filter])))->toArray(Request::create('/'))['project_id']);
+        self::assertSame(53, (new ReportSubscriptionDeliveryResource($this->delivery(null, ['project_id' => $filter])))->toArray(Request::create('/'))['project_id']);
+        self::assertSame(52, (new ReportSubscriptionResource($this->subscription(52, ['project_id' => $filter])))->toArray(Request::create('/'))['project_id']);
+    }
+
+    public static function legacyProjectFilters(): array
+    {
+        return [[53], ['53'], [['operator' => 'eq', 'value' => 53]], [['operator' => 'eq', 'value' => '53']]];
+    }
+
     private function resource(string $branch): ReportSubscriptionResource|ReportSubscriptionDeliveryResource|ReportSubscriptionPageResource
     {
         $subscription = $this->subscription();
@@ -105,9 +118,9 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         };
     }
 
-    private function subscription(?int $projectId = 52): ReportSubscription
+    private function subscription(?int $projectId = 52, array $filters = []): ReportSubscription
     {
-        $input = $this->executionInput($projectId);
+        $input = $this->executionInput($projectId, $filters);
 
         return new ReportSubscription(
             '01J00000000000000000000001',
@@ -136,9 +149,9 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         );
     }
 
-    private function delivery(?int $projectId = 52): ReportSubscriptionDelivery
+    private function delivery(?int $projectId = 52, array $filters = []): ReportSubscriptionDelivery
     {
-        $input = $this->executionInput($projectId);
+        $input = $this->executionInput($projectId, $filters);
 
         return new ReportSubscriptionDelivery(
             '01J00000000000000000000003',
@@ -166,10 +179,10 @@ final class ReportSubscriptionResourceSchemaTest extends TestCase
         );
     }
 
-    private function executionInput(?int $projectId): string
+    private function executionInput(?int $projectId, array $filters = []): string
     {
         return (new ReportSubscriptionExecutionInput(
-            'budget_plan_fact', new ReportFilterSet([]), [], 'ru', '01J00000000000000000000002',
+            'budget_plan_fact', new ReportFilterSet($filters), [], 'ru', '01J00000000000000000000002',
             'xlsx', ['name'], new ReportWindowSort('name', ReportSortDirection::ASC), new DateTimeZone('UTC'),
             ['mode' => 'previous_day'], '1.0.0', new Sha256Hash(str_repeat('a', 64)),
             projectScopeId: $projectId,

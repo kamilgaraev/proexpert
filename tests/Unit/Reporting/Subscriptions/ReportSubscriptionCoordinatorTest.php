@@ -261,6 +261,33 @@ final class ReportSubscriptionCoordinatorTest extends TestCase
         self::assertSame([52, 52, 53], $checked);
     }
 
+    public function test_explicit_null_clears_project_for_organization_wide_saved_view(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(52));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::never())->method('resolveForProject');
+        [$coordinator, $store] = $this->scopedCoordinator($subscription, $scopes);
+        $coordinator->update($this->context($subscription), $subscription->id, new UpdateReportSubscriptionData(['project_id' => null, 'format' => 'csv']));
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($store->updates['execution_input_bytes']);
+        self::assertNull($input->projectScopeId);
+        self::assertNull($input->effectiveProjectId());
+    }
+
+    public function test_accepted_project_cannot_be_cleared(): void
+    {
+        $subscription = $this->subscription(input: $this->executionInput(52, 'accepted_production_progress'));
+        $scopes = $this->createMock(CurrentReportProjectScopeResolver::class);
+        $scopes->expects(self::never())->method('resolveForProject');
+        [$coordinator, $store] = $this->scopedCoordinator($subscription, $scopes);
+        try {
+            $coordinator->update($this->context($subscription), $subscription->id, new UpdateReportSubscriptionData(['project_id' => null, 'format' => 'csv']));
+            self::fail('Expected required project rejection');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+            self::assertSame([], $store->updates);
+        }
+    }
+
     public function test_scoped_create_without_fresh_authorization_collaborator_fails_closed(): void
     {
         $subscription = $this->subscription();

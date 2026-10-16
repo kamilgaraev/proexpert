@@ -242,11 +242,12 @@ final class AssistantAdminGovernanceCoverageTest extends TestCase
                 'contract_version' => $definition->contractVersion, 'name' => 'Personal view', 'filters_json' => [],
                 'sort_json' => ['field' => $definition->sorts[0]['id'], 'direction' => 'asc'], 'columns_json' => [$definition->columns[0]['id']]]);
             $bytes = (new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput(
-                $subscriptionCode, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]), [], 'ru', $view->id,
+                $subscriptionCode, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet($actor->id === $f->owner->id
+                    ? ['project_id' => ['operator' => 'eq', 'value' => (string) $project->id]] : []), [], 'ru', $view->id,
                 $definition->formats[0], [$definition->columns[0]['id']],
                 new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort($definition->sorts[0]['id'], \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection::ASC),
                 new \DateTimeZone('UTC'), ['mode' => 'previous_day'], $definition->contractVersion, $definition->definitionHash,
-                projectScopeId: $organization === $org ? (int) $project->id : null,
+                projectScopeId: $organization === $org && $actor->id !== $f->owner->id ? (int) $project->id : null,
             ))->canonicalBytes();
             $records[] = \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSubscriptionRecord::query()->create([
                 'id' => (string) Str::ulid(), 'organization_id' => $organization, 'owner_id' => $actor->id, 'saved_view_id' => $view->id,

@@ -17,7 +17,7 @@ final class ReportSubscriptionDeliveryResource extends JsonResource
         return [
             'id' => $this->resource->id,
             'subscription_id' => $this->resource->subscriptionId,
-            'project_id' => $this->resource->executionInput()->projectScopeId,
+            'project_id' => $this->resource->executionInput()->effectiveProjectId(),
             'trigger' => $this->resource->trigger->value,
             'scheduled_for' => $this->resource->scheduledFor->format(DATE_ATOM),
             'run_id' => $this->resource->runId,

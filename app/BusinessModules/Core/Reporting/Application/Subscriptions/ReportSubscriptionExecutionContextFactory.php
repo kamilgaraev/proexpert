@@ -37,21 +37,9 @@ final readonly class ReportSubscriptionExecutionContextFactory
             || $input->contractVersion !== $definition->contractVersion) {
             throw new RuntimeException('report_subscription_definition_changed');
         }
-        $projectId = $definition->code === 'accepted_production_progress'
-            ? $input->projectScopeId
-            : ($input->projectScopeId ?? $input->filters->values['project_id'] ?? null);
+        $projectId = $input->effectiveProjectId();
         if ($projectId !== null || $definition->code === 'accepted_production_progress') {
-            if (is_array($projectId)) {
-                if (count($projectId) !== 2 || ($projectId['operator'] ?? null) !== 'eq' || ! array_key_exists('value', $projectId)) {
-                    throw new RuntimeException('report_subscription_project_scope_invalid');
-                }
-                $projectId = $projectId['value'];
-            }
-            if (! is_int($projectId) && ! is_string($projectId)) {
-                throw new RuntimeException('report_subscription_project_scope_invalid');
-            }
-            $projectId = filter_var($projectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-            if ($projectId === false) {
+            if ($projectId === null) {
                 throw new RuntimeException('report_subscription_project_scope_invalid');
             }
 

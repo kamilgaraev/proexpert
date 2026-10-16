@@ -24,7 +24,7 @@ final class CreateReportSubscriptionRequest extends ReportFormRequest
             'period_policy' => ['required', 'array:mode', 'min:1'],
             'period_policy.mode' => ['required', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['required', 'in:csv,xlsx,pdf'],
-            'project_id' => ['sometimes', 'integer', 'min:1'],
+            'project_id' => ['sometimes', 'integer', 'min:1', 'regex:/^[1-9][0-9]*$/D'],
             ...$this->subscriptionForbiddenClientFieldsRules(),
         ];
     }

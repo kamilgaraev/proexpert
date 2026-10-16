@@ -24,7 +24,7 @@ final readonly class UpdateReportSubscriptionData
         ];
 
         if ($changes === [] || array_diff(array_keys($changes), $allowed) !== []
-            || (array_key_exists('project_id', $changes) && (! is_int($changes['project_id']) || $changes['project_id'] < 1))) {
+            || (isset($changes['project_id']) && (! is_int($changes['project_id']) || $changes['project_id'] < 1))) {
             throw new InvalidArgumentException('report_subscription_update_invalid');
         }
     }

@@ -25,7 +25,7 @@ final class UpdateReportSubscriptionRequest extends ReportSubscriptionRouteReque
             'period_policy' => ['sometimes', 'array:mode', 'min:1'],
             'period_policy.mode' => ['required_with:period_policy', Rule::in(ReportSubscriptionPeriodResolver::MODES)],
             'format' => ['sometimes', 'in:csv,xlsx,pdf'],
-            'project_id' => ['sometimes', 'integer', 'min:1'],
+            'project_id' => ['sometimes', 'nullable', 'integer', 'min:1', 'regex:/^[1-9][0-9]*$/D'],
         ];
     }
 
@@ -37,7 +37,7 @@ final class UpdateReportSubscriptionRequest extends ReportSubscriptionRouteReque
     public function toData(): UpdateReportSubscriptionData
     {
         $changes = $this->safe()->only($this->acceptedBodyFields());
-        if (array_key_exists('project_id', $changes)) {
+        if (isset($changes['project_id'])) {
             $changes['project_id'] = (int) $changes['project_id'];
         }
 

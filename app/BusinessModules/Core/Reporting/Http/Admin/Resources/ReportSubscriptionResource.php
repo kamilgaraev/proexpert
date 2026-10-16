@@ -19,7 +19,7 @@ final class ReportSubscriptionResource extends JsonResource
             'id' => $this->resource->id,
             'saved_view_id' => $this->resource->savedViewId,
             'report_code' => $this->resource->reportCode,
-            'project_id' => ReportSubscriptionExecutionInput::fromCanonicalBytes($this->resource->executionInputBytes)->projectScopeId,
+            'project_id' => ReportSubscriptionExecutionInput::fromCanonicalBytes($this->resource->executionInputBytes)->effectiveProjectId(),
             'frequency' => $this->resource->frequency->value,
             'weekday' => $this->resource->weekday,
             'day_of_month' => $this->resource->dayOfMonth,
