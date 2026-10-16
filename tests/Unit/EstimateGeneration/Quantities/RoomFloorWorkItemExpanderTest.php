@@ -54,7 +54,8 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
     {
         $item = $this->item('rough.floor');
         $draft = $this->draft([$item]);
-        $quantity = $this->quantities()['quantity:area:room:1'];
+        $quantity = new QuantityData('floor_area', 'm2', '40', 'floor_area', '1', [],
+            QuantitySource::Evidenced, ['evidence:building'], 'model:1');
         self::assertSame($draft, (new RoomFloorWorkItemExpander)->expand($draft, ['floor_area' => $quantity], 128));
         foreach (['project_document_normative_reference', 'canonical_technology_package'] as $source) {
             $changed = $draft;
@@ -65,12 +66,21 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
 
     public function test_direct_and_calculated_room_areas_both_expand_floor_works(): void
     {
-        foreach ([['room:1', 'room:2', 'room:3'], ['room:2']] as $directRooms) {
+        foreach ([['room:1', 'room:2', 'room:3'], ['room:2'], ['room:1', 'room:2']] as $directRooms) {
             $quantities = $this->quantities();
             foreach ($quantities as $key => $quantity) {
                 if (in_array($quantity->formulaInputs['entity_id'], $directRooms, true)) {
                     $quantities[$key] = new QuantityData($key, $quantity->unit, $quantity->amount,
                         'direct_floor_area', $quantity->formulaVersion, $quantity->formulaInputs,
+                        $quantity->source, $quantity->evidenceIds, $quantity->modelVersion);
+                }
+            }
+            $formulaCounts = array_count_values(array_map(static fn (QuantityData $quantity): string => $quantity->formulaKey, $quantities));
+            foreach ($quantities as $key => $quantity) {
+                if ($formulaCounts[$quantity->formulaKey] === 1) {
+                    unset($quantities[$key]);
+                    $quantities['floor_area'] = new QuantityData('floor_area', $quantity->unit, $quantity->amount,
+                        $quantity->formulaKey, $quantity->formulaVersion, $quantity->formulaInputs,
                         $quantity->source, $quantity->evidenceIds, $quantity->modelVersion);
                 }
             }
@@ -84,6 +94,21 @@ final class RoomFloorWorkItemExpanderTest extends TestCase
                 self::assertSame($item['entity_id'], $quantity->formulaInputs['entity_id']);
                 self::assertSame($quantities[$item['quantity_formula']], $quantity);
             }
+        }
+    }
+
+    public function test_one_room_alias_is_scoped_for_both_floor_works(): void
+    {
+        $source = $this->quantities()['quantity:area:room:1'];
+        $alias = new QuantityData('floor_area', 'm2', '8.51', 'floor_area', '1', $source->formulaInputs,
+            $source->source, $source->evidenceIds, $source->modelVersion);
+        $expanded = (new RoomFloorWorkItemExpander)->expand(
+            $this->draft([$this->item('rough.floor'), $this->item('finish.floor')]), ['floor_area' => $alias], 128);
+        $items = $expanded['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(2, $items);
+        foreach ($items as $item) {
+            self::assertSame('room:1', $item['entity_id']);
+            self::assertSame($alias, (new WorkItemQuantityResolver)->resolve($item, ['floor_area' => $alias]));
         }
     }
 

@@ -29,7 +29,9 @@ final readonly class RoomFloorWorkItemExpander
             }
         }
         FrozenWorkItemLimit::assertCount($count, $limit);
-        if (isset($quantities['floor_area'])) {
+        $global = $quantities['floor_area'] ?? null;
+        if ($global !== null && (! $global instanceof QuantityData
+            || ! is_string($global->formulaInputs['entity_id'] ?? null) || $global->formulaInputs['entity_id'] === '')) {
             return $draft;
         }
         foreach ($quantities as $quantity) {
@@ -53,8 +55,7 @@ final readonly class RoomFloorWorkItemExpander
                         || ($item['metadata']['quantity_source'] ?? null) !== 'unknown'
                         || ($item['quantity'] ?? null) !== null || isset($item['quantity_evidence'])
                         || isset($item['metadata']['scope_entity_id']) || isset($item['entity_id'])
-                        || ! in_array($work, ['rough.floor', 'finish.floor'], true)
-                        || $this->mapper->map($work, $quantities) !== null) {
+                        || ! in_array($work, ['rough.floor', 'finish.floor'], true)) {
                         $items[] = $item;
 
                         continue;
