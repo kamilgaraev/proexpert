@@ -205,6 +205,165 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
     }
 
+    public function test_qa_quote_caps_the_shared_wallet_reserve_and_enforces_the_remaining_total_without_reducing_scope(): void
+    {
+        \Illuminate\Support\Facades\Http::fake();
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.live_qa.enabled' => false]);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['selected_sections' => ['structures', 'roofing', 'earthworks', 'finishing']]]);
+        $credits = app(AICreditService::class);
+        $credits->grant($organization, 1000, 'purchase', null, 'test:qa-capped-quote');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $regularId = (string) Str::uuid();
+        $regularQuote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $regularId, 'generation');
+        $regularPlan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $regularId)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertGreaterThan(50000, $regularQuote['max_units_minor']);
+        self::assertSame(array_sum(array_map(static fn (array $role): int => $role['max_calls'] * $role['maximum_cost_micro_rub'],
+            $regularPlan['roles'])), $regularPlan['maximum_provider_cost_micro_rub']);
+        $runId = (string) Str::uuid();
+        config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => $runId]);
+        $priorAttempt = (string) Str::uuid();
+        DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $priorAttempt,
+            'request_fingerprint' => hash('sha256', $priorAttempt), 'logical_request_fingerprint' => hash('sha256', $priorAttempt),
+            'organization_id' => $scope->organizationId, 'project_id' => $scope->projectId, 'session_id' => $scope->sessionId,
+            'state' => 'pre_wire', 'owner_token' => $priorAttempt, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)
+            ->admit($priorAttempt, new AiCost('88.20000000', 'RUB', 'available')));
+        $runBefore = DB::table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->sole();
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $row = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($row->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(1000, $quote['max_units_minor']);
+        self::assertSame(1800000, $plan['maximum_provider_cost_micro_rub']);
+        self::assertSame($regularPlan['roles'], $plan['roles']);
+        self::assertSame($regularPlan['maximum_calls'], $plan['maximum_calls']);
+        self::assertSame(128, $plan['work_item_limit']);
+        self::assertSame($runId, $plan['qa_expense_budget']['run_id']);
+        self::assertEquals($runBefore, DB::table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->sole());
+        self::assertSame(1, DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)->count());
+        self::assertSame($regularQuote['max_units_minor'], $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $regularId, 'generation')['max_units_minor']);
+        [$otherOrganization, $otherActor, $otherScope] = $this->fixture();
+        $credits->grant($otherOrganization, 1000000, 'purchase', null, 'test:qa-concurrent-quote');
+        $otherId = (string) Str::uuid();
+        $otherQuote = $operations->quote($otherActor, $otherScope->projectId, $otherScope->sessionId, 0, $otherId, 'generation');
+        self::assertSame(1000, $otherQuote['max_units_minor']);
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        $otherSession = EstimateGenerationSession::query()->findOrFail($otherScope->sessionId);
+        try {
+            DB::transaction(fn () => $operations->begin($otherActor, $otherSession, 0, $otherId, $otherQuote['quote_id'], 'generation'));
+            self::fail('Another organization reserved the same remaining QA budget.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+            self::assertSame('estimator_live_qa_expense_limit_reached', $exception->reason);
+        }
+        self::assertSame(0, $credits->balance($otherOrganization)['reserved_minor']);
+        self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $otherId)->value('status'));
+        self::assertSame(0, \App\Models\Credits\AICreditReservation::query()->where('organization_id', $otherOrganization->id)->count());
+        $row = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $reservation = \App\Models\Credits\AICreditReservation::query()->findOrFail($row->reservation_id);
+        self::assertSame(1000, $reservation->reserved_minor);
+        $legacyAttempt = (string) Str::uuid();
+        DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $legacyAttempt,
+            'request_fingerprint' => hash('sha256', $legacyAttempt), 'logical_request_fingerprint' => hash('sha256', $legacyAttempt),
+            'organization_id' => $otherScope->organizationId, 'project_id' => $otherScope->projectId, 'session_id' => $otherScope->sessionId,
+            'state' => 'pre_wire', 'owner_token' => $legacyAttempt, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+        $qaGuard = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class);
+        try {
+            DB::transaction(fn () => $qaGuard->admit($legacyAttempt, new AiCost('0.09000000', 'RUB', 'available')));
+            self::fail('A legacy call spent the remaining budget held by another operation.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+            self::assertSame('estimator_live_qa_expense_limit_reached', $exception->reason);
+        }
+        self::assertFalse(DB::table('estimate_generation_qa_expense_attempts')->where('attempt_id', $legacyAttempt)->exists());
+        self::assertSame(1000, $reservation->fresh()->reserved_minor);
+        $attempt = (string) Str::uuid();
+        $admission = app(EstimatorCreditAttemptAdmission::class);
+        DB::transaction(fn () => $admission->admit($id, $attempt, $scope->organizationId, $scope->projectId, $scope->sessionId,
+            'estimate_composition', new AiCost('1.00000000', 'RUB', 'available')));
+        DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $attempt,
+            'credit_operation_id' => $id, 'credit_role' => 'estimate_composition',
+            'request_fingerprint' => hash('sha256', $attempt), 'logical_request_fingerprint' => hash('sha256', $attempt),
+            'organization_id' => $scope->organizationId, 'project_id' => $scope->projectId, 'session_id' => $scope->sessionId,
+            'state' => 'pre_wire', 'owner_token' => $attempt, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::transaction(fn () => $qaGuard->admit($attempt, new AiCost('1.00000000', 'RUB', 'available')));
+        self::assertTrue(DB::table('estimate_generation_qa_expense_attempts')->where('attempt_id', $attempt)->exists());
+        try {
+            DB::transaction(fn () => $admission->admit($id, (string) Str::uuid(), $scope->organizationId, $scope->projectId, $scope->sessionId,
+                'estimate_composition', new AiCost('1.00000000', 'RUB', 'available')));
+            self::fail('A second call exceeded the overall QA quote budget.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+            self::assertSame('estimator_credit_supplier_limit_reached', $exception->reason);
+        }
+        self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count());
+        $identity = json_decode($row->credit_request, true, 64, JSON_THROW_ON_ERROR);
+        app(EloquentAiUsageStore::class)->record(new AiUsageData(new AiOperationContext((string) Str::uuid(), $attempt,
+            $scope->organizationId, $scope->projectId, $scope->sessionId, 'plan_work_items', 'estimate_composition', 1, creditOperationId: $id),
+            'timeweb', 'openai/gpt-6-luna', 'succeeded', 10, reportedModel: 'openai/gpt-6-luna', usageStatus: 'measured',
+            inputTokens: 1000, outputTokens: 100, reasoningTokens: 20, priceSnapshot: AiPriceSnapshot::fromArray($identity['supplier_tariff'])));
+        $draft = ['source_input_version' => $row->source_version, 'local_estimates' => [['sections' => [['work_items' => [
+            ['key' => 'work:known', 'quantity' => '3', 'quantity_evidence' => ['source_type' => 'user_input']],
+        ]]]]]];
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft);
+        $receipt = DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->publish($session->fresh(), $id, $draft));
+        self::assertSame(50, $receipt['consumed_units_minor']);
+        self::assertSame(950, $credits->balance($organization)['available_minor']);
+        self::assertSame(0, $credits->balance($organization)['reserved_minor']);
+        $freshOtherId = (string) Str::uuid();
+        $freshOtherQuote = $operations->quote($otherActor, $otherScope->projectId, $otherScope->sessionId, 0, $freshOtherId, 'generation');
+        self::assertSame(950, $freshOtherQuote['max_units_minor']);
+        self::assertSame($freshOtherId, DB::transaction(fn () => $operations->begin($otherActor, $otherSession, 0, $freshOtherId, $freshOtherQuote['quote_id'], 'generation')));
+        self::assertSame(950, $credits->balance($otherOrganization)['reserved_minor']);
+    }
+
+    public function test_qa_rejects_a_stale_quote_when_supplier_expense_changes_before_begin(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => (string) Str::uuid()]);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $credits = app(AICreditService::class);
+        $credits->grant($organization, 100000, 'purchase', null, 'test:qa-stale-quote');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        self::assertSame(50000, $quote['max_units_minor']);
+        $prior = (string) Str::uuid();
+        DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $prior,
+            'request_fingerprint' => hash('sha256', $prior), 'logical_request_fingerprint' => hash('sha256', $prior),
+            'organization_id' => $scope->organizationId, 'project_id' => $scope->projectId, 'session_id' => $scope->sessionId,
+            'state' => 'pre_wire', 'owner_token' => $prior, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)
+            ->admit($prior, new AiCost('1.00000000', 'RUB', 'available')));
+        try {
+            DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+            self::fail('The quote reserved more than the remaining QA budget.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+            self::assertSame('estimator_live_qa_expense_limit_reached', $exception->reason);
+        }
+        self::assertSame(0, $credits->balance($organization)['reserved_minor']);
+        self::assertSame(0, \App\Models\Credits\AICreditReservation::query()->where('organization_id', $organization->id)->count());
+        $freshId = (string) Str::uuid();
+        $freshQuote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $freshId, 'generation');
+        self::assertSame(49400, $freshQuote['max_units_minor']);
+        DB::transaction(function () use ($operations, $actor, $session, $freshId, $freshQuote): void {
+            self::assertSame($freshId, $operations->begin($actor, $session, 0, $freshId, $freshQuote['quote_id'], 'generation'));
+            self::assertGreaterThanOrEqual(1, (int) DB::selectOne("SELECT COUNT(*) AS locks FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()")->locks);
+        });
+        self::assertSame(49400, $credits->balance($organization)['reserved_minor']);
+    }
+
     public function test_a_quote_reserves_the_real_known_composer_parts_even_with_one_selected_section(): void
     {
         [$organization, $actor, $scope] = $this->fixture();

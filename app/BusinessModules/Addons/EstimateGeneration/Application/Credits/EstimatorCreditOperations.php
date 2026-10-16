@@ -94,6 +94,8 @@ final readonly class EstimatorCreditOperations
         if ($this->database->transactionLevel() < 1 || ! Str::isUuid($requestId) || ! Str::isUuid($quoteId)) {
             throw new DomainException('estimator_credit_begin_requires_transaction');
         }
+        $qaGuard = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class);
+        $qaGuard->lockForReservation();
         $session = $this->session($actor, (int) $session->project_id, (int) $session->id);
         $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
         app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
@@ -133,6 +135,7 @@ final readonly class EstimatorCreditOperations
         }
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         $request = $this->request($identity);
+        $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
         $this->database->table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)
             ->update(['reservation_id' => $reservation->id, 'status' => 'reserved', 'updated_at' => now()]);
@@ -177,6 +180,10 @@ final readonly class EstimatorCreditOperations
         }
         if ($parameters !== []) {
             $plan['operation_parameters'] = $parameters;
+        }
+        $qaBudget = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->quoteBudget($plan['document_costs'] ?? []);
+        if ($qaBudget !== null) {
+            $plan = $this->plans->capForQaBudget($plan, $qaBudget);
         }
         $manifestHash = hash('sha256', CanonicalPipelineJson::encode($manifest));
         $identity = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,

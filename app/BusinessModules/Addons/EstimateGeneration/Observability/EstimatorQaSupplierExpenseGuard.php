@@ -16,6 +16,119 @@ final readonly class EstimatorQaSupplierExpenseGuard
 
     public function __construct(private Connection $database) {}
 
+    public function lockForReservation(): void
+    {
+        if (config('estimate-generation.live_qa.enabled') !== true) {
+            return;
+        }
+        $runId = config('estimate-generation.live_qa.run_id');
+        if ($this->database->transactionLevel() < 1 || ! is_string($runId) || ! Str::isUuid($runId)) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $this->database->selectOne('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ['estimate_generation_live_qa:'.strtolower($runId)]);
+    }
+
+    public function assertReservationBudget(array $plan, int $maximumUnitsMinor): void
+    {
+        $budget = $this->quoteBudget($plan['document_costs'] ?? []);
+        if ($budget === null) {
+            return;
+        }
+        $approved = $plan['qa_expense_budget'] ?? [];
+        foreach (['contract_version', 'run_id', 'unit_cost_micro_rub', 'unit_minor', 'price_version', 'carried_document_cost_micro_rub', 'carried_document_units_minor'] as $key) {
+            if (($approved[$key] ?? null) !== $budget[$key]) {
+                throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
+            }
+        }
+        if ($maximumUnitsMinor < 1 || $maximumUnitsMinor > $budget['maximum_reservation_units_minor']
+            || $plan['maximum_provider_cost_micro_rub'] > $budget['maximum_reservation_cost_micro_rub']) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
+        }
+    }
+
+    public function quoteBudget(array $documentCosts = []): ?array
+    {
+        if (config('estimate-generation.live_qa.enabled') !== true) {
+            return null;
+        }
+        $runId = config('estimate-generation.live_qa.run_id');
+        $unitCost = BigDecimal::of((string) config('ai-assistant-credits.rub_per_unit', '0.18'))
+            ->multipliedBy('1000000')->toScale(0, RoundingMode::Floor)->toInt();
+        $unitMinor = (int) config('ai-assistant-credits.unit_minor', 100);
+        $priceVersion = (int) config('ai-assistant-credits.price_version', 2);
+        if ($this->database->transactionLevel() < 1 || ! is_string($runId) || ! Str::isUuid($runId)
+            || $unitCost < 1 || $unitMinor !== 100 || $priceVersion < 1
+            || (int) config('ai-assistant-credits.minimum_units_minor', 50) !== 50
+            || (int) config('ai-assistant-credits.charge_step_minor', 50) !== 50) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $runId = strtolower($runId);
+        $cap = BigDecimal::of(self::MAXIMUM_UNITS_MINOR)->multipliedBy($unitCost)
+            ->dividedBy($unitMinor, 0, RoundingMode::Floor)->toInt();
+        $run = $this->database->table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->first();
+        if ($run !== null && ($run->status !== 'active' || (int) $run->maximum_units_minor !== self::MAXIMUM_UNITS_MINOR
+            || (int) $run->unit_cost_micro_rub !== $unitCost || (int) $run->unit_minor !== $unitMinor
+            || (int) $run->price_version !== $priceVersion || (int) $run->maximum_cost_micro_rub !== $cap)) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
+        }
+        $costs = [];
+        $charged = [];
+        foreach ($this->exposureGroups($runId) as $group) {
+            $costs[$group->operation_key] = (string) $group->supplier_exposure;
+            $charged[$group->operation_key] = (int) $group->charged_units_minor;
+        }
+        [$costs, $charged] = $this->withActiveReservations($runId, $costs, $charged);
+        $remaining = intdiv(max(0, self::MAXIMUM_UNITS_MINOR - self::exposureUnitsMinor($costs, $unitCost, $charged)), 50) * 50;
+        if ($remaining < 50) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
+        }
+        $carried = $this->carriedCostInRun($runId, $documentCosts, $costs, $charged, $unitCost);
+        $newCost = BigDecimal::of($remaining)->multipliedBy($unitCost)->dividedBy($unitMinor, 0, RoundingMode::Floor);
+        $reservationUnits = $remaining + $carried['units_minor'];
+        $reservationCost = BigDecimal::min($newCost->plus($carried['cost_micro_rub']),
+            BigDecimal::of($reservationUnits)->multipliedBy($unitCost)->dividedBy($unitMinor, 0, RoundingMode::Floor))->toInt();
+
+        return ['contract_version' => 'estimator-live-qa-quote-budget:v1', 'run_id' => $runId,
+            'remaining_units_minor' => $remaining, 'unit_cost_micro_rub' => $unitCost, 'unit_minor' => $unitMinor,
+            'carried_document_cost_micro_rub' => $carried['cost_micro_rub'], 'carried_document_units_minor' => $carried['units_minor'],
+            'maximum_reservation_units_minor' => $reservationUnits, 'maximum_reservation_cost_micro_rub' => $reservationCost,
+            'price_version' => $priceVersion, 'maximum_provider_cost_micro_rub' => $newCost->toInt()];
+    }
+
+    private function carriedCostInRun(string $runId, array $documentCosts, array $costs, array $charged, int $unitCost): array
+    {
+        $items = $documentCosts['items'] ?? [];
+        if ($items === []) {
+            return ['cost_micro_rub' => 0, 'units_minor' => 0];
+        }
+        $byAttempt = [];
+        foreach ($items as $item) {
+            $attemptId = $item['source_attempt_id'] ?? null;
+            $operationId = $item['source_operation_id'] ?? null;
+            $cost = $item['cost_micro_rub'] ?? null;
+            if (! is_string($attemptId) || ! Str::isUuid($attemptId) || ! is_string($operationId) || ! Str::isUuid($operationId)
+                || ! is_int($cost) || $cost < 1 || isset($byAttempt[$attemptId])) {
+                throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+            }
+            $byAttempt[$attemptId] = ['cost_micro_rub' => $cost, 'operation_id' => $operationId];
+        }
+        $cost = BigDecimal::zero();
+        $remainingCosts = $costs;
+        foreach ($this->database->table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)
+            ->whereIn('attempt_id', array_keys($byAttempt))->pluck('attempt_id') as $attemptId) {
+            $item = $byAttempt[$attemptId];
+            $cost = $cost->plus($item['cost_micro_rub']);
+            $remaining = BigDecimal::of($remainingCosts[$item['operation_id']] ?? '0')->minus($item['cost_micro_rub']);
+            if ($remaining->isNegative()) {
+                throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
+            }
+            $remainingCosts[$item['operation_id']] = (string) $remaining;
+        }
+
+        return ['cost_micro_rub' => $cost->toInt(), 'units_minor' => self::exposureUnitsMinor($costs, $unitCost, $charged)
+            - self::exposureUnitsMinor($remainingCosts, $unitCost, $charged)];
+    }
+
     public function admit(string $attemptId, AiCost $maximum): void
     {
         if (config('estimate-generation.live_qa.enabled') !== true) {
@@ -66,8 +179,49 @@ final readonly class EstimatorQaSupplierExpenseGuard
                 throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
             }
         }
-        $groups = $this->database->select(<<<'SQL'
-SELECT COALESCE(physical.credit_operation_id::text,
+        $groups = $this->exposureGroups($runId);
+        $supplierExposure = BigDecimal::of($next);
+        $costs = [$nextKey => (string) $next];
+        $charged = [];
+        foreach ($groups as $group) {
+            $supplierExposure = $supplierExposure->plus((string) $group->supplier_exposure);
+            $costs[$group->operation_key] = (string) BigDecimal::of($costs[$group->operation_key] ?? '0')->plus((string) $group->supplier_exposure);
+            $charged[$group->operation_key] = (int) $group->charged_units_minor;
+        }
+        [$costs, $charged] = $this->withActiveReservations($runId, $costs, $charged, $physical->credit_operation_id);
+        if ($supplierExposure->isGreaterThan($cap) || self::exposureUnitsMinor($costs, $unitCost, $charged) > self::MAXIMUM_UNITS_MINOR) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
+        }
+        $this->database->table('estimate_generation_qa_expense_attempts')->insert([
+            'attempt_id' => $attemptId, 'run_id' => $runId, 'maximum_cost_micro_rub' => $next, 'created_at' => now(),
+        ]);
+    }
+
+    private function withActiveReservations(string $runId, array $costs, array $charged, ?string $excludedOperationId = null): array
+    {
+        foreach ($this->database->select(<<<'SQL'
+SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor,
+  COALESCE((operations.processing_plan->'qa_expense_budget'->>'carried_document_units_minor')::bigint,0) AS carried_units_minor
+FROM estimate_generation_credit_operations operations
+JOIN ai_credit_reservations reservations ON reservations.id=operations.reservation_id
+WHERE reservations.status='reserved' AND operations.operation_id IS DISTINCT FROM ?::uuid AND (
+  operations.processing_plan->'qa_expense_budget'->>'run_id'=?
+  OR EXISTS (SELECT 1 FROM estimate_generation_qa_expense_attempts attempts
+    JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
+    WHERE attempts.run_id=? AND physical.credit_operation_id=operations.operation_id))
+SQL, [$excludedOperationId, $runId, $runId]) as $hold) {
+            $costs[$hold->operation_key] ??= '0';
+            $reserved = max(0, (int) $hold->reserved_minor - (int) ($hold->carried_units_minor ?? 0));
+            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, $reserved);
+        }
+
+        return [$costs, $charged];
+    }
+
+    private function exposureGroups(string $runId): array
+    {
+        return $this->database->select(<<<'SQL'
+SELECT COALESCE(allocated_operation.operation_id::text, physical.credit_operation_id::text,
     physical.organization_id::text || ':' || COALESCE(physical.logical_request_fingerprint, physical.attempt_id::text)) AS operation_key,
   SUM(CASE
     WHEN usages.usage_status='measured' AND usages.pricing_status='available' AND usages.currency='RUB'
@@ -78,24 +232,15 @@ FROM estimate_generation_qa_expense_attempts attempts
 JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
 LEFT JOIN estimate_generation_ai_usage usages ON usages.attempt_id=attempts.attempt_id
   AND usages.organization_id=physical.organization_id AND usages.project_id=physical.project_id AND usages.session_id=physical.session_id
-LEFT JOIN estimate_generation_credit_operations operations ON operations.operation_id=physical.credit_operation_id
+LEFT JOIN ai_credit_provider_cost_allocations allocation ON allocation.source_attempt_id=physical.attempt_id
+  AND allocation.organization_id=physical.organization_id AND allocation.project_id=physical.project_id AND allocation.session_id=physical.session_id
+LEFT JOIN estimate_generation_credit_operations allocated_operation ON allocated_operation.operation_id=allocation.destination_operation_id
+  AND allocated_operation.processing_plan->'qa_expense_budget'->>'run_id'=attempts.run_id::text
+LEFT JOIN estimate_generation_credit_operations operations
+  ON operations.operation_id=COALESCE(allocated_operation.operation_id,physical.credit_operation_id)
 WHERE attempts.run_id=?
 GROUP BY operation_key
 SQL, [$runId]);
-        $supplierExposure = BigDecimal::of($next);
-        $costs = [$nextKey => (string) $next];
-        $charged = [];
-        foreach ($groups as $group) {
-            $supplierExposure = $supplierExposure->plus((string) $group->supplier_exposure);
-            $costs[$group->operation_key] = (string) BigDecimal::of($costs[$group->operation_key] ?? '0')->plus((string) $group->supplier_exposure);
-            $charged[$group->operation_key] = (int) $group->charged_units_minor;
-        }
-        if ($supplierExposure->isGreaterThan($cap) || self::exposureUnitsMinor($costs, $unitCost, $charged) > self::MAXIMUM_UNITS_MINOR) {
-            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
-        }
-        $this->database->table('estimate_generation_qa_expense_attempts')->insert([
-            'attempt_id' => $attemptId, 'run_id' => $runId, 'maximum_cost_micro_rub' => $next, 'created_at' => now(),
-        ]);
     }
 
     /** Includes the estimator's 0.5-unit minimum and rounding once per operation, also for service expenses. */

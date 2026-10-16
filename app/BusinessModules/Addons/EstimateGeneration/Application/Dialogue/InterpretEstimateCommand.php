@@ -177,6 +177,7 @@ final readonly class InterpretEstimateCommand
                 || $this->contexts->build($current)['fingerprint'] !== $context['fingerprint']) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['state_version' => 'Исходные данные уточнения изменились.']);
             }
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->lockForReservation();
             $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', strtolower($key))
                 ->where('organization_id', $current->organization_id)->where('project_id', $current->project_id)
                 ->where('session_id', $current->id)->where('actor_user_id', $actor->id)->where('kind', 'dialogue')->lockForUpdate()->first();

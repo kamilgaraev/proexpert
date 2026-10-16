@@ -73,6 +73,44 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
         self::assertSame(249750, (int) DB::table('ai_credit_provider_cost_allocations')->where('source_provider_usage_id', $allocation->source_provider_usage_id)->value('cost_micro_rub'));
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('allocationQaRuns')]
+    public function test_qa_counts_allocated_document_cost_once_and_preserves_its_original_run(bool $sameRun): void
+    {
+        $sourceRun = (string) \Illuminate\Support\Str::uuid();
+        $targetRun = $sameRun ? $sourceRun : (string) \Illuminate\Support\Str::uuid();
+        config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => $sourceRun]);
+        $run = $this->replayPhoto('photo-document-cost-v1.json', 0, 1, '20', 150,
+            static function () use ($targetRun): void {
+                config(['estimate-generation.live_qa.run_id' => $targetRun]);
+            });
+        $guard = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class);
+        $operation = DB::table('estimate_generation_credit_operations')->where('session_id', $run['session_id'])->where('kind', 'generation')->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame($sameRun ? 249750 : 0, $plan['qa_expense_budget']['carried_document_cost_micro_rub']);
+        self::assertSame($plan['qa_expense_budget']['maximum_provider_cost_micro_rub'] + ($sameRun ? 249750 : 0), $plan['maximum_provider_cost_micro_rub']);
+        self::assertSame(50000, (int) DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->value('reserved_minor'));
+        self::assertSame(1, DB::table('ai_credit_provider_cost_allocations')->where('session_id', $run['session_id'])->count());
+        self::assertSame(49850, DB::transaction(fn () => $guard->quoteBudget())['remaining_units_minor']);
+        config(['estimate-generation.live_qa.run_id' => $sourceRun]);
+        self::assertSame(49850, DB::transaction(fn () => $guard->quoteBudget())['remaining_units_minor']);
+        self::assertSame($sameRun ? 3 : 1, DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $sourceRun)->count());
+        $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()->findOrFail($run['session_id']);
+        $attempt = (string) \Illuminate\Support\Str::uuid();
+        DB::table('estimate_generation_vision_physical_attempts')->insert(['attempt_id' => $attempt,
+            'request_fingerprint' => hash('sha256', $attempt), 'logical_request_fingerprint' => hash('sha256', $attempt),
+            'organization_id' => $session->organization_id, 'project_id' => $session->project_id, 'session_id' => $session->id,
+            'state' => 'pre_wire', 'owner_token' => $attempt, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now()]);
+        DB::transaction(fn () => $guard->admit($attempt,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost('89.73000000', 'RUB', 'available')));
+        self::assertSame($sameRun ? 4 : 2, DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $sourceRun)->count());
+    }
+
+    public static function allocationQaRuns(): array
+    {
+        return ['one run' => [true], 'different runs keep historical attribution' => [false]];
+    }
+
     public function test_information_only_result_leaves_document_cost_available_without_allocating_or_charging(): void
     {
         $run = $this->replayPhoto('photo-document-cost-info-v1.json', 0, 1);

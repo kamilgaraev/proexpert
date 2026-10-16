@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -83,6 +84,28 @@ final class EstimatorProcessingPlan
             'composer_part_limit' => $kind === 'documents' || $kind === 'dialogue' ? 0
                 : $composerParts,
             'synthesis_part_limit' => isset($roles['project_synthesis']) ? $synthesisParts : 0];
+    }
+
+    public function capForQaBudget(array $plan, array $budget): array
+    {
+        $maximum = $budget['maximum_provider_cost_micro_rub'] ?? null;
+        $carried = $budget['carried_document_cost_micro_rub'] ?? 0;
+        if (! is_int($maximum) || $maximum < 1 || ! is_int($carried) || $carried < 0
+            || $carried > ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $total = BigDecimal::of($maximum)->plus($carried)->toInt();
+        $reservationMaximum = $budget['maximum_reservation_cost_micro_rub'] ?? $total;
+        if (! is_int($reservationMaximum) || $reservationMaximum < 1 || $reservationMaximum > $total) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $plan['maximum_provider_cost_micro_rub'] = min($plan['maximum_provider_cost_micro_rub'], $reservationMaximum);
+        if ($plan['maximum_provider_cost_micro_rub'] <= ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
+        }
+        $plan['qa_expense_budget'] = $budget;
+
+        return $plan;
     }
 
     private function role(int $calls, int $inputCeiling, int $outputCeiling, AiPriceSnapshot $tariff, bool $image = false): array
