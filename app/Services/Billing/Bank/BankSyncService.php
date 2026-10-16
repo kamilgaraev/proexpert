@@ -146,7 +146,10 @@ final class BankSyncService
                 $failed = true;
                 $failureCode = in_array($exception->getMessage(), ['bank_amount_invalid', 'tochka_transaction_invalid', 'tochka_transaction_account_mismatch'], true)
                     ? $exception->getMessage() : 'transaction_failed';
-                Log::error('Bank transaction processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class, 'failure_code' => $failureCode]);
+                $amount = is_array($transaction) ? ($transaction['Amount']['amount'] ?? null) : null;
+                Log::error('Bank transaction processing failed.', ['statement_id' => $statement->id, 'exception' => $exception::class, 'failure_code' => $failureCode,
+                    'amount_type' => get_debug_type($amount),
+                    'fraction_digits' => is_string($amount) && preg_match('/\A\d+\.(\d+)\z/', $amount, $matches) ? strlen($matches[1]) : null]);
             }
         }
         if ($failed) {

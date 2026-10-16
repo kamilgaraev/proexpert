@@ -36,7 +36,13 @@ final class BankSettlementService
             'currency' => ($transaction['Amount']['currency'] ?? null) !== 'RUB',
         ]));
         if ($failedChecks !== []) {
-            \Illuminate\Support\Facades\Log::warning('Bank transaction validation rejected.', ['failed_checks' => $failedChecks]);
+            $currency = $transaction['Amount']['currency'] ?? null;
+            \Illuminate\Support\Facades\Log::warning('Bank transaction validation rejected.', [
+                'failed_checks' => $failedChecks,
+                'booking_date_shape' => $date === '' ? 'missing' : (preg_match('/\A\d{4}-\d{2}-\d{2}T/', $date) ? 'iso_datetime' : 'other'),
+                'currency_kind' => in_array($currency, ['RUB', 'RUR', '643', '810'], true) ? $currency : 'other',
+                'direction_kind' => in_array($direction, ['credit', 'debit', 'crdt', 'dbit', 'c', 'd'], true) ? $direction : 'other',
+            ]);
             throw new InvalidArgumentException('tochka_transaction_invalid');
         }
         $data = [
@@ -50,6 +56,13 @@ final class BankSettlementService
         ];
         $ours = (string) config('bank_billing.seller_account');
         if (($direction === 'credit' ? $data['recipient_account'] : $data['payer_account']) !== $ours) {
+            $accountValue = $transaction[$direction === 'credit' ? 'CreditorAccount' : 'DebtorAccount']['identification'] ?? null;
+            $accountText = is_string($accountValue) ? $accountValue : '';
+            \Illuminate\Support\Facades\Log::warning('Bank transaction account rejected.', [
+                'account_shape' => $accountText === '' ? 'missing' : (preg_match('/\A\d{20}\/\d{9}\z/', $accountText) ? 'account_id'
+                    : (preg_match('/\A\d{20}\z/', $accountText) ? 'account_number' : 'other')),
+                'account_number_matches' => substr($accountText, 0, 20) === $ours,
+            ]);
             throw new InvalidArgumentException('tochka_transaction_account_mismatch');
         }
         $operation = DB::transaction(function () use ($data): CommercialBankOperation {
