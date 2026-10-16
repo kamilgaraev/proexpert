@@ -4,20 +4,43 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Requests;
 
-use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
-
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Http\Responses\PublicSupplierRequestAccessResponse;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use App\BusinessModules\Features\Procurement\Support\SupplierPaymentSchedule;
 use App\Enums\CurrencyCode;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Validation\Rule;
 
 use function trans_message;
 
 class StorePublicSupplierProposalRequest extends FormRequest
 {
-    public function authorize(): bool
+    private ?SupplierRequest $resolvedSupplierRequest = null;
+
+    public function authorize(ProcurementLifecycleService $lifecycleService): bool
     {
+        $supplierRequest = $this->supplierRequest();
+
+        if (! $supplierRequest instanceof SupplierRequest) {
+            throw new HttpResponseException(LandingResponse::error(trans_message('procurement.public_supplier_requests.not_found'), 404));
+        }
+
+        if ($supplierRequest->status === SupplierRequestStatusEnum::SENT && $supplierRequest->hasExpiredPublicToken()) {
+            $supplierRequest = $lifecycleService->syncSupplierRequestExpiry($supplierRequest);
+            $this->resolvedSupplierRequest = $supplierRequest;
+        }
+
+        $blockedResponse = PublicSupplierRequestAccessResponse::blocked($supplierRequest, true);
+
+        if ($blockedResponse !== null) {
+            throw new HttpResponseException($blockedResponse);
+        }
+
         return true;
     }
 
@@ -79,13 +102,17 @@ class StorePublicSupplierProposalRequest extends FormRequest
 
     private function supplierRequest(): ?SupplierRequest
     {
+        if ($this->resolvedSupplierRequest !== null) {
+            return $this->resolvedSupplierRequest;
+        }
+
         $token = (string) $this->route('token');
 
-        if ($token === '') {
+        if (strlen($token) < 32) {
             return null;
         }
 
-        return SupplierRequest::query()
+        return $this->resolvedSupplierRequest = SupplierRequest::query()
             ->where('public_token', $token)
             ->first();
     }

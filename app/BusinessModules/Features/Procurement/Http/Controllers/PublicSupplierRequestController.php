@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierProposalIntakeSourceE
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePublicSupplierProposalRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\PublicSupplierRequestResource;
+use App\BusinessModules\Features\Procurement\Http\Responses\PublicSupplierRequestAccessResponse;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
@@ -17,7 +18,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
-use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 use function trans_message;
@@ -39,7 +39,7 @@ class PublicSupplierRequestController extends Controller
             }
 
             $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
-            $blockedResponse = $this->blockedResponse($supplierRequest, false);
+            $blockedResponse = PublicSupplierRequestAccessResponse::blocked($supplierRequest, false);
 
             if ($blockedResponse instanceof JsonResponse) {
                 return $blockedResponse;
@@ -73,7 +73,7 @@ class PublicSupplierRequestController extends Controller
             }
 
             $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
-            $blockedResponse = $this->blockedResponse($supplierRequest, true);
+            $blockedResponse = PublicSupplierRequestAccessResponse::blocked($supplierRequest, true);
 
             if ($blockedResponse instanceof JsonResponse) {
                 return $blockedResponse;
@@ -124,38 +124,5 @@ class PublicSupplierRequestController extends Controller
             ->where('public_token', $token)
             ->with(['organization', 'supplier', 'externalSupplierContact', 'supplierParty', 'lines'])
             ->first();
-    }
-
-    private function blockedResponse(SupplierRequest $supplierRequest, bool $forSubmit): ?JsonResponse
-    {
-        if ($supplierRequest->status === SupplierRequestStatusEnum::CANCELLED) {
-            return LandingResponse::error(
-                trans_message('procurement.public_supplier_requests.cancelled'),
-                Response::HTTP_GONE
-            );
-        }
-
-        if ($supplierRequest->status === SupplierRequestStatusEnum::EXPIRED) {
-            return LandingResponse::error(
-                trans_message('procurement.public_supplier_requests.expired'),
-                Response::HTTP_GONE
-            );
-        }
-
-        if ($forSubmit && $supplierRequest->status === SupplierRequestStatusEnum::RESPONDED) {
-            return LandingResponse::error(
-                trans_message('procurement.public_supplier_requests.already_responded'),
-                Response::HTTP_CONFLICT
-            );
-        }
-
-        if ($forSubmit && ! $supplierRequest->canReceivePublicProposal()) {
-            return LandingResponse::error(
-                trans_message('procurement.public_supplier_requests.not_accepting_responses'),
-                Response::HTTP_CONFLICT
-            );
-        }
-
-        return null;
     }
 }

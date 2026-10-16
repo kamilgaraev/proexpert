@@ -164,14 +164,17 @@ class SupplierRequest extends Model
         return $status instanceof SupplierRequestStatusEnum && $status->canBeCancelled();
     }
 
+    public function hasExpiredPublicToken(): bool
+    {
+        return $this->public_token_expires_at !== null
+            && ! $this->public_token_expires_at->isFuture();
+    }
+
     public function canReceivePublicProposal(): bool
     {
         return $this->status === SupplierRequestStatusEnum::SENT
             && $this->public_token !== null
-            && (
-                $this->public_token_expires_at === null
-                || $this->public_token_expires_at->isFuture()
-            );
+            && ! $this->hasExpiredPublicToken();
     }
 
     public function publicUrl(): ?string
@@ -180,6 +183,6 @@ class SupplierRequest extends Model
             return null;
         }
 
-        return rtrim((string) config('app.frontend_url'), '/') . '/supplier-requests/' . $this->public_token;
+        return rtrim((string) config('app.frontend_url'), '/').'/supplier-requests/'.$this->public_token;
     }
 }

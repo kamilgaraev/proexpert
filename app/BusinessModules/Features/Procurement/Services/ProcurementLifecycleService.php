@@ -127,8 +127,7 @@ class ProcurementLifecycleService
 
         if (
             $supplierRequest->status === SupplierRequestStatusEnum::SENT
-            && $supplierRequest->public_token_expires_at !== null
-            && $supplierRequest->public_token_expires_at->isPast()
+            && $supplierRequest->hasExpiredPublicToken()
         ) {
             $supplierRequest = $this->syncSupplierRequestExpiry($supplierRequest);
         }
@@ -229,8 +228,7 @@ class ProcurementLifecycleService
     {
         if (
             $supplierRequest->status === SupplierRequestStatusEnum::SENT
-            && $supplierRequest->public_token_expires_at !== null
-            && $supplierRequest->public_token_expires_at->isPast()
+            && $supplierRequest->hasExpiredPublicToken()
         ) {
             $supplierRequest->update(['status' => SupplierRequestStatusEnum::EXPIRED]);
         }
@@ -473,8 +471,7 @@ class ProcurementLifecycleService
         foreach ($purchaseRequest->supplierRequests as $supplierRequest) {
             if (
                 $supplierRequest->status === SupplierRequestStatusEnum::SENT
-                && $supplierRequest->public_token_expires_at !== null
-                && $supplierRequest->public_token_expires_at->isPast()
+                && $supplierRequest->hasExpiredPublicToken()
             ) {
                 $this->syncSupplierRequestExpiry($supplierRequest);
                 $hasExpiredSync = true;
