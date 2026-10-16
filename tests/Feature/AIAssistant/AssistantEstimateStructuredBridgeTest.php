@@ -39,7 +39,9 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         $authorization->shouldReceive('can')->andReturn(true);
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
-        $this->mock(OrganizationEntitlementService::class)->shouldReceive('getEffectiveModules')
+        $moduleEntitlements = $this->mock(OrganizationEntitlementService::class);
+        $moduleEntitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $moduleEntitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
+        $moduleEntitlements->shouldReceive('getEffectiveModules')
             ->andReturn(collect([new Module(['slug' => 'budget-estimates']), new Module(['slug' => 'project-management'])]));
         $this->mock(UserProjectAccessService::class)->shouldReceive('queryAccessibleProjects')
             ->andReturnUsing(fn (User $actor, int $organizationId) => Project::query()->where('organization_id', $organizationId));

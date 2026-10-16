@@ -53,6 +53,7 @@ final class AssistantApiContractTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (): bool => $this->permissionGranted);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => $this->moduleEnabled ? collect([new Module(['slug' => 'ai-assistant'])]) : collect());
         $this->app->instance(AssistantDataAccessPolicy::class, new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules));
         $this->app->instance(TokenBudgetService::class, new TokenBudgetService(new TokenCounter(new class {

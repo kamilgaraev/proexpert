@@ -113,7 +113,7 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
     private function fixture(bool $revokeAfterRead, string $sourceType = 'completed_work', bool $empty = false, int $reads = 1): array
     {
         $this->previousResolver = Model::getConnectionResolver();
-        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select'])->getMock();
+        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select', 'getSchemaBuilder'])->getMock();
         $connection->method('select')->willReturn([(object) ['exists' => true]]);
         $resolver = $this->createMock(ConnectionResolverInterface::class);
         $resolver->method('connection')->willReturn($connection);
@@ -121,6 +121,8 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         $schema = $this->createMock(\Illuminate\Database\Schema\Builder::class);
         $schema->method('getColumnListing')->willReturn(['id', 'organization_id', 'project_id', 'contract_id', 'asset_id', 'deleted_at', 'status', 'quantity', 'total_amount', 'amount', 'completion_date']);
         app()->instance('db.schema', $schema);
+        $connection->method('getSchemaBuilder')->willReturn($schema);
+        \Illuminate\Support\Facades\DB::swap($resolver);
         $nativeChecks = 0;
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('forCurrentChecks')->willReturnSelf();
@@ -128,6 +130,7 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
             return ! ($revokeAfterRead && $nativeChecks >= 2 && $permission === 'finance.view');
         });
         $modules = $this->createMock(OrganizationEntitlementService::class);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect(array_map(static fn (string $slug): Module => new Module(['slug' => $slug]), ['ai-assistant', 'project-management', 'payments', 'contract-management', 'budgeting', 'machinery-operations'])));
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturnCallback(static fn () => Project::query());

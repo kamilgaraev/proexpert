@@ -47,6 +47,7 @@ final class AssistantDesignDomainTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => ! in_array($permission, $this->denied, true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'design-management'], (object) ['slug' => 'ai-assistant']]));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);

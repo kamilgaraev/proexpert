@@ -40,6 +40,7 @@ try {
     $authorization->shouldReceive('canCurrent')->andReturn(true);
     $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
     $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+    $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
     $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant'])]));
     $app->instance(AssistantDataAccessPolicy::class, new AssistantDataAccessPolicy($authorization, Mockery::mock(UserProjectAccessService::class), $entitlements));
     Queue::fake();
@@ -56,7 +57,7 @@ try {
     $duration = (hrtime(true) - $startedAt) / 1000000;
     $replayed = $service->submit($payload['organization_id'], $actor, null, $payload['request'], 'admin');
     if (!$started['created'] || $replayed['created'] || $replayed['request']->id !== $started['request']->id) { throw new RuntimeException('submit_idempotency_failed'); }
-    $result = ['status' => 'queued', 'jobs' => Queue::pushed(ExecuteAssistantChatJob::class)->count(), 'duration_ms' => round($duration, 2), 'peak_memory_bytes' => memory_get_peak_usage(true)];
+    $result = ['status' => 'queued', 'jobs' => Queue::getFacadeRoot()->pushed(ExecuteAssistantChatJob::class)->count(), 'duration_ms' => round($duration, 2), 'peak_memory_bytes' => memory_get_peak_usage(true)];
 } catch (Throwable $exception) {
     $result = ['status' => 'error', 'exception_class' => get_class($exception)];
 }

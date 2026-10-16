@@ -311,6 +311,7 @@ final class AIAssistantRagContextTest extends TestCase
         $redis->shouldReceive('eval')->andReturn(1);
         Redis::shouldReceive('connection')->andReturn($redis);
         $this->mock(OrganizationEntitlementService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $mock->getEffectiveModules($organizationId)->pluck('slug')->all());
             $mock->shouldReceive('getEffectiveModules')->andReturn(collect([
                 (object) ['slug' => 'ai-assistant'],
                 (object) ['slug' => 'project-management'],

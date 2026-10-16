@@ -38,6 +38,7 @@ final class AssistantBimEngineeringAccessTest extends TestCase
             }
         });
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'design-management'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $this->policy = new AssistantDataAccessPolicy($app->make(\App\Domain\Authorization\Services\AuthorizationService::class),

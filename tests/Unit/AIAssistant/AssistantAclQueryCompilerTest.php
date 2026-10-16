@@ -43,6 +43,22 @@ final class AssistantAclQueryCompilerTest extends TestCase
         else { Model::unsetConnectionResolver(); }
     }
 
+    public function test_current_domain_checks_use_injected_module_slugs_and_observe_revocation(): void
+    {
+        $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('canCurrent')->andReturnTrue();
+        $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldNotReceive('getEffectiveModules');
+        $modules->shouldReceive('getEffectiveModuleSlugs')->twice()->with(1)
+            ->andReturn(['project-management'], []);
+        $policy = new AssistantDataAccessPolicy($authorization,
+            Facade::getFacadeApplication()->make(\App\Services\Project\UserProjectAccessService::class), $modules);
+
+        self::assertTrue($policy->canReadDomain($this->actor, 1, 'projects'));
+        self::assertFalse($policy->canReadDomain($this->actor, 1, 'projects'));
+    }
+
     public function test_purchase_order_parent_accepts_order_read_permission_without_opening_generic_procurement_domain(): void
     {
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
@@ -89,6 +105,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
             return $allowed;
         });
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(static function () use (&$moduleActive) {
             return collect($moduleActive ? [(object) ['slug' => 'crm']] : []);
         });

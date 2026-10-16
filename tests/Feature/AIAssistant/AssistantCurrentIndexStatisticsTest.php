@@ -121,6 +121,7 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'budgeting'], (object) ['slug' => 'file-management'], (object) ['slug' => 'payments']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $coverage = new RagCoverageService($registry, new RagIndexer(Mockery::mock(RagEmbeddingProviderInterface::class), $registry), $policy);
@@ -423,6 +424,7 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('canCurrent')->andReturnTrue();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'budgeting']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $policy->withCurrentChecks($actor, $organization->id, function () use ($policy, $actor, $organization): void {
@@ -524,6 +526,7 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions
             && ! in_array($permission, $this->deniedPermissions, true) && in_array($permission, ['projects.view', 'contracts.view', 'finance.view'], true));
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'contract-management'], (object) ['slug' => 'payments']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);

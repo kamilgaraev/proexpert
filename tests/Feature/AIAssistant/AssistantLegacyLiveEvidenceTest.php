@@ -53,6 +53,7 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
             && ($this->financialPermissions || ! in_array($permission, ['finance.view', 'finance.view_project_budget'], true)));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['project-management', 'contract-management', 'catalog-management', 'schedule-management', 'procurement', 'site-requests', 'users'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

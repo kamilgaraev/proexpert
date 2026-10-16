@@ -542,7 +542,7 @@ final class AssistantDataAccessPolicy
     private function currentEffectiveModuleSlugs(User $user, int $organizationId): array
     {
         $loadModules = fn (): array => ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))
-            ->getEffectiveModules($organizationId)->pluck('slug')->all();
+            ->getEffectiveModuleSlugs($organizationId);
 
         $modules = $this->rememberCurrent($user, $organizationId, 'modules', $loadModules);
 

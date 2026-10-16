@@ -61,6 +61,7 @@ final class AssistantMaterialStockToolTest extends TestCase
             && ! in_array($permission, $this->deniedPermissions, true))->byDefault();
         $this->authorization = $authorization;
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'basic-warehouse', 'catalog-management', 'project-management'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

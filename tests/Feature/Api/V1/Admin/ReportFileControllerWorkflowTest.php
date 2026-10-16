@@ -19,6 +19,7 @@ class ReportFileControllerWorkflowTest extends TestCase
     {
         parent::setUp();
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([new \App\Models\Module(['slug' => 'file-management'])]));
         $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
     }

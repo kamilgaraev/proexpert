@@ -33,7 +33,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\PostgresConnection;
-use Illuminate\Database\Schema\PostgresBuilder;
+use Illuminate\Database\Schema\Builder as SchemaBuilder;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionProperty;
@@ -239,18 +239,20 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $fields = ['id', 'name', 'secret_amount', ...array_map(static fn (int $number): string => 'field_'.$number, range(1, 24))];
         $catalog ??= new AssistantDomainCatalog([new AssistantDomainDefinition('projects', 'projects', 'project', ['projects.view'], $fields, [], ['search', 'read', 'navigation'], '/projects', 'projects', ['project'], ['secret_amount' => ['finance.view']])]);
         $this->previousResolver = Model::getConnectionResolver();
-        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select'])->getMock();
+        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select', 'getSchemaBuilder'])->getMock();
         $connection->method('select')->willReturn([(object) ['exists' => true]]);
         $resolver = $this->createMock(ConnectionResolverInterface::class);
         $resolver->method('connection')->willReturn($connection);
         Model::setConnectionResolver($resolver);
-        $schema = $this->getMockBuilder(PostgresBuilder::class)->setConstructorArgs([$connection])->onlyMethods(['getColumnListing'])->getMock();
+        $schema = $this->getMockBuilder(SchemaBuilder::class)->setConstructorArgs([$connection])->onlyMethods(['getColumnListing'])->getMock();
         $schema->method('getColumnListing')->willReturnCallback(static fn (string $table): array => match ($table) {
             'projects' => ['id', 'organization_id', 'name', 'deleted_at'],
             'payment_documents' => ['id', 'organization_id', 'project_id', 'deleted_at'],
             default => [],
         });
         app()->instance('db.schema', $schema);
+        $connection->method('getSchemaBuilder')->willReturn($schema);
+        \Illuminate\Support\Facades\DB::swap($resolver);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(static fn (User $actor, string $permission): bool => match ($permission) {
             'finance.view' => $financeAllowed,
@@ -260,6 +262,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         });
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'project-management']), new Module(['slug' => 'payments'])]));
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturnCallback(static fn (User $actor, int $organizationId): Builder => Project::query()->where('projects.organization_id', $organizationId));

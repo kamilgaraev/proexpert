@@ -166,6 +166,9 @@ class WarehouseStockReportTest extends TestCase
         $html = view('reports.warehouse-stock-pdf', ['data' => $report['data'], 'totals' => $report['totals'], 'generated_at' => '16.10.2026 00:00'])->render();
         $this->assertStringNotContainsString('technical_stock_login', $html);
         $this->assertStringContainsString('ФИО не указано', $html);
+        $warehouse->delete();
+        $afterDeletion = $this->reportService->getWarehouseStockReport($this->makeWarehouseStockRequest($organization, $user));
+        $this->assertSame(['Ответственное хранение: Объект приёмки, ФИО не указано'], $afterDeletion['data']->pluck('warehouse')->all());
     }
 
     private function createStockReportContext(): array

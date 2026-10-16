@@ -135,6 +135,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
@@ -1122,6 +1123,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing($authorizationDecision);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([
             new Module(['slug' => 'ai-assistant']),
             new Module(['slug' => 'users']),
@@ -1212,6 +1214,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $authorization->method('canCurrent')->willReturnCallback(static fn (User $user, string $permission): bool => $permission === 'ai_assistant.chat');
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
+        $modules->method('getEffectiveModuleSlugs')->willReturnCallback(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'contract-management'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
@@ -1309,6 +1312,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'users'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
@@ -1688,6 +1692,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(array_map(static fn (string $slug): Module => new Module(['slug' => $slug]),
             ['ai-assistant', 'users', 'reports'])));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

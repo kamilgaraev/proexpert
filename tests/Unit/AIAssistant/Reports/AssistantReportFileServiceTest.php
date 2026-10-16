@@ -32,6 +32,7 @@ final class AssistantReportFileServiceTest extends TestCase
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'reports', 'payments'])->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $policy = new \App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy($authorization, new \App\Services\Project\UserProjectAccessService, $modules);
         $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class, $policy);

@@ -71,6 +71,7 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
             }
         );
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $entitlements->shouldReceive('getEffectiveModules')->zeroOrMoreTimes()->andReturnUsing(
             static function (int $organizationId) use (&$modulesByOrganization, &$moduleCalls): Collection {
                 $moduleCalls[$organizationId] = ($moduleCalls[$organizationId] ?? 0) + 1;

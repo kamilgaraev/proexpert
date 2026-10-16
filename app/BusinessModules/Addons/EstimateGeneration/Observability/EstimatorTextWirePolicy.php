@@ -17,6 +17,8 @@ final class EstimatorTextWirePolicy
 
     public const SYSTEM_HEADROOM_BYTES = 8192;
 
+    public const STRUCTURED_OUTPUT_TOKENS = 8192;
+
     public static function capture(): array
     {
         return self::configuredPolicy(true);
@@ -27,7 +29,7 @@ final class EstimatorTextWirePolicy
         $prepared = (new TokenBudgetService)->prepare([], [], 'normal');
         $limits = $prepared['budget_limits'];
         if ($structuredOutput) {
-            $limits['output_tokens'] = 8192;
+            $limits['output_tokens'] = self::STRUCTURED_OUTPUT_TOKENS;
         }
 
         return ['contract' => self::CONTRACT, 'profile' => 'normal',
