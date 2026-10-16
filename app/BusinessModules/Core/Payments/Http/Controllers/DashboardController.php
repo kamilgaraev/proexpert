@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Http\Requests\PaymentProjectScopeRequest;
 use App\BusinessModules\Core\Payments\Services\PaymentDashboardQueryService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
@@ -24,9 +25,11 @@ class DashboardController extends Controller
             $period = max((int) $request->input('period', 30), 1);
 
             return AdminResponse::success(
-                $this->dashboard->getDashboard($organizationId, $period, $request->projectId()),
+                $this->dashboard->getDashboard($request->user(), $organizationId, $period, $request->projectId()),
                 trans_message('payments.dashboard.loaded')
             );
+        } catch (AuthorizationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             Log::error('payments.dashboard.error', ['organization_id' => $organizationId, 'error' => $e->getMessage()]);
 

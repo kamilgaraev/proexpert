@@ -11,15 +11,24 @@ use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentDashboardQueryService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Contractor;
 use App\Models\Contract;
 use App\Models\ContractProjectAllocation;
 use App\Models\Project;
+use App\Models\User;
 use App\Enums\ProjectOrganizationRole;
 use App\Enums\UserProjectAccessMode;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Tests\Support\AdminApiTestContext;
@@ -283,6 +292,122 @@ class DashboardControllerWorkflowTest extends TestCase
             ])->assertStatus(422);
             $this->assertSame(1, PaymentDocument::query()->where('organization_id', $context->organization->id)->count());
         }
+    }
+
+    public function test_dashboard_service_rejects_foreign_inactive_organization_membership_and_actor_before_financial_reads(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->assertDashboardServiceDenied($context->user, $foreignContext->organization->id);
+        $this->assertDashboardServiceDenied($context->user, 0);
+
+        $context->organization->users()->updateExistingPivot($context->user->id, ['is_active' => false]);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['is_active' => true]);
+        $context->organization->forceFill(['is_active' => false])->save();
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id);
+        $context->organization->forceFill(['is_active' => true])->save();
+        $context->user->forceFill(['is_active' => false])->save();
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id);
+    }
+
+    public function test_dashboard_service_requires_the_explicit_actors_dashboard_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $otherActor = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['is_owner' => false]);
+        $context->user->roleAssignments()->delete();
+        $role = OrganizationCustomRole::createRole(
+            organizationId: $context->organization->id,
+            name: 'Dashboard denied test role',
+            modulePermissions: ['payments' => ['payments.invoice.view']],
+            interfaceAccess: ['admin'],
+            createdBy: $context->user,
+        );
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $role->slug,
+            context: AuthorizationContext::getOrganizationContext($context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
+        Cache::driver('array')->flush();
+        Cache::flush();
+        Auth::setUser($otherActor->user);
+
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id);
+    }
+
+    public function test_dashboard_service_checks_project_access_and_preserves_shared_archived_history(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id, 'is_archived' => true]);
+        $this->createDocument($context, ['project_id' => $project->id]);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id, $project->id);
+        $context->user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $service = app(PaymentDashboardQueryService::class);
+        $this->assertSame(1, $service->getDashboard($context->user, $context->organization->id, 30, $project->id)['summary']['total_documents_count']);
+
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id, $foreignProject->id);
+        $shared = $this->sharedProject($context, $foreignContext->organization->id);
+        $shared->forceFill(['is_archived' => true])->save();
+        $this->createDocument($context, ['project_id' => $shared->id]);
+        $this->assertSame(1, $service->getDashboard($context->user, $context->organization->id, 30, $shared->id)['summary']['total_documents_count']);
+        $shared->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id, $shared->id);
+    }
+
+    public function test_project_dashboard_permission_does_not_grant_other_projects_or_organization_dashboard(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'is_owner' => false, 'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
+        ]);
+        $context->user->roleAssignments()->delete();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $role = OrganizationCustomRole::createRole(
+            organizationId: $context->organization->id,
+            name: 'Project dashboard test role',
+            modulePermissions: ['payments' => ['payments.dashboard.view']],
+            interfaceAccess: ['admin'],
+            createdBy: $context->user,
+        );
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $role->slug,
+            context: AuthorizationContext::getProjectContext($project->id, $context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
+        Cache::driver('array')->flush();
+        Cache::flush();
+        $this->createDocument($context, ['project_id' => $project->id]);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id);
+        $this->assertDashboardServiceDenied($context->user, $context->organization->id, $otherProject->id);
+        $result = app(PaymentDashboardQueryService::class)->getDashboard($context->user, $context->organization->id, 30, $project->id);
+        $this->assertSame(1, $result['summary']['total_documents_count']);
+    }
+
+    private function assertDashboardServiceDenied(User $actor, int $organizationId, ?int $projectId = null): void
+    {
+        $denied = false;
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            app(PaymentDashboardQueryService::class)->getDashboard($actor, $organizationId, 30, $projectId);
+        } catch (AuthorizationException) {
+            $denied = true;
+        } finally {
+            $queries = DB::getQueryLog();
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $this->assertTrue($denied);
+        $this->assertFalse(collect($queries)->contains(fn (array $query): bool => preg_match('/\b(payment_documents|payment_transactions)\b/i', $query['query']) === 1));
     }
 
     private function sharedProject(AdminApiTestContext $context, int $ownerOrganizationId): Project

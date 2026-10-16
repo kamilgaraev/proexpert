@@ -9,16 +9,26 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Enums\Contract\ContractAllocationTypeEnum;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Contract;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 final class PaymentDashboardQueryService
 {
-    public function __construct(private readonly FinancialBalanceQuery $financialBalances) {}
+    public function __construct(
+        private readonly FinancialBalanceQuery $financialBalances,
+        private readonly AuthorizationService $authorization,
+        private readonly UserProjectAccessService $projects,
+    ) {}
 
-    public function getDashboard(int $organizationId, int $days, ?int $projectId = null): array
+    public function getDashboard(User $actor, int $organizationId, int $days, ?int $projectId = null): array
     {
+        $this->authorize($actor, $organizationId, $projectId);
+
         return [
             'summary' => $this->getSummary($organizationId, $projectId),
             'documents_by_status' => $this->getDocumentsByStatus($organizationId, $projectId),
@@ -32,6 +42,28 @@ final class PaymentDashboardQueryService
             'payment_trends' => $this->getPaymentTrends($organizationId, $days, $projectId),
             'contract_comparison' => $this->getContractComparison($organizationId, $projectId),
         ];
+    }
+
+    private function authorize(User $actor, int $organizationId, ?int $projectId): void
+    {
+        if ($organizationId <= 0 || (int) $actor->current_organization_id !== $organizationId || !$actor->exists
+            || !User::query()->useWritePdo()->whereKey($actor->id)->where('is_active', true)->exists()
+            || !$actor->organizations()->useWritePdo()->where('organizations.id', $organizationId)
+                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()) {
+            throw new AuthorizationException;
+        }
+
+        if ($projectId !== null && ($projectId <= 0 || !$this->projects->queryAccessibleProjects($actor, $organizationId, true)
+            ->useWritePdo()->where('projects.id', $projectId)->exists())) {
+            throw new AuthorizationException;
+        }
+
+        if (!$this->authorization->canCurrent($actor, 'payments.dashboard.view', ['organization_id' => $organizationId])
+            && ($projectId === null || !$this->authorization->canCurrent($actor, 'payments.dashboard.view', [
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'strict_project_scope' => true,
+            ]))) {
+            throw new AuthorizationException;
+        }
     }
 
     private function getSummary(int $organizationId, ?int $projectId): array
