@@ -29,6 +29,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
@@ -133,9 +134,17 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
 
     #[Test]
     #[DataProvider('observerAgreementCases')]
-    public function png_runs_detector_representation_and_production_processor_as_one_path(bool $conflict): void
+    public function png_runs_detector_representation_and_production_processor_as_one_path(bool $conflict, bool $withSemanticRegions = false): void
     {
         $source = $this->png(12, 8);
+        if ($withSemanticRegions) {
+            $image = imagecreatefromstring($source);
+            imagefill($image, 0, 0, imagecolorallocate($image, 0, 80, 220));
+            ob_start();
+            imagepng($image);
+            $source = (string) ob_get_clean();
+            imagedestroy($image);
+        }
         $sourceVersion = 'sha256:'.hash('sha256', $source);
         $document = new EstimateGenerationDocument([
             'id' => 4,
@@ -189,6 +198,10 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             }
         };
         $reader = new BoundedVersionedS3ObjectReader($files);
+        $observerInputs = [];
+        $regions = $withSemanticRegions ? json_decode(CanonicalPipelineJson::encode([
+            ['label' => 'Floor plan', 'purpose' => 'Read the dimensions', 'box' => [0.1, 0.1, 0.8, 0.8]],
+        ]), true, flags: JSON_THROW_ON_ERROR) : [];
         $processor = new ProductionDocumentUnitProcessor(
             new OcrDocumentUnitProcessor(
                 $this->createMock(DocumentUnitContentReader::class),
@@ -197,7 +210,10 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
-            $this->observerRunner($vision, conflict: $conflict),
+            $this->observerRunner($vision, conflict: $conflict, regions: $regions,
+                onRun: static function (VisionDocumentInput $input, array $profiles) use (&$observerInputs): void {
+                    $observerInputs[] = ['input' => $input, 'profiles' => $profiles];
+                }),
             $this->arbitrator(),
         );
         $locator = $unit->locator;
@@ -228,6 +244,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             'processing_documents',
             17,
             static fn (): bool => true,
+            processingAttemptId: '20000000-0000-4000-8000-000000000001',
+            creditOperationId: '20000000-0000-4000-8000-000000000002',
         ));
 
         self::assertSame('image', $output->normalizedPayload['document_representation']['format']);
@@ -253,12 +271,40 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $output->normalizedPayload['document_representation']['native_structure']['resource_measurement']['phases'],
         );
         self::assertSame('image_pixels', $output->normalizedPayload['document_representation']['coordinate_space']);
+        if ($withSemanticRegions) {
+            self::assertCount(2, $observerInputs);
+            $literal = $observerInputs[0]['input'];
+            $remaining = $observerInputs[1]['input'];
+            self::assertSame([ObserverProfile::Literal], $observerInputs[0]['profiles']);
+            self::assertSame([ObserverProfile::Construction, ObserverProfile::Risk], $observerInputs[1]['profiles']);
+            self::assertSame([], $literal->regionImages);
+            self::assertCount(1, $remaining->regionImages);
+            self::assertSame($literal->sourceTransform, $remaining->sourceTransform);
+            self::assertSame($literal->sourceVersion, $remaining->sourceVersion);
+            self::assertSame($literal->pageId, $remaining->pageId);
+            self::assertSame($literal->processingUnitId, $remaining->processingUnitId);
+            self::assertSame('20000000-0000-4000-8000-000000000002', $remaining->operationContext->creditOperationId);
+            self::assertSame('20000000-0000-4000-8000-000000000001', $remaining->operationContext->processingLineageId);
+            $crop = imagecreatefromstring($remaining->regionImages[0]['image_content']);
+            $fullPage = imagecreatefromstring($literal->imageContent);
+            $original = imagecreatefromstring($source);
+            $cropColor = imagecolorat($crop, intdiv(imagesx($crop), 2), intdiv(imagesy($crop), 2));
+            $fullColor = imagecolorat($fullPage, intdiv(imagesx($fullPage), 2), intdiv(imagesy($fullPage), 2));
+            self::assertSame(($cropColor >> 16) & 255, ($cropColor >> 8) & 255);
+            self::assertSame(($cropColor >> 8) & 255, $cropColor & 255);
+            self::assertEqualsWithDelta($fullColor & 255, $cropColor & 255, 2);
+            self::assertNotSame(imagecolorat($original, 0, 0), $cropColor);
+            imagedestroy($crop);
+            imagedestroy($fullPage);
+            imagedestroy($original);
+        }
     }
 
     public static function observerAgreementCases(): iterable
     {
         yield 'agreement does not require an arbiter' => [false];
         yield 'conflicting quantities require an arbiter' => [true];
+        yield 'persisted regions reach remaining observers in the derivative frame' => [false, true];
     }
 
     #[Test]
@@ -831,18 +877,22 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         self::assertStringStartsWith('org-2/', $representation['visual_artifact_path']);
     }
 
-    private function observerRunner(?VisionProvider $provider = null, ?\Throwable $error = null, bool $conflict = false): DocumentObserverRunner
+    private function observerRunner(?VisionProvider $provider = null, ?\Throwable $error = null, bool $conflict = false,
+        array $regions = [], ?\Closure $onRun = null): DocumentObserverRunner
     {
-        return new class($provider, $error, $conflict) implements DocumentObserverRunner
+        return new class($provider, $error, $conflict, $regions, $onRun) implements DocumentObserverRunner
         {
             public function __construct(
                 private readonly ?VisionProvider $provider,
                 private readonly ?\Throwable $error,
                 private readonly bool $conflict,
+                private readonly array $regions,
+                private readonly ?\Closure $onRun,
             ) {}
 
             public function run(VisionDocumentInput $source, array $profiles): array
             {
+                $this->onRun?->__invoke($source, $profiles);
                 if ($this->error !== null) {
                     throw $this->error;
                 }
@@ -863,7 +913,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                         'ambiguous' => false,
                         'material_risk' => 'high',
                         'reasons' => ['test_dense_page'],
-                        'semantic_regions' => [],
+                        'semantic_regions' => $this->regions,
                     ],
                 ];
                 $results = [];

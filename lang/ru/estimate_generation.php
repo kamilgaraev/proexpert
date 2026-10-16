@@ -44,6 +44,8 @@ return [
             'total_area' => 'Общая площадь',
             'area' => 'Площадь',
             'dimension' => 'Размер',
+            'length' => 'Длина',
+            'width' => 'Ширина',
             'height' => 'Высота',
             'elevation' => 'Высотная отметка',
             'floor_count' => 'Этажность',

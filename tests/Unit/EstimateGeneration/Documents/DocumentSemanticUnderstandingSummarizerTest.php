@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSemanticUnderstandingSummarizer;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -77,7 +78,8 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
     }
 
     #[Test]
-    public function completed_drawing_analysis_projects_quantity_capability_only_from_an_accepted_numeric_claim(): void
+    #[DataProvider('measurementTypes')]
+    public function completed_drawing_analysis_projects_quantity_capability_only_from_an_accepted_numeric_claim(string $factType, string $unit): void
     {
         $summary = (new DocumentSemanticUnderstandingSummarizer)->summarize([[
             'schema_version' => 4,
@@ -95,9 +97,9 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
             'vision_analysis' => ['sheet_type' => 'floor_plan'],
             'independent_observations' => ['observer_literal' => [
                 'claims' => [[
-                    'factType' => 'area',
+                    'factType' => $factType,
                     'value' => ['type' => 'number', 'data' => 72.19],
-                    'unit' => 'm2',
+                    'unit' => $unit,
                     'evidenceRef' => 'page-4-literal',
                 ], [
                     'factType' => 'area',
@@ -126,7 +128,8 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
     }
 
     #[Test]
-    public function incomplete_or_unaccepted_drawing_analysis_cannot_promote_quantity_evidence(): void
+    #[DataProvider('measurementTypes')]
+    public function incomplete_or_unaccepted_drawing_analysis_cannot_promote_quantity_evidence(string $factType, string $unit): void
     {
         $summary = (new DocumentSemanticUnderstandingSummarizer)->summarize([[
             'schema_version' => 4,
@@ -142,9 +145,9 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
             'vision_analysis' => ['sheet_type' => 'floor_plan'],
             'independent_observations' => ['observer_literal' => [
                 'claims' => [[
-                    'factType' => 'area',
+                    'factType' => $factType,
                     'value' => ['type' => 'number', 'data' => 72.19],
-                    'unit' => 'm2',
+                    'unit' => $unit,
                     'evidenceRef' => 'page-4-literal',
                 ]],
             ]],
@@ -161,5 +164,15 @@ final class DocumentSemanticUnderstandingSummarizerTest extends TestCase
         self::assertFalse($summary['document_understanding']['extracted_capabilities']['has_quantities']);
         self::assertTrue($summary['document_understanding']['extracted_capabilities']['requires_manual_review']);
         self::assertSame(0, $summary['document_understanding']['extracted_capabilities']['accepted_quantity_claims']);
+    }
+
+    public static function measurementTypes(): array
+    {
+        return [
+            'area' => ['area', 'm2'],
+            'length' => ['length', 'mm'],
+            'width' => ['width', 'mm'],
+            'height' => ['height', 'mm'],
+        ];
     }
 }
