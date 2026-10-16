@@ -6,6 +6,7 @@ namespace Tests\Feature\DesignManagement;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
+use App\BusinessModules\Features\DesignManagement\Models\DesignWorkflowEvent;
 use App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignDocumentArtifactService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignPackageIssueRegisterService;
@@ -162,6 +163,88 @@ final class DesignDocumentPermissionRegressionTest extends TestCase
         $this->withHeaders($actor->authHeaders())->get('/api/v1/admin/design-management/composition/packages/'.$package->id.'/issue-register/export')->assertOk();
     }
 
+    public function test_csv_versions_preserve_legacy_columns_and_selected_snapshot(): void
+    {
+        $actor = $this->context(['export']);
+        [$package] = $this->package($actor);
+        $snapshot = ['package' => ['title' => '=Комплект'], 'sections' => [[
+            'code' => 'AR', 'documents' => [[
+                'document_code' => 'AR-01', 'title' => "План; \"учебный\"\nЛист", 'current_version_id' => 987,
+                'version_number' => '+03', 'revision' => 'УЧ-01', 'source_original_name' => 'plan.pdf',
+                'source_sha256' => str_repeat('a', 64), 'sheets_count' => 1,
+            ]],
+        ]]];
+        $event = $this->releaseSnapshot($actor, $package, $snapshot);
+        $newer = $snapshot;
+        $newer['sections'][0]['documents'][0]['version_number'] = '4';
+        $this->releaseSnapshot($actor, $package, $newer);
+        $url = '/api/v1/admin/design-management/composition/packages/'.$package->id.'/issue-register/export?workflow_event_id='.$event->id;
+        $legacyHeader = ['Комплект', 'Выдача', 'Дата', 'Раздел', 'Документ', 'Название', 'Версия', 'Ревизия', 'Файл', 'SHA256', 'Листов'];
+        $date = $event->created_at->toISOString();
+        $legacyRow = ["'=Комплект", (string) $event->id, $date, 'AR', 'AR-01', "План; \"учебный\"\nЛист", '987', 'УЧ-01', 'plan.pdf', str_repeat('a', 64), '1'];
+        foreach (['' => [$legacyHeader, $legacyRow], '&format_version=1' => [$legacyHeader, $legacyRow], '&format_version=2' => [
+            ['Комплект', 'Выдача', 'Дата', 'Раздел', 'Документ', 'Название', 'Номер версии', 'ID версии', 'Ревизия', 'Файл', 'SHA256', 'Листов'],
+            ["'=Комплект", (string) $event->id, $date, 'AR', 'AR-01', "План; \"учебный\"\nЛист", "'+03", '987', 'УЧ-01', 'plan.pdf', str_repeat('a', 64), '1'],
+        ]] as $query => $expected) {
+            $response = $this->withHeaders($actor->authHeaders())->get($url.$query);
+            $response->assertOk()->assertDownload('design-register-'.$package->id.'.csv');
+            $this->assertSame('text/csv; charset=UTF-8', $response->headers->get('Content-Type'));
+            $body = $response->streamedContent();
+            $this->assertStringStartsWith("\xEF\xBB\xBF", $body);
+            $this->assertSame($expected, $this->csvRows($body));
+        }
+    }
+
+    public function test_csv_version_two_keeps_missing_historical_number_empty(): void
+    {
+        $actor = $this->context(['export']);
+        [$package] = $this->package($actor);
+        $snapshot = ['package' => ['title' => 'Исторический комплект'], 'sections' => [[
+            'code' => 'AR', 'documents' => [[
+                'document_code' => 'AR-01', 'title' => 'Исторический план', 'current_version_id' => 987,
+                'revision' => '1', 'source_original_name' => 'old.pdf', 'sheets_count' => 0,
+            ]],
+        ]]];
+        $event = $this->releaseSnapshot($actor, $package, $snapshot);
+        $storedSnapshot = $event->fresh()->metadata['release_snapshot'];
+        $response = $this->withHeaders($actor->authHeaders())->get('/api/v1/admin/design-management/composition/packages/'.$package->id.'/issue-register/export?format_version=2&workflow_event_id='.$event->id);
+        $response->assertOk();
+        $rows = $this->csvRows($response->streamedContent());
+        $this->assertCount(12, $rows[0]);
+        $this->assertSame('', $rows[1][6]);
+        $this->assertSame('987', $rows[1][7]);
+        $this->assertSame($storedSnapshot, $event->fresh()->metadata['release_snapshot']);
+    }
+
+    public function test_csv_version_two_preserves_text_identifiers_without_formulas(): void
+    {
+        $actor = $this->context(['export']);
+        [$package] = $this->package($actor);
+        foreach (['01', '1.0', '2026-10-16', '1E3', '12345678901234567890', 'May-26', '=1+1', '+03', '@version'] as $number) {
+            $snapshot = ['package' => ['title' => 'Комплект'], 'sections' => [[
+                'code' => 'AR', 'documents' => [[
+                    'document_code' => 'AR-01', 'title' => 'План', 'current_version_id' => 987,
+                    'version_number' => $number, 'revision' => '1', 'source_original_name' => 'plan.pdf', 'sheets_count' => 0,
+                ]],
+            ]]];
+            $event = $this->releaseSnapshot($actor, $package, $snapshot);
+            $response = $this->withHeaders($actor->authHeaders())->get('/api/v1/admin/design-management/composition/packages/'.$package->id.'/issue-register/export?format_version=2&workflow_event_id='.$event->id);
+            $response->assertOk();
+            $rows = $this->csvRows($response->streamedContent());
+            $this->assertSame("'".$number, $rows[1][6]);
+            $this->assertSame('987', $rows[1][7]);
+            $this->assertSame($number, $event->fresh()->metadata['release_snapshot']['sections'][0]['documents'][0]['version_number']);
+        }
+    }
+
+    public function test_csv_rejects_unknown_format_version(): void
+    {
+        $actor = $this->context(['export']);
+        [$package] = $this->package($actor);
+        $this->withHeaders($actor->authHeaders())->get('/api/v1/admin/design-management/composition/packages/'.$package->id.'/issue-register/export?format_version=3')
+            ->assertUnprocessable()->assertJsonValidationErrors('format_version');
+    }
+
     public function test_workflow_check_uses_action_permission_without_manual_norm_control_right(): void
     {
         $actor = $this->context(['edit', 'review', 'approve']);
@@ -243,6 +326,29 @@ final class DesignDocumentPermissionRegressionTest extends TestCase
                 }
             }
         }
+    }
+
+    private function releaseSnapshot(AdminApiTestContext $actor, DesignPackage $package, array $snapshot): DesignWorkflowEvent
+    {
+        return DesignWorkflowEvent::query()->create([
+            'organization_id' => $package->organization_id, 'project_id' => $package->project_id,
+            'package_id' => $package->id, 'actor_id' => $actor->user->id, 'action' => 'issue', 'to_status' => 'issued',
+            'metadata' => ['release_snapshot' => $snapshot],
+        ]);
+    }
+
+    private function csvRows(string $body): array
+    {
+        $stream = fopen('php://temp', 'w+b');
+        $this->assertIsResource($stream);
+        fwrite($stream, substr($body, 3));
+        rewind($stream);
+        $rows = [];
+        while (($row = fgetcsv($stream, null, ';', '"', '')) !== false) {
+            $rows[] = $row;
+        }
+        fclose($stream);
+        return $rows;
     }
 
     private function context(array $permissions): AdminApiTestContext

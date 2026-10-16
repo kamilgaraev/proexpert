@@ -33,13 +33,16 @@ final class DesignAuditWorkflowTest extends TestCase
         $event = DesignWorkflowEvent::query()->where('package_id', $package->id)->where('action', 'issue')->sole();
         $register = app(DesignPackageIssueRegisterService::class)->build($package, $event->id, $actor);
         $this->assertSame('issued', $section->fresh()->status->value);
+        $this->assertSame('1', $register['sections'][0]['documents'][0]['version_number']);
         $workflow->transition($package, (int) $actor->id, 'return_to_work', 'Новая ревизия');
         $artifact->update(['document_title' => 'Изменённый документ']);
+        $version->update(['version_number' => '2']);
         $package->update(['title' => 'Изменённый комплект']);
         $after = app(DesignPackageIssueRegisterService::class)->build($package->fresh(), $event->id, $actor);
         $this->assertSame($register, $after);
         $this->assertTrue($after['is_snapshot']);
         $this->assertSame($version->id, $after['sections'][0]['documents'][0]['current_version_id']);
+        $this->assertSame('1', $after['sections'][0]['documents'][0]['version_number']);
     }
 
     public function test_incomplete_sheet_replacement_keeps_existing_rows_and_issued_sheets_are_locked(): void
