@@ -184,7 +184,7 @@ final readonly class EstimateCompositionProjector
         return $items;
     }
 
-    private function supplementaryPositionKeys(array $localEstimates, array $supplementary): array
+    public function supplementaryPositionKeys(array $localEstimates, array $supplementary): array
     {
         $reserved = [];
         foreach ($localEstimates as $estimate) {

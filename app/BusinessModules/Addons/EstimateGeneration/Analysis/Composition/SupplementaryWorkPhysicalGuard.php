@@ -8,6 +8,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemPhysicalIdent
 
 final readonly class SupplementaryWorkPhysicalGuard
 {
+    public function correctionIntent(array $correction, array $binding): array
+    {
+        return ['kind' => 'supplementary',
+            'candidate_id' => 'audit-correction:'.hash('sha256', $correction['finding_id'].'|'.$correction['work_key'].'|'.$binding['entity_id']),
+            'work_key' => $correction['work_key'], 'name' => $correction['name'],
+            'derived_quantity_id' => $correction['derived_quantity_id'], 'source_fact_ids' => $correction['source_fact_ids'],
+            'entity_id' => $binding['entity_id'], 'technology_package_candidate' => null];
+    }
+
     public function filter(array $localEstimates, array $composition, array $quantities, array $facts): array
     {
         $knownEntities = array_fill_keys(array_filter([...array_column($quantities, 'entity_id'), ...array_column($facts, 'entity_id')], 'is_string'), true);

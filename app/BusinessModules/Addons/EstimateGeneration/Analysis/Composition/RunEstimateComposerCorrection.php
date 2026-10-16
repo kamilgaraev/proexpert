@@ -106,13 +106,15 @@ final readonly class RunEstimateComposerCorrection
             }
         }
         $validated = [];
+        $additions = [];
+        $physicalGuard = new SupplementaryWorkPhysicalGuard;
         foreach ($payload as $correction) {
             if (! is_array($correction) || ! isset($findingIds[$correction['finding_id'] ?? ''])) {
                 throw new InvalidArgumentException('estimate_composer_correction_finding_invalid');
             }
             $operation = $correction['operation'] ?? null;
             if ($operation === 'add_work') {
-                $this->validateAddWork($correction, $factIds, $quantityIds, $items);
+                $this->validateAddWork($correction, $factIds, $quantityIds);
                 $correction['name'] = (new WorkIntentSourceClassifier)->canonicalName($correction['work_key']) ?? $correction['name'];
             } elseif (in_array($operation, ['replace_quantity', 'replace_unit'], true)) {
                 $this->validateReplacement($correction, $quantityIds, $items);
@@ -121,17 +123,25 @@ final readonly class RunEstimateComposerCorrection
             }
             $binding = $provenance->correction($correction, $operation === 'add_work' ? null : $itemDetails[$correction['target_item_key']]);
             $provenance->basis($binding);
+            if ($operation === 'add_work') {
+                $additions[] = $physicalGuard->correctionIntent($correction, $binding);
+                $filtered = $physicalGuard->filter($input->audit->draft['local_estimates'] ?? [],
+                    ['intents' => $additions, 'quarantined' => []], $input->audit->derivedQuantities, $input->audit->facts);
+                if ($filtered['quarantined'] !== []) {
+                    throw new InvalidArgumentException('estimate_composer_correction_add_invalid');
+                }
+            }
             $validated[] = $correction;
         }
 
         return $validated;
     }
 
-    private function validateAddWork(array $correction, array $factIds, array $quantityIds, array $items): void
+    private function validateAddWork(array $correction, array $factIds, array $quantityIds): void
     {
         $expected = ['operation', 'finding_id', 'work_key', 'name', 'derived_quantity_id', 'source_fact_ids'];
         if ($this->sortedKeys($correction) !== $this->sortedKeys(array_fill_keys($expected, null))
-            || ! $this->identifier($correction['work_key'] ?? null) || isset($items[$correction['work_key']])
+            || ! $this->identifier($correction['work_key'] ?? null)
             || ! is_string($correction['name'] ?? null) || trim($correction['name']) === ''
             || mb_strlen($correction['name']) > 300 || preg_match('/\p{Cyrillic}/u', $correction['name']) !== 1
             || ! isset($quantityIds[$correction['derived_quantity_id'] ?? ''])
