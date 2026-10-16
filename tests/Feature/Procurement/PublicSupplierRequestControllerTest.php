@@ -56,7 +56,7 @@ class PublicSupplierRequestControllerTest extends TestCase
         $proposal->load('intake', 'lines');
         $this->assertSame($supplierRequest->id, $proposal->supplier_request_id);
         $this->assertSame($supplier->id, $proposal->supplier_id);
-        $this->assertSame(['public_supplier_response' => true], $proposal->metadata);
+        $this->assertSame(['public_supplier_response' => true, 'payment_schedule' => null], $proposal->metadata);
         $this->assertSame('other', $proposal->intake?->source->value);
         $this->assertSame($line->id, $proposal->lines->first()?->supplier_request_line_id);
         $this->assertEqualsWithDelta(91.67, (float) $proposal->vat_amount, 0.01);
@@ -165,6 +165,78 @@ class PublicSupplierRequestControllerTest extends TestCase
         $this->assertSame(0, SupplierProposal::query()->count());
 
         $this->getJson('/api/v1/procurement/supplier-requests/short-token')->assertNotFound();
+    }
+
+    public function test_responded_public_link_expires_without_changing_completed_history(): void
+    {
+        $organization = Organization::factory()->create(['name' => 'Expiry buyer']);
+        $supplier = $this->createSupplier($organization->id);
+        $purchaseRequest = $this->createPurchaseRequest($organization->id);
+        $supplierRequest = app(SupplierRequestService::class)->send(app(SupplierRequestService::class)->create($organization->id, [
+            'purchase_request_id' => $purchaseRequest->id, 'supplier_id' => $supplier->id, 'comment' => 'PRIVATE-REQUEST-COMMENT',
+        ]));
+        $line = $supplierRequest->lines()->firstOrFail();
+        $line->update(['specification' => 'PRIVATE-REQUEST-SPECIFICATION']);
+        $url = '/api/v1/procurement/supplier-requests/'.$supplierRequest->public_token;
+        $expiresAt = $supplierRequest->public_token_expires_at;
+        self::assertNotNull($expiresAt);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', true);
+        $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertCreated();
+        self::assertSame(SupplierRequestStatusEnum::RESPONDED, $supplierRequest->refresh()->status);
+        $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', false)
+            ->assertJsonPath('data.comment', 'PRIVATE-REQUEST-COMMENT');
+        $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertStatus(409);
+        $before = $supplierRequest->refresh()->getRawOriginal();
+        $proposal = SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->firstOrFail();
+        $proposalBefore = $proposal->getRawOriginal();
+        try {
+            $this->travelTo($expiresAt->copy()->subSecond());
+            $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', false)
+                ->assertJsonPath('data.lines.0.specification', 'PRIVATE-REQUEST-SPECIFICATION');
+            foreach ([$expiresAt, $expiresAt->copy()->addSecond()] as $instant) {
+                $this->travelTo($instant);
+                $this->getJson($url)->assertStatus(410)
+                    ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.expired'))
+                    ->assertJsonMissingPath('data.lines')->assertJsonMissingPath('data.comment')->assertJsonMissingPath('data.supplier');
+                $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertStatus(410);
+                self::assertSame($before, $supplierRequest->refresh()->getRawOriginal());
+                self::assertSame($proposalBefore, $proposal->refresh()->getRawOriginal());
+                self::assertSame(1, SupplierProposal::query()->where('supplier_request_id', $supplierRequest->id)->count());
+            }
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_legacy_unbounded_links_and_cancelled_link_responses_are_preserved(): void
+    {
+        $organization = Organization::factory()->create();
+        $supplier = $this->createSupplier($organization->id);
+        $legacy = app(SupplierRequestService::class)->send(app(SupplierRequestService::class)->create($organization->id, [
+            'purchase_request_id' => $this->createPurchaseRequest($organization->id)->id, 'supplier_id' => $supplier->id,
+        ]));
+        $legacy->update(['public_token_expires_at' => null]);
+        $line = $legacy->lines()->firstOrFail();
+        $url = '/api/v1/procurement/supplier-requests/'.$legacy->public_token;
+        $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', true);
+        $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertCreated();
+        $cancelled = app(SupplierRequestService::class)->send(app(SupplierRequestService::class)->create($organization->id, [
+            'purchase_request_id' => $this->createPurchaseRequest($organization->id)->id, 'supplier_id' => $supplier->id,
+        ]));
+        $cancelled->update(['status' => SupplierRequestStatusEnum::CANCELLED]);
+        try {
+            $this->travelTo(now()->addDays(30));
+            $this->getJson($url)->assertOk()->assertJsonPath('data.can_submit', false);
+            $this->postJson($url.'/proposals', $this->proposalPayload($line->id))->assertStatus(409);
+            self::assertSame(SupplierRequestStatusEnum::RESPONDED, $legacy->refresh()->status);
+            self::assertNull($legacy->public_token_expires_at);
+            $this->getJson('/api/v1/procurement/supplier-requests/'.$cancelled->public_token)->assertStatus(410)
+                ->assertJsonPath('message', trans_message('procurement.public_supplier_requests.cancelled'));
+            self::assertSame(SupplierRequestStatusEnum::CANCELLED, $cancelled->refresh()->status);
+            $this->getJson('/api/v1/procurement/supplier-requests/'.str_repeat('x', 64))->assertNotFound();
+        } finally {
+            $this->travelBack();
+        }
     }
 
     private function proposalPayload(int $supplierRequestLineId, array $overrides = []): array

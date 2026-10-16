@@ -135,7 +135,10 @@ class PublicSupplierRequestController extends Controller
             );
         }
 
-        if ($supplierRequest->status === SupplierRequestStatusEnum::EXPIRED) {
+        if (
+            $supplierRequest->status === SupplierRequestStatusEnum::EXPIRED
+            || ($supplierRequest->public_token_expires_at !== null && ! $supplierRequest->public_token_expires_at->isFuture())
+        ) {
             return LandingResponse::error(
                 trans_message('procurement.public_supplier_requests.expired'),
                 Response::HTTP_GONE
