@@ -34,7 +34,7 @@ final class ScopeCompletenessEvaluator
         }
 
         return match ($workKey) {
-            'rough.floor', 'rough.walls', 'rough.ceiling' => 'preparation',
+            'rough.floor', 'rough.walls', 'rough.ceiling', 'floor_screed' => 'preparation',
             'finish.floor', 'finish.paint', 'finish.ceiling', 'finish.baseboard', 'office.ceiling' => 'finishing',
             default => $workKey,
         };

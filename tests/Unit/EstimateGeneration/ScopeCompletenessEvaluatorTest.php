@@ -29,6 +29,10 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
         self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:1']], [$positions[1]])['scope_complete']);
         self::assertSame('rough.floor', ScopeCompletenessEvaluator::workRequirement('structures', 'rough.floor'));
         self::assertSame('custom.floor', ScopeCompletenessEvaluator::workRequirement('finishing', 'custom.floor'));
+        $positions[0]['key'] = $positions[0]['work_key'] = 'floor_screed';
+        self::assertTrue($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:1']], $positions)['scope_complete']);
+        self::assertFalse($evaluator->evaluate($snapshot, 'construction', 'new_construction', ['finishing' => ['room:2']], $positions)['scope_complete']);
+        self::assertSame('floor_screed', ScopeCompletenessEvaluator::workRequirement('structures', 'floor_screed'));
     }
 
     public function test_specific_work_identity_preserves_coverage_of_the_same_entity_and_legacy_positions(): void
