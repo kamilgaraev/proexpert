@@ -1355,6 +1355,54 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         }
     }
 
+    public function test_an_approved_legacy_vision_ceiling_remains_scoped_and_admissible_after_configuration_changes(): void
+    {
+        [$organization, $actor, $base] = $this->fixture();
+        $plan = ['roles' => ['vision' => ['max_calls' => 1, 'input_ceiling' => 32768,
+            'output_ceiling' => 4096, 'maximum_cost_micro_rub' => 732672]]];
+        $encoded = CanonicalPipelineJson::encode($plan);
+        $request = new EstimatorCreditRequest($base->organizationId, $base->projectId, $base->sessionId, (int) $actor->id,
+            $base->operationId, 'documents', 0, $base->inputHash, $base->sourceVersion, $base->manifestHash,
+            hash('sha256', $encoded), 732672, 1, $base->supplierTariff);
+        $credits = app(AICreditService::class);
+        $credits->grant($organization, 10000, 'purchase', null, 'test:legacy-vision');
+        $quote = $credits->quoteEstimator($organization, $actor, $request);
+        $reservation = $credits->beginEstimator($organization, $actor, $quote['quote_id'], $request);
+        DB::table('estimate_generation_credit_operations')->insert(['operation_id' => $request->operationId,
+            'organization_id' => $request->organizationId, 'project_id' => $request->projectId, 'session_id' => $request->sessionId,
+            'actor_user_id' => $actor->id, 'kind' => $request->kind, 'status' => 'reserved', 'approved_state_version' => 0,
+            'input_hash' => $request->inputHash, 'source_version' => $request->sourceVersion, 'manifest_hash' => $request->manifestHash,
+            'plan_hash' => $request->planHash, 'processing_plan' => $encoded,
+            'credit_request' => CanonicalPipelineJson::encode($request->identity()), 'quote_id' => $reservation->ai_credit_quote_id,
+            'reservation_id' => $reservation->id, 'maximum_provider_cost_micro_rub' => 732672,
+            'maximum_calls' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        config()->set('estimate-generation.vision.primary_max_output_tokens', 16384);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext(
+            (string) Str::uuid(), (string) Str::uuid(), $request->organizationId, $request->projectId, $request->sessionId,
+            'understand_documents', 'vision', 1, creditOperationId: $request->operationId);
+        self::assertSame(4096, \App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy::forOperation($context));
+        self::assertSame($reservation->id, DB::transaction(fn () => app(EstimatorCreditAttemptAdmission::class)->admit(
+            $request->operationId, $context->attemptId, $request->organizationId, $request->projectId, $request->sessionId,
+            'vision', new AiCost('0.71884800', 'RUB', 'available'))));
+        $foreign = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext(
+            $context->correlationId, $context->attemptId, $request->organizationId + 100000, $request->projectId, $request->sessionId,
+            'understand_documents', 'vision', 1, creditOperationId: $request->operationId);
+        try {
+            \App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy::forOperation($foreign);
+            self::fail('A foreign organization read the approved ceiling.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation $exception) {
+            self::assertSame('vision_approved_plan_missing', $exception->getMessage());
+        }
+        try {
+            DB::transaction(fn () => DB::table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)
+                ->update(['plan_hash' => str_repeat('0', 64)]));
+            self::fail('The approved plan identity changed.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('credit_operation_identity_is_immutable', $exception->getMessage());
+        }
+        self::assertSame($request->planHash, DB::table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->value('plan_hash'));
+    }
+
     public function test_a_physical_call_is_bound_to_one_reserved_operation_and_a_rollback_does_not_consume_its_slot(): void
     {
         [$organization, $actor, $request] = $this->fixture();

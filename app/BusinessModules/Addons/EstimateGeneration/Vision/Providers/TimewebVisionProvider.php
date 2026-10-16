@@ -814,7 +814,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts)))],
                 ['role' => 'user', 'content' => $content],
             ],
-            'max_completion_tokens' => VisionOutputTokenPolicy::ceiling(),
+            'max_completion_tokens' => VisionOutputTokenPolicy::forOperation($input->operationContext),
             'response_format' => $this->responseFormat($input, $model),
         ];
         VisionModelPolicy::assertSupported($model);
@@ -1217,7 +1217,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
         $maxOutputTokens = isset($payload['max_completion_tokens']) && is_int($payload['max_completion_tokens'])
             ? $payload['max_completion_tokens']
-            : VisionOutputTokenPolicy::ceiling();
+            : VisionOutputTokenPolicy::forOperation($input->operationContext);
         $reasoningTokens = $priceSnapshot->reasoningMode === 'included_in_output' ? $maxOutputTokens : 0;
 
         return $this->costCalculator->calculate(
