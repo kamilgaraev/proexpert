@@ -20,6 +20,7 @@ use App\BusinessModules\Core\Payments\Http\Controllers\ReportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ScheduleController;
 use App\BusinessModules\Core\Payments\Http\Controllers\SettingsController;
 use App\BusinessModules\Core\Payments\Http\Controllers\TransactionController;
+use App\BusinessModules\Core\Payments\Http\Middleware\AuthorizePaymentRequestOrderCreation;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -148,7 +149,7 @@ Route::prefix('api/v1/admin/payments')
                 ->middleware('authorize:payments.invoice.view')
                 ->name('index');
             Route::post('/', [PaymentDocumentController::class, 'store'])
-                ->middleware('authorize:payments.invoice.create')
+                ->middleware(AuthorizePaymentRequestOrderCreation::class.':payments.invoice.create')
                 ->name('store');
             Route::get('/overdue', [PaymentDocumentController::class, 'overdue'])
                 ->middleware('authorize:payments.invoice.view')

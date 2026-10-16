@@ -271,6 +271,71 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         }
     }
 
+    public function test_project_scoped_creator_can_inherit_the_request_project_without_changing_explicit_scope(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $this->assignPaymentPermissions($context, []);
+        $this->assignPaymentPermissions($context, ['payments.invoice.create', 'payments.transaction.approve'], $project->id, false);
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($context->user, 'admin.access', [
+            'organization_id' => $context->organization->id,
+        ]));
+        self::assertFalse(app(AuthorizationService::class)->canCurrent($context->user, 'payments.invoice.create', [
+            'organization_id' => $context->organization->id,
+        ]));
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($context->user, 'payments.invoice.create', [
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'strict_project_scope' => true,
+        ]));
+        self::assertTrue(app(AuthorizationService::class)->canCurrent($context->user, 'payments.transaction.approve', [
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'strict_project_scope' => true,
+        ]));
+        $contractor = $this->createContractor($context);
+        $foreign = AdminApiTestContext::create();
+        $foreignRequest = $this->createPaymentRequest($foreign, $this->createContractor($foreign), PaymentDocumentStatus::APPROVED);
+
+        foreach (['omitted', 'matching', 'explicit_null', 'conflicting', 'other_source_project', 'foreign_organization', 'projectless_source', 'non_request_source'] as $case) {
+            $source = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+            $source->update(['project_id' => $project->id]);
+            if ($case === 'other_source_project') {
+                $source->update(['project_id' => $otherProject->id]);
+            } elseif ($case === 'foreign_organization') {
+                $source = $foreignRequest;
+            } elseif ($case === 'projectless_source') {
+                $source->update(['project_id' => null]);
+            } elseif ($case === 'non_request_source') {
+                $source->update(['document_type' => PaymentDocumentType::INVOICE]);
+            }
+            $payload = [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(), 'amount' => 900, 'currency' => 'RUB',
+                'payer_organization_id' => $context->organization->id,
+                'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class, 'source_id' => $source->id,
+            ];
+            if (in_array($case, ['matching', 'foreign_organization'], true)) {
+                $payload['project_id'] = $project->id;
+            } elseif ($case === 'explicit_null') {
+                $payload['project_id'] = null;
+            } elseif ($case === 'conflicting') {
+                $payload['project_id'] = $otherProject->id;
+            }
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/documents', $payload);
+            if (in_array($case, ['omitted', 'matching'], true)) {
+                self::assertSame(201, $response->getStatusCode(), $case.': '.$response->getContent());
+                $response->assertCreated()->assertJsonPath('data.project.id', $project->id);
+            } else {
+                $response->assertForbidden();
+                self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+                    ->where('source_id', $source->id)->count());
+            }
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_accept_rejects_a_document_that_is_not_a_payment_request(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
