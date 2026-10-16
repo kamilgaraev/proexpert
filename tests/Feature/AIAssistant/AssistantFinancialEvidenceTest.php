@@ -41,7 +41,9 @@ final class AssistantFinancialEvidenceTest extends TestCase
         $authorization->shouldReceive('can')->andReturnUsing($can);
         $authorization->shouldReceive('canCurrent')->andReturnUsing($can);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
-        $this->mock(OrganizationEntitlementService::class)->shouldReceive('getEffectiveModules')
+        $moduleEntitlements = $this->mock(OrganizationEntitlementService::class);
+        $moduleEntitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $moduleEntitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
+        $moduleEntitlements->shouldReceive('getEffectiveModules')
             ->andReturn(collect([new Module(['slug' => 'budget-estimates']), new Module(['slug' => 'project-management'])]));
         $this->mock(UserProjectAccessService::class)->shouldReceive('queryAccessibleProjects')
             ->andReturnUsing(fn (User $actor, int $org) => Project::query()->where('organization_id', $org)

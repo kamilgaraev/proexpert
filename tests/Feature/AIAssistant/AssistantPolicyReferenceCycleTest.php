@@ -30,6 +30,7 @@ final class AssistantPolicyReferenceCycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'workforce-management'], (object) ['slug' => 'project-management']]));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->organization = Organization::withoutEvents(fn () => Organization::factory()->create());

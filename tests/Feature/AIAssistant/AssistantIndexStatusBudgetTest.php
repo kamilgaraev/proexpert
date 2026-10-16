@@ -627,6 +627,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn($canCurrent);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(function () use ($moduleSlugs) {
             $this->moduleReads++;
 

@@ -53,6 +53,7 @@ final class RagActorCoverageTest extends TestCase
         });
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'payments']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService(), $modules);
         $this->collector = new ActorCoverageCollector();

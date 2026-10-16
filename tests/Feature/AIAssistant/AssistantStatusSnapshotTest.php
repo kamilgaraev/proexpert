@@ -553,6 +553,7 @@ final class AssistantStatusSnapshotTest extends TestCase
             public function forCurrentChecks(bool $memoizeReads = false): AuthorizationService { return clone $this; }
         };
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'ai-assistant'],
             (object) ['slug' => 'payments'], (object) ['slug' => 'contract-management']]));
         $modules->shouldReceive('getEffectiveModuleSlugs')->andReturn(['project-management', 'ai-assistant', 'payments', 'contract-management']);

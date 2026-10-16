@@ -91,6 +91,7 @@ final class AssistantRequestProgressLifecycleTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturn(true);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);

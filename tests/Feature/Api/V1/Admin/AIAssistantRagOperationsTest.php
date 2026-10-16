@@ -26,6 +26,7 @@ class AIAssistantRagOperationsTest extends TestCase
         parent::setUp();
         Queue::fake();
         $this->mock(OrganizationEntitlementService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $mock->getEffectiveModules($organizationId)->pluck('slug')->all());
             $mock->shouldReceive('getEffectiveModules')->andReturn(collect([
                 (object) ['slug' => 'ai-assistant'], (object) ['slug' => 'project-management'],
                 (object) ['slug' => 'payments'],

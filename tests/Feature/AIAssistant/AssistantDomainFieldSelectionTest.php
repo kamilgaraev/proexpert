@@ -87,6 +87,7 @@ final class AssistantDomainFieldSelectionTest extends TestCase
             ['budget-estimates.finance.view', 'finance.view', 'finance.view_project_budget'], true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $entitlements);
         $this->app->instance(AssistantEstimatePositionReadService::class, new AssistantEstimatePositionReadService($policy));

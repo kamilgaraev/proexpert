@@ -75,6 +75,7 @@ final class ProjectPulseCurrentAccessTest extends TestCase
             return in_array($permission, ['reports.view', 'finance.view', 'projects.view'], true) && ! in_array($permission, $flags->denied, true);
         });
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'reports'], (object) ['slug' => 'payments'], (object) ['slug' => 'project-management']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);

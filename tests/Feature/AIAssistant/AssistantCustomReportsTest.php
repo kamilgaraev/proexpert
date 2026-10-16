@@ -44,6 +44,7 @@ final class AssistantCustomReportsTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => ! in_array($permission, $this->denied, true));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $entitlements->getEffectiveModules($organizationId)->pluck('slug')->all());
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect(array_map(static fn (string $slug): object => (object) ['slug' => $slug],
             ['project-management', 'contract-management', 'payments', 'reports', 'ai-assistant'])));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $entitlements);

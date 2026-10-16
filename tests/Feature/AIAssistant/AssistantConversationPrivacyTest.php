@@ -96,6 +96,7 @@ final class AssistantConversationPrivacyTest extends TestCase
             return Project::query()->where('organization_id', $organizationId)->whereNotIn('id', $deniedIds);
         });
         $modules = Mockery::mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModuleSlugs')->andReturnUsing(fn (int $organizationId): array => $modules->getEffectiveModules($organizationId)->pluck('slug')->all());
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(function () {
             $this->moduleReads++;
 
