@@ -199,4 +199,45 @@ fi
 chmod 600 "$ENV_FILE"
 assert_env_security
 
-echo 'AI estimator production deploy contract passed (8 runtime cases)'
+awk '
+    /^            for attempt in \$\(seq 1 24\); do$/ { capture = 1 }
+    capture { line = $0; sub(/^            /, "", line); print line }
+    capture && /^            done$/ { exit }
+' "$WORKFLOW" > "$TEST_DIR/readiness-loop.sh"
+test -s "$TEST_DIR/readiness-loop.sh"
+cat > "$TEST_DIR/readiness-test.sh" <<'READINESS'
+set -euo pipefail
+api_calls=0
+horizon_calls=0
+IMAGE_REF=fixture
+assert_estimator_runtime_config() {
+    if [ "$1" = api ]; then
+        api_calls=$((api_calls + 1))
+        printf '%s' "$api_calls" > "$FIXTURE_DIR/api-calls"
+        [ "$api_calls" -gt 1 ] && [ "$FIXTURE_MODE" = recover ]
+    else
+        horizon_calls=$((horizon_calls + 1))
+        printf '%s' "$horizon_calls" > "$FIXTURE_DIR/horizon-calls"
+        [ "$horizon_calls" -gt 1 ]
+    fi
+}
+docker() { return 0; }
+sleep() { return 0; }
+assert_public_core_inactive_for_backend_release() { return 0; }
+systemctl() { printf '%s\n' "$*" >> "$FIXTURE_DIR/ingress-calls"; }
+source "$FIXTURE_DIR/readiness-loop.sh"
+exit 1
+READINESS
+FIXTURE_DIR="$TEST_DIR" FIXTURE_MODE=recover bash "$TEST_DIR/readiness-test.sh" > "$TEST_DIR/readiness-success"
+[[ "$(cat "$TEST_DIR/api-calls")" = 3 ]]
+[[ "$(cat "$TEST_DIR/horizon-calls")" = 2 ]]
+grep -Fxq 'start nginx' "$TEST_DIR/ingress-calls"
+rm -f -- "$TEST_DIR/ingress-calls"
+if FIXTURE_DIR="$TEST_DIR" FIXTURE_MODE=fail bash "$TEST_DIR/readiness-test.sh"; then
+    echo 'permanent runtime mismatch must fail deployment readiness' >&2
+    exit 1
+fi
+[[ "$(cat "$TEST_DIR/api-calls")" = 24 ]]
+test ! -f "$TEST_DIR/ingress-calls"
+
+echo 'AI estimator production deploy contract passed (10 runtime cases)'

@@ -830,8 +830,6 @@ jobs:
                 exit(config("estimate-generation.live_qa.run_id") === $expectedRunId ? 0 : 1);
               '
             }
-            assert_estimator_runtime_config api
-            assert_estimator_runtime_config horizon
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
@@ -839,7 +837,9 @@ jobs:
             fi
 
             for attempt in $(seq 1 24); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
+              if assert_estimator_runtime_config api \
+                && assert_estimator_runtime_config horizon \
+                && docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
                 && docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
                 && docker compose exec -T clamav clamdscan --ping 1 \
