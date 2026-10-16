@@ -374,6 +374,45 @@ final class AssistantCustomReportsTest extends TestCase
         $access->resolve($matches[1], $actor);
     }
 
+    public function test_container_executor_publishes_private_pdf_from_fixed_report_tool(): void
+    {
+        [$org, $actor] = $this->fixture();
+        (new \App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider(app()))->register();
+        $files = $this->createMock(\App\Services\Storage\FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) {
+            return new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', strlen(stream_get_contents($stream)), $hash, $mime);
+        });
+        app()->instance(\App\Services\Storage\FileService::class, $files);
+        $access = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService($this->policy);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class, $access);
+        $report = $this->builder->build($this->plan(), $actor, $org->id);
+        $storage = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files));
+        $stored = $storage->storePdf('%PDF-fixture', 'Остатки.pdf', $org, $actor, $report['source_refs'], $report['required_domains']);
+        $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $tool->method('getName')->willReturn('generate_warehouse_stock_report');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false]);
+        $tool->expects($this->exactly(2))->method('execute')->willReturn(['status' => 'success', ...$stored]);
+        $registry = new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+        $registry->registerTool($tool);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry::class, $registry);
+        $permissions = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class);
+        $permissions->method('canExecuteTool')->willReturn(true);
+        $permissions->method('isMutationTool')->willReturn(false);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class, $permissions);
+
+        $result = app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor::class)
+            ->execute('generate_warehouse_stock_report', [], $actor, $org);
+        self::assertSame('success', $result['status']);
+        self::assertCount(1, $result['artifacts']);
+        self::assertSame('Остатки.pdf', $result['artifacts'][0]['filename']);
+        self::assertSame($stored['storage_path'], $result['artifacts'][0]['storage_path']);
+        self::assertStringStartsWith('/api/v1/ai-assistant/reports/', $result['artifacts'][0]['url']);
+        $other = User::factory()->create(['current_organization_id' => $org->id, 'is_active' => true]);
+        $other->organizations()->attach($org->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        self::assertSame([], app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor::class)
+            ->execute('generate_warehouse_stock_report', [], $other, $org)['artifacts']);
+    }
+
     public static function fileFormats(): array
     {
         return ['xlsx' => ['xlsx', 'PK'], 'csv' => ['csv', "\xEF\xBB\xBF"], 'pdf' => ['pdf', '%PDF-']];
