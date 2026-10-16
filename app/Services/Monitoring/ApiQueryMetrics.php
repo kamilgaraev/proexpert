@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Monitoring;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 
@@ -14,6 +15,10 @@ final class ApiQueryMetrics
     private const MAX_SOURCE_GROUPS = 32;
 
     private const MAX_VARIANTS = 16;
+
+    private const MAX_ENTITY_BUILD_GROUPS = 256;
+
+    private const MAX_REPORTED_ENTITY_BUILDS = 16;
 
     private int $count = 0;
 
@@ -30,6 +35,8 @@ final class ApiQueryMetrics
     private float $sourceCaptureMilliseconds = 0;
 
     private array $processingPhases = [];
+
+    private array $entityBuilds = [];
 
     private ?array $assistantSnapshot = null;
 
@@ -81,7 +88,7 @@ final class ApiQueryMetrics
         $metrics->maximum = max($metrics->maximum, $milliseconds);
     }
 
-    public static function measureProcessingPhase(string $phase, callable $operation): mixed
+    public static function measureProcessingPhase(string $phase, callable $operation, ?string $entityType = null): mixed
     {
         $request = app()->bound('request') ? app('request') : null;
         $checkpoint = $request instanceof Request ? self::processingCheckpoint($request) : null;
@@ -90,7 +97,7 @@ final class ApiQueryMetrics
         try {
             return $operation();
         } finally {
-            self::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
+            self::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint, $entityType);
         }
     }
 
@@ -105,7 +112,7 @@ final class ApiQueryMetrics
             'sql_total_ms' => $metrics->total, 'process_cpu_ms' => self::processCpuMilliseconds()];
     }
 
-    public static function recordProcessingPhase(Request $request, string $phase, int $startedAt, ?array $checkpoint = null): void
+    public static function recordProcessingPhase(Request $request, string $phase, int $startedAt, ?array $checkpoint = null, ?string $entityType = null): void
     {
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
@@ -133,18 +140,32 @@ final class ApiQueryMetrics
         if (! is_finite($milliseconds) || $milliseconds < 0) {
             return;
         }
-        $metrics->processingPhases[$phase]['count'] = ($metrics->processingPhases[$phase]['count'] ?? 0) + 1;
-        $metrics->processingPhases[$phase]['total_ms'] = ($metrics->processingPhases[$phase]['total_ms'] ?? 0) + $milliseconds;
-        $metrics->processingPhases[$phase]['max_ms'] = max($metrics->processingPhases[$phase]['max_ms'] ?? 0, $milliseconds);
+        $measurement = ['count' => 1, 'total_ms' => $milliseconds, 'max_ms' => $milliseconds];
         if ($checkpoint !== null) {
-            $metrics->processingPhases[$phase]['sql_count'] = ($metrics->processingPhases[$phase]['sql_count'] ?? 0) + $metrics->count - $checkpoint['sql_count'];
-            $metrics->processingPhases[$phase]['sql_total_ms'] = ($metrics->processingPhases[$phase]['sql_total_ms'] ?? 0) + $metrics->total - $checkpoint['sql_total_ms'];
+            $measurement['sql_count'] = $metrics->count - $checkpoint['sql_count'];
+            $measurement['sql_total_ms'] = $metrics->total - $checkpoint['sql_total_ms'];
             $cpu = self::processCpuMilliseconds();
             $startedCpu = $checkpoint['process_cpu_ms'] ?? null;
             if ($cpu !== null && is_float($startedCpu) && is_finite($startedCpu) && $startedCpu >= 0 && $cpu >= $startedCpu) {
-                $metrics->processingPhases[$phase]['process_cpu_ms'] = ($metrics->processingPhases[$phase]['process_cpu_ms'] ?? 0) + $cpu - $startedCpu;
+                $measurement['process_cpu_ms'] = $cpu - $startedCpu;
             }
         }
+        $metrics->processingPhases[$phase] ??= [];
+        self::addMeasurement($metrics->processingPhases[$phase], $measurement);
+        if ($phase !== 'rag_acl_entity_build' || $entityType === null
+            || preg_match('/^[a-z][a-z0-9_]{0,127}$/D', $entityType) !== 1) {
+            return;
+        }
+        try {
+            if (! array_key_exists($entityType, AssistantEntityAccessCatalog::entityDefinitions())) { return; }
+        } catch (\Throwable) {
+            return;
+        }
+        if (! isset($metrics->entityBuilds[$entityType]) && count($metrics->entityBuilds) >= self::MAX_ENTITY_BUILD_GROUPS - 1) {
+            $entityType = '__other__';
+        }
+        $metrics->entityBuilds[$entityType] ??= [];
+        self::addMeasurement($metrics->entityBuilds[$entityType], $measurement);
     }
 
     public function summary(): array
@@ -161,6 +182,8 @@ final class ApiQueryMetrics
             'sql_groups' => $groups,
         ];
         if ($this->captureSources) {
+            $summary['release_sha'] = self::runtimeReleaseSha();
+            $summary['rag_entity_builds'] = $this->entityBuildSummary();
             $summary['sql_sources'] = array_map(static function (array $source): array {
                 $source['total_ms'] = round($source['total_ms'], 2);
                 $source['max_ms'] = round($source['max_ms'], 2);
@@ -192,6 +215,46 @@ final class ApiQueryMetrics
         }
 
         return $summary;
+    }
+
+    private static function addMeasurement(array &$total, array $measurement): void
+    {
+        foreach ($measurement as $key => $value) {
+            $total[$key] = $key === 'max_ms' ? max($total[$key] ?? 0, $value) : ($total[$key] ?? 0) + $value;
+        }
+    }
+
+    private function entityBuildSummary(): array
+    {
+        $builds = $this->entityBuilds;
+        $other = $builds['__other__'] ?? [];
+        unset($builds['__other__']);
+        uasort($builds, static fn (array $left, array $right): int => $right['total_ms'] <=> $left['total_ms']);
+        foreach (array_slice($builds, self::MAX_REPORTED_ENTITY_BUILDS) as $build) {
+            self::addMeasurement($other, $build);
+        }
+        $builds = array_slice($builds, 0, self::MAX_REPORTED_ENTITY_BUILDS, true);
+        if ($other !== []) { $builds['__other__'] = $other; }
+        $result = [];
+        foreach ($builds as $type => $build) {
+            foreach (['total_ms', 'max_ms', 'sql_total_ms', 'process_cpu_ms'] as $key) {
+                if (isset($build[$key])) { $build[$key] = round($build[$key], 2); }
+            }
+            $result[] = ['entity_type' => $type] + $build;
+        }
+
+        return $result;
+    }
+
+    private static function runtimeReleaseSha(): ?string
+    {
+        try {
+            $release = (app()->bound('config') ? config('ai-assistant.status_snapshot_release') : null) ?: getenv('MOST_RELEASE_SHA');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_string($release) && preg_match('/^[a-f0-9]{40}$/D', $release) === 1 ? $release : null;
     }
 
     public function recordAssistantSnapshot(array $context): void

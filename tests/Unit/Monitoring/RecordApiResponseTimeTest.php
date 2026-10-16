@@ -365,6 +365,7 @@ final class RecordApiResponseTimeTest extends TestCase
         $logManager->shouldReceive('channel')->once()->with('api_latency')->andReturn($logger);
         $container = new Container;
         $container->instance('log', $logManager);
+        Facade::clearResolvedInstance('log');
         Facade::setFacadeApplication($container);
     }
 }

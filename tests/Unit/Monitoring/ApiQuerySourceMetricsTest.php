@@ -28,6 +28,105 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_entity_build_diagnostics_keep_known_types_numeric_request_local_and_opt_in(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $value = new \stdClass;
+        $calls = 0;
+        self::assertSame($value, ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', static function () use ($request, $value, &$calls): object {
+            $calls++;
+            ApiQueryMetrics::record($request, 2.5);
+
+            return $value;
+        }, 'project'));
+        $failure = new \RuntimeException('private-operation-failure');
+        try {
+            ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', static function () use ($failure): never { throw $failure; }, 'project');
+            self::fail('The operation exception must propagate.');
+        } catch (\RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        foreach (['private_label', 'project:123', User::class, str_repeat('x', 1000)] as $label) {
+            ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', static fn (): null => null, $label);
+        }
+        ApiQueryMetrics::measureProcessingPhase('rag_prepare', static fn (): null => null, 'contract');
+        $summary = $metrics->summary();
+        self::assertArrayHasKey('rag_entity_builds', $summary);
+        self::assertSame(['project'], array_column($summary['rag_entity_builds'], 'entity_type'));
+        $build = $summary['rag_entity_builds'][0];
+        self::assertSame(2, $build['count']);
+        self::assertSame(1, $build['sql_count']);
+        self::assertSame(2.5, $build['sql_total_ms']);
+        self::assertSame(1, $calls);
+        self::assertGreaterThanOrEqual(0, $build['total_ms']);
+        foreach (array_diff_key($build, ['entity_type' => true]) as $number) { self::assertTrue(is_int($number) || is_float($number)); }
+        $safe = (new SensitiveDataRedactor)->redact(['rag_entity_builds' => $summary['rag_entity_builds']]);
+        self::assertSame($summary['rag_entity_builds'], $safe['rag_entity_builds']);
+        self::assertStringNotContainsString('private', json_encode($summary, JSON_THROW_ON_ERROR));
+        [$otherRequest, $otherMetrics] = $this->metrics();
+        app()->instance('request', $otherRequest);
+        self::assertSame([], $otherMetrics->summary()['rag_entity_builds']);
+        [$disabledRequest, $disabled] = $this->metrics(false);
+        app()->instance('request', $disabledRequest);
+        self::assertSame($value, ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', static fn (): object => $value, 'project'));
+        self::assertArrayNotHasKey('rag_entity_builds', $disabled->summary());
+    }
+
+    public function test_entity_build_diagnostics_bound_storage_and_keep_complete_numeric_totals(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $types = array_slice(array_keys(\App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions()), 0, 300);
+        self::assertCount(300, $types);
+        foreach ($types as $type) {
+            $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+            ApiQueryMetrics::record($request, 1.25);
+            ApiQueryMetrics::recordProcessingPhase($request, 'rag_acl_entity_build', $checkpoint['started_at'], $checkpoint, $type);
+        }
+        $summary = $metrics->summary();
+        self::assertArrayHasKey('rag_entity_builds', $summary);
+        $builds = $summary['rag_entity_builds'];
+        self::assertCount(17, $builds);
+        self::assertContains('__other__', array_column($builds, 'entity_type'));
+        self::assertSame(300, array_sum(array_column($builds, 'count')));
+        self::assertSame(300, array_sum(array_column($builds, 'sql_count')));
+        self::assertSame(375.0, array_sum(array_column($builds, 'sql_total_ms')));
+        $safe = (new SensitiveDataRedactor)->redact(['rag_entity_builds' => $builds]);
+        self::assertSame(300, array_sum(array_column($safe['rag_entity_builds'], 'count')));
+        self::assertSame(375.0, array_sum(array_column($safe['rag_entity_builds'], 'sql_total_ms')));
+        self::assertLessThanOrEqual(256, count((new \ReflectionProperty($metrics, 'entityBuilds'))->getValue($metrics)));
+        self::assertSame(300, $summary['processing_phases']['rag_acl_entity_build']['count']);
+    }
+
+    public function test_captured_runtime_release_uses_valid_cached_config_and_has_no_private_fallback(): void
+    {
+        $previousRelease = getenv('MOST_RELEASE_SHA');
+        $hadConfig = app()->bound('config');
+        $previousConfig = $hadConfig ? app('config') : null;
+        $config = new \Illuminate\Config\Repository(['ai-assistant' => ['status_snapshot_release' => str_repeat('a', 40)]]);
+        app()->instance('config', $config);
+        try {
+            putenv('MOST_RELEASE_SHA='.str_repeat('b', 40));
+            [, $metrics] = $this->metrics();
+            self::assertArrayHasKey('release_sha', $metrics->summary());
+            self::assertSame(str_repeat('a', 40), $metrics->summary()['release_sha']);
+            putenv('MOST_RELEASE_SHA');
+            self::assertSame(str_repeat('a', 40), $metrics->summary()['release_sha']);
+            $config->set('ai-assistant.status_snapshot_release', 'private-invalid-release');
+            self::assertNull($metrics->summary()['release_sha']);
+            $config->set('ai-assistant.status_snapshot_release', null);
+            self::assertNull($metrics->summary()['release_sha']);
+            putenv('MOST_RELEASE_SHA='.str_repeat('b', 40));
+            self::assertSame(str_repeat('b', 40), $metrics->summary()['release_sha']);
+            [, $disabled] = $this->metrics(false);
+            self::assertArrayNotHasKey('release_sha', $disabled->summary());
+            self::assertStringNotContainsString('private', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        } finally {
+            $previousRelease === false ? putenv('MOST_RELEASE_SHA') : putenv('MOST_RELEASE_SHA='.$previousRelease);
+            if ($hadConfig) { app()->instance('config', $previousConfig); } else { app()->forgetInstance('config'); }
+        }
+    }
+
     public function test_security_emit_metrics_preserve_log_levels_redaction_alerts_and_entry_exception(): void
     {
         [$request, $metrics] = $this->metrics();
