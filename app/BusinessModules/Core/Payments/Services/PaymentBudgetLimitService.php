@@ -418,7 +418,7 @@ final class PaymentBudgetLimitService
 
         $line = $this->resolveBudgetLine($document, $month, $budgetArticle, $responsibilityCenter, $lockBudgetLine);
         $context = $this->buildContext($document, $operationType, $month, $line, $budgetArticle, $responsibilityCenter);
-        $amounts = $this->buildAmounts($document, $month, $line, $requested);
+        $amounts = $this->buildAmounts($document, $month, $line, $requested, $operationType);
 
         return [
             'controlled' => true,
@@ -591,15 +591,21 @@ final class PaymentBudgetLimitService
         Carbon $month,
         ?BudgetLine $line,
         string|int|float $requestedAmount,
+        string $operationType,
     ): BudgetLimitAmounts {
         if (! $line instanceof BudgetLine) {
             return new BudgetLimitAmounts('0', '0', '0', '0', '0', '0', '0', $requestedAmount);
         }
 
+        $coveredRequestIds = $this->coveredRequestIds($document, $line, $month);
+        if ($operationType === self::OPERATION_VIEW && in_array((int) $document->id, $coveredRequestIds, true)) {
+            $requestedAmount = '0';
+        }
+
         return new BudgetLimitAmounts(
             approvedBudgetAmount: $this->approvedBudgetAmount($line, $month, (string) ($document->currency ?: 'RUB')),
             actualPaymentsAmount: $this->actualPaymentsAmount($document, $line, $month),
-            pendingApprovalAmount: $this->legacyCommittedAmount($document, $line, $month),
+            pendingApprovalAmount: $this->legacyCommittedAmount($document, $line, $month, $coveredRequestIds),
             reservedAmount: $this->reservedAmount($document, $line, $month),
             carryoverAmount: (string) ($line->metadata['carryover_amount'] ?? 0),
             adjustmentAmount: (string) ($line->metadata['adjustment_amount'] ?? 0),
@@ -645,15 +651,12 @@ final class PaymentBudgetLimitService
             ->whereDate('period_month', $month->toDateString())
             ->where('payment_document_id', '!=', $document->id)
             ->when($line->project_id !== null, fn (Builder $query) => $query->where('project_id', $line->project_id))
-            ->when($line->project_id === null, fn (Builder $query) => $query->whereNull('project_id'))
             ->when($line->contract_id !== null, fn (Builder $query) => $query->where('contract_id', $line->contract_id))
-            ->when($line->contract_id === null, fn (Builder $query) => $query->whereNull('contract_id'))
             ->when($line->counterparty_id !== null, fn (Builder $query) => $query->where('counterparty_id', $line->counterparty_id))
-            ->when($line->counterparty_id === null, fn (Builder $query) => $query->whereNull('counterparty_id'))
             ->sum('amount');
     }
 
-    private function legacyCommittedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month): string
+    private function legacyCommittedAmount(PaymentDocument $document, BudgetLine $line, Carbon $month, array $coveredRequestIds): string
     {
         $statuses = array_map(
             static fn (PaymentDocumentStatus $status): string => $status->value,
@@ -663,21 +666,8 @@ final class PaymentBudgetLimitService
         return (string) PaymentDocument::query()
             ->whereKeyNot($document->getKey())
             ->whereIn('status', $statuses)
-            ->where(function (Builder $query) use ($month): void {
-                $from = $month->toDateString();
-                $to = $month->copy()->endOfMonth()->toDateString();
-
-                $query->whereBetween('scheduled_at', [$from, $to])
-                    ->orWhere(function (Builder $dueQuery) use ($from, $to): void {
-                        $dueQuery->whereNull('scheduled_at')
-                            ->whereBetween('due_date', [$from, $to]);
-                    })
-                    ->orWhere(function (Builder $documentDateQuery) use ($from, $to): void {
-                        $documentDateQuery->whereNull('scheduled_at')
-                            ->whereNull('due_date')
-                            ->whereBetween('document_date', [$from, $to]);
-                    });
-            })
+            ->whereNotIn('id', $coveredRequestIds)
+            ->tap(fn (Builder $query) => $this->applyOperationMonthFilter($query, $month))
             ->whereNotExists(function ($query): void {
                 $query->select(DB::raw('1'))
                     ->from('budget_limit_reservations')
@@ -686,6 +676,22 @@ final class PaymentBudgetLimitService
             })
             ->tap(fn (Builder $query) => $this->applyDocumentDimensionFilter($query, $document, $line))
             ->sum('remaining_amount');
+    }
+
+    private function applyOperationMonthFilter(Builder $query, Carbon $month): void
+    {
+        $from = $month->toDateString();
+        $to = $month->copy()->endOfMonth()->toDateString();
+        $query->where(function (Builder $dateQuery) use ($from, $to): void {
+            $dateQuery->whereBetween('scheduled_at', [$from, $to])
+                ->orWhere(function (Builder $dueQuery) use ($from, $to): void {
+                    $dueQuery->whereNull('scheduled_at')->whereBetween('due_date', [$from, $to]);
+                })
+                ->orWhere(function (Builder $documentDateQuery) use ($from, $to): void {
+                    $documentDateQuery->whereNull('scheduled_at')->whereNull('due_date')
+                        ->whereBetween('document_date', [$from, $to]);
+                });
+        });
     }
 
     private function applyDocumentDimensionFilter(Builder $query, PaymentDocument $document, BudgetLine $line): void
@@ -823,9 +829,102 @@ final class PaymentBudgetLimitService
 
     private function isReservable(PaymentDocument $document): bool
     {
-        return in_array($document->status, self::RESERVABLE_STATUSES, true)
+        return (in_array($document->status, self::RESERVABLE_STATUSES, true)
+                || ($document->status === PaymentDocumentStatus::DRAFT && $this->paymentRequestForOrder($document) !== null))
             && BigDecimal::of($this->reservationAmount($document))->isPositive()
             && $this->isBudgetControlledDocument($document);
+    }
+
+    private function paymentRequestForOrder(PaymentDocument $document): ?PaymentDocument
+    {
+        if ($document->document_type !== PaymentDocumentType::PAYMENT_ORDER
+            || $document->source_type !== PaymentDocument::class || ! $document->source_id) {
+            return null;
+        }
+        $request = $document->source;
+        if (! $request instanceof PaymentDocument
+            || (int) $request->organization_id !== (int) $document->organization_id
+            || $request->document_type !== PaymentDocumentType::PAYMENT_REQUEST
+            || $request->status !== PaymentDocumentStatus::APPROVED
+            || $request->currency !== $document->currency
+            || ($request->direction?->value ?? InvoiceDirection::OUTGOING->value) !== ($document->direction?->value ?? InvoiceDirection::OUTGOING->value)
+            || ! BigDecimal::of((string) $request->amount)->isEqualTo(BigDecimal::of((string) $document->amount))
+            || $this->contractId($request) !== $this->contractId($document)
+            || $this->counterpartyId($request) !== $this->counterpartyId($document)) {
+            return null;
+        }
+        foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
+            if ((int) $request->{$field} !== (int) $document->{$field}) {
+                return null;
+            }
+        }
+
+        return $request;
+    }
+
+    private function coveredRequestIds(PaymentDocument $document, BudgetLine $line, Carbon $month): array
+    {
+        $activeStatuses = [...self::RESERVABLE_STATUSES, PaymentDocumentStatus::DRAFT];
+        $orders = PaymentDocument::query()
+            ->where('organization_id', $document->organization_id)
+            ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+            ->where('source_type', PaymentDocument::class)
+            ->whereHasMorph('source', [PaymentDocument::class], function (Builder $requestQuery) use ($document, $month): void {
+                $requestQuery->where('organization_id', $document->organization_id)
+                    ->where('document_type', PaymentDocumentType::PAYMENT_REQUEST->value)
+                    ->where('status', PaymentDocumentStatus::APPROVED->value);
+                $this->applyOperationMonthFilter($requestQuery, $month);
+            })
+            ->whereIn('status', array_map(static fn (PaymentDocumentStatus $status): string => $status->value, [...$activeStatuses, PaymentDocumentStatus::PAID]))
+            ->where(function (Builder $query): void {
+                $query->where('status', PaymentDocumentStatus::PAID->value)
+                    ->orWhereExists(function ($reservationQuery): void {
+                        $reservationQuery->select(DB::raw('1'))->from('budget_limit_reservations')
+                            ->whereColumn('budget_limit_reservations.payment_document_id', 'payment_documents.id')
+                            ->where('budget_limit_reservations.status', BudgetLimitReservation::STATUS_RESERVED);
+                    });
+            })
+            ->tap(fn (Builder $query) => $this->applyDocumentDimensionFilter($query, $document, $line))
+            ->with('source')
+            ->get();
+        $reservations = BudgetLimitReservation::query()
+            ->whereIn('payment_document_id', $orders->modelKeys())
+            ->where('status', BudgetLimitReservation::STATUS_RESERVED)
+            ->get()->groupBy('payment_document_id');
+        if (in_array($document->status, $activeStatuses, true) && $this->paymentRequestForOrder($document) !== null) {
+            $orders->push($document);
+        }
+        $coveredIds = [];
+        foreach ($orders as $order) {
+            $request = $this->paymentRequestForOrder($order);
+            if ($request === null) {
+                continue;
+            }
+            $covered = (int) $order->id === (int) $document->id
+                || ($order->status === PaymentDocumentStatus::PAID
+                    && BigDecimal::of((string) $order->paid_amount)->isGreaterThanOrEqualTo(BigDecimal::of((string) $order->amount)));
+            foreach ($reservations->get($order->id, collect()) as $reservation) {
+                if ((int) $reservation->organization_id !== (int) $order->organization_id
+                    || $reservation->currency !== $order->currency
+                    || (int) $reservation->contract_id !== (int) $this->contractId($order)
+                    || (int) $reservation->counterparty_id !== (int) $this->counterpartyId($order)
+                    || ! BigDecimal::of((string) $reservation->amount)->isEqualTo(BigDecimal::of($this->reservationAmount($order)))
+                    || ! Carbon::parse($reservation->period_month)->isSameMonth($this->operationMonth($order))) {
+                    continue;
+                }
+                foreach (['project_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
+                    if ((int) $reservation->{$field} !== (int) $order->{$field}) {
+                        continue 2;
+                    }
+                }
+                $covered = true;
+            }
+            if ($covered) {
+                $coveredIds[] = (int) $request->id;
+            }
+        }
+
+        return array_values(array_unique($coveredIds));
     }
 
     private function operationMonth(PaymentDocument $document, ?Carbon $operationDate = null): Carbon
@@ -888,7 +987,7 @@ final class PaymentBudgetLimitService
             : null;
     }
 
-    private function contractId(PaymentDocument $document): ?int
+    public function contractId(PaymentDocument $document): ?int
     {
         if ($document->invoiceable_type === Contract::class && $document->invoiceable_id) {
             return (int) $document->invoiceable_id;
@@ -914,7 +1013,7 @@ final class PaymentBudgetLimitService
         return is_numeric($value) ? (int) $value : null;
     }
 
-    private function counterpartyId(PaymentDocument $document): ?int
+    public function counterpartyId(PaymentDocument $document): ?int
     {
         return $document->contractor_id
             ?? $document->payee_contractor_id

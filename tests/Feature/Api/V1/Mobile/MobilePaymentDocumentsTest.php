@@ -60,6 +60,155 @@ final class MobilePaymentDocumentsTest extends TestCase
         $this->assertSame(1, PaymentDocument::query()->where('origin_key', 'mobile:'.$context->user->id.':mobile-payment-create-0001')->count());
     }
 
+    public function test_request_orders_preserve_mobile_keys_for_new_and_existing_children(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule((int) $context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Mobile request payee']);
+
+        foreach (['mobile_first', 'accept_first', 'generic_first'] as $scenario) {
+            $request = $this->createApprovedPaymentRequest($context, $project, $payee, 'REQ-'.$scenario);
+            $otherRequest = $this->createApprovedPaymentRequest($context, $project, $payee, 'REQ-OTHER-'.$scenario);
+            $payload = [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(), 'amount' => 100, 'currency' => 'RUB',
+                'project_id' => $project->id,
+                'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $payee->id,
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ];
+            $existingId = null;
+            if ($scenario === 'accept_first') {
+                $existingId = $this->withHeaders($context->authHeaders())
+                    ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")
+                    ->assertOk()->json('data.payment_order.id');
+            } elseif ($scenario === 'generic_first') {
+                $existingId = $this->withHeaders($context->authHeaders())
+                    ->postJson('/api/v1/admin/payments/documents', $payload)
+                    ->assertCreated()->json('data.id');
+            }
+            $this->flushHeaders();
+            $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile-request-'.$scenario.'-0001'];
+            $first = $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload);
+            self::assertSame($scenario === 'mobile_first' ? 201 : 200, $first->status(), $scenario.':'.$first->getContent());
+            $id = $first->json('data.id');
+            if ($existingId !== null) {
+                self::assertSame($existingId, $id);
+            }
+            $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)
+                ->assertOk()->assertJsonPath('data.id', $id);
+            $this->withHeaders($headers)
+                ->postJson('/api/v1/mobile/payments/documents', array_replace($payload, ['amount' => 200]))
+                ->assertStatus(409);
+            $this->withHeaders($headers)
+                ->postJson('/api/v1/mobile/payments/documents', array_replace($payload, ['source_id' => $otherRequest->id]))
+                ->assertStatus(409);
+            $ordinaryPayload = $payload;
+            unset($ordinaryPayload['source_type'], $ordinaryPayload['source_id']);
+            $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $ordinaryPayload)->assertStatus(409);
+            $secondHeaders = array_replace($headers, ['Idempotency-Key' => 'mobile-request-'.$scenario.'-0002']);
+            $this->withHeaders($secondHeaders)->postJson('/api/v1/mobile/payments/documents', $payload)
+                ->assertOk()->assertJsonPath('data.id', $id);
+            $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)
+                ->assertOk()->assertJsonPath('data.id', $id);
+            $this->assertDatabaseHas('payment_documents', ['id' => $id, 'origin_key' => "payment-request:{$request->id}:order"]);
+            self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)->where('source_id', $request->id)->count());
+            self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)->where('source_id', $otherRequest->id)->count());
+        }
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_legacy_mobile_origin_replays_remain_idempotent_without_an_alias_record(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule((int) $context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $payee = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Legacy mobile payee']);
+        $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile.legacy:origin-0001'];
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST->value,
+            'document_date' => now()->toDateString(), 'amount' => 100,
+            'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $payee->id,
+        ];
+        $first = $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)->assertCreated();
+        $id = $first->json('data.id');
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $id, 'origin_key' => 'mobile:'.$context->user->id.':mobile.legacy:origin-0001',
+        ]);
+        \Illuminate\Support\Facades\DB::table('mobile_mutation_idempotencies')
+            ->where('organization_id', $context->organization->id)->where('user_id', $context->user->id)
+            ->where('operation', 'payments.documents.create')->where('resource_id', $id)->delete();
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/payments/documents', array_replace($payload, ['amount' => 200]))
+            ->assertStatus(409);
+        $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)
+            ->assertOk()->assertJsonPath('data.id', $id);
+        $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)
+            ->assertOk()->assertJsonPath('data.id', $id);
+        $this->assertDatabaseHas('mobile_mutation_idempotencies', [
+            'organization_id' => $context->organization->id, 'user_id' => $context->user->id,
+            'operation' => 'payments.documents.create', 'resource_id' => $id,
+        ]);
+        self::assertSame(1, PaymentDocument::query()->forOrganization((int) $context->organization->id)->count());
+    }
+
+    public function test_linked_order_write_without_approval_permission_returns_mobile_403(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule((int) $context->organization->id);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Mobile restricted payee']);
+        UserRoleAssignment::query()->where('user_id', $context->user->id)->delete();
+        $role = OrganizationCustomRole::query()->create([
+            'organization_id' => $context->organization->id, 'name' => 'Mobile create without approve',
+            'slug' => 'mobile_request_create_only_'.$context->organization->id,
+            'system_permissions' => [],
+            'module_permissions' => ['payments' => ['payments.invoice.view', 'payments.invoice.create', 'payments.invoice.edit', 'payments.invoice.issue']],
+            'interface_access' => ['admin', 'mobile'], 'conditions' => null,
+            'is_active' => true, 'created_by' => $context->user->id,
+        ]);
+        UserRoleAssignment::assignRole(
+            user: $context->user, roleSlug: $role->slug,
+            context: AuthorizationContext::getOrganizationContext((int) $context->organization->id),
+            roleType: UserRoleAssignment::TYPE_CUSTOM,
+        );
+        self::assertFalse(app(\App\Domain\Authorization\Services\AuthorizationService::class)->canCurrent(
+            $context->user, 'payments.transaction.approve', ['organization_id' => $context->organization->id]
+        ));
+        $request = $this->createApprovedPaymentRequest($context, $project, $payee, 'REQ-MOBILE-403');
+        $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile-request-no-approve-0001'];
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(), 'amount' => 100, 'currency' => 'RUB',
+            'project_id' => $project->id,
+            'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $payee->id,
+        ];
+        $ordinary = $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)->assertCreated();
+        $this->withHeaders($headers)
+            ->putJson('/api/v1/mobile/payments/documents/'.$ordinary->json('data.id'), ['description' => 'Allowed ordinary edit'])
+            ->assertOk();
+        $linkedHeaders = array_replace($headers, ['Idempotency-Key' => 'mobile-request-no-approve-0002']);
+        $linkedPayload = $payload + ['source_type' => PaymentDocument::class, 'source_id' => $request->id];
+        $this->withHeaders($linkedHeaders)->postJson('/api/v1/mobile/payments/documents', $linkedPayload)
+            ->assertForbidden()->assertJsonPath('success', false);
+        self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)->where('source_id', $request->id)->count());
+        $legacy = $this->createApprovedPaymentRequest($context, $project, $payee, 'LEGACY-MOBILE-403');
+        $legacy->update([
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER, 'status' => PaymentDocumentStatus::DRAFT,
+            'source_type' => PaymentDocument::class, 'source_id' => $request->id, 'description' => 'Legacy draft',
+        ]);
+        $this->withHeaders($linkedHeaders)->postJson('/api/v1/mobile/payments/documents', $linkedPayload)->assertForbidden();
+        $this->withHeaders($headers)->putJson("/api/v1/mobile/payments/documents/{$legacy->id}", ['description' => 'Forbidden'])
+            ->assertForbidden();
+        $this->withHeaders($headers)->postJson("/api/v1/mobile/payments/documents/{$legacy->id}/submit")->assertForbidden();
+        self::assertSame('Legacy draft', $legacy->fresh()->description);
+        self::assertSame(PaymentDocumentStatus::DRAFT, $legacy->fresh()->status);
+        self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_create_returns_validation_error_for_form_payload_without_transaction_parties(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
@@ -573,6 +722,20 @@ final class MobilePaymentDocumentsTest extends TestCase
         $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents/'.$generic->id.'/reject', [
             'reason' => 'Неверная сумма',
         ])->assertOk()->assertJsonPath('data.status', 'rejected');
+    }
+
+    private function createApprovedPaymentRequest(AdminApiTestContext $context, Project $project, Contractor $payee, string $number): PaymentDocument
+    {
+        $document = $this->createDocument((int) $context->organization->id, (int) $project->id, $number);
+        $document->update([
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'document_date' => now()->toDateString(), 'due_date' => now()->addDays(7)->toDateString(),
+            'amount' => 100, 'remaining_amount' => 100, 'vat_rate' => 0,
+            'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $payee->id,
+            'contractor_id' => $payee->id, 'payment_purpose' => 'Учебное мобильное требование',
+        ]);
+
+        return $document;
     }
 
     private function createDocument(int $organizationId, ?int $projectId, string $number): PaymentDocument

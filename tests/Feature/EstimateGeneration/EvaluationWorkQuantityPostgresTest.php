@@ -8,13 +8,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraft
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
@@ -22,6 +25,36 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_http_manual_quantity_validation_reaches_the_writer_and_replays_without_new_facts(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $url = $this->quantityEndpoint($actor, $session);
+        $input = $this->input();
+        $response = $this->postJson($url, $input)->assertOk()->assertJsonPath('data.state_version', 1)->assertJsonPath('data.cost_units', '0');
+        $this->postJson($url, $input)->assertOk()->assertJsonPath('data.fact_id', $response->json('data.fact_id'));
+        self::assertSame(1, (int) $session->fresh()->state_version);
+        $quantity = app(CurrentProjectDerivedQuantityService::class)->previewInput((int) $session->organization_id,
+            (int) $session->project_id, (int) $session->id)['quantities'][$response->json('data.quantity_key')];
+        self::assertSame('3', $quantity->amount);
+        self::assertSame('count', $quantity->unit);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_http_quantity_rejects_a_native_source_combined_with_either_manual_field(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $url = $this->quantityEndpoint($actor, $session);
+        foreach ([['value' => '3'], ['unit' => 'шт'], ['value' => '3', 'unit' => 'шт']] as $manual) {
+            $input = $this->input();
+            unset($input['value'], $input['unit']);
+            $this->postJson($url, [...$input, 'source_fact_id' => 'fact:source', 'source_fact_version' => 1,
+                'source_value_hash' => str_repeat('a', 64), ...$manual])->assertUnprocessable()->assertJsonValidationErrors(array_keys($manual));
+            self::assertSame(0, (int) $session->fresh()->state_version);
+            self::assertArrayNotHasKey('quantity_selections', $session->fresh()->input_payload);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_manual_work_quantity_preserves_the_existing_asset_and_does_not_replace_another_works_fact(): void
     {
         [$actor, $session] = $this->fixture();
@@ -189,6 +222,18 @@ final class EvaluationWorkQuantityPostgresTest extends EstimateGenerationCanonic
     {
         return ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'work_item_key' => 'equipment:purchase',
             'value' => '3', 'unit' => 'шт', 'reason' => 'Подтверждено три единицы оборудования по выбранной комплектации'];
+    }
+
+    private function quantityEndpoint(User $actor, EstimateGenerationSession $session): string
+    {
+        $project = Project::query()->findOrFail($session->project_id);
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
+        Route::post('/_contract/projects/{project}/estimate-generation/sessions/{session}/evaluation/quantity',
+            [EstimateGenerationEvaluationController::class, 'quantity'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $this->withToken(auth('api_admin')->login($actor));
+
+        return '/_contract/projects/'.$project->id.'/estimate-generation/sessions/'.$session->id.'/evaluation/quantity';
     }
 
     private function fixture(): array

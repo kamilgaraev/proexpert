@@ -122,8 +122,8 @@ final class EstimateGenerationEvaluationController extends Controller
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
             'work_item_key' => ['required', 'string', 'max:160'], 'reason' => ['required', 'string', 'max:1000'],
-            'value' => ['required_without:source_fact_id', 'prohibited_with:source_fact_id', 'string', 'max:21'],
-            'unit' => ['required_without:source_fact_id', 'prohibited_with:source_fact_id', 'string', 'max:30'],
+            'value' => ['required_without:source_fact_id', 'prohibits:source_fact_id', 'string', 'max:21'],
+            'unit' => ['required_without:source_fact_id', 'prohibits:source_fact_id', 'string', 'max:30'],
             'source_fact_id' => ['required_without:value', 'string', 'max:191'],
             'source_fact_version' => ['required_with:source_fact_id', 'integer', 'min:1'],
             'source_value_hash' => ['required_with:source_fact_id', 'string', 'regex:/\A[a-f0-9]{64}\z/']]);

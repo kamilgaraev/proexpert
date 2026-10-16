@@ -28,6 +28,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -186,6 +187,8 @@ final class PaymentDocumentController extends Controller
                 trans_message('payments.documents.created'),
                 201
             );
+        } catch (AuthorizationException $e) {
+            return AdminResponse::error($e->getMessage(), 403);
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (PaymentDocumentDeviationBlockedException $e) {
@@ -216,6 +219,8 @@ final class PaymentDocumentController extends Controller
                 $this->presenter->detailed($updated, $request->user()),
                 trans_message('payments.documents.updated')
             );
+        } catch (AuthorizationException $e) {
+            return AdminResponse::error($e->getMessage(), 403);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (ModelNotFoundException) {
@@ -246,6 +251,8 @@ final class PaymentDocumentController extends Controller
                 $this->presenter->detailed($submitted, $request->user()),
                 trans_message('payments.documents.submitted')
             );
+        } catch (AuthorizationException $e) {
+            return AdminResponse::error($e->getMessage(), 403);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (ModelNotFoundException) {
