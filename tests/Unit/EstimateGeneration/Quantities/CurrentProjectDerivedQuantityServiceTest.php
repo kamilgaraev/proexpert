@@ -189,12 +189,13 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
                 $mapper = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
                 self::assertSame('40', $mapper->map('office.ceiling', $result['quantities'])?->amount);
                 self::assertNull($mapper->map('rough.floor', $result['quantities']));
+                self::assertSame([], $result['warnings']);
             } else {
                 self::assertArrayNotHasKey('floor_area', $result['quantities']);
+                self::assertContains('canonical_quantity_aggregate_unresolved', array_column($result['warnings'], 'code'));
             }
             self::assertCount($withBuilding ? 3 : 2, $result['quantities']);
             self::assertSame(['room:area', 'room:dimensions'], $result['context']['room_floor_entity_ids']);
-            self::assertContains('canonical_quantity_aggregate_unresolved', array_column($result['warnings'], 'code'));
             $items = [];
             foreach (['rough.floor', 'finish.floor'] as $work) {
                 $items[] = ['key' => 'catalog:'.$work, 'item_type' => 'priced_work', 'quantity' => null,
@@ -252,6 +253,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
             if ($buildingState === 'confirmed') {
                 self::assertSame('40', $result['quantities']['floor_area']->amount);
+                self::assertNotContains('canonical_quantity_aggregate_unresolved', array_column($result['warnings'], 'code'));
             } else {
                 self::assertArrayNotHasKey('floor_area', $result['quantities']);
             }

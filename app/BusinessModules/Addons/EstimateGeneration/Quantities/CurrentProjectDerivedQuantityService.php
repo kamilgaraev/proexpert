@@ -794,7 +794,6 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $result = [];
         foreach ($byPurpose as $purpose => $items) {
-            $allItems = $items;
             $hasGlobal = false;
             if ($purpose === 'floor_area' && ! $unresolvedBuildingFloor) {
                 $buildingFloors = array_values(array_filter($items,
@@ -815,15 +814,15 @@ final readonly class CurrentProjectDerivedQuantityService
                 $key = $quantity->logicalId ?? $quantity->id;
                 $result[$key] = $this->quantityData($quantity, $modelVersion, $key, $facts);
             }
-            if (isset($aliasedPurposes[$purpose]) && count($allItems) > 1) {
+            if (! $hasGlobal && isset($aliasedPurposes[$purpose]) && count($items) > 1) {
                 $formulas = array_values(array_unique(array_map(
-                    static fn (DerivedQuantity $quantity): string => $quantity->formulaIdentity ?? $quantity->formula, $allItems)));
+                    static fn (DerivedQuantity $quantity): string => $quantity->formulaIdentity ?? $quantity->formula, $items)));
                 $warnings[] = [
                     'code' => 'canonical_quantity_aggregate_unresolved',
                     'formula' => count($formulas) === 1 ? $formulas[0] : $purpose,
                     'quantity_ids' => array_slice(array_map(
                         static fn (DerivedQuantity $quantity): string => $quantity->id,
-                        $allItems,
+                        $items,
                     ), 0, 100),
                 ];
             }
