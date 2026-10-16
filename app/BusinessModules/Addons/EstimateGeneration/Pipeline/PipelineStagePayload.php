@@ -148,9 +148,16 @@ final readonly class PipelineStagePayload
                 || ! is_string($request['reason'] ?? null) || $request['reason'] === '' || strlen($request['reason']) > 200
                 || ! array_key_exists('work_name', $request) || ($request['work_name'] !== null && ! is_string($request['work_name']))
                 || (is_string($request['work_name']) && mb_strlen($request['work_name']) > 300)
-                || ! in_array($request['next_action'] ?? null, ['confirm_work_source', 'provide_work_scope'], true)
+                || ! in_array($request['next_action'] ?? null, ['confirm_work_source', 'provide_work_scope', 'keep_existing_work'], true)
                 || ! is_array($request['source_fact_ids'] ?? null) || ! array_is_list($request['source_fact_ids'])
                 || count($request['source_fact_ids']) > 10000) {
+                throw new InvalidArgumentException('Pipeline work source requests are invalid.');
+            }
+            $covered = $request['reason'] === 'estimate_composer_physical_duplicate_covered';
+            $reference = $request['covered_by_position_key'] ?? $request['covered_by_candidate_id'] ?? null;
+            if (($request['next_action'] === 'keep_existing_work') !== $covered
+                || ($covered && (! is_string($reference) || $reference === '' || strlen($reference) > 160
+                    || array_key_exists('covered_by_position_key', $request) === array_key_exists('covered_by_candidate_id', $request)))) {
                 throw new InvalidArgumentException('Pipeline work source requests are invalid.');
             }
             foreach ($request['source_fact_ids'] as $id) {

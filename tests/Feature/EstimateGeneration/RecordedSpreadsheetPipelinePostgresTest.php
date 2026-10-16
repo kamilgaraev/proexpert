@@ -137,11 +137,11 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame([], $automaticSuspendedCeilings, 'An office label and floor dimensions do not choose a suspended ceiling.');
             self::assertTrue(app(BuildMostEstimateDraft::class)->verifyArtifact($session->draft_payload));
             self::assertCount(count(ProcessingStage::cases()), $adapter->lastRun['completed_stages']);
-            self::assertSame(6, $adapter->lastRun['provider_requests']);
-            self::assertSame(6, $adapter->lastRun['requests_after_replay']);
+            self::assertSame(4, $adapter->lastRun['provider_requests']);
+            self::assertSame(4, $adapter->lastRun['requests_after_replay']);
             $auditSubjects = DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
                 ->where('role', 'estimate_auditor')->pluck('subject_id')->all();
-            self::assertCount(5, $auditSubjects);
+            self::assertCount(3, $auditSubjects);
             foreach ($auditSubjects as $subject) {
                 self::assertStringStartsWith($session->id.':0:part:', $subject, 'Context parts are not extra audit/correction passes.');
             }
@@ -162,14 +162,20 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             }
             $positions = array_values(array_filter($adapter->lastRun['evaluation']['scenarios'][0]['positions'], static fn (array $item): bool => $item['work_key'] === 'finish.floor'));
             self::assertCount(1, $positions);
+            self::assertSame('finish_finishing-norm-intent-1', $positions[0]['key']);
             self::assertSame('50', $positions[0]['quantity']);
             self::assertSame('m2', $positions[0]['unit']);
             self::assertSame('supported', $positions[0]['quantity_status']);
             self::assertSame('floor_area', $positions[0]['quantity_formula']);
             self::assertNotEmpty($positions[0]['quantity_evidence_details']);
             self::assertNull($positions[0]['price_snapshot']);
-            self::assertSame(6, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
-            self::assertSame(5, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
+            $coveredDuplicates = array_values(array_filter($session->draft_payload['estimate_composition']['request_info'],
+                static fn (array $notice): bool => $notice['reason'] === 'estimate_composer_physical_duplicate_covered'));
+            self::assertCount(1, $coveredDuplicates);
+            self::assertSame($positions[0]['key'], $coveredDuplicates[0]['covered_by_position_key']);
+            self::assertNotContains('work_source_review', array_column($adapter->lastRun['evaluation']['missing_requirements'], 'requirement'));
+            self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            self::assertSame(3, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)
                 ->where('role', 'estimate_auditor')->where('status', 'completed')->distinct()->count('subject_id'));
             $repository = app(ProjectModelRepository::class);
             $measurementVersion = $numeric[0]->sourceVersion;
@@ -207,12 +213,10 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $organizationId = (int) $session->organization_id;
         $original = $adapter->lastRun['evaluation']['scenarios'][0]['positions'];
         $originalKeys = array_column($original, 'key');
-        // The server baseline remains alongside the three supplementary model intents.
-        // This is a transfer regression, not an oracle for the quality of that worklist.
         self::assertEqualsCanonicalizing([
             'rough_finishing-norm-intent-1', 'rough_finishing-norm-intent-2', 'rough_finishing-norm-intent-3',
             'finish_finishing-norm-intent-1', 'finish_finishing-norm-intent-2', 'finish_finishing-norm-intent-3',
-            'finish_finishing-norm-intent-4', 'finishing', 'preparation', 'finish.floor',
+            'finish_finishing-norm-intent-4', 'finishing', 'preparation',
         ], $originalKeys);
         $snapshot = app(ProjectModelRepository::class)->snapshot($organizationId, $projectId, $sessionId);
         $names = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'room_name'));
@@ -300,8 +304,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             self::assertSame('RUB', $position['price_snapshot']['currency']);
             self::assertSame($native ? '1.50' : '0.03', $position['total_cost']);
         }
-        // 50 m² × 0.03 plus nine explicitly assumed unit quantities × 0.03 = 1.77.
-        self::assertSame('1.77', $revision['result']['scenarios'][0]['total_by_currency']['RUB']);
+        self::assertSame('1.74', $revision['result']['scenarios'][0]['total_by_currency']['RUB']);
         self::assertSame($originalKeys, array_column($revision['result']['scenarios'][0]['positions'], 'key'));
         self::assertTrue($revision['result']['scope_confirmed']);
         $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, $projectId, $sessionId,
@@ -318,14 +321,14 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $applied = app(ApplyGeneratedEstimate::class)->handle($command);
         self::assertSame($applied->estimateId, app(ApplyGeneratedEstimate::class)->handle($command)->estimateId);
         $estimate = Estimate::query()->findOrFail($applied->estimateId);
-        self::assertSame('1.77', $estimate->total_amount_with_vat);
+        self::assertSame('1.74', $estimate->total_amount_with_vat);
         self::assertSame(count($original), $estimate->items()->whereNull('parent_work_id')->count());
         for ($iteration = 0; $iteration < 2; $iteration++) {
             app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
-            self::assertSame('1.77', $estimate->fresh()->total_amount_with_vat);
+            self::assertSame('1.74', $estimate->fresh()->total_amount_with_vat);
         }
         $totals = (new \ReflectionMethod(EstimateExportService::class, 'prepareTotalsData'))->invoke(app(EstimateExportService::class), $estimate->fresh());
-        self::assertSame('1.77', (string) $totals['total_amount_with_vat']);
-        self::assertSame(6, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
+        self::assertSame('1.74', (string) $totals['total_amount_with_vat']);
+        self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
     }
 }

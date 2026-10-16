@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateC
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\SupplementaryWorkPhysicalGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunFailure;
@@ -506,6 +507,7 @@ final class EstimateComposerTest extends TestCase
             [$result[0]['candidate_id'] => $result[0]],
             $input->derivedQuantities,
             $input->facts,
+            [$result[0]['candidate_id'] => 'finish.floor'],
         );
         self::assertSame(
             'quantity:room-area',
@@ -581,6 +583,63 @@ final class EstimateComposerTest extends TestCase
         foreach ($parts as $part) {
             self::assertSame(['finishing'], $part->canonicalPayload()['allowed_work_sections']);
         }
+    }
+
+    public function test_multiple_parts_keep_other_entities_and_project_unique_canonical_work_rows(): void
+    {
+        $items = [];
+        for ($index = 0; $index < 65; $index++) {
+            $items[] = ['key' => 'baseline:'.$index, 'name' => 'Работа '.$index, 'item_type' => 'priced_work', 'unit' => 'm2',
+                'source_refs' => [['fact_id' => 'fact:'.($index % 2 === 0 ? 'a' : 'b')]]];
+        }
+        $estimates = [['key' => 'roofing', 'sections' => [['key' => 'works', 'work_items' => $items]]]];
+        $projector = new EstimateCompositionProjector;
+        $facts = array_map(static fn (string $id): array => ['id' => 'fact:'.$id, 'entity_id' => 'roof:'.$id,
+            'entity_type' => 'roof', 'type' => 'plan_area', 'value' => '50', 'unit' => 'm2',
+            'status' => 'confirmed', 'origin' => 'document', 'evidence_ids' => ['proof:'.$id]], ['a', 'b']);
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [],
+            $projector->candidates($estimates), [], RunEstimateComposer::PROMPT_CONTRACT, allowedWorkSections: ['roofing']);
+        $model = new class implements EstimateComposerModel
+        {
+            public int $calls = 0;
+
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $this->calls++;
+                $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+                $id = $this->calls === 2 ? 'b' : 'a';
+                $records = array_map(static fn (array $candidate): array => ['kind' => 'existing',
+                    'candidate_id' => $candidate['candidate_id'], 'work_key' => null, 'name' => null,
+                    'derived_quantity_id' => null, 'source_fact_ids' => $candidate['source_fact_ids'],
+                    'technology_package_candidate' => null, 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []], $input->candidates);
+                $records[] = ['kind' => 'supplementary', 'work_key' => 'roof_underlay', 'name' => 'Подготовка кровли',
+                    'entity_id' => 'roof:'.$id, 'derived_quantity_id' => null, 'source_fact_ids' => ['fact:'.$id],
+                    'technology_package_candidate' => null, 'unit' => 'm2', 'work_section' => 'roofing',
+                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+
+                return ['work_intents' => $records];
+            }
+        };
+        $composer = new RunEstimateComposer(new MultipartComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna');
+        $composition = $composer->runDetailed($input);
+        self::assertSame(3, $model->calls);
+        self::assertCount(3, array_filter($composition['intents'], static fn (array $intent): bool => $intent['kind'] === 'supplementary'));
+        self::assertSame($composition, $composer->runDetailed($input));
+        self::assertSame(3, $model->calls);
+        $filtered = (new SupplementaryWorkPhysicalGuard)->filter($estimates, $composition, [], $facts);
+        self::assertCount(67, $filtered['intents']);
+        self::assertCount(1, $filtered['quarantined']);
+        $supplementary = [];
+        foreach ($filtered['intents'] as $intent) {
+            if ($intent['kind'] === 'supplementary') {
+                $supplementary[$intent['candidate_id']] = $intent;
+            }
+        }
+        $keys = (new \ReflectionMethod($projector, 'supplementaryPositionKeys'))->invoke($projector, $estimates, $supplementary);
+        $additional = (new \ReflectionMethod($projector, 'supplementaryItems'))->invoke($projector, $supplementary, [], $facts, $keys);
+        self::assertCount(2, array_unique(array_column($additional, 'key')));
+        self::assertSame(['roof_underlay', 'roof_underlay'], array_column($additional, 'work_key'));
+        self::assertSame(['roof:a', 'roof:b'], array_column(array_column($additional, 'metadata'), 'scope_entity_id'));
     }
 
     public function test_timeweb_model_calls_only_the_pinned_model_with_bounded_price_free_json_contract(): void
@@ -771,6 +830,40 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
     {
         $this->result = $result;
         $this->lastResult = $result;
+    }
+
+    public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}
+
+    public function loadCurrent(AiRoleRunInput $input): ?AiRoleRunClaim
+    {
+        return null;
+    }
+
+    public function completedFingerprints(int $organizationId, int $projectId, int $sessionId, array $roles, array $sourceVersions): array
+    {
+        return [];
+    }
+}
+
+final class MultipartComposerRoleRunMemoryRepository implements AiRoleRunRepository
+{
+    private array $ids = [];
+
+    private array $results = [];
+
+    public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
+    {
+        $id = $this->ids[$input->subjectVersion] ??= count($this->ids) + 1;
+
+        return isset($this->results[$id]) ? new AiRoleRunClaim($id, 'replay', result: $this->results[$id])
+            : new AiRoleRunClaim($id, 'owned', $ownerUuid);
+    }
+
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
+
+    public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
+    {
+        $this->results[$runId] = $result;
     }
 
     public function fail(int $runId, string $ownerUuid, AiRoleRunFailure $failure): void {}

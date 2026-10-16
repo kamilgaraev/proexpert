@@ -245,7 +245,7 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
                 'request_count' => count($this->history) - $historyStart,
                 'completed_stage_count' => DB::table('estimate_generation_pipeline_checkpoints')->where('session_id', $session->id)
                     ->where('status', 'completed')->count(),
-            ], JSON_THROW_ON_ERROR));
+            ], JSON_THROW_ON_ERROR), previous: $error);
         }
         $session->refresh();
         $evaluation = $session->draft_payload['evaluation_result'] ?? null;
@@ -451,11 +451,11 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
 
     private function seedSettings(): void
     {
-        if (DB::table('estimate_generation_setting_snapshots')->where('scope', 'global')->whereNull('organization_id')->exists()) {
-            return;
-        }
+        $latest = DB::table('estimate_generation_setting_snapshots')->where('scope', 'global')->whereNull('organization_id')
+            ->orderByDesc('version')->first(['version', 'snapshot_hash']);
+        $version = (int) ($latest?->version ?? 0) + 1;
         $snapshot = EstimateGenerationSettingsData::fromArray([
-            'scope' => 'global', 'organization_id' => null, 'expected_version' => 0, 'idempotency_key' => (string) Str::ulid(),
+            'scope' => 'global', 'organization_id' => null, 'expected_version' => $version - 1, 'idempotency_key' => (string) Str::ulid(),
             'models' => ['vision' => 'openai/gpt-6-luna', 'classification' => 'openai/gpt-6-luna', 'normative_matching' => 'openai/gpt-6-luna'],
             'limits' => ['max_files' => 8, 'max_pages_per_file' => 80, 'max_total_pages' => 500],
             'timeouts' => ['vision' => 60, 'classification' => 60, 'normative_matching' => 60],
@@ -465,10 +465,13 @@ final class RecordedUniversalPipelineAdapter implements BenchmarkPipelineAdapter
             'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
         ])->snapshot();
         $hash = SettingsSnapshotHash::calculate($snapshot);
+        if ($latest !== null && $latest->snapshot_hash === $hash) {
+            return;
+        }
         $adminId = DB::table('system_admins')->insertGetId(['name' => 'Replay fixture', 'email' => Str::uuid().'@example.test',
             'password' => 'not-used', 'created_at' => now(), 'updated_at' => now()]);
         $id = DB::table('estimate_generation_setting_snapshots')->insertGetId(['scope' => 'global', 'organization_id' => null,
-            'version' => 1, 'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'snapshot_hash' => $hash,
+            'version' => $version, 'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'snapshot_hash' => $hash,
             'daily_budget' => '250.00', 'monthly_budget' => '4000.00', 'currency' => 'RUB', 'created_by_system_admin_id' => $adminId, 'created_at' => now()]);
         DB::table('estimate_generation_setting_snapshot_hashes')->insert(['setting_snapshot_id' => $id,
             'algorithm' => 'jcs-sha256-v1', 'snapshot_hash' => $hash, 'created_at' => now()]);
