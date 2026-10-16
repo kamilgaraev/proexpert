@@ -33,6 +33,24 @@ final readonly class UndatedPaymentCalendarItem
         $this->sourceType = 'payment_schedule';
     }
 
+    public function withRemainingAmount(string $remainingAmount): self
+    {
+        return new self(
+            organizationId: $this->organizationId,
+            direction: $this->direction,
+            amount: $this->amount,
+            remainingAmount: $remainingAmount,
+            currency: $this->currency,
+            sourceId: $this->sourceId,
+            cashFlowKey: $this->cashFlowKey,
+            projectId: $this->projectId,
+            counterpartyId: $this->counterpartyId,
+            budgetArticleId: $this->budgetArticleId,
+            responsibilityCenterId: $this->responsibilityCenterId,
+            drillDown: $this->drillDown,
+        );
+    }
+
     public function toArray(): array
     {
         return [
