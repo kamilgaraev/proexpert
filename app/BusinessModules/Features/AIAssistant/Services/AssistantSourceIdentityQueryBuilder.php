@@ -31,7 +31,7 @@ final class AssistantSourceIdentityQueryBuilder
         return $planned;
     }
 
-    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null): QueryBuilder
+    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null, bool $boundedSourceMembership = false): QueryBuilder
     {
         $key = $entities->getModel()->getQualifiedKeyName();
         if ($identitySources === null) {
@@ -48,6 +48,17 @@ final class AssistantSourceIdentityQueryBuilder
         $output = $sourceColumns === null ? ['eligible_identity_source.admitted_source_id AS source_id']
             : array_map(static fn (string $column): string => 'eligible_identity_source.admitted_projection_'.substr($column, strrpos($column, '.') + 1).' AS '.substr($column, strrpos($column, '.') + 1), $sourceColumns);
         $grammar = $entities->getQuery()->getGrammar();
+
+        if ($boundedSourceMembership && $sourceColumns !== null && $entityType === 'mdm_change_log') {
+            $sourceRows = DB::query()->fromSub($sources, 'eligible_identity_source');
+            $sourceKeys = (clone $sourceRows)->select('eligible_identity_source.admitted_entity_id');
+            $textKey = 'CAST('.$grammar->wrap($key).' AS TEXT)';
+            $native = $entities->distinct()->select([])->selectRaw($textKey)
+                ->whereRaw('('.$textKey.' COLLATE "C" IN ('.$sourceKeys->toSql().')) IS TRUE', $sourceKeys->getBindings())->toBase();
+
+            return $sourceRows->select($output)->distinct()
+                ->whereRaw('('.$grammar->wrap('eligible_identity_source.admitted_entity_id').' COLLATE "C" IN ('.$native->toSql().')) IS TRUE', $native->getBindings());
+        }
 
         if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'design_ifc_model_element'], true)) {
             $entityId = $grammar->wrap($table.'.entity_id');

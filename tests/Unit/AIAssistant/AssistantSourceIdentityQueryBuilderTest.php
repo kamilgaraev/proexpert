@@ -33,6 +33,16 @@ final class AssistantSourceIdentityQueryBuilderTest extends TestCase
             (new AssistantSourceIdentityQueryBuilder)->planBatches(['assistant_document' => ['file_document' => true]], ['file_document' => 2], 8, false));
     }
 
+    public function test_large_reporting_sources_are_not_in_a_bounded_mixed_batch(): void
+    {
+        $identities = ['mdm_change_log' => ['organization_reporting' => true], 'project' => ['project' => true]];
+        $builder = new AssistantSourceIdentityQueryBuilder;
+        self::assertSame([['types' => ['organization_reporting', 'project'], 'entity' => null]],
+            $builder->planBatches($identities, ['organization_reporting' => 9999, 'project' => 1], 8, false));
+        self::assertSame([['types' => ['organization_reporting'], 'entity' => null], ['types' => ['project'], 'entity' => null]],
+            $builder->planBatches($identities, ['organization_reporting' => 10001, 'project' => 1], 8, false));
+    }
+
     public function test_unbatched_identity_queries_keep_the_existing_shape(): void
     {
         self::assertSame([['types' => null, 'entity' => null]], (new AssistantSourceIdentityQueryBuilder)->planBatches(
