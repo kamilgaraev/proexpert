@@ -67,7 +67,10 @@ final class BankSyncService
                         Log::error('Bank payment activation failed.', ['invoice_id' => $invoice->id, 'exception' => $exception::class]);
                     }
                 });
-            CommercialBankDocument::query()->where(fn ($query) => $query->where('status', 'pending')->orWhereNull('notified_at'))->orderBy('updated_at')->orderBy('id')->limit(5)->get()
+            CommercialBankDocument::query()->where(fn ($query) => $query->whereIn('status', ['pending', 'creating'])
+                ->orWhere(fn ($ready) => $ready->where('status', 'ready')->whereNull('notified_at')))
+                ->where(fn ($query) => $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
+                ->orderBy('updated_at')->orderBy('id')->limit(5)->get()
                 ->each(function ($document) use (&$counts): void {
                     $document->touch();
                     try {
@@ -75,6 +78,8 @@ final class BankSyncService
                     } catch (Throwable $exception) {
                         $counts['failed']++;
                         Log::error('Bank document generation failed.', ['document_id' => $document->id, 'exception' => $exception::class]);
+                        CommercialBankDocument::query()->whereKey($document->id)->where('status', 'pending')
+                            ->whereNull('next_attempt_at')->update(['next_attempt_at' => now()->addMinutes(2)]);
                     }
                 });
 

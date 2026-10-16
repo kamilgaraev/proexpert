@@ -8,6 +8,8 @@ return [
     'jwt_path' => env('TOCHKA_JWT_PATH', ''),
     'customer_code' => env('TOCHKA_CUSTOMER_CODE', ''),
     'account_id' => env('TOCHKA_ACCOUNT_ID', ''),
+    'sbp_b2b_enabled' => (bool) env('TOCHKA_SBP_B2B_ENABLED', false),
+    'sbp_merchant_id' => env('TOCHKA_SBP_MERCHANT_ID', ''),
     'start_date' => env('TOCHKA_START_DATE', '2026-10-15'),
     'seller_account' => env('TOCHKA_SETTLEMENT_ACCOUNT', ''),
     'seller_bik' => env('TOCHKA_BANK_BIK', ''),

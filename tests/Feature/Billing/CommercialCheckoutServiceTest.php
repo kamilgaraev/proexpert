@@ -1668,7 +1668,7 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->prepareBankBilling();
         $this->checkout(['machinery']);
         $document = \App\Models\CommercialBankDocument::query()->sole();
-        $path = 'org-'.$this->organization->id.'/billing/documents/'.$document->invoice->public_id.'/'.$document->public_id.'.pdf';
+        $path = 'org-'.$this->organization->id.'/billing/documents/'.$document->invoice->public_id.'/tochka/'.$document->public_id.'.pdf';
         $content = '%PDF-1.4 bank invoice test';
         $files = \Mockery::mock(\App\Services\Storage\FileService::class);
         $files->shouldReceive('existsCurrent')->once()->with($path)->andReturn(false);
@@ -1678,18 +1678,7 @@ class CommercialCheckoutServiceTest extends TestCase
         fwrite($stream, $content);
         rewind($stream);
         $files->shouldReceive('readCurrent')->once()->with($path)->andReturn($stream);
-        $service = new class($files, $content) extends \App\Services\Billing\Bank\BankDocumentService
-        {
-            public function __construct(\App\Services\Storage\FileService $files, private readonly string $content)
-            {
-                parent::__construct($files);
-            }
-
-            public function render(\App\Models\CommercialBankDocument $document): string
-            {
-                return $this->content;
-            }
-        };
+        $service = new \App\Services\Billing\Bank\BankDocumentService($files);
         $stored = $service->store($document);
         $this->assertSame('ready', $stored->status);
         $this->assertSame(hash('sha256', $content), $stored->sha256);
@@ -1699,6 +1688,115 @@ class CommercialCheckoutServiceTest extends TestCase
         fclose($read);
         $this->assertDatabaseCount('commercial_bank_documents', 1);
         $this->assertDatabaseCount('commercial_billing_notification_keys', 1);
+    }
+
+    public function test_bank_document_timeout_never_repeats_a_potentially_successful_create(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        $client = app(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('createDocument')->once()->andThrow(new \RuntimeException('tochka_connection_failed'));
+        $files = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $service = new \App\Services\Billing\Bank\BankDocumentService($files);
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            try {
+                $service->store($document);
+                $this->fail('Ambiguous document create accepted');
+            } catch (\RuntimeException) {
+                $this->assertSame('creation_unknown', $document->refresh()->status);
+                $this->assertSame('creation_unknown', $document->failure_code);
+                $this->assertNull($document->provider_document_id);
+            }
+        }
+        $this->assertSame($document->invoice->number, $document->provider_request['Data']['Content']['Invoice']['number']);
+    }
+
+    public function test_bank_document_pdf_retry_reuses_the_committed_remote_id_and_original_payload(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        $id = (string) \Illuminate\Support\Str::uuid();
+        $client = app(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('createDocument')->once()->with('invoice', \Mockery::on(function (array $payload) use ($document): bool {
+            $invoice = $payload['Data']['Content']['Invoice'];
+
+            return $payload['Data']['SecondSide']['taxCode'] === $document->snapshot['buyer']['inn']
+                && $payload['Data']['accountId'] === config('bank_billing.account_id')
+                && $invoice['Positions'][0]['ndsKind'] === 'without_nds'
+                && $invoice['totalAmount'] === (float) \App\Services\Billing\Bank\BankMoney::decimal($document->invoice->amount_minor);
+        }))->andReturn($id);
+        $client->shouldReceive('documentPdf')->once()->with('invoice', 'test-customer', $id)
+            ->andThrow(new \RuntimeException('tochka_http_503'));
+        $files = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $files->shouldReceive('existsCurrent')->twice()->andReturn(false);
+        $files->shouldReceive('putPrivate')->once()->andReturnUsing(fn (string $path, string $content): \App\Services\Storage\DTO\CurrentStoredFile => new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', strlen($content), hash('sha256', $content), 'application/pdf'));
+        $service = new \App\Services\Billing\Bank\BankDocumentService($files);
+        try {
+            $service->store($document);
+            $this->fail('PDF failure accepted');
+        } catch (\RuntimeException) {
+            $this->assertSame($id, $document->refresh()->provider_document_id);
+        }
+        $document->invoice->organization->forceFill(['tax_number' => '1111111111'])->save();
+        $client->shouldReceive('documentPdf')->once()->with('invoice', 'test-customer', $id)->andReturn('%PDF-1.4 bank invoice test');
+        $this->assertSame('ready', $service->store($document)->status);
+        $this->assertSame('7707083893', $document->provider_request['Data']['SecondSide']['taxCode']);
+    }
+
+    public function test_bank_document_denied_permission_backs_off_without_local_pdf_fallback(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        app(\App\Services\Billing\Bank\TochkaClient::class)->shouldReceive('createDocument')->once()
+            ->andThrow(new \RuntimeException('tochka_http_403'));
+        $service = new \App\Services\Billing\Bank\BankDocumentService(\Mockery::mock(\App\Services\Storage\FileService::class));
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            try {
+                $service->store($document);
+                $this->fail('Denied document accepted');
+            } catch (\RuntimeException) {
+                $this->assertSame('pending', $document->refresh()->status);
+                $this->assertSame('permission_or_rate_limit', $document->failure_code);
+                $this->assertTrue($document->next_attempt_at->isFuture());
+                $this->assertNull($document->storage_path);
+            }
+        }
+    }
+
+    public function test_bank_document_abandoned_create_and_in_transaction_calls_do_not_repeat_post(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        $document->forceFill(['status' => 'creating', 'creation_started_at' => now()->subHour()])->save();
+        app(\App\Services\Billing\Bank\TochkaClient::class)->shouldNotReceive('createDocument');
+        $service = new \App\Services\Billing\Bank\BankDocumentService(\Mockery::mock(\App\Services\Storage\FileService::class));
+        try {
+            $service->store($document);
+        } catch (\RuntimeException) {
+            $this->assertSame('creation_unknown', $document->refresh()->status);
+        }
+        $this->expectExceptionMessage('bank_document_transaction_invalid');
+        DB::transaction(fn () => $service->store($document));
+    }
+
+    public function test_bank_closing_document_payload_is_an_act_of_granted_rights_without_vat(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'act-payment', $invoice->amount_minor));
+        $closing = $invoice->documents()->where('kind', 'closing')->sole();
+        $parent = (string) \Illuminate\Support\Str::uuid();
+        $payload = app(\App\Services\Billing\Bank\TochkaDocumentPayload::class)->build($closing, $parent);
+        $this->assertSame($parent, $payload['Data']['documentId']);
+        $this->assertSame($invoice->number.'-ACT', $payload['Data']['Content']['Act']['number']);
+        $this->assertSame('without_nds', $payload['Data']['Content']['Act']['Positions'][0]['ndsKind']);
+        $this->assertStringContainsString('Право использования', $payload['Data']['Content']['Act']['Positions'][0]['positionName']);
+        $this->assertArrayNotHasKey('Invoicef', $payload['Data']['Content']);
     }
 
     public function test_bank_personal_account_cannot_be_allocated_even_by_an_operator(): void
@@ -1719,6 +1817,124 @@ class CommercialCheckoutServiceTest extends TestCase
         } finally {
             $this->assertNull($invoice->refresh()->activated_at);
         }
+    }
+
+    public function test_bank_b2b_qr_uses_exact_minor_amount_and_only_signals_a_statement_refresh(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        config(['bank_billing.sbp_b2b_enabled' => true, 'bank_billing.sbp_merchant_id' => 'MF0000000001']);
+        $id = 'AS000000000000000000000000000001';
+        $url = 'https://qr.nspk.ru/'.$id;
+        $client = app(\App\Services\Billing\Bank\TochkaClient::class);
+        $client->shouldReceive('createB2bQr')->once()->with('MF0000000001', config('bank_billing.account_id'),
+            \Mockery::on(fn (array $data): bool => $data['amount'] === $invoice->amount_minor
+                && $data['paymentPurpose'] === $invoice->snapshot['purpose'] && $data['takeTax'] === false
+                && is_int($data['ttl']) && $data['ttl'] > 0))
+            ->andReturn(['Data' => ['qrcId' => $id, 'payload' => $url]]);
+        $client->shouldReceive('b2bQr')->once()->with($id)->andReturn(['Data' => [
+            'qrcId' => $id, 'payload' => $url, 'accountId' => config('bank_billing.account_id'), 'merchantId' => 'MF0000000001',
+            'amount' => $invoice->amount_minor, 'paymentPurpose' => $invoice->snapshot['purpose'], 'takeTax' => false,
+            'image' => ['mediaType' => 'image/png', 'content' => base64_encode("\x89PNG\r\n\x1a\nfixture")],
+        ]]);
+        $service = app(\App\Services\Billing\Bank\BankQrService::class);
+        $first = $service->get($this->user, (int) $this->organization->id, $invoice->public_id);
+        $this->assertSame($first, $service->get($this->user, (int) $this->organization->id, $invoice->public_id));
+        $this->assertSame('sbp_b2b', $first['type']);
+        $verifier = \Mockery::mock(\App\Services\Billing\Bank\TochkaWebhookVerifier::class);
+        $verifier->shouldReceive('verify')->with('signed-b2b')->twice()->andReturn([
+            'webhookType' => 'incomingSbpB2BPayment', 'customerCode' => 'test-customer', 'qrcId' => $id,
+            'amount' => \App\Services\Billing\Bank\BankMoney::decimal($invoice->amount_minor),
+        ]);
+        $hooks = new \App\Services\Billing\Bank\TochkaWebhookService($verifier);
+        $hooks->receive('signed-b2b');
+        $hooks->receive('signed-b2b');
+        $this->assertDatabaseCount('commercial_bank_webhook_events', 1);
+        $this->assertDatabaseCount('commercial_bank_operations', 0);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->assertSame('awaiting_payment', $invoice->refresh()->status);
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'b2b-statement', $invoice->amount_minor));
+        $this->assertNotNull($invoice->refresh()->activated_at);
+    }
+
+    public function test_bank_b2b_qr_refuses_partial_payments_foreign_invoices_and_unconfigured_services(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $invoice = \App\Models\CommercialBankInvoice::query()->sole();
+        app(\App\Services\Billing\Bank\TochkaClient::class)->shouldNotReceive('createB2bQr');
+        $service = app(\App\Services\Billing\Bank\BankQrService::class);
+        $this->assertFalse($service->enabled());
+        foreach (['MA0000000001', 'MB0000000001', 'MF0000000001'] as $merchant) {
+            config(['bank_billing.sbp_b2b_enabled' => true, 'bank_billing.sbp_merchant_id' => $merchant]);
+            $this->assertTrue($service->enabled());
+        }
+        config(['bank_billing.sbp_b2b_enabled' => false]);
+        try {
+            $service->get($this->user, (int) $this->organization->id, $invoice->public_id);
+            $this->fail('Disabled QR generated');
+        } catch (\InvalidArgumentException) {
+            $this->addToAssertionCount(1);
+        }
+        config(['bank_billing.sbp_b2b_enabled' => true, 'bank_billing.sbp_merchant_id' => 'MF0000000001']);
+        try {
+            $service->get($this->user, (int) $this->organization->id + 1, $invoice->public_id);
+            $this->fail('Foreign organization QR generated');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $this->addToAssertionCount(1);
+        }
+        app(\App\Services\Billing\Bank\BankSettlementService::class)->ingest($this->bankTransaction($invoice, 'partial-before-qr', 100));
+        $this->expectException(\InvalidArgumentException::class);
+        $service->get($this->user, (int) $this->organization->id, $invoice->public_id);
+    }
+
+    public function test_bank_document_recovery_requires_operator_and_explicit_bank_verification(): void
+    {
+        $this->prepareBankBilling();
+        $this->checkout(['machinery']);
+        $document = \App\Models\CommercialBankDocument::query()->sole();
+        $document->forceFill(['status' => 'creation_unknown'])->save();
+        $service = app(\App\Services\Billing\Bank\BankDocumentRecoveryService::class);
+        $observer = new \App\Models\SystemAdmin(['role' => 'security_auditor', 'is_active' => true]);
+        try {
+            $service->resolve($observer, (int) $document->id, null, 'Отсутствие проверено в Точке', true);
+            $this->fail('Observer resolved document');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            $this->addToAssertionCount(1);
+        }
+        $operator = new \App\Models\SystemAdmin(['role' => 'super_admin', 'is_active' => true]);
+        $operator->id = 100;
+        try {
+            $service->resolve($operator, (int) $document->id, null, 'Отсутствие проверено в Точке', false);
+            $this->fail('Unconfirmed resolution accepted');
+        } catch (\InvalidArgumentException) {
+            $this->assertSame('creation_unknown', $document->refresh()->status);
+        }
+        $audit = new class
+        {
+            public array $events = [];
+
+            public function record(...$arguments): void
+            {
+                $this->events[] = $arguments;
+            }
+        };
+        $this->app->instance(\App\Services\Filament\SystemAdminAuditService::class, $audit);
+        $document->forceFill(['status' => 'blocked', 'provider_request' => ['Data' => ['customerCode' => 'old-invalid-customer']],
+            'provider_customer_code' => 'old-invalid-customer', 'creation_started_at' => now()])->save();
+        config(['bank_billing.customer_code' => 'corrected-customer']);
+        $service->resolve($operator, (int) $document->id, null, 'Отсутствие документа подтверждено в банке, исправлен код клиента', true);
+        $document->refresh();
+        $this->assertSame('pending', $document->status);
+        $this->assertNull($document->provider_request);
+        $this->assertNull($document->creation_started_at);
+        $this->assertSame('corrected-customer', $document->provider_customer_code);
+        $this->assertSame(100, (int) $document->reviewed_by);
+        $this->assertCount(1, $audit->events);
+        $rebuilt = app(\App\Services\Billing\Bank\TochkaDocumentPayload::class)->build($document);
+        $this->assertSame('corrected-customer', $rebuilt['Data']['customerCode']);
+        $this->assertSame($document->snapshot['buyer']['inn'], $rebuilt['Data']['SecondSide']['taxCode']);
     }
 
     public function test_bank_overpayment_refund_does_not_reduce_the_paid_subscription(): void
@@ -1801,6 +2017,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function prepareBankBilling(): void
     {
         config(['bank_billing.default_provider' => 'tochka', 'services.yookassa.payments_enabled' => false,
+            'bank_billing.customer_code' => 'test-customer',
             'ai-assistant-credits.enforce' => false, 'bank_billing.seller_account' => '40802810000000000001',
             'bank_billing.seller_bik' => '044525104', 'bank_billing.seller_bank' => 'Тестовый банк',
             'bank_billing.seller_correspondent_account' => '30101810000000000001',
@@ -1821,6 +2038,8 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->timestamps();
         });
         (require database_path('migrations/2026_10_15_230000_create_commercial_bank_billing.php'))->up();
+        (require database_path('migrations/2026_10_16_120000_add_tochka_document_delivery.php'))->up();
+        (require database_path('migrations/2026_10_16_121000_create_commercial_bank_qr_codes.php'))->up();
         $this->organization->forceFill(['legal_name' => 'ООО Покупатель', 'tax_number' => '7707083893', 'registration_number' => '1027700132195', 'address' => 'Москва'])->save();
         $this->user->forceFill(['current_organization_id' => $this->organization->id])->save();
         DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true]);
@@ -1829,6 +2048,8 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
         $client = \Mockery::mock(\App\Services\Billing\Bank\TochkaClient::class);
         $client->shouldReceive('ready')->andReturn(true);
+        $client->shouldReceive('createDocument')->byDefault()->andReturnUsing(fn (): string => (string) \Illuminate\Support\Str::uuid());
+        $client->shouldReceive('documentPdf')->byDefault()->andReturn('%PDF-1.4 bank invoice test');
         $this->app->instance(\App\Services\Billing\Bank\TochkaClient::class, $client);
     }
 
@@ -1861,7 +2082,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
-            'commercial_bank_documents', 'commercial_bank_refunds', 'commercial_bank_webhook_events', 'commercial_bank_statements',
+            'commercial_bank_qr_codes', 'commercial_bank_documents', 'commercial_bank_refunds', 'commercial_bank_webhook_events', 'commercial_bank_statements',
             'commercial_bank_allocations', 'commercial_bank_operations', 'commercial_bank_invoices',
             'commercial_contour_changes', 'commercial_billing_notification_keys',
             'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs',

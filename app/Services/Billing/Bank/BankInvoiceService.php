@@ -171,7 +171,9 @@ final class BankInvoiceService
                 ->sum(fn ($operation): int => $operation->amount_minor - $operation->allocated_minor),
             'documents' => $invoice->documents->map(fn ($document): array => [
                 'id' => $document->public_id, 'kind' => $document->kind, 'status' => $document->status,
-                'issued_at' => $document->issued_at?->toJSON(), 'signature_status' => 'requires_signature',
+                'issued_at' => $document->issued_at?->toJSON(), 'provider' => $document->provider,
+                'signature_status' => $document->provider === 'tochka' ? 'not_confirmed_by_api' : 'requires_signature',
+                'failure_code' => $document->failure_code,
             ])->all(),
             'refunds' => $invoice->refunds->map(fn ($refund): array => [
                 'id' => $refund->public_id, 'status' => $refund->status, 'amount_minor' => $refund->amount_minor,

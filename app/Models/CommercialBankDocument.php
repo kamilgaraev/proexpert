@@ -13,7 +13,9 @@ class CommercialBankDocument extends Model
 
     protected $attributes = ['status' => 'pending'];
 
-    protected $casts = ['snapshot' => 'array', 'issued_at' => 'immutable_datetime', 'notified_at' => 'immutable_datetime'];
+    protected $casts = ['snapshot' => 'array', 'provider_request' => 'array', 'issued_at' => 'immutable_datetime',
+        'notified_at' => 'immutable_datetime', 'creation_started_at' => 'immutable_datetime',
+        'next_attempt_at' => 'immutable_datetime', 'reviewed_at' => 'immutable_datetime'];
 
     public function invoice(): BelongsTo
     {
