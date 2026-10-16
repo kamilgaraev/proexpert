@@ -61,7 +61,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
         Facade::setFacadeApplication($container);
 
-        $this->service = new PaymentCalendarSourceService;
+        $this->service = $container->make(PaymentCalendarSourceService::class);
     }
 
     protected function tearDown(): void

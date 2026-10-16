@@ -106,7 +106,7 @@ final class PaymentCalendarProjectScopeSecurityTest extends TestCase
         $this->budget($fixture->foreignOrganization->id, [[$allowed->id, 9999]]);
         $this->getJson($this->url('budget_amount'), $this->headers($actor))->assertOk()->assertJsonCount(1, 'data.items')
             ->assertJsonPath('data.summary.outflow', 100);
-        $backgroundItems = (new PaymentCalendarSourceService)->collect($this->filters($fixture->organization->id));
+        $backgroundItems = app(PaymentCalendarSourceService::class)->collect($this->filters($fixture->organization->id));
         self::assertCount(2, $backgroundItems);
         self::assertEqualsCanonicalizing([$allowed->id, $restricted->id], array_map(static fn ($item) => $item->projectId, $backgroundItems));
     }
@@ -167,7 +167,7 @@ final class PaymentCalendarProjectScopeSecurityTest extends TestCase
     {
         $access = app(PaymentDocumentAccessService::class);
 
-        return (new PaymentCalendarSourceService)->collect($this->filters($organizationId),
+        return app(PaymentCalendarSourceService::class)->collect($this->filters($organizationId),
             scopeDocument: fn (Builder $query) => $access->scope($query, $organizationId, $actor, 'payments.schedule.view'),
             scopeProjects: fn (Builder $query) => $access->scopeProjects($query, $organizationId, $actor, 'payments.schedule.view'));
     }

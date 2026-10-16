@@ -37,7 +37,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
     public function liquidity_as_of_returns_an_empty_versioned_source_for_an_empty_organization(): void
     {
         $organizationId = 799999;
-        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+        $result = (new PortfolioLiquidityAsOfSource(app(PaymentCalendarSourceService::class)))->read(
             $organizationId,
             new PaymentCalendarSourceFilters($organizationId, '2026-08-01', '2026-08-31', currency: 'RUB'),
             new DateTimeImmutable('2026-08-31T23:59:59+00:00'),
@@ -124,7 +124,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
             'source_hash' => hash('sha256', 'recorded-after-cutoff'),
         ]);
 
-        $source = new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService);
+        $source = new PortfolioLiquidityAsOfSource(app(PaymentCalendarSourceService::class));
         $result = $source->read(
             $organizationId,
             new PaymentCalendarSourceFilters(
@@ -170,7 +170,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
             'source_hash' => hash('sha256', 'late-backfill'),
         ]);
 
-        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+        $result = (new PortfolioLiquidityAsOfSource(app(PaymentCalendarSourceService::class)))->read(
             $organizationId,
             new PaymentCalendarSourceFilters($organizationId, '2026-06-01', '2026-06-30', currency: 'RUB'),
             new DateTimeImmutable('2026-06-30T23:59:59+00:00'),
@@ -215,7 +215,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
             ]);
         }
 
-        $result = (new PortfolioLiquidityAsOfSource(new PaymentCalendarSourceService))->read(
+        $result = (new PortfolioLiquidityAsOfSource(app(PaymentCalendarSourceService::class)))->read(
             $organizationId,
             new PaymentCalendarSourceFilters($organizationId, '2026-06-01', '2026-06-30', currency: 'RUB'),
             new DateTimeImmutable('2026-06-30T23:59:59+00:00'),
@@ -281,14 +281,14 @@ final class BudgetingPortfolioProviderTest extends TestCase
         }
 
         $organization = Organization::factory()->create();
-        $first = CashGapOpeningBalance::query()->create([
+        $first = CashGapOpeningBalance::withoutEvents(static fn () => CashGapOpeningBalance::query()->create([
             'organization_id' => $organization->getKey(),
             'balance_date' => '2026-07-01',
             'currency' => 'RUB',
             'amount' => '100.00',
             'status' => CashGapOpeningBalance::STATUS_APPROVED,
             'approved_at' => '2026-07-01 10:00:00+00',
-        ]);
+        ]));
         $runner = app(PortfolioLiquidityBackfillRunner::class);
         $firstChunk = $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
         $checkpoint = DB::table('budgeting_portfolio_liquidity_backfill_checkpoints')
@@ -296,14 +296,14 @@ final class BudgetingPortfolioProviderTest extends TestCase
             ->where('source_type', 'opening_balance')
             ->first();
 
-        $second = CashGapOpeningBalance::query()->create([
+        $second = CashGapOpeningBalance::withoutEvents(static fn () => CashGapOpeningBalance::query()->create([
             'organization_id' => $organization->getKey(),
             'balance_date' => '2026-07-02',
             'currency' => 'RUB',
             'amount' => '200.00',
             'status' => CashGapOpeningBalance::STATUS_APPROVED,
             'approved_at' => '2026-07-02 10:00:00+00',
-        ]);
+        ]));
         $runner->runChunk((int) $organization->getKey(), 'opening_balance', 1);
 
         self::assertTrue($firstChunk['has_more']);
@@ -484,7 +484,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
             $scope,
             new ReportVisibility(true, false, false, false, false, false, false),
             new AuthorizationDecisionContext(
-                'test',
+                'cli',
                 740001,
                 [740001],
                 [],
