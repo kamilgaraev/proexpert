@@ -13,6 +13,7 @@ use App\Models\User;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
+use function trans_message;
 
 class ScheduleTaskResourceAssignmentService
 {
@@ -25,8 +26,8 @@ class ScheduleTaskResourceAssignmentService
                 $unitCost = BigDecimal::of((string) $data['cost_per_unit'])->toScale(2, RoundingMode::HalfUp);
                 $total = $quantity->multipliedBy($unitCost)->toScale(2, RoundingMode::HalfUp);
                 if ($total->isGreaterThan('9999999999999.99')) {
-                    throw new ScheduleValidationException('Плановая стоимость материала превышает допустимую сумму.', [
-                        'allocated_units' => ['Уменьшите количество или цену материала.'],
+                    throw new ScheduleValidationException(trans_message('schedule_management.task_resource_cost_limit_exceeded'), [
+                        'allocated_units' => [trans_message('schedule_management.task_resource_cost_reduce_quantity_or_price')],
                     ]);
                 }
                 $plannedCost = (string) $total;

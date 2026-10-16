@@ -41,6 +41,8 @@ return [
     'task_not_found' => 'Задача не найдена.',
     'task_load_error' => 'Не удалось загрузить задачу.',
     'task_resource_assigned' => 'Ресурс назначен на задачу.',
+    'task_resource_cost_limit_exceeded' => 'Плановая стоимость материала превышает допустимую сумму.',
+    'task_resource_cost_reduce_quantity_or_price' => 'Уменьшите количество или цену материала.',
     'task_resource_removed' => 'Ресурс снят с задачи.',
     'task_resource_not_found' => 'Ресурс задачи не найден.',
     'task_resource_assign_error' => 'Не удалось назначить ресурс на задачу.',

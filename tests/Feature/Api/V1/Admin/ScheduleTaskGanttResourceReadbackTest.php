@@ -167,8 +167,25 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
             'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
             'allocated_units' => '999999.99', 'cost_per_unit' => '99999999.99',
-        ])->assertUnprocessable()->assertJsonPath('errors.allocated_units.0', 'Уменьшите количество или цену материала.');
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', 'Плановая стоимость материала превышает допустимую сумму.')
+            ->assertJsonPath('errors.allocated_units.0', 'Уменьшите количество или цену материала.');
         $this->assertSame(10, $task->resources()->count());
+
+        $locale = app()->getLocale();
+        app()->setLocale('en');
+        try {
+            $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
+                'resource_type' => 'material', 'material_id' => $material->id, 'allocation_percent' => 100,
+                'assignment_start_date' => '2026-06-01', 'assignment_end_date' => '2026-06-05',
+                'allocated_units' => '999999.99', 'cost_per_unit' => '99999999.99',
+            ])->assertUnprocessable()
+                ->assertJsonPath('message', 'The planned material cost exceeds the allowed amount.')
+                ->assertJsonPath('errors.allocated_units.0', 'Reduce the material quantity or unit price.');
+            $this->assertSame(10, $task->resources()->count());
+        } finally {
+            app()->setLocale($locale);
+        }
 
         $task->update(['status' => 'completed', 'progress_percent' => 100]);
         $this->withHeaders($context->authHeaders())->postJson($baseUrl, [
