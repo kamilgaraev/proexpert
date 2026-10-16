@@ -70,10 +70,10 @@ final class EstimatorProcessingPlanTest extends TestCase
         $builder = new EstimatorProcessingPlan;
         $plan = $builder->build('generation', 0, 128, false, $this->tariff());
         $plan['document_costs'] = ['cost_micro_rub' => 180000];
-        $budget = ['maximum_provider_cost_micro_rub' => 900000];
+        $budget = ['maximum_provider_cost_micro_rub' => 900000, 'carried_document_cost_micro_rub' => 180000];
         $capped = $builder->capForQaBudget($plan, $budget);
 
-        self::assertSame(900000, $capped['maximum_provider_cost_micro_rub']);
+        self::assertSame(1080000, $capped['maximum_provider_cost_micro_rub']);
         self::assertSame($plan['roles'], $capped['roles']);
         self::assertSame($plan['maximum_calls'], $capped['maximum_calls']);
         self::assertSame($plan['work_item_limit'], $capped['work_item_limit']);
@@ -82,13 +82,24 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertGreaterThan(900000, $plan['maximum_provider_cost_micro_rub']);
     }
 
-    public function test_qa_budget_cannot_drop_already_incured_document_costs(): void
+    public function test_document_cost_not_counted_in_this_qa_run_still_uses_its_budget(): void
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
         $plan['document_costs'] = ['cost_micro_rub' => 180000];
         $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached::class);
         $this->expectExceptionMessage('estimator_live_qa_expense_limit_reached');
         (new EstimatorProcessingPlan)->capForQaBudget($plan, ['maximum_provider_cost_micro_rub' => 180000]);
+    }
+
+    public function test_document_cost_already_counted_in_this_run_does_not_consume_the_new_call_budget_again(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
+        $plan['document_costs'] = ['cost_micro_rub' => 1800000];
+        $capped = (new EstimatorProcessingPlan)->capForQaBudget($plan,
+            ['maximum_provider_cost_micro_rub' => 180000, 'carried_document_cost_micro_rub' => 1800000]);
+        self::assertSame(1980000, $capped['maximum_provider_cost_micro_rub']);
+        self::assertSame(180000, $capped['maximum_provider_cost_micro_rub'] - $capped['document_costs']['cost_micro_rub']);
+        self::assertSame($plan['roles'], $capped['roles']);
     }
 
     public function test_qa_cap_does_not_increase_a_smaller_operation_reserve(): void

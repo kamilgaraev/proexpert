@@ -84,6 +84,11 @@ final class RecordedPhotoPipelinePostgresTest extends EstimateGenerationCanonica
                 config(['estimate-generation.live_qa.run_id' => $targetRun]);
             });
         $guard = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class);
+        $operation = DB::table('estimate_generation_credit_operations')->where('session_id', $run['session_id'])->where('kind', 'generation')->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame($sameRun ? 249750 : 0, $plan['qa_expense_budget']['carried_document_cost_micro_rub']);
+        self::assertSame($plan['qa_expense_budget']['maximum_provider_cost_micro_rub'] + ($sameRun ? 249750 : 0), $plan['maximum_provider_cost_micro_rub']);
+        self::assertSame(50000, (int) DB::table('ai_credit_reservations')->where('id', $operation->reservation_id)->value('reserved_minor'));
         self::assertSame(1, DB::table('ai_credit_provider_cost_allocations')->where('session_id', $run['session_id'])->count());
         self::assertSame(49850, DB::transaction(fn () => $guard->quoteBudget())['remaining_units_minor']);
         config(['estimate-generation.live_qa.run_id' => $sourceRun]);

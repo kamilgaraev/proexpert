@@ -74,14 +74,45 @@ final class EstimatorQaSupplierExpenseGuardTest extends TestCase
         self::assertSame(49000, $budget['remaining_units_minor']);
     }
 
-    private function guard(array $groups, array $holds = []): EstimatorQaSupplierExpenseGuard
+    public function test_an_active_reservation_does_not_hold_its_carried_source_expense_again(): void
+    {
+        $budget = $this->guard([['operation_key' => 'source', 'supplier_exposure' => '1800000', 'charged_units_minor' => 0]],
+            [['operation_key' => 'target', 'reserved_minor' => 2000, 'carried_cost' => 1800000]])->quoteBudget();
+        self::assertSame(48000, $budget['remaining_units_minor']);
+    }
+
+    public function test_reservation_can_include_same_run_document_cost_larger_than_the_remaining_new_call_budget(): void
+    {
+        $attemptId = '22222222-2222-5222-8222-222222222222';
+        $guard = $this->guard([
+            ['operation_key' => 'source', 'supplier_exposure' => '1800000', 'charged_units_minor' => 0],
+            ['operation_key' => 'other', 'supplier_exposure' => '88020000', 'charged_units_minor' => 0],
+        ], [], [$attemptId]);
+        $documents = ['cost_micro_rub' => 1800000, 'items' => [['source_attempt_id' => $attemptId, 'cost_micro_rub' => 1800000]]];
+        $budget = $guard->quoteBudget($documents);
+        self::assertSame(100, $budget['remaining_units_minor']);
+        self::assertSame(1800000, $budget['carried_document_cost_micro_rub']);
+        $plan = ['document_costs' => $documents, 'qa_expense_budget' => $budget, 'maximum_provider_cost_micro_rub' => 1980000];
+        $guard->assertReservationBudget($plan, 1100);
+        $this->expectException(SessionAiCostLimitReached::class);
+        $this->expectExceptionMessage('estimator_live_qa_expense_limit_reached');
+        $guard->assertReservationBudget($plan, 1150);
+    }
+
+    private function guard(array $groups, array $holds = [], array $carriedAttempts = []): EstimatorQaSupplierExpenseGuard
     {
         $database = $this->createMock(Connection::class);
         $database->method('transactionLevel')->willReturn(1);
         $query = $this->createMock(Builder::class);
-        $database->method('table')->with('estimate_generation_qa_expense_runs')->willReturn($query);
+        $attemptQuery = $this->createMock(Builder::class);
+        $database->method('table')->willReturnMap([
+            ['estimate_generation_qa_expense_runs', $query], ['estimate_generation_qa_expense_attempts', $attemptQuery],
+        ]);
         $query->method('where')->with('run_id', '11111111-1111-5111-8111-111111111111')->willReturnSelf();
         $query->method('first')->willReturn(null);
+        $attemptQuery->method('where')->with('run_id', '11111111-1111-5111-8111-111111111111')->willReturnSelf();
+        $attemptQuery->method('whereIn')->willReturnSelf();
+        $attemptQuery->method('pluck')->with('attempt_id')->willReturn(new \Illuminate\Support\Collection($carriedAttempts));
         $database->method('select')->willReturnCallback(static function (string $sql) use ($groups, $holds): array {
             $rows = str_contains($sql, 'JOIN ai_credit_reservations') ? $holds : $groups;
 

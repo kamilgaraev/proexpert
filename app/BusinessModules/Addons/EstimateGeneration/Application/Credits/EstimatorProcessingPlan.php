@@ -89,10 +89,12 @@ final class EstimatorProcessingPlan
     public function capForQaBudget(array $plan, array $budget): array
     {
         $maximum = $budget['maximum_provider_cost_micro_rub'] ?? null;
-        if (! is_int($maximum) || $maximum < 1) {
+        $carried = $budget['carried_document_cost_micro_rub'] ?? 0;
+        if (! is_int($maximum) || $maximum < 1 || ! is_int($carried) || $carried < 0
+            || $carried > ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
             throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
         }
-        $plan['maximum_provider_cost_micro_rub'] = min($plan['maximum_provider_cost_micro_rub'], $maximum);
+        $plan['maximum_provider_cost_micro_rub'] = min($plan['maximum_provider_cost_micro_rub'], BigDecimal::of($maximum)->plus($carried)->toInt());
         if ($plan['maximum_provider_cost_micro_rub'] <= ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
             throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
         }

@@ -181,7 +181,7 @@ final readonly class EstimatorCreditOperations
         if ($parameters !== []) {
             $plan['operation_parameters'] = $parameters;
         }
-        $qaBudget = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->quoteBudget();
+        $qaBudget = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->quoteBudget($plan['document_costs'] ?? []);
         if ($qaBudget !== null) {
             $plan = $this->plans->capForQaBudget($plan, $qaBudget);
         }

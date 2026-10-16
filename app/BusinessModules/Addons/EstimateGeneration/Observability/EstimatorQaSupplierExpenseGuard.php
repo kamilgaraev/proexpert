@@ -30,22 +30,25 @@ final readonly class EstimatorQaSupplierExpenseGuard
 
     public function assertReservationBudget(array $plan, int $maximumUnitsMinor): void
     {
-        $budget = $this->quoteBudget();
+        $budget = $this->quoteBudget($plan['document_costs'] ?? []);
         if ($budget === null) {
             return;
         }
         $approved = $plan['qa_expense_budget'] ?? [];
-        foreach (['contract_version', 'run_id', 'unit_cost_micro_rub', 'unit_minor', 'price_version'] as $key) {
+        foreach (['contract_version', 'run_id', 'unit_cost_micro_rub', 'unit_minor', 'price_version', 'carried_document_cost_micro_rub'] as $key) {
             if (($approved[$key] ?? null) !== $budget[$key]) {
                 throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
             }
         }
-        if ($maximumUnitsMinor < 1 || $maximumUnitsMinor > $budget['remaining_units_minor']) {
+        $allowedCost = BigDecimal::of($budget['maximum_provider_cost_micro_rub'])->plus($budget['carried_document_cost_micro_rub']);
+        $allowedUnits = self::exposureUnitsMinor(['reservation' => (string) $allowedCost], $budget['unit_cost_micro_rub']);
+        if ($maximumUnitsMinor < 1 || $maximumUnitsMinor > $allowedUnits
+            || BigDecimal::of($plan['maximum_provider_cost_micro_rub'])->isGreaterThan($allowedCost)) {
             throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
         }
     }
 
-    public function quoteBudget(): ?array
+    public function quoteBudget(array $documentCosts = []): ?array
     {
         if (config('estimate-generation.live_qa.enabled') !== true) {
             return null;
@@ -77,7 +80,8 @@ final readonly class EstimatorQaSupplierExpenseGuard
             $charged[$group->operation_key] = (int) $group->charged_units_minor;
         }
         foreach ($this->database->select(<<<'SQL'
-SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor
+SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor,
+  COALESCE((operations.processing_plan->'qa_expense_budget'->>'carried_document_cost_micro_rub')::bigint,0) AS carried_cost
 FROM estimate_generation_credit_operations operations
 JOIN ai_credit_reservations reservations ON reservations.id=operations.reservation_id
 WHERE reservations.status='reserved' AND (
@@ -87,7 +91,10 @@ WHERE reservations.status='reserved' AND (
     WHERE attempts.run_id=? AND physical.credit_operation_id=operations.operation_id))
 SQL, [$runId, $runId]) as $hold) {
             $costs[$hold->operation_key] ??= '0';
-            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, (int) $hold->reserved_minor);
+            $uncovered = BigDecimal::max('0', BigDecimal::of($hold->reserved_minor)->multipliedBy($unitCost)
+                ->dividedBy($unitMinor, 2, RoundingMode::Ceiling)->minus($hold->carried_cost ?? 0));
+            $reserved = self::exposureUnitsMinor(['reservation' => (string) $uncovered], $unitCost);
+            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, $reserved);
         }
         $remaining = intdiv(max(0, self::MAXIMUM_UNITS_MINOR - self::exposureUnitsMinor($costs, $unitCost, $charged)), 50) * 50;
         if ($remaining < 50) {
@@ -96,8 +103,33 @@ SQL, [$runId, $runId]) as $hold) {
 
         return ['contract_version' => 'estimator-live-qa-quote-budget:v1', 'run_id' => $runId,
             'remaining_units_minor' => $remaining, 'unit_cost_micro_rub' => $unitCost, 'unit_minor' => $unitMinor,
+            'carried_document_cost_micro_rub' => $this->carriedCostInRun($runId, $documentCosts),
             'price_version' => $priceVersion, 'maximum_provider_cost_micro_rub' => BigDecimal::of($remaining)
                 ->multipliedBy($unitCost)->dividedBy($unitMinor, 0, RoundingMode::Floor)->toInt()];
+    }
+
+    private function carriedCostInRun(string $runId, array $documentCosts): int
+    {
+        $items = $documentCosts['items'] ?? [];
+        if ($items === []) {
+            return 0;
+        }
+        $byAttempt = [];
+        foreach ($items as $item) {
+            $attemptId = $item['source_attempt_id'] ?? null;
+            $cost = $item['cost_micro_rub'] ?? null;
+            if (! is_string($attemptId) || ! Str::isUuid($attemptId) || ! is_int($cost) || $cost < 1 || isset($byAttempt[$attemptId])) {
+                throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+            }
+            $byAttempt[$attemptId] = $cost;
+        }
+        $cost = BigDecimal::zero();
+        foreach ($this->database->table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)
+            ->whereIn('attempt_id', array_keys($byAttempt))->pluck('attempt_id') as $attemptId) {
+            $cost = $cost->plus($byAttempt[$attemptId]);
+        }
+
+        return $cost->toInt();
     }
 
     public function admit(string $attemptId, AiCost $maximum): void
