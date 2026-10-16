@@ -22,6 +22,56 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_bank_payment_proof_expiry_bypasses_all_cached_permission_decisions(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create([]);
+        $org = (int) $fixture->organization->id;
+        $account = \App\Models\OrganizationCommercialAccount::query()->where('organization_id', $org)->sole();
+        $order = \App\Models\CommercialOrder::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $org, 'commercial_account_id' => $account->id,
+            'user_id' => $fixture->owner->id, 'status' => 'pending_payment', 'offer_type' => 'packages', 'quote_version' => 4,
+            'billing_period' => '30_days', 'renew_subscription' => true, 'selected_package_slugs' => ['working-entry'],
+            'current_package_slugs' => [], 'selected_resource_addons' => [], 'amount_minor' => 10000, 'amount' => '100.00',
+            'currency' => 'RUB', 'period_start_at' => now(), 'period_end_at' => now()->addMonth(),
+            'client_idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+        $payment = \App\Models\CommercialPayment::query()->create([
+            'commercial_order_id' => $order->id, 'provider' => 'tochka', 'provider_status' => 'created', 'amount_minor' => 10000,
+            'currency' => 'RUB', 'provider_idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+        $invoice = \App\Models\CommercialBankInvoice::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $org, 'commercial_order_id' => $order->id,
+            'commercial_payment_id' => $payment->id, 'number' => 'MOST-'.str_pad((string) $order->id, 10, '0', STR_PAD_LEFT),
+            'amount_minor' => 10000, 'snapshot' => [], 'expires_at' => now()->addWeek(),
+        ]);
+        $proof = \App\Models\CommercialBankPaymentProof::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(), 'organization_id' => $org, 'commercial_account_id' => $account->id,
+            'commercial_bank_invoice_id' => $invoice->id, 'submitted_by' => $fixture->owner->id, 'status' => 'pending',
+            'storage_path' => 'org-'.$org.'/billing/test.pdf', 'mime' => 'application/pdf', 'size_bytes' => 100,
+            'sha256' => str_repeat('a', 64), 'package_slugs' => ['working-entry'], 'resource_addons' => [],
+            'submitted_at' => now(), 'temporary_expires_at' => now()->addMinute(),
+        ]);
+        app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->invalidate($org);
+        $authorization = app(AuthorizationService::class);
+        $context = ['organization_id' => $org];
+        $this->assertTrue($authorization->can($fixture->member, 'ai_assistant.chat', $context));
+        $this->assertTrue($authorization->can($fixture->member, 'ai_assistant.chat', $context));
+        \Illuminate\Support\Facades\Auth::login($fixture->member);
+        $request = Request::create('/api/v1/admin/permissions', 'GET');
+        $request->attributes->set('current_organization_id', $org);
+        $controller = app(\App\Http\Controllers\Api\V1\UserPermissionsController::class);
+        $permissions = $controller->index($request);
+        $this->assertSame(200, $permissions->getStatusCode());
+        $this->assertContains('ai-assistant', array_column($permissions->getData(true)['data']['active_modules'], 'slug'));
+        $this->travelTo($proof->temporary_expires_at);
+        $this->assertFalse($authorization->can($fixture->member, 'ai_assistant.chat', $context));
+        $this->assertFalse($authorization->canCurrent($fixture->member, 'ai_assistant.chat', $context));
+        $permissions = $controller->index($request);
+        $this->assertSame(200, $permissions->getStatusCode());
+        $this->assertNotContains('ai-assistant', array_column($permissions->getData(true)['data']['active_modules'], 'slug'));
+        $this->assertNull($invoice->refresh()->paid_at);
+    }
+
     public function test_one_current_scope_reuses_role_and_module_reads_for_distinct_permissions(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();

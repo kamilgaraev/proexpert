@@ -54,6 +54,8 @@ class CommercialQuotaService
         $limits = array_fill_keys($organizationIds, $baseLimit);
         $packageLimits = array_fill_keys($organizationIds, 0.0);
         $resourceLimits = array_fill_keys($organizationIds, 0.0);
+        $paidResourceLimits = array_fill_keys($organizationIds, 0.0);
+        $currentPackages = [];
         $corporateOverrides = [];
 
         $subscriptions = OrganizationPackageSubscription::query()
@@ -83,6 +85,7 @@ class CommercialQuotaService
                 $this->packageCatalog->canonicalizePackageSlug((string) $subscription->package_slug),
             );
             $packageLimits[$organizationId] += (float) (is_array($package) ? ($package['limits']['ai_estimates_month'] ?? 0) : 0);
+            $currentPackages[$organizationId][] = $this->packageCatalog->canonicalizePackageSlug((string) $subscription->package_slug);
         }
 
         $allocations = OrganizationResourceAllocation::query()
@@ -112,6 +115,23 @@ class CommercialQuotaService
             }
 
             $resourceLimits[$organizationId] += (float) $allocation->quantity;
+            if ($allocation->source === 'paid_addon') {
+                $paidResourceLimits[$organizationId] += (float) $allocation->quantity;
+            }
+        }
+
+        foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->grants($organizationIds) as $proof) {
+            $organizationId = (int) $proof->organization_id;
+            foreach (array_diff($proof->package_slugs, $currentPackages[$organizationId] ?? []) as $slug) {
+                $packageLimits[$organizationId] += (float) ($this->packageCatalog->package($slug)['limits']['ai_estimates_month'] ?? 0);
+            }
+            $temporary = 0.0;
+            foreach ($proof->resource_addons as $resource) {
+                if (($resource['status'] ?? '') === 'ok' && ($resource['limit_key'] ?? '') === 'ai_estimates_month') {
+                    $temporary += max(0, (float) ($resource['quantity'] ?? 0));
+                }
+            }
+            $resourceLimits[$organizationId] += max(0, $temporary - $paidResourceLimits[$organizationId]);
         }
 
         foreach ($organizationIds as $organizationId) {
@@ -264,6 +284,21 @@ class CommercialQuotaService
         $metadata = config('commercial_limits.limits', []);
         $packageLimits = $this->packageLimits($organizationId);
         $paidAddons = $this->allocationTotals($organizationId, 'paid_addon', effectiveQuota: true);
+        $temporaryAddons = [];
+        $paidPackages = $this->normalizePackageSlugs($this->activePackageSlugs($organizationId));
+        foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->grants([$organizationId]) as $proof) {
+            foreach (array_diff($proof->package_slugs, $paidPackages) as $slug) {
+                foreach (($this->packageCatalog->package($slug)['limits'] ?? []) as $key => $quantity) {
+                    $packageLimits[$key] = ($packageLimits[$key] ?? 0) + (float) $quantity;
+                }
+            }
+            foreach ($proof->resource_addons as $resource) {
+                if (($resource['status'] ?? '') === 'ok' && is_string($resource['limit_key'] ?? null)) {
+                    $key = $resource['limit_key'];
+                    $temporaryAddons[$key] = ($temporaryAddons[$key] ?? 0) + max(0, (float) ($resource['quantity'] ?? 0));
+                }
+            }
+        }
         $manualGrants = $this->allocationTotals($organizationId, 'manual_grant');
         $corporateOverrides = $this->corporateOverrides($organizationId);
         $limits = [];
@@ -274,11 +309,12 @@ class CommercialQuotaService
                 : ($free[$key] ?? 0)));
             $fromPackages = $this->number((float) ($packageLimits[$key] ?? 0));
             $fromPaid = $this->number((float) (($paidAddons[$key] ?? 0) + ($manualGrants[$key] ?? 0)));
+            $fromTemporary = max(0, ($temporaryAddons[$key] ?? 0) - ($paidAddons[$key] ?? 0));
             $overrideExists = array_key_exists($key, $corporateOverrides);
             $override = $overrideExists ? $corporateOverrides[$key] : null;
             $limit = $overrideExists
                 ? ($override === null ? null : $this->number((float) $override))
-                : $this->number((float) $base + (float) $fromPackages + (float) $fromPaid);
+                : $this->number((float) $base + (float) $fromPackages + (float) $fromPaid + $fromTemporary);
             $used = $this->number((float) ($usage[$key] ?? 0));
             $remaining = $limit === null ? null : $this->number(max(0, (float) $limit - (float) $used));
 
@@ -296,6 +332,7 @@ class CommercialQuotaService
                     'free_base' => $base,
                     'packages' => $fromPackages,
                     'paid_addons' => $fromPaid,
+                    'bank_payment_pending' => $this->number($fromTemporary),
                     'corporate_override' => $overrideExists ? ($override === null ? null : $this->number((float) $override)) : null,
                 ],
             ];

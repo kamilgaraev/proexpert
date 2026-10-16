@@ -34,6 +34,9 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         $this->cache = new Repository(new ArrayStore());
         $this->application->instance('cache', $this->cache);
         $this->application->instance('files', new Filesystem());
+        $proofAccess = Mockery::mock(\App\Services\Billing\Bank\BankPaymentProofAccess::class);
+        $proofAccess->shouldReceive('cacheDiscriminator')->andReturn('none');
+        $this->application->instance(\App\Services\Billing\Bank\BankPaymentProofAccess::class, $proofAccess);
         $log = Mockery::mock();
         $log->shouldReceive('debug')->andReturnNull();
         Log::swap($log);

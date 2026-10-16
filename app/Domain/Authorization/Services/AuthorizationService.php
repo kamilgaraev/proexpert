@@ -135,6 +135,10 @@ class AuthorizationService
         
         try {
             $cacheKey = "user_permission_{$user->id}_{$permission}_" . md5(serialize($context));
+            $organizationId = $context['organization_id'] ?? $user->current_organization_id;
+            if (!$this->currentChecks && is_numeric($organizationId)) {
+                $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
+            }
             
             $result = $this->rememberArray($cacheKey, 300, function () use ($user, $permission, $context) {
                 return $this->checkPermission($user, $permission, $context);

@@ -35,6 +35,9 @@ class OrganizationEntitlementService
             $this->packageCatalog->foundationModules(),
             $this->getAlwaysOnModuleSlugs(),
         )));
+        foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs($organizationId) as $packageSlug) {
+            $slugs = array_merge($slugs, $this->packageCatalog->tierModules($packageSlug, 'standard'));
+        }
 
         $packages = [];
         $subscriptionSlugs = array_unique(array_merge(
@@ -103,6 +106,19 @@ class OrganizationEntitlementService
 
         foreach ($packageSubscriptions as $packageSubscription) {
             $this->appendPackageModuleSources($sources, $packageSubscription);
+        }
+
+        foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->grants([$organizationId]) as $proof) {
+            foreach ($proof->package_slugs as $packageSlug) {
+                foreach ($this->packageCatalog->tierModules($packageSlug, 'standard') as $moduleSlug) {
+                    $candidate = ['module_slug' => $moduleSlug, 'package_slug' => $packageSlug,
+                        'commercial_account_id' => $proof->commercial_account_id, 'expires_at' => $proof->temporary_expires_at,
+                        'access_source' => 'bank_payment_pending'];
+                    if ($this->shouldUseSource($sources[$moduleSlug] ?? null, $candidate)) {
+                        $sources[$moduleSlug] = $candidate;
+                    }
+                }
+            }
         }
 
         return $sources;

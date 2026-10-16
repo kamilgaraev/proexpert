@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Billing;
 
 use App\Http\Requests\Billing\BankInvoiceListRequest;
+use App\Http\Requests\Billing\BankPaymentProofRequest;
 use App\Http\Requests\Billing\BankRefundRequest;
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\LandingResponse;
@@ -66,6 +67,25 @@ final class BankBillingController
 
             return app(BankRefundService::class)->request($actor, $org, $invoice, (int) $data['amount_minor'],
                 $data['kind'], $data['reason'], $data['client_idempotency_key']);
+        });
+    }
+
+    public function paymentProof(BankPaymentProofRequest $request, string $invoice): Response
+    {
+        return $this->respond($request, function (User $actor, int $org) use ($request, $invoice): array {
+            $service = app(\App\Services\Billing\Bank\BankPaymentProofService::class);
+            $proof = $service->submit($actor, $org, $invoice, $request->file('file'));
+
+            return app(\App\Services\Billing\Bank\BankInvoiceService::class)->payload($proof->invoice);
+        });
+    }
+
+    public function downloadProof(Request $request, string $proof): Response
+    {
+        return $this->respond($request, function (User $actor, int $org) use ($proof): Response {
+            $service = app(\App\Services\Billing\Bank\BankPaymentProofService::class);
+
+            return $service->download($actor, $org, $proof);
         });
     }
 

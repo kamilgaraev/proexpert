@@ -26,11 +26,23 @@ final class BankSettlementService
         $paymentId = trim((string) ($transaction['paymentId'] ?? '')) ?: null;
         $amount = BankMoney::minor($transaction['Amount']['amount'] ?? null);
         $date = (string) ($transaction['documentProcessDate'] ?? '');
-        if ($id === '' || strlen($id) > 180 || strlen((string) $paymentId) > 180 || $amount < 1
-            || ! in_array($direction, ['credit', 'debit'], true)
-            || ! preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $date)
-            || ! CarbonImmutable::hasFormatWithModifiers($date, 'Y-m-d')
-            || ($transaction['Amount']['currency'] ?? null) !== 'RUB') {
+        $failedChecks = array_keys(array_filter([
+            'transaction_id' => $id === '' || strlen($id) > 180,
+            'payment_id' => strlen((string) $paymentId) > 180,
+            'amount' => $amount < 1,
+            'direction' => ! in_array($direction, ['credit', 'debit'], true),
+            'booking_date' => ! preg_match('/\A\d{4}-\d{2}-\d{2}\z/', $date)
+                || ! CarbonImmutable::hasFormatWithModifiers($date, 'Y-m-d'),
+            'currency' => ($transaction['Amount']['currency'] ?? null) !== 'RUB',
+        ]));
+        if ($failedChecks !== []) {
+            $currency = $transaction['Amount']['currency'] ?? null;
+            \Illuminate\Support\Facades\Log::warning('Bank transaction validation rejected.', [
+                'failed_checks' => $failedChecks,
+                'booking_date_shape' => $date === '' ? 'missing' : (preg_match('/\A\d{4}-\d{2}-\d{2}T/', $date) ? 'iso_datetime' : 'other'),
+                'currency_kind' => in_array($currency, ['RUB', 'RUR', '643', '810'], true) ? $currency : 'other',
+                'direction_kind' => in_array($direction, ['credit', 'debit', 'crdt', 'dbit', 'c', 'd'], true) ? $direction : 'other',
+            ]);
             throw new InvalidArgumentException('tochka_transaction_invalid');
         }
         $data = [
@@ -44,6 +56,13 @@ final class BankSettlementService
         ];
         $ours = (string) config('bank_billing.seller_account');
         if (($direction === 'credit' ? $data['recipient_account'] : $data['payer_account']) !== $ours) {
+            $accountValue = $transaction[$direction === 'credit' ? 'CreditorAccount' : 'DebtorAccount']['identification'] ?? null;
+            $accountText = is_string($accountValue) ? $accountValue : '';
+            \Illuminate\Support\Facades\Log::warning('Bank transaction account rejected.', [
+                'account_shape' => $accountText === '' ? 'missing' : (preg_match('/\A\d{20}\/\d{9}\z/', $accountText) ? 'account_id'
+                    : (preg_match('/\A\d{20}\z/', $accountText) ? 'account_number' : 'other')),
+                'account_number_matches' => substr($accountText, 0, 20) === $ours,
+            ]);
             throw new InvalidArgumentException('tochka_transaction_account_mismatch');
         }
         $operation = DB::transaction(function () use ($data): CommercialBankOperation {
@@ -94,7 +113,7 @@ final class BankSettlementService
             ! in_array($invoice->status, ['awaiting_payment', 'partially_paid', 'paid'], true) => 'invoice_not_payable',
             $operation->payer_inn !== ($invoice->snapshot['buyer']['inn'] ?? null) => 'payer_mismatch',
             preg_match('/\A(?:40[567]\d{17}|40802\d{15})\z/', (string) $operation->payer_account) !== 1 => 'payer_not_b2b',
-            $operation->booked_on->toDateString() > $invoice->expires_at->toDateString() => 'late_payment',
+            $operation->booked_on->toDateString() > $invoice->expires_at->max($invoice->paymentProof?->temporary_expires_at ?? $invoice->expires_at)->toDateString() => 'late_payment',
             $operation->booked_on->toDateString() < $invoice->created_at->setTimezone('Europe/Moscow')->toDateString() => 'payment_before_invoice',
             default => null,
         };
@@ -165,6 +184,7 @@ final class BankSettlementService
                         'provider_payment_id' => 'bank-'.$invoice->public_id, 'reconciliation_required' => false, 'refunded_amount_minor' => 0])->save();
                 }
                 $invoice->save();
+                app(BankPaymentProofService::class)->confirm($invoice);
             }
             $operation->forceFill(['matched_invoice_id' => $invoice->id,
                 'review_reason' => $operation->amount_minor > $operation->allocated_minor ? 'overpayment' : null,

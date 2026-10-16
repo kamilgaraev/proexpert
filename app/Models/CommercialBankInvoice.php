@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CommercialBankInvoice extends Model
 {
@@ -19,6 +20,11 @@ class CommercialBankInvoice extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(CommercialOrder::class, 'commercial_order_id');
+    }
+
+    public function paymentProof(): HasOne
+    {
+        return $this->hasOne(CommercialBankPaymentProof::class, 'commercial_bank_invoice_id');
     }
 
     public function payment(): BelongsTo
