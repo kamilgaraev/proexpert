@@ -1361,7 +1361,9 @@ final class AssistantDataAccessPolicy
         $extendedParents = (AssistantEntityAccessCatalog::parentColumns())[$type] ?? [];
         $hasRequiredParent = array_filter($extendedParents, static fn (array $parent): bool => ! $parent['nullable']) !== [];
         if (! in_array($organizationColumn, $columns, true) && ! $hasRequiredParent && ! $globalCatalog && ! $customOrganizationScope) { return null; }
-        if (is_array($publicCatalog)) {
+        if ($type === 'contract') {
+            (new AssistantContractOrganizationScope)->apply($query, $organizationId);
+        } elseif (is_array($publicCatalog)) {
             $query->where(static fn (Builder $catalog): Builder => $catalog->where($table.'.'.$organizationColumn, $organizationId)
                 ->orWhere($table.'.'.$publicCatalog['approval_column'], $publicCatalog['approved_value']));
         } elseif (AssistantExtendedDomainRegistry::values('organizationNullableCatalogs')[$type] ?? false) {

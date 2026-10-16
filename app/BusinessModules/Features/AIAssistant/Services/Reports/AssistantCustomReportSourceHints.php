@@ -49,6 +49,8 @@ final readonly class AssistantCustomReportSourceHints
                     $fields = array_slice($source['fields'], 0, 40, true);
                     $hints[] = ['domain' => $domain, 'entity_type' => $definition->entityType,
                         'fields' => array_map(static fn (array $field): string => $field['type'], $fields),
+                        'choices' => array_map(static fn (array $field): array => $field['choices'],
+                            array_filter($fields, static fn (array $field): bool => isset($field['choices']))),
                         'metrics' => array_map(static fn (array $field): array => $field['aggregations'],
                             array_filter($fields, static fn (array $field): bool => count($field['aggregations']) > 1)),
                         'dimensions' => array_map(static fn (array $field): array => $field['dimensions'],

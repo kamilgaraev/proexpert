@@ -98,10 +98,13 @@ class AssistantRetentionService
                 $result['files']++;
             }
             foreach ($this->reportCandidates($locked) as $report) {
-                if (! $this->files->delete($report->path, $locked->organization)) {
-                    throw new RuntimeException('assistant_retention_file_delete_failed');
+                $reports = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportArtifactLifecycle($this->files);
+                if (! $reports->delete((string) $report->path, (int) $locked->organization_id, (int) $report->user_id)) {
+                    if (! $this->files->delete($report->path, $locked->organization)) {
+                        throw new RuntimeException('assistant_retention_file_delete_failed');
+                    }
+                    $report->delete();
                 }
-                $report->delete();
                 $result['reports']++;
                 $result['files']++;
             }
@@ -159,7 +162,7 @@ class AssistantRetentionService
                 }
                 $others = DB::table('ai_messages')->join('ai_conversations', 'ai_conversations.id', '=', 'ai_messages.conversation_id')
                     ->where('ai_messages.conversation_id', '!=', $conversation->id)
-                    ->whereRaw('ai_messages.metadata::text LIKE ?', ['%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $path).'%']);
+                    ->whereRaw('ai_messages.metadata::jsonb::text LIKE ?', ['%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $path).'%']);
                 if ($previewCutoff) {
                     $others->where(fn ($query) => $query->where('ai_conversations.id', '>', $conversation->id)
                         ->orWhereRaw('COALESCE(ai_conversations.last_activity_at, ai_conversations.created_at) > ?', [$previewCutoff]));

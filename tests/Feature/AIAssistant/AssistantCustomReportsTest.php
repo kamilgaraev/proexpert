@@ -374,6 +374,45 @@ final class AssistantCustomReportsTest extends TestCase
         $access->resolve($matches[1], $actor);
     }
 
+    public function test_container_executor_publishes_private_pdf_from_fixed_report_tool(): void
+    {
+        [$org, $actor] = $this->fixture();
+        (new \App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider(app()))->register();
+        $files = $this->createMock(\App\Services\Storage\FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) {
+            return new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', strlen(stream_get_contents($stream)), $hash, $mime);
+        });
+        app()->instance(\App\Services\Storage\FileService::class, $files);
+        $access = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService($this->policy);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class, $access);
+        $report = $this->builder->build($this->plan(), $actor, $org->id);
+        $storage = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files));
+        $stored = $storage->storePdf('%PDF-fixture', 'Остатки.pdf', $org, $actor, $report['source_refs'], $report['required_domains']);
+        $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $tool->method('getName')->willReturn('generate_warehouse_stock_report');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false]);
+        $tool->expects($this->exactly(2))->method('execute')->willReturn(['status' => 'success', ...$stored]);
+        $registry = new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+        $registry->registerTool($tool);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry::class, $registry);
+        $permissions = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class);
+        $permissions->method('canExecuteTool')->willReturn(true);
+        $permissions->method('isMutationTool')->willReturn(false);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class, $permissions);
+
+        $result = app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor::class)
+            ->execute('generate_warehouse_stock_report', [], $actor, $org);
+        self::assertSame('success', $result['status']);
+        self::assertCount(1, $result['artifacts']);
+        self::assertSame('Остатки.pdf', $result['artifacts'][0]['filename']);
+        self::assertSame($stored['storage_path'], $result['artifacts'][0]['storage_path']);
+        self::assertStringStartsWith('/api/v1/ai-assistant/reports/', $result['artifacts'][0]['url']);
+        $other = User::factory()->create(['current_organization_id' => $org->id, 'is_active' => true]);
+        $other->organizations()->attach($org->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        self::assertSame([], app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor::class)
+            ->execute('generate_warehouse_stock_report', [], $other, $org)['artifacts']);
+    }
+
     public static function fileFormats(): array
     {
         return ['xlsx' => ['xlsx', 'PK'], 'csv' => ['csv', "\xEF\xBB\xBF"], 'pdf' => ['pdf', '%PDF-']];
@@ -487,6 +526,72 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertArrayHasKey('number', $hints[0]['fields']);
         self::assertArrayNotHasKey('total_amount', $hints[0]['fields']);
         self::assertLessThanOrEqual(40, count($hints[0]['fields']));
+    }
+
+    public function test_contract_source_matches_active_organization_placement_with_shared_and_revoked_access(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $own = $this->contract($org, $project, '100.00');
+        $own->organizationViews()->delete();
+        $foreign = Organization::factory()->create();
+        $shared = $this->contract($foreign, $project, '200.00');
+        $sharedView = \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $shared->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1]);
+        $archived = $this->contract($org, $project, '300.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $archived->id, 'organization_id' => $org->id], ['visibility' => 'archived', 'version' => 1]);
+        $revoked = $this->contract($org, $project, '400.00');
+        \App\Models\ContractOrganizationView::query()->updateOrCreate(['contract_id' => $revoked->id, 'organization_id' => $org->id], ['visibility' => 'active', 'version' => 1, 'access_revoked_at' => now()]);
+        $hiddenProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $this->contract($org, $hiddenProject, '500.00');
+        $this->contract($foreign, $project, '600.00');
+        $counterpartyOnly = $this->contract($foreign, $project, '700.00');
+        $counterpartyOnly->organizationViews()->delete();
+        $counterpartyOnly->contractor->update(['source_organization_id' => $org->id]);
+        $linkedParty = $this->contract($foreign, $project, '800.00');
+        $linkedParty->organizationViews()->delete();
+        \App\Models\ContractParty::withoutEvents(static fn () => \App\Models\ContractParty::query()->create([
+            'contract_id' => $linkedParty->id, 'side' => 'second', 'party_key' => 'second',
+            'role' => 'contractor', 'linked_organization_id' => $org->id, 'name' => $org->name, 'snapshot' => [],
+        ]));
+        $source = $this->sources->resolve($actor, $org->id, 'contracts', 'contract', null);
+        self::assertSame([$own->id, $shared->id, $linkedParty->id], $source['query']->orderBy('contracts.id')->pluck('contracts.id')->all());
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $linkedParty->id));
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $shared->id));
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'contract', $archived->id));
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'contract', $revoked->id));
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'contract', $counterpartyOnly->id));
+        $report = $this->builder->build($this->plan($this->contractsSection(['columns' => ['number']])), $actor, $org->id);
+        self::assertSame(3, $report['sections'][0]['source_row_count']);
+        self::assertTrue($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $sharedView->update(['access_revoked_at' => now()]);
+        self::assertFalse($this->policy->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
+    public function test_report_status_choices_are_canonical_and_valid_filter_returns_active_projects(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $project->update(['status' => 'active']);
+        $source = $this->sources->resolve($actor, $org->id, 'projects', 'project', null);
+        self::assertSame(['draft', 'active', 'completed', 'paused', 'cancelled'], array_column($source['fields']['status']['choices'], 'value'));
+        $query = 'Сделай CSV по действующим проектам';
+        $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query, []);
+        $hints = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints(
+            new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $this->sources, $this->policy))->forRequest($actor, $org->id, $query, $understanding);
+        self::assertSame($source['fields']['status']['choices'], $hints[0]['choices']['status']);
+        $report = $this->builder->build($this->plan(['columns' => ['id', 'name'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'active']]]), $actor, $org->id);
+        self::assertSame([[$project->id, $project->name]], $report['sections'][0]['rows']);
+    }
+
+    public function test_invalid_enum_filter_is_rejected_before_generating_a_misleading_empty_report(): void
+    {
+        [$org, $actor] = $this->fixture();
+        foreach ([['eq', 'Активный'], ['in', ['active', 'unknown_status']], ['contains', 'active'], ['gt', 'active']] as [$operator, $value]) {
+            try {
+                $this->builder->build($this->plan(['filters' => [['field' => 'status', 'operator' => $operator, 'value' => $value]]]), $actor, $org->id);
+                self::fail('Invalid enum filter must be rejected');
+            } catch (ValidationException $error) {
+                self::assertArrayHasKey('filters', $error->errors());
+            }
+        }
     }
 
     private function fixture(): array

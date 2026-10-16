@@ -137,6 +137,7 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantCapabilityCatalog::class);
         $this->app->singleton(AssistantPeriodResolver::class);
         $this->app->singleton(AssistantAgentPlanner::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService::class);
         $this->app->scoped(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {

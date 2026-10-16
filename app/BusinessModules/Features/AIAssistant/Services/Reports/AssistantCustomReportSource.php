@@ -39,6 +39,9 @@ final readonly class AssistantCustomReportSource
         if (! $query instanceof Builder) {
             throw new AccessDeniedHttpException;
         }
+        if ($entityType === 'contract') {
+            (new \App\BusinessModules\Features\AIAssistant\Services\AssistantContractOrganizationScope)->apply($query, $organizationId, true);
+        }
         if ($projectId !== null && ! $this->policy->applyEntityProjectScope($actor, $organizationId, $entityType, $query, $projectId)) {
             throw ValidationException::withMessages(['project_id' => trans_message('ai_custom_reports.unsupported_project')]);
         }
@@ -70,6 +73,15 @@ final readonly class AssistantCustomReportSource
             }
             $label = trans_message('ai_assistant_facts.fields.'.$field);
             $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
+            $cast = $model->getCasts()[$field] ?? null;
+            $values = $entityType === 'project' && $field === 'status' ? ['draft', 'active', 'completed', 'paused', 'cancelled'] : [];
+            if (is_string($cast) && enum_exists($cast) && is_subclass_of($cast, \BackedEnum::class)) {
+                $values = array_column($cast::cases(), 'value');
+            }
+            if ($values !== []) {
+                $fields[$field]['choices'] = array_map(static fn (string|int $value): array => ['value' => $value,
+                    'label' => \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactLabels::display($entityType, $field, (string) $value)], $values);
+            }
         }
         foreach ($fields as $field => $metadata) {
             $fields[$field]['aggregations'] = AssistantCustomReportMeasure::aggregations($field, $metadata['type'], $fields);

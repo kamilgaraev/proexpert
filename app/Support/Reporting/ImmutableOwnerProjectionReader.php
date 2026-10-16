@@ -182,7 +182,7 @@ final readonly class ImmutableOwnerProjectionReader
             ->where('organization_id', $context->scope->organizationId)
             ->first();
         if ($record === null
-            || ! hash_equals((string) $record->getAttribute('source_hash'), $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->getAttribute('source_hash'), $snapshot->materializedSourceHash->value)
             || ! hash_equals((string) $record->getAttribute('definition_hash'), $snapshot->definitionHash->value)
         ) {
             throw new InvalidArgumentException('owner_projection_snapshot_missing');

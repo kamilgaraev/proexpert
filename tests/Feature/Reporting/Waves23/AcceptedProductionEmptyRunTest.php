@@ -77,6 +77,11 @@ final class AcceptedProductionEmptyRunTest extends TestCase
         );
         $result = $provider->result($context, $snapshot);
         self::assertSame($sourceHash->value, app(CanonicalReportSourceHashBuilder::class)->build($query, $snapshot, $result)->value);
+        $rows = app(\App\Services\CompletedWork\Reporting\AcceptedProduction\Queries\AcceptedProductionRowQuery::class);
+        $sort = new ReportWindowSort('recognized_on', ReportSortDirection::DESC);
+        self::assertSame([], iterator_to_array($rows->cursor($context, $snapshot, $sort, 10)));
+        $page = $rows->page($context, $snapshot, $sort, null, 10);
+        self::assertSame([], $page->rows);
 
         $ready = $runs->sealReady($context, $run->id, $lease, $snapshot, $result, $sourceHash, new DateTimeImmutable);
 
@@ -108,5 +113,10 @@ final class AcceptedProductionEmptyRunTest extends TestCase
             self::assertSame($export->id, app(CreateReportExportAction::class)->handle($context, $run->id, $data, $key)->id);
             self::assertSame(1, DB::table('report_audit_intents')->where('event_key', 'reports:export:'.$export->id.':queued')->count());
         }
+        \App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot::query()->whereKey($snapshot->id)
+            ->update(['source_hash' => str_repeat('f', 64)]);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('owner_projection_snapshot_missing');
+        iterator_to_array($rows->cursor($context, $snapshot, $sort, 10));
     }
 }

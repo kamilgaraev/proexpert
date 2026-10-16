@@ -91,7 +91,7 @@ final readonly class AssistantCustomReportBuilder
         $model = $query->getModel();
         $table = $model->getTable();
         foreach ($section['filters'] as $filter) {
-            $this->filter($query, $table.'.'.$filter['field'], $source['fields'][$filter['field']]['type'], $filter);
+            $this->filter($query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
         }
         foreach ($section['order_by'] as $order) {
             if ($section['metrics'] === []) {
@@ -227,8 +227,9 @@ final readonly class AssistantCustomReportBuilder
         return [$rows, $refs, array_values(array_unique($domains))];
     }
 
-    private function filter($query, string $column, string $type, array $filter): void
+    private function filter($query, string $column, array $field, array $filter): void
     {
+        $type = $field['type'];
         $operator = $filter['operator'];
         $value = $filter['value'];
         if (in_array($operator, ['is_null', 'is_not_null'], true)) {
@@ -243,6 +244,10 @@ final readonly class AssistantCustomReportBuilder
         if (! is_array($values) || $values === [] || count($values) > 50) {
             throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.invalid_filter')]);
         }
+        $choices = isset($field['choices']) ? array_column($field['choices'], 'value') : [];
+        if ($choices !== [] && ! in_array($operator, ['eq', 'neq', 'in'], true)) {
+            throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.invalid_filter')]);
+        }
         foreach ($values as $item) {
             $valid = is_scalar($item) && mb_strlen((string) $item) <= 200 && match ($type) {
                 'number' => preg_match('/^-?[0-9]+(?:\.[0-9]+)?$/D', (string) $item) === 1,
@@ -251,7 +256,7 @@ final readonly class AssistantCustomReportBuilder
                     && ($date = \DateTimeImmutable::createFromFormat('!Y-m-d', $item)) !== false && $date->format('Y-m-d') === $item,
                 default => is_string($item) || is_int($item),
             };
-            if (! $valid || ($operator === 'contains' && $type !== 'string')) {
+            if (! $valid || ($operator === 'contains' && $type !== 'string') || ($choices !== [] && ! in_array($item, $choices, true))) {
                 throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.invalid_filter')]);
             }
         }

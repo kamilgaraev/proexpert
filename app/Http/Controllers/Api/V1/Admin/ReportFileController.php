@@ -141,6 +141,10 @@ class ReportFileController extends Controller
         try {
             $user = $request->user();
             $file = $this->findReportFile($id, (int) $user->current_organization_id, (int) $user->id);
+            $reports = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportArtifactLifecycle($this->fileService);
+            if ($reports->delete((string) $file->path, (int) $user->current_organization_id, (int) $user->id)) {
+                return AdminResponse::success(null, trans_message('files.deleted'));
+            }
             $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
 
             if ($storage->exists($file->path)) {
