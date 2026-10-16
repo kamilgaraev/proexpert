@@ -4,18 +4,34 @@ declare(strict_types=1);
 
 namespace App\Services\Schedule;
 
+use App\Exceptions\Schedule\ScheduleValidationException;
 use App\Models\Material;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\TaskResource;
 use App\Models\User;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
+use function trans_message;
 
 class ScheduleTaskResourceAssignmentService
 {
     public function assign(ProjectSchedule $schedule, ScheduleTask $task, array $data, User $assignedBy): TaskResource
     {
         return DB::transaction(function () use ($schedule, $task, $data, $assignedBy): TaskResource {
+            $plannedCost = $data['estimated_cost'] ?? null;
+            if ($data['resource_type'] === 'material' && $plannedCost === null && isset($data['cost_per_unit'])) {
+                $quantity = BigDecimal::of((string) ($data['allocated_units'] ?? 1))->toScale(2, RoundingMode::HalfUp);
+                $unitCost = BigDecimal::of((string) $data['cost_per_unit'])->toScale(2, RoundingMode::HalfUp);
+                $total = $quantity->multipliedBy($unitCost)->toScale(2, RoundingMode::HalfUp);
+                if ($total->isGreaterThan('9999999999999.99')) {
+                    throw new ScheduleValidationException(trans_message('schedule_management.task_resource_cost_limit_exceeded'), [
+                        'allocated_units' => [trans_message('schedule_management.task_resource_cost_reduce_quantity_or_price')],
+                    ]);
+                }
+                $plannedCost = (string) $total;
+            }
             $resource = TaskResource::query()->create(array_merge(
                 [
                     'task_id' => $task->id,
@@ -25,7 +41,7 @@ class ScheduleTaskResourceAssignmentService
                     'allocation_percent' => $data['allocation_percent'],
                     'assignment_start_date' => $data['assignment_start_date'],
                     'assignment_end_date' => $data['assignment_end_date'],
-                    'total_planned_cost' => $data['estimated_cost'] ?? null,
+                    'total_planned_cost' => $plannedCost,
                     'allocated_units' => $data['allocated_units'] ?? 1,
                     'allocated_hours' => $data['allocated_hours'] ?? null,
                     'cost_per_hour' => $data['cost_per_hour'] ?? null,
@@ -75,6 +91,8 @@ class ScheduleTaskResourceAssignmentService
             'allocation_percent' => (float) $resource->allocation_percent,
             'assignment_start_date' => $resource->assignment_start_date?->format('Y-m-d'),
             'assignment_end_date' => $resource->assignment_end_date?->format('Y-m-d'),
+            'allocated_units' => $resource->allocated_units !== null ? (float) $resource->allocated_units : null,
+            'cost_per_unit' => $resource->cost_per_unit !== null ? (float) $resource->cost_per_unit : null,
             'estimated_cost' => $resource->total_planned_cost !== null ? (float) $resource->total_planned_cost : null,
             'total_planned_cost' => $resource->total_planned_cost !== null ? (float) $resource->total_planned_cost : null,
             'has_conflicts' => (bool) $resource->has_conflicts,

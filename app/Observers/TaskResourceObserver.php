@@ -4,7 +4,7 @@ namespace App\Observers;
 
 use App\Models\TaskResource;
 use App\Exceptions\Schedule\ScheduleValidationException;
-use Illuminate\Support\Facades\Log;
+use function trans_message;
 
 class TaskResourceObserver
 {
@@ -44,8 +44,8 @@ class TaskResourceObserver
     {
         if (!$resource->task) {
             throw new ScheduleValidationException(
-                'Задача для назначения ресурса не найдена',
-                ['task_id' => ['Задача не найдена']]
+                trans_message('schedule_management.task_resource_task_missing'),
+                ['task_id' => [trans_message('schedule_management.task_resource_task_not_found')]]
             );
         }
     }
@@ -57,8 +57,8 @@ class TaskResourceObserver
     {
         if ($resource->task && $resource->task->status->value === 'completed') {
             throw new ScheduleValidationException(
-                'Нельзя назначать ресурсы на завершенную задачу',
-                ['task_id' => ['Задача уже завершена']]
+                trans_message('schedule_management.task_resource_completed_task'),
+                ['task_id' => [trans_message('schedule_management.task_resource_task_completed')]]
             );
         }
     }
@@ -72,7 +72,7 @@ class TaskResourceObserver
 
         if ($resource->assignment_start_date && $resource->assignment_end_date) {
             if ($resource->assignment_end_date < $resource->assignment_start_date) {
-                $errors['assignment_end_date'] = ['Дата окончания назначения должна быть позже или равна дате начала'];
+                $errors['assignment_end_date'] = [trans_message('schedule_management.task_resource_end_before_start')];
             }
 
             // Проверка соответствия датам задачи
@@ -81,17 +81,17 @@ class TaskResourceObserver
                 $taskEnd = $resource->task->planned_end_date ?? $resource->task->actual_end_date;
 
                 if ($taskStart && $resource->assignment_start_date < $taskStart) {
-                    $errors['assignment_start_date'] = ['Дата начала назначения не может быть раньше даты начала задачи'];
+                    $errors['assignment_start_date'] = [trans_message('schedule_management.task_resource_start_before_task')];
                 }
 
                 if ($taskEnd && $resource->assignment_end_date > $taskEnd) {
-                    $errors['assignment_end_date'] = ['Дата окончания назначения не может быть позже даты окончания задачи'];
+                    $errors['assignment_end_date'] = [trans_message('schedule_management.task_resource_end_after_task')];
                 }
             }
         }
 
         if (!empty($errors)) {
-            throw new ScheduleValidationException('Ошибка валидации дат назначения ресурса', $errors);
+            throw new ScheduleValidationException(trans_message('schedule_management.task_resource_dates_invalid'), $errors);
         }
     }
 
@@ -103,8 +103,8 @@ class TaskResourceObserver
         if ($resource->allocation_percent !== null) {
             if ($resource->allocation_percent < 0 || $resource->allocation_percent > 100) {
                 throw new ScheduleValidationException(
-                    'Процент загрузки ресурса должен быть от 0 до 100',
-                    ['allocation_percent' => ['Процент загрузки должен быть в диапазоне от 0 до 100']]
+                    trans_message('schedule_management.task_resource_allocation_invalid'),
+                    ['allocation_percent' => [trans_message('schedule_management.task_resource_allocation_out_of_range')]]
                 );
             }
         }
