@@ -170,7 +170,7 @@ SQL, [$runId, $runId]) as $hold) {
     private function exposureGroups(string $runId): array
     {
         return $this->database->select(<<<'SQL'
-SELECT COALESCE(physical.credit_operation_id::text,
+SELECT COALESCE(allocated_operation.operation_id::text, physical.credit_operation_id::text,
     physical.organization_id::text || ':' || COALESCE(physical.logical_request_fingerprint, physical.attempt_id::text)) AS operation_key,
   SUM(CASE
     WHEN usages.usage_status='measured' AND usages.pricing_status='available' AND usages.currency='RUB'
@@ -181,7 +181,12 @@ FROM estimate_generation_qa_expense_attempts attempts
 JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
 LEFT JOIN estimate_generation_ai_usage usages ON usages.attempt_id=attempts.attempt_id
   AND usages.organization_id=physical.organization_id AND usages.project_id=physical.project_id AND usages.session_id=physical.session_id
-LEFT JOIN estimate_generation_credit_operations operations ON operations.operation_id=physical.credit_operation_id
+LEFT JOIN ai_credit_provider_cost_allocations allocation ON allocation.source_attempt_id=physical.attempt_id
+  AND allocation.organization_id=physical.organization_id AND allocation.project_id=physical.project_id AND allocation.session_id=physical.session_id
+LEFT JOIN estimate_generation_credit_operations allocated_operation ON allocated_operation.operation_id=allocation.destination_operation_id
+  AND allocated_operation.processing_plan->'qa_expense_budget'->>'run_id'=attempts.run_id::text
+LEFT JOIN estimate_generation_credit_operations operations
+  ON operations.operation_id=COALESCE(allocated_operation.operation_id,physical.credit_operation_id)
 WHERE attempts.run_id=?
 GROUP BY operation_key
 SQL, [$runId]);
