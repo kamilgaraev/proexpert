@@ -77,18 +77,27 @@ final class EstimatorQaSupplierExpenseGuardTest extends TestCase
     public function test_an_active_reservation_does_not_hold_its_carried_source_expense_again(): void
     {
         $budget = $this->guard([['operation_key' => 'source', 'supplier_exposure' => '1800000', 'charged_units_minor' => 0]],
-            [['operation_key' => 'target', 'reserved_minor' => 2000, 'carried_cost' => 1800000]])->quoteBudget();
+            [['operation_key' => 'target', 'reserved_minor' => 2000, 'carried_units_minor' => 1000]])->quoteBudget();
         self::assertSame(48000, $budget['remaining_units_minor']);
+    }
+
+    public function test_carried_reservation_uses_the_same_rounded_units_as_its_source(): void
+    {
+        $budget = $this->guard([['operation_key' => 'source', 'supplier_exposure' => '249750', 'charged_units_minor' => 0]],
+            [['operation_key' => 'target', 'reserved_minor' => 1150, 'carried_units_minor' => 150]])->quoteBudget();
+        self::assertSame(48850, $budget['remaining_units_minor']);
     }
 
     public function test_reservation_can_include_same_run_document_cost_larger_than_the_remaining_new_call_budget(): void
     {
         $attemptId = '22222222-2222-5222-8222-222222222222';
+        $operationId = '33333333-3333-5333-8333-333333333333';
         $guard = $this->guard([
-            ['operation_key' => 'source', 'supplier_exposure' => '1800000', 'charged_units_minor' => 0],
+            ['operation_key' => $operationId, 'supplier_exposure' => '1800000', 'charged_units_minor' => 0],
             ['operation_key' => 'other', 'supplier_exposure' => '88020000', 'charged_units_minor' => 0],
         ], [], [$attemptId]);
-        $documents = ['cost_micro_rub' => 1800000, 'items' => [['source_attempt_id' => $attemptId, 'cost_micro_rub' => 1800000]]];
+        $documents = ['cost_micro_rub' => 1800000, 'items' => [['source_attempt_id' => $attemptId,
+            'source_operation_id' => $operationId, 'cost_micro_rub' => 1800000]]];
         $budget = $guard->quoteBudget($documents);
         self::assertSame(100, $budget['remaining_units_minor']);
         self::assertSame(1800000, $budget['carried_document_cost_micro_rub']);
@@ -97,6 +106,19 @@ final class EstimatorQaSupplierExpenseGuardTest extends TestCase
         $this->expectException(SessionAiCostLimitReached::class);
         $this->expectExceptionMessage('estimator_live_qa_expense_limit_reached');
         $guard->assertReservationBudget($plan, 1150);
+    }
+
+    public function test_partial_carry_credits_only_the_rounded_exposure_released_from_its_source_operation(): void
+    {
+        $attemptId = '22222222-2222-5222-8222-222222222222';
+        $operationId = '33333333-3333-5333-8333-333333333333';
+        $guard = $this->guard([['operation_key' => $operationId, 'supplier_exposure' => '270000', 'charged_units_minor' => 0]], [], [$attemptId]);
+        $budget = $guard->quoteBudget(['cost_micro_rub' => 249750, 'items' => [['source_attempt_id' => $attemptId,
+            'source_operation_id' => $operationId, 'cost_micro_rub' => 249750]]]);
+        self::assertSame(49850, $budget['remaining_units_minor']);
+        self::assertSame(100, $budget['carried_document_units_minor']);
+        self::assertSame(49950, $budget['maximum_reservation_units_minor']);
+        self::assertSame(89910000, $budget['maximum_reservation_cost_micro_rub']);
     }
 
     private function guard(array $groups, array $holds = [], array $carriedAttempts = []): EstimatorQaSupplierExpenseGuard

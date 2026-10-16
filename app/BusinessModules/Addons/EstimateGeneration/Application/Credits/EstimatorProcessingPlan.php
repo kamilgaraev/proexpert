@@ -94,7 +94,12 @@ final class EstimatorProcessingPlan
             || $carried > ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
             throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
         }
-        $plan['maximum_provider_cost_micro_rub'] = min($plan['maximum_provider_cost_micro_rub'], BigDecimal::of($maximum)->plus($carried)->toInt());
+        $total = BigDecimal::of($maximum)->plus($carried)->toInt();
+        $reservationMaximum = $budget['maximum_reservation_cost_micro_rub'] ?? $total;
+        if (! is_int($reservationMaximum) || $reservationMaximum < 1 || $reservationMaximum > $total) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $plan['maximum_provider_cost_micro_rub'] = min($plan['maximum_provider_cost_micro_rub'], $reservationMaximum);
         if ($plan['maximum_provider_cost_micro_rub'] <= ($plan['document_costs']['cost_micro_rub'] ?? 0)) {
             throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
         }

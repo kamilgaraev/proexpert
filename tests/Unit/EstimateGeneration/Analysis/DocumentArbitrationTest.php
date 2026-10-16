@@ -625,6 +625,65 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function matching_independent_room_candidates_share_lineage_and_publish_once_with_common_confidence(): void
+    {
+        $factory = new DocumentUnitPublicationFactory;
+        $runs = $this->roomNameRuns();
+        $publication = $factory->fromAnalysis($this->sourceInput(), $runs, null);
+        self::assertCount(2, $publication->claims);
+        self::assertCount(2, $publication->decisions);
+        foreach ($publication->decisions as $decision) {
+            self::assertSame('candidate', $decision->status);
+            self::assertSame(['construction:1', 'risk:1'], $decision->supportingClaimIds);
+            self::assertSame(['construction:note-1', 'risk:note-1'], $decision->evidenceRefs);
+        }
+        $models = new InMemoryProjectModelRepository;
+        $writer = new ProjectModelEvidenceWriter($models, new InMemoryEvidenceRepository);
+        $writer->writeArbitration($publication->claims, $publication->decisions, 13, 4);
+        self::assertCount(1, $models->facts);
+        $fact = array_values($models->facts)[0];
+        self::assertSame('candidate', $fact->status);
+        self::assertSame(0.96, $fact->confidence);
+        self::assertCount(2, $fact->evidenceIds);
+        $replay = $factory->fromAnalysis($this->sourceInput(), array_reverse($runs, true), null);
+        $writer->writeArbitration($replay->claims, $replay->decisions, 13, 4);
+        self::assertEquals($fact, array_values($models->facts)[0]);
+    }
+
+    #[Test]
+    public function fallback_room_candidates_with_different_entities_or_values_keep_independent_lineage(): void
+    {
+        foreach ([['entityKey' => 'floor.2.room.lounge'], ['value' => ['type' => 'string', 'data' => 'Kitchen']]] as $change) {
+            $runs = $this->roomNameRuns();
+            $payload = $runs['observer_risk']->payload;
+            $payload['claims'][0] = [...$payload['claims'][0], ...$change];
+            $runs['observer_risk'] = new AiRoleRunResult($payload, null);
+            $publication = (new DocumentUnitPublicationFactory)->fromAnalysis($this->sourceInput(), $runs, null);
+            self::assertCount(2, $publication->claims);
+            foreach ($publication->decisions as $decision) {
+                self::assertSame('candidate', $decision->status);
+                self::assertSame([$decision->claimId], $decision->supportingClaimIds);
+            }
+        }
+    }
+
+    #[Test]
+    public function explicit_arbitration_lineage_is_not_rewritten_by_fallback_grouping(): void
+    {
+        $publication = (new DocumentUnitPublicationFactory)->fromAnalysis($this->sourceInput(), $this->roomNameRuns(),
+            new AiRoleRunResult(['decisions' => [['claim_id' => 'construction:1', 'status' => 'accepted',
+                'supporting_claim_ids' => ['construction:1'], 'evidence_refs' => ['construction:note-1']]]], null));
+        $byId = [];
+        foreach ($publication->decisions as $decision) {
+            $byId[$decision->claimId] = $decision;
+        }
+        self::assertSame('accepted', $byId['construction:1']->status);
+        self::assertSame(['construction:1'], $byId['construction:1']->supportingClaimIds);
+        self::assertSame('candidate', $byId['risk:1']->status);
+        self::assertSame(['risk:1'], $byId['risk:1']->supportingClaimIds);
+    }
+
+    #[Test]
     public function independent_observations_are_preserved_as_non_calculable_candidates_per_page(): void
     {
         $models = new InMemoryProjectModelRepository;
@@ -768,6 +827,20 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     /** @return array<string,AiRoleRunResult> */
+    private function roomNameRuns(): array
+    {
+        $runs = array_intersect_key($this->observerRuns(), array_flip(['observer_construction', 'observer_risk']));
+        foreach ($runs as $role => $run) {
+            $payload = $run->payload;
+            $payload['claims'][0] = [...$payload['claims'][0], 'entityKey' => 'room.lounge', 'factType' => 'room_name',
+                'value' => ['type' => 'string', 'data' => 'Lounge'], 'confidence' => $role === 'observer_construction' ? 0.97 : 0.95];
+            $payload['evidence'][0]['locator']['explicit'] = false;
+            $runs[$role] = new AiRoleRunResult($payload, $run->physicalAttemptId);
+        }
+
+        return $runs;
+    }
+
     private function observerRuns(): array
     {
         $runs = [];

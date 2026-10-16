@@ -1139,6 +1139,61 @@ final class AtomicDocumentUnitPublicationPostgresTest extends EstimateGeneration
     }
 
     #[Test]
+    public function matching_fallback_room_observations_publish_atomically_without_promoting_them_to_confirmed_facts(): void
+    {
+        DB::beginTransaction();
+        try {
+            [$unit, $sourceVersion, $writer, $store] = $this->publicationFixture('5', 14);
+            $now = now()->toDateTimeImmutable();
+            $claim = $store->claim((int) $unit->id, $sourceVersion, $now, $now->modify('+120 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+            $context = $store->executionContext($claim);
+            self::assertInstanceOf(DocumentUnitExecutionContext::class, $context);
+            self::assertNotNull($context->pageId);
+            $image = imagecreatetruecolor(2, 2);
+            ob_start();
+            imagepng($image);
+            $content = (string) ob_get_clean();
+            imagedestroy($image);
+            $source = new \App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput(
+                $context->organizationId, $context->projectId, $context->sessionId, $context->documentId,
+                $context->pageId, $context->index, $context->unitId, $sourceVersion, 'sha256:'.hash('sha256', $content),
+                'image/png', $content, 'high', new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext(
+                    (string) \Illuminate\Support\Str::uuid(), (string) \Illuminate\Support\Str::uuid(),
+                    $context->organizationId, $context->projectId, $context->sessionId, 'understand_documents', 'vision', 1,
+                    $context->documentId, $context->pageId, $context->unitId),
+                (new \App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory)->identity());
+            $runs = [];
+            foreach (['observer_construction' => 0.97, 'observer_risk' => 0.95] as $role => $confidence) {
+                $runs[$role] = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult([
+                    'role' => $role, 'source' => ['document_id' => $context->documentId, 'page_id' => $context->pageId,
+                        'page_number' => $context->index, 'source_version' => $sourceVersion],
+                    'claims' => [['entityKey' => 'room.lounge', 'factType' => 'room_name',
+                        'value' => ['type' => 'string', 'data' => 'Lounge'], 'unit' => null, 'confidence' => $confidence,
+                        'evidenceRef' => 'floorplan', 'sourcePolygonOrNativeRef' => [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]]],
+                    'evidence' => [['key' => 'floorplan', 'locator' => ['page_id' => $context->pageId,
+                        'page_number' => $context->index, 'processing_unit_id' => $context->unitId,
+                        'source_version' => $sourceVersion, 'coordinate_space' => 'normalized_derivative_v1']]],
+                ], null);
+            }
+            $publication = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublicationFactory)
+                ->fromAnalysis($source, $runs, null);
+            self::assertTrue($store->publish($claim, new DocumentUnitOutput(version: 'shared-candidate-lineage:v1', text: 'Lounge',
+                confidence: 0.96, unitType: $context->type, unitIndex: $context->index, sourceVersion: $sourceVersion,
+                publication: $publication), $now->modify('+1 second')));
+            self::assertSame('completed', $unit->fresh()->status->value);
+            $fact = DB::table('estimate_generation_project_model_assertions')->where('session_id', $context->sessionId)->sole();
+            self::assertSame('candidate', $fact->fact_status);
+            self::assertSame(0.96, (float) $fact->confidence);
+            self::assertSame(2, DB::table('estimate_generation_project_model_fact_evidence')->where('fact_id', $fact->id)->count());
+            self::assertSame(0, EstimateGenerationDocumentFact::query()->where('session_id', $context->sessionId)->count());
+            $writer->writeArbitration($publication->claims, $publication->decisions, $context->documentId, $context->index);
+            self::assertSame(1, DB::table('estimate_generation_project_model_assertions')->where('session_id', $context->sessionId)->count());
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
     public function same_fact_identity_with_different_canonical_payload_fails_closed(): void
     {
         self::assertSame('pgsql', DB::getDriverName());

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationInputBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 
@@ -85,28 +87,41 @@ final readonly class DocumentUnitPublicationFactory
             $decidedClaims[$claimId] = true;
         }
 
-        foreach ($claims as $claim) {
-            if (! isset($decidedClaims[$claim->id])) {
-                $decisions[] = $this->candidateDecision($claim);
-            }
-        }
-
-        return $decisions;
+        return [...$decisions, ...$this->candidateDecisions(array_values(array_filter($claims,
+            static fn (ObservationClaim $claim): bool => ! isset($decidedClaims[$claim->id]))))];
     }
 
     /** @param list<\App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim> $claims @return list<ArbitrationDecision> */
     private function candidateDecisions(array $claims): array
     {
-        return array_map(fn ($claim): ArbitrationDecision => $this->candidateDecision($claim), $claims);
+        $matcher = new ClaimSemanticMatcher;
+        $groups = [];
+        foreach ($claims as $claim) {
+            $groups[$matcher->key($claim).$matcher->entityScope($claim)][] = $claim;
+        }
+
+        return array_map(function (ObservationClaim $claim) use ($groups, $matcher): ArbitrationDecision {
+            $support = $groups[$matcher->key($claim).$matcher->entityScope($claim)];
+            if (count(array_unique(array_map(static fn (ObservationClaim $item): string => $item->observerRole, $support))) < 2) {
+                $support = [$claim];
+            }
+
+            return $this->candidateDecision($claim, $support);
+        }, $claims);
     }
 
-    private function candidateDecision(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim $claim): ArbitrationDecision
+    private function candidateDecision(ObservationClaim $claim, array $support): ArbitrationDecision
     {
+        $ids = array_map(static fn (ObservationClaim $item): string => $item->id, $support);
+        $refs = array_values(array_unique(array_filter(array_map(static fn (ObservationClaim $item): ?string => $item->evidenceRef, $support))));
+        sort($ids, SORT_STRING);
+        sort($refs, SORT_STRING);
+
         return new ArbitrationDecision(
             claimId: $claim->id,
             status: 'candidate',
-            supportingClaimIds: [$claim->id],
-            evidenceRefs: $claim->evidenceRef === null ? [] : [$claim->evidenceRef],
+            supportingClaimIds: $ids,
+            evidenceRefs: $refs,
             reasonCode: 'independent_observation_preserved',
             canonicalClaim: null,
         );
