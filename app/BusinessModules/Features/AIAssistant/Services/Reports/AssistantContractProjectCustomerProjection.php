@@ -35,7 +35,7 @@ final class AssistantContractProjectCustomerProjection
                     ->on('report_project_counterparty.organization_id', '=', 'report_customer_project_source.organization_id'))
             ->leftJoinSub(Organization::query()->select(['id', 'name']), 'report_project_owner',
                 static fn (JoinClause $join) => $join->on('report_project_owner.id', '=', 'report_customer_project_source.organization_id'))
-            ->select('projects.id');
+            ->select(['projects.id', 'report_project_counterparty.name as fallback_customer_name']);
         $hasText = "report_customer_project_source.customer IS NOT NULL AND report_customer_project_source.customer NOT IN ('', '0')";
 
         return $projects->selectRaw("CASE WHEN report_customer_participant.id IS NOT NULL THEN report_customer_participant.name
