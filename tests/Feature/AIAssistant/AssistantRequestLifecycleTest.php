@@ -1668,7 +1668,8 @@ final class AssistantRequestLifecycleTest extends TestCase
         return ['ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
     }
 
-    public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(): void
+    #[DataProvider('customReportRequests')]
+    public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(string $query): void
     {
         (require database_path('migrations/2026_08_06_000050_scope_personal_files_to_organizations.php'))->up();
         (require database_path('migrations/2025_07_09_000001_create_report_files_table.php'))->up();
@@ -1735,7 +1736,7 @@ final class AssistantRequestLifecycleTest extends TestCase
             $usage + ['content' => '', 'output' => [$call], 'function_calls' => [$call]],
             $usage + ['content' => 'Готово', 'output' => [$message], 'function_calls' => []]
         );
-        $payload = $this->quote(['message' => 'Сделай Excel со списком сотрудников']);
+        $payload = $this->quote(['message' => $query]);
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->method('plan')->willReturn(['request' => ['message' => $payload['message'], 'context' => []],
             'request_understanding' => (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($payload['message'])->toArray(),
@@ -1751,6 +1752,11 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame('verified', $metadata['validation_status']);
         self::assertFalse($metadata['needs_clarification']);
         self::assertSame(trans_message('ai_custom_reports.ready'), $response['message']['content']);
+    }
+
+    public static function customReportRequests(): array
+    {
+        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF']];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

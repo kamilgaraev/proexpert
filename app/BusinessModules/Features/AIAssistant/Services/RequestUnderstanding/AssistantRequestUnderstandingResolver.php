@@ -160,7 +160,8 @@ final class AssistantRequestUnderstandingResolver
 
     private function resolvePrimaryIntent(string $normalized, array $constraints): string
     {
-        if ($this->hasConstraint($constraints, ['no_file', 'no_pdf', 'no_report', 'text_only', 'json_only', 'no_actions'])) {
+        if ($this->hasConstraint($constraints, ['no_file', 'no_report', 'text_only', 'json_only', 'no_actions'])
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             if ($this->isKnowledgeSearch($normalized)) {
                 return 'search_knowledge';
             }
@@ -234,7 +235,7 @@ final class AssistantRequestUnderstandingResolver
 
         $fileFormat = $this->requestedFileFormat($normalized);
         if (in_array('text_only', $constraints, true) || $this->hasConstraint($constraints, ['no_file', 'no_report'])
-            || (in_array('no_pdf', $constraints, true) && ! in_array($fileFormat, ['xlsx', 'csv'], true))) {
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             return 'text';
         }
 
@@ -333,10 +334,15 @@ final class AssistantRequestUnderstandingResolver
         return min(0.95, round($confidence, 2));
     }
 
+    private function hasBlockingPdfConstraint(string $normalized, array $constraints): bool
+    {
+        return in_array('no_pdf', $constraints, true) && ! in_array($this->requestedFileFormat($normalized), ['xlsx', 'csv'], true);
+    }
+
     private function isExplicitReportGenerationRequest(string $normalized, array $constraints): bool
     {
         if ($this->hasConstraint($constraints, ['no_file', 'no_report', 'text_only', 'json_only', 'no_actions'])
-            || (in_array('no_pdf', $constraints, true) && ! in_array($this->requestedFileFormat($normalized), ['xlsx', 'csv'], true))) {
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             return false;
         }
 
