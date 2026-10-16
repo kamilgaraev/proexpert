@@ -177,6 +177,10 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $mixed = 'Какая техника простаивает в нашем проекте и какие счета не оплачены?';
         self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $mixed));
+        foreach (['Сделай машину нашего объекта свободной', 'Переведи назначенную технику нашего объекта на другой проект'] as $write) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($write)), $write);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $write), $write);
+        }
     }
 
     public function test_director_compound_finance_and_schedule_impact_bind_verified_scope(): void

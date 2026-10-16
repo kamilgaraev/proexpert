@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 
@@ -15,6 +16,9 @@ final readonly class AssistantProjectMachineryReader
     {
         return preg_match('/техник[а-яё]*|машин[а-яё]*|механизм[а-яё]*/iu', $query) === 1
             && preg_match('/закреплен|закрепл[её]н|назначен|назначени|свободн|простаива|ремонт|обслуживан/iu', $query) === 1
+            && ! AssistantMutationIntent::containsRequest($query)
+            && ! AssistantMutationIntent::containsFollowUpCommand($query)
+            && preg_match('/(?<!\pL)(?:сделай(?:те)?|сделать|переведи(?:те)?|перевести|освободи(?:те)?|освободить)(?!\pL)/iu', $query) !== 1
             && preg_match('/назначь|создай|отправь|спиши|измени|удали|бюджет|расход|потрач|затрат|сумм|стоим|сч[её]т|плат[её]ж|оплат|документ|смет|поставк|договор|табел|замечан|дефект|качест|зависимост|критическ|сотрудник|бим|ifc|bim/iu', $query) !== 1;
     }
     public function read(User $actor, int $organizationId, array $arguments): array
