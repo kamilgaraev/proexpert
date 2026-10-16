@@ -24,9 +24,26 @@ class MdmImportService
         $issues = [];
         $accepted = 0;
 
-        foreach ($rows as $index => $row) {
+        foreach (array_values($rows) as $index => $row) {
             $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
             $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
+            $referenceErrors = $this->referenceErrors($organizationId, $entityType, $data);
+
+            if ($referenceErrors !== []) {
+                $referenceIssues = [];
+                foreach ($referenceErrors as $field => $messages) {
+                    foreach ($messages as $message) {
+                        $referenceIssues[] = ['code' => 'reference_not_found', 'field' => $field, 'message' => $message];
+                    }
+                }
+                $issues[] = [
+                    'row' => $index + 1,
+                    'score' => $quality['score'],
+                    'issues' => [...$quality['issues'], ...$referenceIssues],
+                ];
+
+                continue;
+            }
 
             if ($quality['score'] >= 70) {
                 if (! $this->registry->supportsCreate($entityType) && $this->findRecordByQuality($organizationId, $entityType, $quality) === null) {
@@ -138,6 +155,19 @@ class MdmImportService
 
     private function assertScopedReferences(int $organizationId, string $entityType, array $values, int|string $rowIndex): void
     {
+        $errors = [];
+        foreach ($this->referenceErrors($organizationId, $entityType, $values, true) as $field => $messages) {
+            $errors["rows.{$rowIndex}.{$field}"] = $messages;
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
+    }
+
+    private function referenceErrors(int $organizationId, string $entityType, array $values, bool $lock = false): array
+    {
+        $errors = [];
         foreach ($this->registry->referenceFields($entityType) as $field => $referenceEntityType) {
             if (! array_key_exists($field, $values) || $values[$field] === null || $values[$field] === '') {
                 continue;
@@ -149,14 +179,19 @@ class MdmImportService
                     ->where('organization_id', $organizationId)->orWhere('is_system', true))
                 : $this->registry->query((string) $referenceEntityType, $organizationId);
 
-            if ($query->whereKey($referenceId)->sharedLock()->first(['id']) === null) {
-                throw ValidationException::withMessages([
-                    "rows.{$rowIndex}.{$field}" => [trans_message('mdm.validation.reference_not_found', [
-                        'field' => $this->registry->fieldLabel($entityType, (string) $field),
-                    ])],
-                ]);
+            $query->whereKey($referenceId);
+            if ($lock) {
+                $query->sharedLock();
+            }
+
+            if ($query->first(['id']) === null) {
+                $errors[$field] = [trans_message('mdm.validation.reference_not_found', [
+                    'field' => $this->registry->fieldLabel($entityType, (string) $field),
+                ])];
             }
         }
+
+        return $errors;
     }
 
     private function findRecordByQuality(int $organizationId, string $entityType, array $quality): ?MdmRecord

@@ -21,6 +21,20 @@ use Tests\TestCase;
 
 final class MdmTenantReferenceSecurityTest extends TestCase
 {
+    public function test_rows_and_csv_preview_report_foreign_references_as_rejected_rows(): void
+    {
+        [$actor, $ownUnit, $foreignUnit] = $this->catalog();
+        foreach (['rows', 'file'] as $source) {
+            $this->import($actor, $source, [
+                $this->row('PREVIEW-VALID-'.$source, $ownUnit), $this->row('PREVIEW-FOREIGN-'.$source, $foreignUnit),
+            ], 'preview')->assertOk()->assertJsonPath('data.accepted_rows', 1)->assertJsonPath('data.rejected_rows', 1)
+                ->assertJsonPath('data.issues.0.row', 2)->assertJsonPath('data.issues.0.issues.0.code', 'reference_not_found')
+                ->assertJsonPath('data.issues.0.issues.0.field', 'measurement_unit_id')
+                ->assertJsonPath('data.issues.0.issues.0.message', trans_message('mdm.validation.reference_not_found', ['field' => 'Единица измерения']));
+        }
+        self::assertSame(0, Material::query()->where('organization_id', $actor->organization->id)->count());
+    }
+
     public function test_rows_and_csv_reject_private_foreign_units_without_partial_imports(): void
     {
         [$actor, $ownUnit, $foreignUnit] = $this->catalog();
@@ -154,17 +168,17 @@ final class MdmTenantReferenceSecurityTest extends TestCase
         return ['name' => 'Material '.$code, 'code' => $code, 'measurement_unit_id' => $unit instanceof MeasurementUnit ? $unit->id : $unit, 'description' => 'Initial description'];
     }
 
-    private function import(AdminApiTestContext $actor, string $source, array $rows): \Illuminate\Testing\TestResponse
+    private function import(AdminApiTestContext $actor, string $source, array $rows, string $action = 'apply'): \Illuminate\Testing\TestResponse
     {
         if ($source === 'rows') {
-            return $this->postJson('/api/v1/admin/mdm/imports/apply', ['entity_type' => 'material', 'rows' => $rows], $this->headers($actor));
+            return $this->postJson('/api/v1/admin/mdm/imports/'.$action, ['entity_type' => 'material', 'rows' => $rows], $this->headers($actor));
         }
         $csv = "name;code;measurement_unit_id;description\n";
         foreach ($rows as $row) {
             $csv .= implode(';', [$row['name'], $row['code'], $row['measurement_unit_id'], $row['description']])."\n";
         }
 
-        return $this->post('/api/v1/admin/mdm/imports/file/apply', [
+        return $this->post('/api/v1/admin/mdm/imports/file/'.$action, [
             'entity_type' => 'material', 'file' => UploadedFile::fake()->createWithContent('materials.csv', $csv),
         ], $this->headers($actor));
     }
