@@ -62,10 +62,23 @@ final class AssistantReportSlotResolverTest extends TestCase
             'period' => 'previous month',
             'date_from' => '2026-04-01',
             'date_to' => '2026-04-30',
-            'report_type' => 'time_tracking',
             'project_id' => 12,
             'user_id' => 77,
         ], $this->resolver()->toolArguments($state));
+    }
+
+    public function test_warehouse_report_does_not_receive_unrelated_slots(): void
+    {
+        $state = new AssistantTaskState(
+            id: 'report.warehouse_stock', domain: 'reports', capability: 'warehouse',
+            toolName: 'generate_warehouse_stock_report', status: 'ready_to_execute',
+            slots: [new AssistantTaskSlot('warehouse_id', false, 5),
+                new AssistantTaskSlot('project_id', false, 12),
+                new AssistantTaskSlot('period', false, ['source_text' => 'за месяц', 'date_from' => '2026-04-01'])],
+            sourceMessage: 'Сделай PDF по остаткам склада'
+        );
+
+        $this->assertSame(['warehouse_id' => 5], $this->resolver()->toolArguments($state));
     }
 
     private function resolver(): AssistantReportSlotResolver

@@ -41,7 +41,7 @@ final readonly class AssistantOperationalReportEnricher
         }
 
         foreach ($this->limitations($ragReport) as $limitation) {
-            if ($sources !== [] && ($ragReport['has_sufficient_data'] ?? false) === true) {
+            if ($hasStructuredData || ($sources !== [] && ($ragReport['has_sufficient_data'] ?? false) === true)) {
                 continue;
             }
 

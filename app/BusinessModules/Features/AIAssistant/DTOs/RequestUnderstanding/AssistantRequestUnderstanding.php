@@ -37,6 +37,9 @@ final readonly class AssistantRequestUnderstanding
     public function blocksFileGeneration(): bool
     {
         foreach (['no_file', 'no_pdf', 'no_report', 'text_only', 'json_only', 'no_actions'] as $constraint) {
+            if ($constraint === 'no_pdf' && in_array($this->outputFormat, ['xlsx', 'csv'], true)) {
+                continue;
+            }
             if ($this->hasConstraint($constraint)) {
                 return true;
             }

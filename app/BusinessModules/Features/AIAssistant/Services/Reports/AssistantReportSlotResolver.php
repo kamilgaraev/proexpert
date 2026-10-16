@@ -54,10 +54,16 @@ final readonly class AssistantReportSlotResolver
      */
     public function toolArguments(AssistantTaskState $state): array
     {
+        $reportType = str_starts_with($state->id, 'report.') ? substr($state->id, 7) : '';
+        $definition = (new AssistantReportCatalog)->findById($reportType);
+        if ($definition === null || $definition->toolName !== $state->toolName) {
+            return [];
+        }
+        $slotNames = array_column([...$definition->requiredSlots, ...$definition->optionalSlots], 'name');
         $period = $state->slotValue('period');
         $periodData = is_array($period) ? $period : [];
 
-        $arguments = [
+        $arguments = in_array('period', $slotNames, true) ? [
             'period' => isset($periodData['source_text']) && is_scalar($periodData['source_text'])
                 ? (string) $periodData['source_text']
                 : null,
@@ -67,22 +73,16 @@ final readonly class AssistantReportSlotResolver
             'date_to' => isset($periodData['date_to']) && is_scalar($periodData['date_to'])
                 ? (string) $periodData['date_to']
                 : null,
-        ];
-
-        if (str_starts_with($state->id, 'report.')) {
-            $reportType = substr($state->id, 7);
-            if ($reportType !== '' && $reportType !== 'unspecified') {
-                $arguments['report_type'] = $reportType;
-            }
-        }
+        ] : [];
 
         if (in_array($state->toolName, ['generate_operational_pdf_report', 'generate_rag_pdf_report'], true)) {
+            $arguments['report_type'] = $reportType;
             $arguments['query'] = $state->sourceMessage;
         }
 
         foreach (['project_id', 'warehouse_id', 'contractor_id', 'user_id'] as $slotName) {
             $value = $state->slotValue($slotName);
-            if ($value !== null && $value !== '') {
+            if (in_array($slotName, $slotNames, true) && $value !== null && $value !== '') {
                 $arguments[$slotName] = $value;
             }
         }

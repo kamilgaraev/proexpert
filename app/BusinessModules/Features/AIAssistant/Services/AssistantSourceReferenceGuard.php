@@ -63,6 +63,9 @@ class AssistantSourceReferenceGuard
             }
             $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'];
             $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'];
+            if ($type === \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::TYPE) {
+                continue;
+            }
             if ($type === AssistantDomainSearchCountEvidence::TYPE) {
                 if (! app(AssistantDomainSearchCountEvidence::class)->matchesReference($actor, $organizationId, $reference)) {
                     return false;

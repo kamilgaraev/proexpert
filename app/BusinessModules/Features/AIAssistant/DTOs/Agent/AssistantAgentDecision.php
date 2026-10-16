@@ -14,6 +14,7 @@ final readonly class AssistantAgentDecision
         public ?AssistantTaskState $state = null,
         public ?string $toolName = null,
         public array $toolArguments = [],
-        public ?string $clarificationQuestion = null
+        public ?string $clarificationQuestion = null,
+        public bool $clearPendingState = false,
     ) {}
 }

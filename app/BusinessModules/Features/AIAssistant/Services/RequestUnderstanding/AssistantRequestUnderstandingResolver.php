@@ -10,6 +10,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassif
 
 final class AssistantRequestUnderstandingResolver
 {
+    private const NEGATIVE_CREATION_VERBS = 'создавай|формируй|делай|генерируй|выгружай|подготавливай';
+
     public function __construct(private readonly AssistantCapabilityRegistry $capabilities = new AssistantCapabilityRegistry) {}
 
     public function resolve(string $message, array $context = []): AssistantRequestUnderstanding
@@ -29,7 +31,7 @@ final class AssistantRequestUnderstandingResolver
         if ($domain === 'estimates' && ! in_array('estimate', $requestedEntities, true)) {
             $requestedEntities[] = 'estimate';
         }
-        $sectionNavigation = !in_array('no_navigation', $constraints, true)
+        $sectionNavigation = ! in_array('no_navigation', $constraints, true)
             && $this->isSectionNavigation($normalized, $context, $capability);
         $primaryIntent = $sectionNavigation ? 'navigate' : $this->resolvePrimaryIntent($normalized, $constraints);
         $compoundMutation = AssistantMutationIntent::compoundType($message);
@@ -62,32 +64,27 @@ final class AssistantRequestUnderstandingResolver
     private function resolveConstraints(string $normalized): array
     {
         $constraints = [];
-        $negativeCreation = $this->containsAnyWholePhrase($normalized, [
-            'не создавай',
-            'не формируй',
-            'не делай',
-            'не генерируй',
-            'не выгружай',
-            'не подготавливай',
-        ]);
+        $negativeScopes = $this->negativeCreationScopes($normalized);
+        $negativeCreation = $negativeScopes !== [];
+        $negativeObjects = implode(' ', $negativeScopes);
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без pdf', 'не нужен pdf', 'не нужно pdf', 'не pdf', 'не файл pdf'])
-            || ($negativeCreation && $this->hasPdfMarker($normalized))
+            || $this->hasPdfMarker($negativeObjects)
         ) {
             $constraints[] = 'no_pdf';
         }
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без файла', 'без файлов', 'не нужен файл', 'не нужны файлы', 'не файл', 'не файлы', 'не нужен никакой файл'])
-            || ($negativeCreation && $this->hasFileMarker($normalized))
+            || $this->containsAny($negativeObjects, ['файл', 'выгрузк', 'документ'])
         ) {
             $constraints[] = 'no_file';
         }
 
         if (
             $this->containsAnyWholePhrase($normalized, ['без отчета', 'без отчетов', 'не нужен отчет', 'не нужны отчеты', 'не отчет', 'не создавай отчет'])
-            || ($negativeCreation && $this->hasReportMarker($normalized))
+            || $this->hasReportMarker($negativeObjects)
         ) {
             $constraints[] = 'no_report';
         }
@@ -160,7 +157,8 @@ final class AssistantRequestUnderstandingResolver
 
     private function resolvePrimaryIntent(string $normalized, array $constraints): string
     {
-        if ($this->hasConstraint($constraints, ['no_file', 'no_pdf', 'no_report', 'text_only', 'json_only', 'no_actions'])) {
+        if ($this->hasConstraint($constraints, ['no_file', 'no_report', 'text_only', 'json_only', 'no_actions'])
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             if ($this->isKnowledgeSearch($normalized)) {
                 return 'search_knowledge';
             }
@@ -232,16 +230,17 @@ final class AssistantRequestUnderstandingResolver
             return 'json';
         }
 
-        if (in_array('text_only', $constraints, true) || $this->hasConstraint($constraints, ['no_file', 'no_pdf', 'no_report'])) {
+        $fileFormat = $this->requestedFileFormat($normalized);
+        if (in_array('text_only', $constraints, true) || $this->hasConstraint($constraints, ['no_file', 'no_report'])
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             return 'text';
         }
 
+        if ($primaryIntent === 'generate_report' && $fileFormat !== null) {
+            return $fileFormat;
+        }
         if (str_contains($normalized, 'таблиц')) {
             return 'table';
-        }
-
-        if ($primaryIntent === 'generate_report' && $this->hasPdfMarker($normalized)) {
-            return 'pdf';
         }
 
         if ($primaryIntent === 'generate_report' && $this->hasFileMarker($normalized)) {
@@ -332,9 +331,15 @@ final class AssistantRequestUnderstandingResolver
         return min(0.95, round($confidence, 2));
     }
 
+    private function hasBlockingPdfConstraint(string $normalized, array $constraints): bool
+    {
+        return in_array('no_pdf', $constraints, true) && ! in_array($this->requestedFileFormat($normalized), ['xlsx', 'csv'], true);
+    }
+
     private function isExplicitReportGenerationRequest(string $normalized, array $constraints): bool
     {
-        if ($this->hasConstraint($constraints, ['no_file', 'no_pdf', 'no_report', 'text_only', 'json_only', 'no_actions'])) {
+        if ($this->hasConstraint($constraints, ['no_file', 'no_report', 'text_only', 'json_only', 'no_actions'])
+            || $this->hasBlockingPdfConstraint($normalized, $constraints)) {
             return false;
         }
 
@@ -467,14 +472,14 @@ final class AssistantRequestUnderstandingResolver
 
     private function isSectionNavigation(string $normalized, array $context, ?array $capability): bool
     {
-        if ($capability === null || !self::hasOnlyBackgroundProjectReferences($context) || !empty($context['filters'])
-            || !empty($context['period']) || !empty($context['selected_estimate_id'])
-            || !empty($context['selected_estimate']) || !empty($context['selected_entities'])
+        if ($capability === null || ! self::hasOnlyBackgroundProjectReferences($context) || ! empty($context['filters'])
+            || ! empty($context['period']) || ! empty($context['selected_estimate_id'])
+            || ! empty($context['selected_estimate']) || ! empty($context['selected_entities'])
             || array_diff(array_keys($context), ['source_module', 'source_route', 'entity_refs', 'period', 'filters', 'ui_state']) !== []) {
             return false;
         }
         $uiState = $context['ui_state'] ?? [];
-        if (!is_array($uiState) || array_diff(array_keys($uiState), ['pathname', 'assistant_path']) !== []) {
+        if (! is_array($uiState) || array_diff(array_keys($uiState), ['pathname', 'assistant_path']) !== []) {
             return false;
         }
         if (preg_match('/^(?:где(?: находится| находятся| найти)?|куда(?: перейти)?|как найти|открой(?:те)?|перейди(?:те)?|покажи(?:те)? раздел)\s+(.+)$/u', $normalized, $match) !== 1) {
@@ -485,7 +490,7 @@ final class AssistantRequestUnderstandingResolver
         $aliases = [$capability['label'] ?? '', ...($capability['keywords'] ?? [])];
         $ending = '(?:а|я|ы|и|е|у|ю|о|ов|ев|ей|ах|ях|ам|ям|ами|ями|ие|ия|ии|ий|ию|ения|ений|ению|ениях)?';
         foreach ($aliases as $alias) {
-            if (!is_string($alias) || ($alias = $this->normalize($alias)) === '') {
+            if (! is_string($alias) || ($alias = $this->normalize($alias)) === '') {
                 continue;
             }
             if ($subject === $alias) {
@@ -497,6 +502,7 @@ final class AssistantRequestUnderstandingResolver
                 return true;
             }
         }
+
         return false;
     }
 
@@ -506,10 +512,11 @@ final class AssistantRequestUnderstandingResolver
         if ($references === []) {
             return true;
         }
-        if (!is_array($references) || count($references) !== 1) {
+        if (! is_array($references) || count($references) !== 1) {
             return false;
         }
         $reference = reset($references);
+
         return is_array($reference) && ($reference['type'] ?? null) === 'project'
             && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
             && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
@@ -527,7 +534,31 @@ final class AssistantRequestUnderstandingResolver
 
     private function hasFileMarker(string $normalized): bool
     {
-        return $this->containsAny($normalized, ['файл', 'файлы', 'файлов', 'выгруз', 'документ']);
+        return $this->containsAny($normalized, ['файл', 'файлы', 'файлов', 'выгруз', 'документ'])
+            || in_array($this->requestedFileFormat($normalized), ['xlsx', 'csv'], true);
+    }
+
+    private function negativeCreationScopes(string $normalized): array
+    {
+        $commands = self::NEGATIVE_CREATION_VERBS.'|создай|сформируй|сделай|сгенерируй|выгрузи|подготовь|пришли|отправь|покажи|нужен|нужна|нужно|найди|перечисли|проанализируй';
+        preg_match_all('/(?<!\pL)не\s+(?:'.self::NEGATIVE_CREATION_VERBS.')(?!\pL).*?(?=\s+(?:не\s+)?(?:'.$commands.')(?!\pL)|$)/u', $normalized, $matches);
+
+        return $matches[0];
+    }
+
+    private function requestedFileFormat(string $normalized): ?string
+    {
+        $formats = '(xlsx|excel|эксель|csv|pdf|пдф)';
+        $positive = str_replace($this->negativeCreationScopes($normalized), ' ', $normalized);
+        $positive = preg_replace('/(?<!\pL)(?:не\s+(?:нужен|нужна|нужно|нужны)|не|без)\s+(?:в\s+)?(?:формате\s+)?'.$formats.'(?!\pL)/u', ' ', $positive);
+        if (preg_match('/(?<!\pL)(?:в\s+(?:формате\s+)?|(?:сделай|создай|выгрузи|сформируй|подготовь|пришли)\s+(?:мне\s+)?)'.$formats.'(?!\pL)/u', $positive, $match) !== 1
+            && preg_match('/(?<![\pL\pN])'.$formats.'(?![\pL\pN])/u', $positive, $match) !== 1) {
+            return null;
+        }
+
+        return match ($match[1]) {
+            'xlsx', 'excel', 'эксель' => 'xlsx', 'csv' => 'csv', default => 'pdf'
+        };
     }
 
     private function hasReportMarker(string $normalized): bool
@@ -576,6 +607,10 @@ final class AssistantRequestUnderstandingResolver
     {
         $value = mb_strtolower(trim($value));
         $value = str_replace('ё', 'е', $value);
+        $formats = '(xlsx|excel|эксель|csv|pdf|пдф)';
+        $fileNames = '(?:файл(?:а|ы|ов)?|документ(?:а|ы|ов)?|отчет(?:а|ы|ов)?|выгрузк[ауи])';
+        $value = preg_replace('/(?<!\pL)'.$fileNames.'[\s\p{Pd}]+(?:(?:в\s+)?формат[ае]\s+|в\s+)?'.$formats.'(?!\pL)/u', '$1', $value) ?? $value;
+        $value = preg_replace('/(?<!\pL)'.$formats.'[\s\p{Pd}]+'.$fileNames.'(?!\pL)/u', '$1', $value) ?? $value;
         $value = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value) ?? $value;
 
         return preg_replace('/\s+/u', ' ', trim($value)) ?? '';

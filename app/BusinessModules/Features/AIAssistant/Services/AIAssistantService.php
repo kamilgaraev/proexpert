@@ -1123,7 +1123,27 @@ class AIAssistantService
                 $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
                     'source_refs' => [], 'needs_clarification' => true];
             }
+            $reportArtifacts = [];
+            $reportReferences = [];
+            foreach ($this->activeToolResults as $activeResult) {
+                if (($activeResult['_tool_name'] ?? null) !== 'generate_custom_report' || ($activeResult['status'] ?? null) !== 'success') {
+                    continue;
+                }
+                $artifacts = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService::class)
+                    ->artifactsFromToolResult('generate_custom_report', $activeResult, $this->resolveOrganization($organizationId), $user);
+                $reportArtifacts = [...$reportArtifacts, ...$this->filterAgentArtifactsForOrganization($organizationId, $artifacts, (int) $user->id)];
+                $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
+            }
+            if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
+                $assistantContent = trans_message('ai_custom_reports.ready');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'verified',
+                    'source_refs' => $reportReferences, 'needs_clarification' => false];
+                $degradedMode = false;
+            } else {
+                $reportArtifacts = [];
+            }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
+                'artifacts' => $reportArtifacts,
                 'degraded_mode' => $degradedMode,
                 'tool_failures' => $toolFailures,
                 'tool_evidence' => $toolEvidence,
@@ -1172,6 +1192,11 @@ class AIAssistantService
                 && ! ($financialCheck['replaced'] ?? false)
                 && ! ($structuredCheck['replaced'] ?? false);
             $assistantPayload['fetched_at'] = now()->toISOString();
+            if ($reportArtifacts !== []) {
+                $assistantPayload['artifacts'] = $reportArtifacts;
+                $assistantPayload['answer'] = $assistantContent;
+                $assistantPayload['needs_clarification'] = false;
+            }
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
             $verificationTimer->finish();
             $this->rememberRagContext($conversation, $ragMetadata);
@@ -1260,11 +1285,11 @@ class AIAssistantService
         $decision = $this->agentPlanner->decide($query, $context, $pendingState,
             fn (string $type, ?string $name, ?int $id): ?array => $this->resolveAgentReportEntityScope($type, $name, $id, $user, $organizationId, $taskPlan));
 
-        if ($this->isGroundedRequest($taskPlan) && $decision->type === 'answer') {
-            return null;
-        }
-
         if ($decision->type === 'answer') {
+            if ($decision->clearPendingState) {
+                $this->agentStateStore->clear($conversation);
+            }
+
             return null;
         }
 
@@ -1292,14 +1317,6 @@ class AIAssistantService
     {
         return $this->agentExecutor->resolveReportEntityScope($type, $name, $id, $actor,
             $this->resolveOrganization($organizationId), $this->requestUnderstandingFromPlan($taskPlan));
-    }
-
-    private function isGroundedRequest(array $taskPlan): bool
-    {
-        $request = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
-        $desiredMode = mb_strtolower(trim((string) ($request['desired_mode'] ?? '')));
-
-        return $desiredMode === 'grounded';
     }
 
     private function logRequestUnderstanding(array $taskPlan, int $organizationId, User $user): void
@@ -1387,7 +1404,7 @@ class AIAssistantService
         $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, array_values(array_filter(
             $toolResult['artifacts'] ?? [],
             static fn (mixed $artifact): bool => is_array($artifact)
-        )));
+        )), (int) $user->id);
 
         $toolStatus = (string) ($toolResult['status'] ?? 'error');
         if ($toolStatus === 'error' || $artifacts === []) {
@@ -1513,14 +1530,17 @@ class AIAssistantService
         return $payload;
     }
 
-    protected function filterAgentArtifactsForOrganization(int $organizationId, array $artifacts): array
+    protected function filterAgentArtifactsForOrganization(int $organizationId, array $artifacts, int $actorId): array
     {
         $expectedPrefix = sprintf('org-%d/reports/', $organizationId);
+        $personalPrefix = sprintf('org-%d/personal-files/user-%d/', $organizationId, $actorId);
 
-        return array_values(array_filter($artifacts, static function (array $artifact) use ($expectedPrefix): bool {
+        return array_values(array_filter($artifacts, static function (array $artifact) use ($expectedPrefix, $personalPrefix): bool {
             return ($artifact['storage_disk'] ?? null) === 's3'
                 && is_string($artifact['storage_path'] ?? null)
-                && str_starts_with($artifact['storage_path'], $expectedPrefix);
+                && ! str_contains($artifact['storage_path'], '..')
+                && (str_starts_with($artifact['storage_path'], $expectedPrefix)
+                    || str_starts_with($artifact['storage_path'], $personalPrefix));
         }));
     }
 
@@ -2238,6 +2258,14 @@ class AIAssistantService
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
                 }
+                if ($toolName === 'generate_custom_report') {
+                    foreach ($args['sections'] ?? [] as $index => $section) {
+                        if (! is_array($section)) {
+                            continue;
+                        }
+                        $args['sections'][$index]['project_id'] = $requestProjectScope->projectId;
+                    }
+                }
                 if (isset($schema['properties']['project_id'])) {
                     $args['project_id'] = $requestProjectScope->projectId;
                 }
@@ -2347,6 +2375,7 @@ class AIAssistantService
             }
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
+                'describe_custom_report_source',
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
@@ -2427,7 +2456,9 @@ class AIAssistantService
                 'source' => 'assistant_tool',
             ];
 
-            return $toolResult;
+            return $toolName === 'generate_custom_report' && is_array($toolResult)
+                ? array_intersect_key($toolResult, array_flip(['status', 'message', 'format', 'filename', 'generated_at', 'sections', 'validation_errors']))
+                : $toolResult;
         } catch (Throwable $exception) {
             if ($exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded
                 || $exception instanceof AssistantReadPermitTimeoutException) {
@@ -3539,6 +3570,14 @@ class AIAssistantService
             $hints = AssistantToolSurface::compactHints($this->precomputedCapabilityHints ?? $this->buildDomainCapabilityHints($taskPlan));
             $messages[] = ['role' => 'system', 'content' => json_encode(['kind' => 'backend_capability_schema',
                 'registered_domain_capabilities' => $hints], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+            $understanding = $this->requestUnderstandingFromPlan($taskPlan);
+            if ($this->activeActor instanceof User && $understanding instanceof AssistantRequestUnderstanding
+                && \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($currentQuery, $understanding)) {
+                $reportSources = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints::class)
+                    ->forRequest($this->activeActor, (int) $this->activeActor->current_organization_id, $currentQuery, $understanding);
+                $messages[] = ['role' => 'system', 'content' => json_encode(['kind' => 'custom_report_sources', 'sources' => $reportSources],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+            }
         }
 
         $history = $this->conversationManager->getMessagesForContextWithBudget(

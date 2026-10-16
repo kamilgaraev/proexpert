@@ -21,17 +21,18 @@ final class AssistantReportAccessService
         $organizationId = (int) $organization->id;
         $this->assertReferences($user, $organizationId, $sourceRefs, $domains);
         if (! str_starts_with($path, 'org-'.$organizationId.'/') || str_contains($path, '..')) {
-            throw new AccessDeniedHttpException();
+            throw new AccessDeniedHttpException;
         }
         $id = (string) Str::uuid();
         $expiresAt = now()->addDays(90);
+        $token = rtrim(strtr(base64_encode(encrypt(['report_access_id' => $id])), '+/', '-_'), '=');
         DB::table('ai_assistant_report_access')->insert([
             'id' => $id, 'organization_id' => $organizationId, 'user_id' => $user->id,
             'storage_path' => $path, 'source_refs' => json_encode($sourceRefs, JSON_THROW_ON_ERROR),
             'required_domains' => json_encode(array_values(array_unique(array_merge(['reports'], $domains))), JSON_THROW_ON_ERROR),
             'expires_at' => $expiresAt, 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $token = rtrim(strtr(base64_encode(encrypt(['report_access_id' => $id])), '+/', '-_'), '=');
+
         return ['download_url' => '/api/v1/ai-assistant/reports/'.$token.'/download', 'report_access_id' => $id, 'source_refs' => $sourceRefs];
     }
 
@@ -41,14 +42,22 @@ final class AssistantReportAccessService
         $id = is_array($data) ? ($data['report_access_id'] ?? null) : null;
         $record = is_string($id) ? DB::table('ai_assistant_report_access')->where('id', $id)->first() : null;
         if ($record === null) {
-            throw new AccessDeniedHttpException();
+            throw new AccessDeniedHttpException;
         }
         if (now()->greaterThanOrEqualTo($record->expires_at)) {
-            throw new GoneHttpException();
+            throw new GoneHttpException;
         }
         $this->assertReferences($user, (int) $record->organization_id,
             json_decode($record->source_refs, true, 512, JSON_THROW_ON_ERROR),
             json_decode($record->required_domains, true, 512, JSON_THROW_ON_ERROR));
+        $file = \App\Models\PersonalFile::query()->where('storage_key', $record->storage_path)
+            ->where('organization_id', $record->organization_id)->where('user_id', $record->user_id)->where('is_folder', false)->first();
+        $record->filename = $file?->original_name ?? basename($record->storage_path);
+        $record->mime_type = $file?->mime_type ?? 'application/pdf';
+        if (! in_array($record->mime_type, AssistantCustomReportRenderer::MIME_TYPES, true)) {
+            throw new AccessDeniedHttpException;
+        }
+
         return $record;
     }
 

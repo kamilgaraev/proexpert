@@ -415,6 +415,7 @@ class AssistantAgentPlannerTest extends TestCase
             null,
             static function (string $type, ?string $query, ?int $id) use (&$calls): ?array {
                 $calls[] = [$type, $query, $id];
+
                 return ['id' => 72, 'label' => 'СевГУ'];
             }
         );
@@ -434,6 +435,7 @@ class AssistantAgentPlannerTest extends TestCase
                 $this->assertSame($type, $actualType);
                 $this->assertSame($name, $query);
                 $this->assertNull($id);
+
                 return null;
             });
         $this->assertSame('ask_clarification', $decision->type);
@@ -503,6 +505,7 @@ class AssistantAgentPlannerTest extends TestCase
             function (string $type, ?string $query, ?int $id): array {
                 $this->assertSame('Корпус Б', $query);
                 $this->assertNull($id);
+
                 return ['id' => 73, 'label' => 'Корпус Б'];
             });
         $this->assertSame('execute_tool', $decision->type);
@@ -524,6 +527,7 @@ class AssistantAgentPlannerTest extends TestCase
         $decision = $this->planner()->decide('Сформируй отчет по движению материалов текущего проекта за ноябрь 2026', $this->projectContext(), null,
             static function (string $type, ?string $query, ?int $id) use (&$calls): ?array {
                 $calls[] = [$type, $query, $id];
+
                 return ['id' => 56, 'label' => 'Проверенный проект'];
             });
         $this->assertSame([['project', null, 56]], $calls);
@@ -560,8 +564,7 @@ class AssistantAgentPlannerTest extends TestCase
 
     private function decide(string $message, array $context, ?AssistantTaskState $pending = null, ?callable $resolver = null): \App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantAgentDecision
     {
-        return $this->planner()->decide($message, $context, $pending, $resolver ?? static fn (string $type, ?string $query, ?int $id): ?array =>
-            $id !== null ? ['id' => $id, 'label' => null] : null);
+        return $this->planner()->decide($message, $context, $pending, $resolver ?? static fn (string $type, ?string $query, ?int $id): ?array => $id !== null ? ['id' => $id, 'label' => null] : null);
     }
 
     private function planner(): AssistantAgentPlanner
@@ -575,6 +578,17 @@ class AssistantAgentPlannerTest extends TestCase
     /**
      * @return array<string, mixed>
      */
+    public function test_arbitrary_excel_bypasses_fixed_pdf_and_rag_execution(): void
+    {
+        $decision = $this->decide('Сделай Excel: договоры по подрядчикам с суммами и статусами', $this->projectContext(), null);
+        self::assertSame('answer', $decision->type);
+        self::assertNull($decision->toolName);
+        self::assertFalse($decision->clearPendingState);
+        $switch = $this->decide('Сделай Excel по договорам с суммами', $this->projectContext(), $this->pendingScheduleState());
+        self::assertSame('answer', $switch->type);
+        self::assertTrue($switch->clearPendingState);
+    }
+
     private function projectContext(): array
     {
         return [

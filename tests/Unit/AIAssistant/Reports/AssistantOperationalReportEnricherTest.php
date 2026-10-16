@@ -71,6 +71,19 @@ final class AssistantOperationalReportEnricherTest extends TestCase
         $this->assertStringContainsString('не найдено релевантных источников', mb_strtolower(implode(' ', $enriched['limitations'])));
     }
 
+    public function test_missing_optional_rag_does_not_discredit_existing_database_rows(): void
+    {
+        $report = ['sections' => [['title' => 'Проекты', 'total' => 6, 'rows' => [['Дом']]]],
+            'limitations' => ['Показаны первые восемь договоров.']];
+        $enriched = (new AssistantOperationalReportEnricher)->enrich($report, [
+            'sources' => [], 'has_sufficient_data' => false,
+            'limitations' => ['По запросу не найдено релевантных источников.'],
+        ]);
+
+        $this->assertTrue($enriched['has_structured_data']);
+        $this->assertSame($report['limitations'], $enriched['limitations']);
+    }
+
     /**
      * @return array<string, mixed>
      */

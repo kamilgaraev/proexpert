@@ -26,7 +26,9 @@ final class AssistantToolSurface
             'assistant_domain_discover_capabilities', 'search_projects', 'search_assistant_documents'];
         $capability = $plan['capability'] ?? [];
         $domains = array_filter([(string) ($capability['id'] ?? ''), (string) ($capability['domain'] ?? '')]);
-        if ($selectedEstimate) { $domains[] = 'estimates'; }
+        if ($selectedEstimate) {
+            $domains[] = 'estimates';
+        }
         $query = mb_strtolower((string) ($plan['request']['message'] ?? ''));
         $entities = $plan['request_understanding']['requested_entities'] ?? [];
         $context = is_array($plan['request']['context'] ?? null) ? $plan['request']['context'] : [];
@@ -79,14 +81,20 @@ final class AssistantToolSurface
             $selected[] = $operationalIntent['name'];
         }
         foreach (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::ORGANIZATION_TOOLS as $name => $reader) {
-            if ($reader::hasIntent($query)) { $selected[] = $name; }
+            if ($reader::hasIntent($query)) {
+                $selected[] = $name;
+            }
         }
         foreach (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::NAMED_TOOLS as $name => $reader) {
-            if ($reader::hasIntent($query)) { $selected[] = $name; }
+            if ($reader::hasIntent($query)) {
+                $selected[] = $name;
+            }
         }
         if (($plan['request_understanding']['primary_intent'] ?? null) === 'generate_report'
             || preg_match('/pdf|отч[её]т|report|сформируй|выгруз/iu', $signals)) {
-            $reports = ['generate_operational_pdf_report'];
+            $custom = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($query,
+                \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding::fromArray($plan['request_understanding'] ?? []));
+            $reports = $custom ? ['generate_custom_report', 'describe_custom_report_source'] : ['generate_operational_pdf_report'];
             foreach ([
                 '/прибыл|profit|рентабел|бюджет/iu' => ['generate_profitability_report'],
                 '/выполнен|completion|completed_work/iu' => ['generate_work_completion_report'],
@@ -98,7 +106,9 @@ final class AssistantToolSurface
                 '/график|срок|timeline|schedule/iu' => ['generate_project_timelines_report'],
                 '/документ|document|rag|норматив/iu' => ['generate_rag_pdf_report'],
             ] as $pattern => $tools) {
-                if (preg_match($pattern, $signals)) { array_push($reports, ...$tools); }
+                if (! $custom && preg_match($pattern, $signals)) {
+                    array_push($reports, ...$tools);
+                }
             }
             array_push($selected, ...$reports);
         }

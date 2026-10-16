@@ -8,12 +8,12 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantAgentDecision;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantResolvedPeriod;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskSlot;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
-use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
-use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
-use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportIntentResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSlotResolver;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -47,6 +47,9 @@ final readonly class AssistantAgentPlanner
     public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null, ?callable $resolveEntityScope = null): AssistantAgentDecision
     {
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
+        if (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($message, $requestUnderstanding)) {
+            return new AssistantAgentDecision(type: 'answer', clearPendingState: $pendingState?->status === 'waiting_for_slots');
+        }
         if ($this->blocksReportPlanning($requestUnderstanding, $pendingState)) {
             return new AssistantAgentDecision(type: 'answer');
         }
@@ -274,6 +277,7 @@ final readonly class AssistantAgentPlanner
                     $state = new AssistantTaskState($state->id, $state->domain, $state->capability, $state->toolName,
                         $state->status, $slots, $state->sourceMessage);
                 }
+
                 continue;
             }
             $scopeSlot = '__scope_'.$entityType;
@@ -290,6 +294,7 @@ final readonly class AssistantAgentPlanner
                 $slots[] = new AssistantTaskSlot($scopeSlot, false, '__organization');
                 $state = new AssistantTaskState($state->id, $state->domain, $state->capability, $state->toolName,
                     $state->status, $slots, $state->sourceMessage);
+
                 continue;
             }
             $contextEntity = $this->contextEntityScope($context, $entityType);
@@ -344,6 +349,7 @@ final readonly class AssistantAgentPlanner
             'contract' => 'договор(?:а|у|ом|е)?',
             default => '',
         };
+
         return $noun !== '' && preg_match('/\b(?:текущ|выбранн|эт(?:от|ого|ом|ому|им))[а-яё]*\s+'.$noun.'\b|\b'.$noun.'\s+(?:текущ|выбранн)[а-яё]*\b/iu', $message) === 1;
     }
 
@@ -358,6 +364,7 @@ final readonly class AssistantAgentPlanner
                 return ['id' => $ref['id']];
             }
         }
+
         return null;
     }
 
@@ -379,6 +386,7 @@ final readonly class AssistantAgentPlanner
         if ($name === '' || preg_match('/^(?:(?:за|с|по|для|на|от|этот|этого|весь|всем|все|сегодня|проекта|объекта|склада|подрядчика|сотрудника)\b|текущ|выполн)/iu', $name) === 1) {
             return null;
         }
+
         return $name;
     }
 

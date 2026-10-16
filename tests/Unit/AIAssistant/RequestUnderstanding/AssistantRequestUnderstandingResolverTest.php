@@ -11,6 +11,78 @@ use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
+    public function test_excel_and_csv_requests_are_explicit_files_and_respect_no_file_constraints(): void
+    {
+        $resolver = new AssistantRequestUnderstandingResolver;
+        foreach (['Сделай Excel: договоры по подрядчикам с суммами и статусами' => 'xlsx',
+            'Выгрузи CSV с просроченными платежами' => 'csv', 'Сформируй таблицу в XLSX по проектам' => 'xlsx',
+            'Сделай Excel по договорам, без PDF' => 'xlsx', 'Из Excel сделай CSV с платежами' => 'csv',
+            'Сделай PDF по проектам, не Excel' => 'pdf'] as $query => $format) {
+            $understanding = $resolver->resolve($query, []);
+            self::assertSame('generate_report', $understanding->primaryIntent);
+            self::assertSame($format, $understanding->outputFormat);
+        }
+        $negative = $resolver->resolve('Объясни Excel простым текстом, без файлов и без отчётов', []);
+        self::assertNotSame('generate_report', $negative->primaryIntent);
+        self::assertTrue($negative->blocksFileGeneration());
+        $understanding = $resolver->resolve('Сделай Excel по договорам, без PDF', []);
+        $policy = new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+        self::assertTrue($policy->canExecuteTool('generate_custom_report', $understanding, false, ['format' => 'xlsx'])->allowed);
+        self::assertFalse($policy->canExecuteTool('generate_custom_report', $understanding, false, ['format' => 'pdf'])->allowed);
+        self::assertFalse($policy->canExecuteTool('generate_operational_pdf_report', $understanding)->allowed);
+    }
+
+    public function test_no_pdf_preserves_explicit_spreadsheet_export_with_summary_analysis_or_knowledge_markers(): void
+    {
+        $resolver = new AssistantRequestUnderstandingResolver;
+        foreach (['Подготовь сводку в Excel без PDF' => 'xlsx',
+            'Проанализируй платежи и выгрузи CSV, не PDF' => 'csv',
+            'Найди факты из базы и сделай Excel, без PDF' => 'xlsx'] as $query => $format) {
+            $result = $resolver->resolve($query);
+            self::assertSame('generate_report', $result->primaryIntent, $query);
+            self::assertSame($format, $result->outputFormat, $query);
+            self::assertContains('no_pdf', $result->constraints);
+            self::assertFalse($result->blocksFileGeneration());
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($query, $result));
+        }
+        foreach (['Подготовь сводку в Excel без PDF. Только текст.',
+            'Проанализируй платежи в CSV, без PDF и без файлов.',
+            'Найди факты в Excel, без PDF и без отчётов.'] as $query) {
+            $result = $resolver->resolve($query);
+            self::assertNotSame('generate_report', $result->primaryIntent, $query);
+            self::assertTrue($result->blocksFileGeneration(), $query);
+        }
+    }
+
+    public function test_negative_creation_applies_to_its_own_format_instead_of_all_files(): void
+    {
+        $resolver = new AssistantRequestUnderstandingResolver;
+        foreach (['Не делай PDF, сделай Excel по платежам' => 'xlsx',
+            'Не формируй PDF, сделай CSV по проектам' => 'csv',
+            'Не создавай ПДФ, подготовь сводку в Excel' => 'xlsx',
+            'Не выгружай PDF, нужен CSV по платежам' => 'csv',
+            'Сделай CSV по платежам, не генерируй PDF' => 'csv',
+            'Не делай файл PDF, сделай Excel по платежам' => 'xlsx',
+            'Не формируй PDF-файл, нужен CSV по проектам' => 'csv',
+            'Без файла PDF, подготовь сводку в Excel' => 'xlsx',
+            'Не нужен файл PDF, нужен CSV по платежам' => 'csv',
+            'Не делай отчет в PDF, сделай Excel по договорам' => 'xlsx'] as $query => $format) {
+            $result = $resolver->resolve($query);
+            self::assertSame('generate_report', $result->primaryIntent, $query);
+            self::assertSame($format, $result->outputFormat, $query);
+            self::assertContains('no_pdf', $result->constraints);
+            self::assertNotContains('no_file', $result->constraints);
+            self::assertNotContains('no_report', $result->constraints);
+            self::assertFalse($result->blocksFileGeneration());
+        }
+        foreach (['Не делай PDF, файл или отчет. Сделай сводку текстом.',
+            'Не формируй файлы, сделай сводку по платежам в Excel',
+            'Не создавай отчет, покажи данные в CSV',
+            'Не делай PDF, файл или отчет. Сделай сводку в Excel.'] as $query) {
+            self::assertTrue($resolver->resolve($query)->blocksFileGeneration(), $query);
+        }
+    }
+
     use UsesAssistantUnitTranslations;
 
     public function test_settings_toggles_require_confirmation(): void

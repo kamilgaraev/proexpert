@@ -33,6 +33,7 @@ final class AssistantOperationalReportServiceTest extends TestCase
     public static function formattedMachineValuesProvider(): array
     {
         return [
+            'terminated contract' => ['terminated', 'contracts', 'status', 'Расторгнут'],
             'purchase request approved' => ['approved', 'purchase_requests', 'status', 'Одобрена'],
             'supplier request responded' => ['responded', 'supplier_requests', 'status', 'Ответ получен'],
             'proposal accepted' => ['accepted', 'supplier_proposals', 'status', 'Принято'],

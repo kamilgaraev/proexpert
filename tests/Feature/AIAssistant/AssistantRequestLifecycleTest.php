@@ -1370,7 +1370,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $permissions->shouldReceive('canExposeTool')->andReturn(true);
         $permissions->shouldReceive('isMutationTool')->andReturn(false);
         $registry = new AIToolRegistry;
-        foreach (['assistant_domain_discover_capabilities', 'generate_operational_pdf_report'] as $name) {
+        foreach (['assistant_domain_discover_capabilities', 'generate_operational_pdf_report', 'generate_custom_report'] as $name) {
             $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
             $tool->method('getName')->willReturn($name);
             $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
@@ -1381,13 +1381,17 @@ final class AssistantRequestLifecycleTest extends TestCase
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->method('plan')->willReturn(['request' => ['context' => [], 'allow_actions' => true],
             'task_type' => 'summary', 'access_context_public' => [], 'capability' => ['id' => 'reports']]);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
-        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
-        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
-            $usage + ['content' => '', 'tool_calls' => [['id' => 'discover', 'function' => ['name' => 'assistant_domain_discover_capabilities', 'arguments' => '{}']]]],
-            $usage + ['content' => 'Отчёт создан: https://example.test/secret.pdf',
-                'tool_calls' => [['id' => 'export', 'function' => ['name' => 'generate_operational_pdf_report', 'arguments' => '{}']]]]
+        $provider->expects($this->never())->method('chat');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        $call = static fn (string $id, string $name): array => ['type' => 'function_call', 'id' => 'fc_'.$id, 'status' => 'completed',
+            'call_id' => $id, 'name' => $name, 'arguments' => '{}'];
+        $discover = $call('discover_budget', 'assistant_domain_discover_capabilities');
+        $export = $call('export_budget', 'generate_custom_report');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $usage + ['content' => '', 'output' => [$discover], 'function_calls' => [$discover]],
+            $usage + ['content' => 'Отчёт создан: https://example.test/secret.pdf', 'output' => [$export], 'function_calls' => [$export]]
         );
         $payload = $this->quote(['message' => 'Покажи текущий статус проекта', 'allow_actions' => true]);
         $service = $this->providerService($provider, $registry, $orchestrator);
@@ -1661,7 +1665,114 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+        return ['ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+    }
+
+    #[DataProvider('customReportRequests')]
+    public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(string $query, bool $hasPendingReport = false): void
+    {
+        (require database_path('migrations/2026_08_06_000050_scope_personal_files_to_organizations.php'))->up();
+        (require database_path('migrations/2025_07_09_000001_create_report_files_table.php'))->up();
+        (require database_path('migrations/2025_07_17_000100_add_organization_id_to_report_files_table.php'))->up();
+        Schema::create('ai_assistant_report_access', static function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('user_id');
+            $table->string('storage_path', 1024);
+            $table->jsonb('source_refs');
+            $table->jsonb('required_domains');
+            $table->timestamp('expires_at');
+            $table->timestamps();
+        });
+        $authorization = $this->mock(AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModules')->andReturn(collect(array_map(static fn (string $slug): Module => new Module(['slug' => $slug]),
+            ['ai-assistant', 'users', 'reports'])));
+        $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
+        $this->app->instance(AssistantDataAccessPolicy::class, $policy);
+        $permissions = $this->mock(AIPermissionChecker::class);
+        foreach (['canUseAssistant', 'canExecuteTool', 'canExposeTool'] as $method) {
+            $permissions->shouldReceive($method)->andReturn(true);
+        }
+        $permissions->shouldReceive('isMutationTool')->andReturn(false);
+        $this->conversations = new ConversationManager($policy);
+        $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
+        $sources = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSource(
+            new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults()), $policy);
+        $references = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference($sources, $policy);
+        $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::class, $references);
+        $reference = $references->create($this->actor, $this->organization->id,
+            ['domain' => 'people', 'entity_type' => 'user', 'project_id' => null], ['name'], [$this->actor->id], hash('sha256', 'snapshot'), now()->toISOString());
+        $files = $this->createMock(\App\Services\Storage\FileService::class);
+        $files->expects($this->once())->method('putPrivate')->willReturnCallback(static fn (string $path, $stream, string $mime, string $hash) => new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', 4, $hash, $mime));
+        $storage = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files));
+        $registry = new AIToolRegistry;
+        $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $tool->method('getName')->willReturn('generate_custom_report');
+        $tool->method('getDescription')->willReturn('Custom report');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['format' => ['type' => 'string', 'enum' => ['xlsx']]], 'required' => ['format'], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->willReturnCallback(function () use ($storage, $reference): array {
+            $stream = fopen('php://temp', 'w+b');
+            fwrite($stream, 'PKqa');
+            rewind($stream);
+            try {
+                return ['status' => 'success', 'report_type' => 'custom', 'source_refs' => [$reference], ...$storage->store($stream, 'Сотрудники.xlsx', 'xlsx',
+                    $this->organization, $this->actor, [$reference], ['people'])];
+            } finally {
+                fclose($stream);
+            }
+        });
+        $registry->registerTool($tool);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects($this->never())->method('chat');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        $call = ['type' => 'function_call', 'id' => 'fc_custom', 'status' => 'completed', 'call_id' => 'custom', 'name' => 'generate_custom_report', 'arguments' => '{"format":"xlsx"}'];
+        $message = ['type' => 'message', 'id' => 'msg_custom', 'status' => 'completed', 'role' => 'assistant',
+            'content' => [['type' => 'output_text', 'text' => 'Готово', 'annotations' => []]]];
+        $provider->expects($this->exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $usage + ['content' => '', 'output' => [$call], 'function_calls' => [$call]],
+            $usage + ['content' => 'Готово', 'output' => [$message], 'function_calls' => []]
+        );
+        $conversationId = null;
+        if ($hasPendingReport) {
+            $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Переключение отчёта');
+            $conversation->context = ['selected_project_id' => 56, 'agent_state' => [
+                'id' => 'report.unspecified', 'domain' => 'reports', 'capability' => 'reports', 'tool_name' => '',
+                'status' => 'waiting_for_slots', 'source_message' => 'Сделай отчет',
+                'slots' => [['name' => 'report_type', 'required' => true, 'value' => null, 'label' => null]],
+            ]];
+            $conversation->save();
+            $conversationId = $conversation->id;
+        }
+        $payload = $this->quote(['message' => $query, ...($conversationId === null ? [] : ['conversation_id' => $conversationId])]);
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->method('plan')->willReturn(['request' => ['message' => $payload['message'], 'context' => []],
+            'request_understanding' => (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($payload['message'])->toArray(),
+            'task_type' => 'summary', 'access_context_public' => [], 'capability' => ['id' => 'reports']]);
+        $service = $this->providerService($provider, $registry, $orchestrator);
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, $conversationId, $payload);
+        $metadata = $response['message']['metadata'];
+        self::assertArrayHasKey('artifacts', $metadata, json_encode($response['message'], JSON_UNESCAPED_UNICODE));
+        self::assertCount(1, $metadata['artifacts']);
+        self::assertSame('Сотрудники.xlsx', $metadata['artifacts'][0]['filename']);
+        self::assertSame('excel', $metadata['artifacts'][0]['type']);
+        self::assertStringStartsWith('org-'.$this->organization->id.'/personal-files/user-'.$this->actor->id.'/', $metadata['artifacts'][0]['storage_path']);
+        self::assertSame('verified', $metadata['validation_status']);
+        self::assertFalse($metadata['needs_clarification']);
+        self::assertSame(trans_message('ai_custom_reports.ready'), $response['message']['content']);
+        if ($hasPendingReport) {
+            $savedContext = \App\BusinessModules\Features\AIAssistant\Models\Conversation::query()->findOrFail($conversationId)->context;
+            self::assertArrayNotHasKey('agent_state', $savedContext);
+            self::assertSame(56, $savedContext['selected_project_id']);
+        }
+    }
+
+    public static function customReportRequests(): array
+    {
+        return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF'], ['Не делай PDF, сделай Excel со списком сотрудников'], ['Не делай файл PDF, сделай Excel со списком сотрудников'], ['Сделай Excel со списком сотрудников', true]];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
@@ -1696,6 +1807,11 @@ final class AssistantRequestLifecycleTest extends TestCase
             tokenBudget: new TokenBudgetService(new TokenCounter),
         );
     }
+}
+
+interface LifecycleNativeResponsesProvider extends LLMProviderInterface
+{
+    public function responses(array $input, array $options = []): array;
 }
 
 final class LifecycleProviderAIAssistantService extends AIAssistantService
