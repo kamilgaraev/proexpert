@@ -18,6 +18,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\User;
 use App\Services\Mobile\MobilePaymentDocumentService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -97,6 +98,8 @@ final class MobilePaymentDocumentController extends Controller
             return MobileResponse::error(trans_message('payments.validation_error'), 422);
         } catch (\DomainException $exception) {
             return $this->domainError($exception);
+        } catch (AuthorizationException) {
+            return MobileResponse::error(trans_message('payments.blockers.permission_required'), 403);
         } catch (Throwable $exception) {
             return $this->failed($request, $exception, 'store');
         }
@@ -117,6 +120,8 @@ final class MobilePaymentDocumentController extends Controller
             return MobileResponse::error(trans_message('payments.validation_error'), 422);
         } catch (\DomainException $exception) {
             return $this->domainError($exception);
+        } catch (AuthorizationException) {
+            return MobileResponse::error(trans_message('payments.blockers.permission_required'), 403);
         } catch (Throwable $exception) {
             return $this->failed($request, $exception, 'update', ['document_id' => $id]);
         }
@@ -135,6 +140,8 @@ final class MobilePaymentDocumentController extends Controller
             return MobileResponse::error(trans_message('payments.not_found'), 404);
         } catch (\DomainException $exception) {
             return $this->domainError($exception);
+        } catch (AuthorizationException) {
+            return MobileResponse::error(trans_message('payments.blockers.permission_required'), 403);
         } catch (Throwable $exception) {
             return $this->failed($request, $exception, 'submit', ['document_id' => $id]);
         }

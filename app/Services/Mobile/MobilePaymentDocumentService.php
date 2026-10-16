@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Mobile;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
@@ -13,7 +14,6 @@ use App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
 
 final class MobilePaymentDocumentService
 {
@@ -23,6 +23,7 @@ final class MobilePaymentDocumentService
         private readonly PaymentDocumentPresenter $presenter,
         private readonly MobileProjectAccessResolver $projectAccess,
         private readonly ApprovalWorkflowService $approvals,
+        private readonly MobileMutationIdempotency $idempotency,
     ) {}
 
     /** @return array<string, mixed> */
@@ -144,31 +145,56 @@ final class MobilePaymentDocumentService
         $data['origin_key'] = 'mobile:'.$user->id.':'.$key;
         $data['mobile_payload_hash'] = $payloadHash;
 
-        [$document, $created, $warnings] = DB::transaction(function () use ($organizationId, $key, $data, $user): array {
-            if (DB::getDriverName() === 'pgsql') {
-                DB::select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ["mobile-payment-create:{$organizationId}:{$key}"]);
-            }
-            $existing = PaymentDocument::query()
-                ->where('organization_id', $organizationId)
-                ->where('origin_key', $data['origin_key'])
-                ->first();
-            if ($existing) {
-                if ($existing->mobile_payload_hash !== $data['mobile_payload_hash']) {
+        $created = false;
+        $warnings = [];
+        $document = $this->idempotency->run(
+            $organizationId,
+            (int) $user->id,
+            $key,
+            'payments.documents.create',
+            $data,
+            function () use ($organizationId, $data, $user, &$created, &$warnings): PaymentDocument {
+                $existing = PaymentDocument::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('origin_key', $data['origin_key'])
+                    ->first();
+                if ($existing) {
+                    if ($existing->mobile_payload_hash !== $data['mobile_payload_hash']) {
+                        throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
+                    }
+                    $existing = $this->queries->findDetailed($organizationId, (int) $existing->id, $user, 'payments.invoice.create');
+                    $this->assertCanAccessDocument($user, $existing, 'payments.invoice.create');
+
+                    return $existing;
+                }
+                $result = $this->workflow->create($organizationId, (int) $user->id, $data, $user);
+                $payment = $result['document'];
+                $isRequestOrder = $payment->document_type === PaymentDocumentType::PAYMENT_ORDER
+                    && $payment->source_type === PaymentDocument::class
+                    && $payment->source instanceof PaymentDocument
+                    && $payment->source->document_type === PaymentDocumentType::PAYMENT_REQUEST;
+                if (! $isRequestOrder && $payment->mobile_payload_hash !== $data['mobile_payload_hash']) {
                     throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
                 }
-                $existing = $this->queries->findDetailed($organizationId, (int) $existing->id, $user, 'payments.invoice.create');
+                $this->assertCanAccessDocument($user, $payment, 'payments.invoice.create');
+                $created = $isRequestOrder ? $payment->wasRecentlyCreated : true;
+                $warnings = $result['warnings'];
+
+                return $payment;
+            },
+            function (int $id) use ($organizationId, $user): ?PaymentDocument {
+                $existing = PaymentDocument::query()->forOrganization($organizationId)->find($id);
+                if (! $existing instanceof PaymentDocument) {
+                    return null;
+                }
                 $this->assertCanAccessDocument($user, $existing, 'payments.invoice.create');
 
-                return [$existing, false, []];
-            }
-            $result = $this->workflow->create($organizationId, (int) $user->id, $data, $user);
-            if ($result['document']->mobile_payload_hash !== $data['mobile_payload_hash']) {
-                throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
-            }
-            $this->assertCanAccessDocument($user, $result['document'], 'payments.invoice.create');
-
-            return [$result['document'], true, $result['warnings']];
-        });
+                return $this->queries->findDetailed($organizationId, $id, $user, 'payments.invoice.create');
+            },
+        );
+        if (! $document instanceof PaymentDocument) {
+            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
+        }
 
         return [
             'data' => $this->withCapabilities(

@@ -294,6 +294,14 @@ class PaymentDocumentService
             throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
         }
         $data['contractor_id'] = $counterpartyId;
+        if (array_key_exists('vat_rate', $data)) {
+            $sameVatRate = $data['vat_rate'] === null || $request->vat_rate === null
+                ? $data['vat_rate'] === $request->vat_rate
+                : BigDecimal::of((string) $data['vat_rate'])->isEqualTo(BigDecimal::of((string) $request->vat_rate));
+            if (! $sameVatRate) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+        }
         $data['vat_rate'] = $request->vat_rate;
         $contractId = $this->budgetLimitService->contractId($request);
         $data['invoiceable_type'] = $contractId !== null ? Contract::class : null;
@@ -315,6 +323,7 @@ class PaymentDocumentService
             && (in_array($existingOrder->status, [PaymentDocumentStatus::CANCELLED, PaymentDocumentStatus::REJECTED], true)
                 || ! BigDecimal::of((string) $existingOrder->amount)->isEqualTo(BigDecimal::of((string) $data['amount']))
                 || $existingOrder->currency !== $data['currency']
+                || $existingOrder->vat_rate !== $request->vat_rate
                 || ($existingOrder->direction?->value ?? InvoiceDirection::OUTGOING->value) !== $data['direction']
                 || $this->budgetLimitService->contractId($existingOrder) !== $contractId
                 || $this->budgetLimitService->counterpartyId($existingOrder) !== $counterpartyId)) {

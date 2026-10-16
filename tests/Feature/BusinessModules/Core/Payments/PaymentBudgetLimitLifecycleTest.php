@@ -264,6 +264,11 @@ final class PaymentBudgetLimitLifecycleTest extends TestCase
             'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
         ]);
         self::assertSame(0, PaymentDocument::query()->where('source_type', PaymentDocument::class)->where('source_id', $request->id)->count());
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + ['vat_rate' => 0])->assertUnprocessable();
+        $this->assertDatabaseHas('budget_limit_reservations', [
+            'payment_document_id' => $request->id, 'status' => BudgetLimitReservation::STATUS_RESERVED, 'amount' => 900,
+        ]);
         $response = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/payments/documents', $payload)->assertCreated();
         $orderId = $response->json('data.id');

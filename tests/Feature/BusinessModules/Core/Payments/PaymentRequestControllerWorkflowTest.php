@@ -296,6 +296,79 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         $this->assertDatabaseCount('payment_transactions', 0);
     }
 
+    public function test_linked_request_order_cannot_change_approved_vat_rate(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $request->update(['vat_rate' => 20]);
+        $accepted = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertOk();
+        $order = PaymentDocument::findOrFail($accepted->json('data.payment_order.id'));
+        self::assertSame('20.00', $order->vat_rate);
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['vat_rate' => 0])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['vat_rate' => null])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$order->id}", ['vat_rate' => '20'])
+            ->assertOk();
+        self::assertSame('20.00', $order->fresh()->vat_rate);
+        self::assertSame('750.00', $order->fresh()->amount_without_vat);
+        self::assertSame('150.00', $order->fresh()->vat_amount);
+        $payload = [
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+            'document_date' => now()->toDateString(), 'amount' => 900,
+            'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $contractor->id,
+            'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+        ];
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + ['vat_rate' => 0])->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', $payload + ['vat_rate' => '20.00'])
+            ->assertCreated()->assertJsonPath('data.id', $order->id);
+        self::assertSame(1, PaymentDocument::query()->where('source_type', PaymentDocument::class)
+            ->where('source_id', $request->id)->count());
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_legacy_request_order_with_different_vat_cannot_be_reused_or_submitted(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $request = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+        $request->update(['vat_rate' => 20]);
+        $legacy = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::DRAFT);
+        $legacy->update([
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            'vat_rate' => 0, 'description' => 'Legacy VAT mismatch',
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/documents', [
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
+                'document_date' => now()->toDateString(), 'amount' => 900,
+                'payer_organization_id' => $context->organization->id, 'payee_contractor_id' => $contractor->id,
+                'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+            ])->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/requests/{$request->id}/accept")->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/payments/documents/{$legacy->id}", ['description' => 'Changed'])
+            ->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/documents/{$legacy->id}/submit")->assertUnprocessable();
+        self::assertSame('0.00', $legacy->fresh()->vat_rate);
+        self::assertSame('Legacy VAT mismatch', $legacy->fresh()->description);
+        self::assertSame(PaymentDocumentStatus::DRAFT, $legacy->fresh()->status);
+        self::assertSame(PaymentDocumentStatus::APPROVED, $request->fresh()->status);
+        $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
     public function test_generic_order_creation_cannot_bypass_request_approval_or_change_its_obligation(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
