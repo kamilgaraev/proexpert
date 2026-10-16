@@ -95,13 +95,10 @@ final readonly class DocumentUnitPublicationFactory
     private function candidateDecisions(array $claims): array
     {
         $matcher = new ClaimSemanticMatcher;
-        $groups = [];
-        foreach ($claims as $claim) {
-            $groups[$matcher->key($claim).$matcher->entityScope($claim)][] = $claim;
-        }
 
-        return array_map(function (ObservationClaim $claim) use ($groups, $matcher): ArbitrationDecision {
-            $support = $groups[$matcher->key($claim).$matcher->entityScope($claim)];
+        return array_map(function (ObservationClaim $claim) use ($claims, $matcher): ArbitrationDecision {
+            $support = array_values(array_filter($claims,
+                static fn (ObservationClaim $item): bool => $matcher->equivalent($claim, $item)));
             if (count(array_unique(array_map(static fn (ObservationClaim $item): string => $item->observerRole, $support))) < 2) {
                 $support = [$claim];
             }

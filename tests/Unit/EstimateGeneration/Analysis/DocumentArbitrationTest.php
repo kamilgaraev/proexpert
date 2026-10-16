@@ -668,6 +668,25 @@ final class DocumentArbitrationTest extends TestCase
     }
 
     #[Test]
+    public function different_numeric_room_keys_do_not_gain_shared_confidence_from_loose_signatures(): void
+    {
+        $runs = $this->roomNameRuns();
+        foreach (['observer_construction' => 'room.1', 'observer_risk' => 'room1'] as $role => $entityKey) {
+            $payload = $runs[$role]->payload;
+            $payload['claims'][0]['entityKey'] = $entityKey;
+            $runs[$role] = new AiRoleRunResult($payload, null);
+        }
+        $publication = (new DocumentUnitPublicationFactory)->fromAnalysis($this->sourceInput(), $runs, null);
+        foreach ($publication->decisions as $decision) {
+            self::assertSame([$decision->claimId], $decision->supportingClaimIds);
+        }
+        $confidence = array_map(static fn ($decision): float => (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactConfidence)
+            ->forDecision($decision, $publication->claims), $publication->decisions);
+        sort($confidence);
+        self::assertSame([0.95, 0.97], $confidence);
+    }
+
+    #[Test]
     public function explicit_arbitration_lineage_is_not_rewritten_by_fallback_grouping(): void
     {
         $publication = (new DocumentUnitPublicationFactory)->fromAnalysis($this->sourceInput(), $this->roomNameRuns(),
