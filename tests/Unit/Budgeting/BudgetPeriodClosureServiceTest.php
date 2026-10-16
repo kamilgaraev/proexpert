@@ -11,6 +11,9 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
+use Illuminate\Database\ConnectionResolver;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\PostgresConnection;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
@@ -23,8 +26,8 @@ final class BudgetPeriodClosureServiceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
         $container->instance('translator', $translator);
@@ -34,7 +37,8 @@ final class BudgetPeriodClosureServiceTest extends TestCase
                 'fallback_locale' => 'ru',
             ],
         ]));
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -54,7 +58,7 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_locked_statuses_block_regular_mutations(): void
     {
-        $service = new BudgetPeriodClosureService();
+        $service = new BudgetPeriodClosureService;
 
         $this->assertFalse($service->isLockedStatus(BudgetPeriodClosureService::STATUS_OPEN));
         $this->assertFalse($service->isLockedStatus(BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT));
@@ -73,21 +77,21 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_period_closure_summary_returns_human_readable_closed_state(): void
     {
-        $service = new BudgetPeriodClosureService();
-        $period = new BudgetPeriod();
+        $service = new BudgetPeriodClosureService;
+        $period = new BudgetPeriod;
         $period->forceFill([
             'uuid' => 'period-uuid',
             'status' => BudgetPeriodClosureService::STATUS_CLOSED,
         ]);
 
-        $user = new User();
+        $user = new User;
         $user->forceFill([
             'id' => 15,
             'name' => 'Финансовый директор',
             'email' => 'finance@example.test',
         ]);
 
-        $closure = new BudgetPeriodClosure();
+        $closure = new BudgetPeriodClosure;
         $closure->forceFill([
             'closure_status' => BudgetPeriodClosureService::STATUS_CLOSED,
             'closure_mode' => 'management',
@@ -96,7 +100,19 @@ final class BudgetPeriodClosureServiceTest extends TestCase
         $closure->setRelation('closedBy', $user);
         $period->setRelation('latestClosure', $closure);
 
-        $summary = $service->periodClosureSummary($period);
+        $previousResolver = Model::getConnectionResolver();
+        $resolver = new ConnectionResolver(['unit' => new PostgresConnection(static fn () => throw new \LogicException('Unit fixture must not access a database.'))]);
+        $resolver->setDefaultConnection('unit');
+        Model::setConnectionResolver($resolver);
+        try {
+            $summary = $service->periodClosureSummary($period);
+        } finally {
+            if ($previousResolver !== null) {
+                Model::setConnectionResolver($previousResolver);
+            } else {
+                Model::unsetConnectionResolver();
+            }
+        }
 
         $this->assertSame('period-uuid', $summary['period_id']);
         $this->assertSame('closed', $summary['status']);
@@ -110,7 +126,7 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_locked_operations_are_translated_for_api_contract(): void
     {
-        $operations = (new BudgetPeriodClosureService())->lockedOperations();
+        $operations = (new BudgetPeriodClosureService)->lockedOperations();
         $labels = array_column($operations, 'label', 'code');
 
         $this->assertSame('Создание, изменение и удаление строк бюджета', $labels['budget_lines']);
@@ -120,14 +136,14 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_reopened_period_requires_active_window_and_allowed_operation(): void
     {
-        $service = new BudgetPeriodClosureService();
-        $period = new BudgetPeriod();
+        $service = new BudgetPeriodClosureService;
+        $period = new BudgetPeriod;
         $period->forceFill([
             'uuid' => 'period-uuid',
             'status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
         ]);
 
-        $closure = new BudgetPeriodClosure();
+        $closure = new BudgetPeriodClosure;
         $closure->setRawAttributes([
             'closure_status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
             'reopened_until' => now()->addHour()->toDateTimeString(),
@@ -145,14 +161,14 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_expired_reopen_window_blocks_mutations(): void
     {
-        $service = new BudgetPeriodClosureService();
-        $period = new BudgetPeriod();
+        $service = new BudgetPeriodClosureService;
+        $period = new BudgetPeriod;
         $period->forceFill([
             'uuid' => 'period-uuid',
             'status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
         ]);
 
-        $closure = new BudgetPeriodClosure();
+        $closure = new BudgetPeriodClosure;
         $closure->setRawAttributes([
             'closure_status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
             'reopened_until' => now()->subMinute()->toDateTimeString(),
@@ -168,7 +184,7 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_reopenable_status_contract_is_restricted_to_closed_states(): void
     {
-        $service = new BudgetPeriodClosureService();
+        $service = new BudgetPeriodClosureService;
 
         $this->assertTrue($service->canReopenStatus(BudgetPeriodClosureService::STATUS_CLOSED));
         $this->assertTrue($service->canReopenStatus(BudgetPeriodClosureService::STATUS_SOFT_CLOSED));
@@ -180,7 +196,7 @@ final class BudgetPeriodClosureServiceTest extends TestCase
 
     public function test_reopened_period_blocks_regular_mutations_without_operation_scope(): void
     {
-        $service = new BudgetPeriodClosureService();
+        $service = new BudgetPeriodClosureService;
 
         $this->expectException(DomainException::class);
 
