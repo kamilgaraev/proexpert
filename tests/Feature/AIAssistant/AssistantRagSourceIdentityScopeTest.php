@@ -302,7 +302,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
         $batches = $this->policy->aggregateSourceIdentityBatches(RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'),
             $this->actor, $this->organization->id, $columns, $aggregate);
-        self::assertCount(1, $batches);
+        self::assertCount(2, $batches);
         $read = static function () use ($batches): array {
             $result = [];
             foreach ($batches as $batch) {
@@ -330,8 +330,10 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
                 $collect($child);
             }
         };
-        $plan = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
-        $collect(json_decode($plan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        foreach ($batches as $batch) {
+            $plan = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
+            $collect(json_decode($plan->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+        }
         self::assertLessThanOrEqual(1200, $scanned, 'Bounded counter batches must not recover the same source rows again after their identity check.');
         DB::table('ai_rag_chunks')->where('source_id', $source->id)->delete();
         self::assertSame(['budgeting' => [1, 0, 0], 'estimate' => [1, 0, 0], 'file_document' => [1, 0, 0], 'project' => [1001, 0, 0]], $read());
