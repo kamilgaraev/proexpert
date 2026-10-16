@@ -143,6 +143,7 @@ class PaymentRequestController extends Controller
                 ->forOrganization($organizationId)
                 ->findOrFail((int) $id);
 
+            $validated['created_by_user_id'] = (int) $request->user()->id;
             $paymentOrder = $this->requestService->acceptRequest($document, $validated);
             $document->loadMissing(['payeeContractor', 'project', 'budgetArticle', 'responsibilityCenter']);
 
@@ -158,6 +159,8 @@ class PaymentRequestController extends Controller
                     'created_at' => $paymentOrder->created_at?->toISOString(),
                 ],
             ], trans_message('payments.requests.accepted'));
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            return AdminResponse::error($e->getMessage(), 403);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Illuminate\Validation\ValidationException $e) {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Services;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -20,11 +21,20 @@ final class PaymentDocumentReferenceAccessService
 
     public function assertInput(int $organizationId, User $actor, string $permission, array $data, ?int $existingProjectId = null): void
     {
+        $sourceDocument = null;
+        if ($permission === 'payments.invoice.create' && $existingProjectId === null
+            && ! array_key_exists('project_id', $data)
+            && ($data['document_type'] ?? null) === PaymentDocumentType::PAYMENT_ORDER->value
+            && ($data['source_type'] ?? null) === PaymentDocument::class
+            && ($sourceId = $this->id($data['source_id'] ?? null)) !== null) {
+            $sourceDocument = PaymentDocument::query()->useWritePdo()->where('organization_id', $organizationId)->find($sourceId);
+        }
         $derivesProject = $existingProjectId === null && (
             $this->id($data['contract_id'] ?? null) !== null
             || (($data['source_type'] ?? null) === Contract::class && $this->id($data['source_id'] ?? null) !== null)
             || (in_array($data['invoiceable_type'] ?? null, [Contract::class, ContractPerformanceAct::class], true)
                 && $this->id($data['invoiceable_id'] ?? null) !== null)
+            || $sourceDocument?->document_type === PaymentDocumentType::PAYMENT_REQUEST
         );
         $projectIds = [];
         if (! array_key_exists('project_id', $data)) {
@@ -92,7 +102,7 @@ final class PaymentDocumentReferenceAccessService
                     $projectIds[] = $projectId === null ? null : (int) $projectId;
                 }
             } elseif ($type === PaymentDocument::class && $reference === 'source') {
-                $source = PaymentDocument::query()->useWritePdo()->where('organization_id', $organizationId)->find($id);
+                $source = $sourceDocument ?? PaymentDocument::query()->useWritePdo()->where('organization_id', $organizationId)->find($id);
                 if (! $source instanceof PaymentDocument) {
                     $this->notFound();
                 }

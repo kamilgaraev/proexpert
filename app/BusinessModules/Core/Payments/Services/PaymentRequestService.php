@@ -173,6 +173,16 @@ class PaymentRequestService
         DB::beginTransaction();
 
         try {
+            $document = PaymentDocument::query()
+                ->forOrganization((int) $document->organization_id)
+                ->whereKey($document->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($document->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
+                throw new \DomainException(trans_message('payments.validation.request_accept_only_payment_requests'));
+            }
+
             // Утверждаем документ (если требуется workflow)
             if ($document->requiresApproval()) {
                 // Workflow утверждения был инициирован при submit
@@ -183,7 +193,6 @@ class PaymentRequestService
             }
 
             // Создаем платежное поручение на основе требования
-            $this->budgetLimitService->release($document, trans_message('budgeting.limits.request_accepted'));
             $paymentOrder = $this->createPaymentOrderFromRequest($document, $data);
 
             Log::info('payment_request.accepted', [

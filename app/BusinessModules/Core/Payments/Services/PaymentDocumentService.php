@@ -15,6 +15,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\User;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -58,10 +59,29 @@ class PaymentDocumentService
             DB::beginTransaction();
 
             try {
-                $data = app(ContractPaymentPreparationService::class)->prepare((int) ($requestedData['organization_id'] ?? 0), $requestedData);
-                $data = $this->normalizeDocumentData($data);
+                $data = $this->normalizeDocumentData($requestedData, false);
                 if (isset($data['organization_id'])) {
                     $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $data['organization_id']);
+                }
+                $preparedOrder = $this->preparePaymentRequestOrder($data, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
+                if ($preparedOrder instanceof PaymentDocument) {
+                    DB::commit();
+
+                    return $preparedOrder;
+                }
+                $data = app(ContractPaymentPreparationService::class)->prepare((int) ($preparedOrder['organization_id'] ?? 0), $preparedOrder);
+                $data = $this->normalizeDocumentData($data);
+                if (($preparedOrder['document_type'] ?? null) === PaymentDocumentType::PAYMENT_ORDER->value
+                    && ($preparedOrder['source_type'] ?? null) === PaymentDocument::class
+                    && ($preparedOrder['origin_key'] ?? null) === sprintf('payment-request:%d:order', (int) ($preparedOrder['source_id'] ?? 0))) {
+                    if (($data['direction'] ?? null) !== ($preparedOrder['direction'] ?? null)) {
+                        throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                    }
+                    foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'contractor_id'] as $field) {
+                        if ((int) ($data[$field] ?? null) !== (int) ($preparedOrder[$field] ?? null)) {
+                            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                        }
+                    }
                 }
                 $data = $this->canonicalizeActInvoiceData($data);
                 if (isset($data['origin_key'])) {
@@ -151,6 +171,18 @@ class PaymentDocumentService
                 if ($isUniqueViolation
                     && str_contains($e->getMessage(), 'payment_documents_org_origin_unique')
                     && isset($data['origin_key'], $data['organization_id'])) {
+                    if (($data['document_type'] ?? null) === PaymentDocumentType::PAYMENT_ORDER->value
+                        && ($data['source_type'] ?? null) === PaymentDocument::class
+                        && $data['origin_key'] === sprintf('payment-request:%d:order', (int) ($data['source_id'] ?? 0))) {
+                        return DB::transaction(function () use ($data, $createdBy, $budgetOverrideReason): PaymentDocument {
+                            $existingOrder = $this->preparePaymentRequestOrder($data, $createdBy, is_string($budgetOverrideReason) ? $budgetOverrideReason : null);
+                            if ($existingOrder instanceof PaymentDocument) {
+                                return $existingOrder;
+                            }
+
+                            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                        });
+                    }
                     $existingDocument = PaymentDocument::query()
                         ->where('organization_id', $data['organization_id'])
                         ->where('origin_key', $data['origin_key'])
@@ -209,6 +241,114 @@ class PaymentDocumentService
         ));
     }
 
+    private function preparePaymentRequestOrder(array $data, ?User $user = null, ?string $overrideReason = null): array|PaymentDocument
+    {
+        if (($data['document_type'] ?? null) !== PaymentDocumentType::PAYMENT_ORDER->value
+            || ($data['source_type'] ?? null) !== PaymentDocument::class
+            || empty($data['source_id'])) {
+            return $data;
+        }
+
+        $request = PaymentDocument::query()
+            ->forOrganization((int) ($data['organization_id'] ?? 0))
+            ->whereKey((int) $data['source_id'])
+            ->lockForUpdate()
+            ->firstOrFail();
+        if ($request->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
+            return $data;
+        }
+        if ($user === null || ! app(PaymentDocumentAccessService::class)
+            ->query((int) $request->organization_id, $user, 'payments.transaction.approve')
+            ->whereKey($request->getKey())->exists()) {
+            throw new AuthorizationException(trans_message('payments.blockers.permission_required'));
+        }
+        if ($request->requiresApproval() && $request->status !== PaymentDocumentStatus::APPROVED) {
+            throw new \DomainException(trans_message('payments.validation.request_must_be_approved'));
+        }
+        $data['currency'] = ($data['currency'] ?? '') ?: $request->currency;
+        $direction = $request->direction?->value ?? InvoiceDirection::OUTGOING->value;
+        if (isset($data['direction']) && $data['direction'] !== $direction) {
+            throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+        }
+        $data['direction'] = $direction;
+        if (! BigDecimal::of((string) ($data['amount'] ?? 0))->isEqualTo(BigDecimal::of((string) $request->amount))
+            || ($data['currency'] ?? null) !== $request->currency) {
+            throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+        }
+        foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
+            if (array_key_exists($field, $data) && (int) $data[$field] !== (int) $request->{$field}) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+            $data[$field] = $request->{$field};
+        }
+        $bankFields = ['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'];
+        foreach ($bankFields as $field) {
+            if (array_key_exists($field, $data) && $data[$field] !== $request->{$field}) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+            $data[$field] = $request->{$field};
+        }
+        $data += ['due_date' => $request->due_date, 'payment_purpose' => $request->payment_purpose];
+        $counterpartyId = $this->budgetLimitService->counterpartyId($request);
+        if (isset($data['contractor_id']) && (int) $data['contractor_id'] !== $counterpartyId) {
+            throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+        }
+        $data['contractor_id'] = $counterpartyId;
+        if (array_key_exists('vat_rate', $data)) {
+            $sameVatRate = $data['vat_rate'] === null || $request->vat_rate === null
+                ? $data['vat_rate'] === $request->vat_rate
+                : BigDecimal::of((string) $data['vat_rate'])->isEqualTo(BigDecimal::of((string) $request->vat_rate));
+            if (! $sameVatRate) {
+                throw new \DomainException(trans_message('payments.validation.request_order_details_mismatch'));
+            }
+        }
+        $data['vat_rate'] = $request->vat_rate;
+        $contractId = $this->budgetLimitService->contractId($request);
+        $data['invoiceable_type'] = $contractId !== null ? Contract::class : null;
+        $data['invoiceable_id'] = $contractId;
+        $data['origin_key'] = sprintf('payment-request:%d:order', $request->id);
+
+        $existingOrders = PaymentDocument::query()
+            ->forOrganization((int) $request->organization_id)
+            ->where('document_type', PaymentDocumentType::PAYMENT_ORDER->value)
+            ->where('source_type', $request->getMorphClass())
+            ->where('source_id', $request->getKey())
+            ->limit(2)
+            ->get();
+        if ($existingOrders->count() > 1) {
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+        }
+        $existingOrder = $existingOrders->first();
+        if ($existingOrder instanceof PaymentDocument
+            && (in_array($existingOrder->status, [PaymentDocumentStatus::CANCELLED, PaymentDocumentStatus::REJECTED], true)
+                || ! BigDecimal::of((string) $existingOrder->amount)->isEqualTo(BigDecimal::of((string) $data['amount']))
+                || $existingOrder->currency !== $data['currency']
+                || $existingOrder->vat_rate !== $request->vat_rate
+                || ($existingOrder->direction?->value ?? InvoiceDirection::OUTGOING->value) !== $data['direction']
+                || $this->budgetLimitService->contractId($existingOrder) !== $contractId
+                || $this->budgetLimitService->counterpartyId($existingOrder) !== $counterpartyId)) {
+            throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+        }
+        if ($existingOrder instanceof PaymentDocument) {
+            foreach (['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id', 'budget_article_id', 'responsibility_center_id'] as $field) {
+                if ((int) $existingOrder->{$field} !== (int) $data[$field]) {
+                    throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                }
+            }
+            foreach ($bankFields as $field) {
+                if ($existingOrder->{$field} !== $data[$field]) {
+                    throw new \DomainException(trans_message('payments.validation.request_order_conflict'));
+                }
+            }
+        }
+        $this->budgetLimitService->release($request, trans_message('budgeting.limits.request_accepted'));
+        if ($existingOrder instanceof PaymentDocument) {
+            $this->budgetLimitService->syncReservation($existingOrder->fresh(), $user, $overrideReason);
+        }
+
+        return $existingOrder ?? $data;
+    }
+
     private function canAutomaticallySubmitActInvoice(PaymentDocument $document, ?User $user): bool
     {
         return $user !== null
@@ -236,6 +376,12 @@ class PaymentDocumentService
 
         try {
             // Валидация изменений
+            $user = auth()->user();
+            $this->preparePaymentRequestOrder(
+                array_merge($document->getAttributes(), $data),
+                $user instanceof User ? $user : null,
+                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+            );
             $this->validator->validate(array_merge($document->toArray(), $data), $document);
 
             // Перерасчет сумм если изменилась amount или vat_rate
@@ -246,7 +392,6 @@ class PaymentDocumentService
             $document->update($data);
             $document->refresh();
 
-            $user = auth()->user();
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_UPDATE,
@@ -290,6 +435,7 @@ class PaymentDocumentService
         DB::beginTransaction();
 
         try {
+            $this->preparePaymentRequestOrder($document->getAttributes(), $user, $overrideReason);
             $document = PaymentDocument::query()
                 ->where('organization_id', $document->organization_id)
                 ->lockForUpdate()
@@ -864,6 +1010,18 @@ class PaymentDocumentService
             $query->byType(PaymentDocumentType::from($filters['document_type']));
         }
 
+        if (isset($filters['payer_organization_id'])) {
+            $query->where('payer_organization_id', (int) $filters['payer_organization_id']);
+        }
+        if (isset($filters['payee_organization_id'])) {
+            $payeeOrganizationId = (int) $filters['payee_organization_id'];
+            $query->where(function ($partyQuery) use ($payeeOrganizationId): void {
+                $partyQuery->where('payee_organization_id', $payeeOrganizationId)
+                    ->orWhereHas('payeeContractor', fn ($contractorQuery) => $contractorQuery->where('source_organization_id', $payeeOrganizationId))
+                    ->orWhere('recipient_organization_id', $payeeOrganizationId);
+            });
+        }
+
         if (isset($filters['status'])) {
             $query->byStatus(PaymentDocumentStatus::from($filters['status']));
         }
@@ -1393,7 +1551,7 @@ class PaymentDocumentService
         return $document;
     }
 
-    private function normalizeDocumentData(array $data): array
+    private function normalizeDocumentData(array $data, bool $defaultCurrency = true): array
     {
         foreach (['document_type', 'direction', 'invoice_type', 'status'] as $field) {
             if (($data[$field] ?? null) instanceof \BackedEnum) {
@@ -1401,7 +1559,7 @@ class PaymentDocumentService
             }
         }
 
-        if (empty($data['currency'])) {
+        if ($defaultCurrency && empty($data['currency'])) {
             $data['currency'] = config('payments.defaults.currency', 'RUB');
         }
 
