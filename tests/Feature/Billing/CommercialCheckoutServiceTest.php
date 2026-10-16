@@ -1866,6 +1866,11 @@ class CommercialCheckoutServiceTest extends TestCase
         app(\App\Services\Billing\Bank\TochkaClient::class)->shouldNotReceive('createB2bQr');
         $service = app(\App\Services\Billing\Bank\BankQrService::class);
         $this->assertFalse($service->enabled());
+        foreach (['MA0000000001', 'MB0000000001', 'MF0000000001'] as $merchant) {
+            config(['bank_billing.sbp_b2b_enabled' => true, 'bank_billing.sbp_merchant_id' => $merchant]);
+            $this->assertTrue($service->enabled());
+        }
+        config(['bank_billing.sbp_b2b_enabled' => false]);
         try {
             $service->get($this->user, (int) $this->organization->id, $invoice->public_id);
             $this->fail('Disabled QR generated');
@@ -1906,6 +1911,30 @@ class CommercialCheckoutServiceTest extends TestCase
         } catch (\InvalidArgumentException) {
             $this->assertSame('creation_unknown', $document->refresh()->status);
         }
+        $audit = new class
+        {
+            public array $events = [];
+
+            public function record(...$arguments): void
+            {
+                $this->events[] = $arguments;
+            }
+        };
+        $this->app->instance(\App\Services\Filament\SystemAdminAuditService::class, $audit);
+        $document->forceFill(['status' => 'blocked', 'provider_request' => ['Data' => ['customerCode' => 'old-invalid-customer']],
+            'provider_customer_code' => 'old-invalid-customer', 'creation_started_at' => now()])->save();
+        config(['bank_billing.customer_code' => 'corrected-customer']);
+        $service->resolve($operator, (int) $document->id, null, 'Отсутствие документа подтверждено в банке, исправлен код клиента', true);
+        $document->refresh();
+        $this->assertSame('pending', $document->status);
+        $this->assertNull($document->provider_request);
+        $this->assertNull($document->creation_started_at);
+        $this->assertSame('corrected-customer', $document->provider_customer_code);
+        $this->assertSame(100, (int) $document->reviewed_by);
+        $this->assertCount(1, $audit->events);
+        $rebuilt = app(\App\Services\Billing\Bank\TochkaDocumentPayload::class)->build($document);
+        $this->assertSame('corrected-customer', $rebuilt['Data']['customerCode']);
+        $this->assertSame($document->snapshot['buyer']['inn'], $rebuilt['Data']['SecondSide']['taxCode']);
     }
 
     public function test_bank_overpayment_refund_does_not_reduce_the_paid_subscription(): void

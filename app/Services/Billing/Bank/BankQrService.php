@@ -19,7 +19,7 @@ final class BankQrService
     public function enabled(): bool
     {
         return config('bank_billing.sbp_b2b_enabled') === true
-            && preg_match('/\AMF[A-Z0-9]{10}\z/', (string) config('bank_billing.sbp_merchant_id')) === 1;
+            && preg_match('/\A[A-Z0-9]{12}\z/', (string) config('bank_billing.sbp_merchant_id')) === 1;
     }
 
     public function get(User $actor, int $organizationId, string $publicId): array
@@ -32,13 +32,14 @@ final class BankQrService
         return Cache::lock('billing:bank-qr:'.$publicId, 120)->block(2, function () use ($organizationId, $publicId): array {
             $invoice = CommercialBankInvoice::query()->where('organization_id', $organizationId)->where('public_id', $publicId)->firstOrFail();
             $this->assertPayable($invoice);
+            $ttl = min(129600, (int) floor(now()->diffInMinutes($invoice->expires_at)));
             $qr = CommercialBankQrCode::query()->firstOrCreate(['commercial_bank_invoice_id' => $invoice->id], [
                 'organization_id' => $organizationId, 'customer_code' => config('bank_billing.customer_code'),
                 'merchant_id' => config('bank_billing.sbp_merchant_id'), 'account_id' => config('bank_billing.account_id'),
-                'amount_minor' => $invoice->amount_minor, 'expires_at' => $invoice->expires_at,
+                'amount_minor' => $invoice->amount_minor, 'expires_at' => now()->addMinutes($ttl),
                 'request' => ['amount' => $invoice->amount_minor, 'paymentPurpose' => $invoice->snapshot['purpose'],
                     'sourceName' => 'MOST', 'takeTax' => false,
-                    'ttl' => min(129600, (int) floor(now()->diffInMinutes($invoice->expires_at))),
+                    'ttl' => $ttl,
                     'uip' => str_replace('-', '', $invoice->public_id)],
             ]);
             if ((int) $qr->organization_id !== $organizationId || $qr->amount_minor !== (int) $invoice->amount_minor

@@ -35,6 +35,10 @@ final class BankDocumentRecoveryService
             }
             DB::transaction(function () use ($document, $actor, $providerId, $reason): void {
                 $before = ['status' => $document->status, 'provider_document_id' => $document->provider_document_id];
+                if ($providerId === null) {
+                    $document->forceFill(['provider_request' => null,
+                        'provider_customer_code' => (string) config('bank_billing.customer_code'), 'creation_started_at' => null]);
+                }
                 $document->forceFill(['provider_document_id' => $providerId, 'status' => 'pending', 'failure_code' => null,
                     'next_attempt_at' => null, 'reviewed_by' => $actor->id, 'review_note' => trim($reason), 'reviewed_at' => now()])->save();
                 app(SystemAdminAuditService::class)->record(actor: $actor, eventType: 'billing.bank_document.resolved', action: 'updated',
