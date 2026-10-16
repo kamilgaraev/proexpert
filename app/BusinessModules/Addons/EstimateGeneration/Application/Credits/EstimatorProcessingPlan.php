@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DomainException;
@@ -43,7 +44,7 @@ final class EstimatorProcessingPlan
                 // Literal runs first; unknown input may legitimately route to observers and arbitration.
                 // Reserve the finite escalation ceiling without making those calls mandatory.
                 $roles['vision'] = $this->role($rasterUnits * 15,
-                    (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
+                    (int) config('estimate-generation.vision.max_input_tokens', 32768), VisionOutputTokenPolicy::ceiling(), $tariff, true);
                 $roles['ocr'] = $this->role($rasterUnits * 3,
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
             }

@@ -1374,6 +1374,15 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $admission = app(EstimatorCreditAttemptAdmission::class);
         $arguments = [$request->operationId, $attemptId, $request->organizationId, $request->projectId, $request->sessionId,
             'estimate_composition', new AiCost('0.030000', 'RUB', 'available')];
+        $overBudget = $arguments;
+        $overBudget[6] = new AiCost('1.800001', 'RUB', 'available');
+        try {
+            DB::transaction(fn () => $admission->admit(...$overBudget));
+            self::fail('A physical call exceeded the frozen role ceiling.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+            self::assertSame('estimator_credit_call_not_planned', $exception->getMessage());
+        }
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $request->operationId)->count());
         try {
             DB::transaction(function () use ($admission, $arguments): void {
                 $admission->admit(...$arguments);
