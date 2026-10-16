@@ -14,6 +14,8 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Enums\Billing\PackageAccessSource;
 use App\Enums\Billing\PackageSubscriptionStatus;
+use App\Enums\ProjectOrganizationRole;
+use App\Enums\UserProjectAccessMode;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use App\Models\Module;
@@ -88,6 +90,9 @@ class AdvanceTransactionWorkflowTest extends TestCase
         ]);
         $organizationUser = $this->createOrganizationUser($context->organization);
         $organizationProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($organizationProject->id, [
+            'role' => 'member', 'is_active' => true, 'assigned_at' => now(),
+        ]);
 
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignUser = $this->createOrganizationUser($foreignOrganization);
@@ -359,6 +364,139 @@ class AdvanceTransactionWorkflowTest extends TestCase
             'current_balance' => 1000,
             'total_issued' => 1000,
         ]);
+    }
+
+    public function test_project_filter_scopes_every_advance_statistic_and_list_to_the_current_organization(): void
+    {
+        $context = $this->createContextWithAdvancePermissions(['advance_transactions.view']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value]);
+        $user = $this->createOrganizationUser($context->organization);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $currentDate = now()->toDateString();
+        $previousDate = now()->startOfMonth()->subMonth()->toDateString();
+        $ids = [];
+        foreach ([
+            [AdvanceAccountTransaction::TYPE_ISSUE, 1000, $currentDate, AdvanceAccountTransaction::STATUS_PENDING],
+            [AdvanceAccountTransaction::TYPE_ISSUE, 100, $previousDate, AdvanceAccountTransaction::STATUS_PENDING],
+            [AdvanceAccountTransaction::TYPE_EXPENSE, 200, $currentDate, AdvanceAccountTransaction::STATUS_REPORTED],
+            [AdvanceAccountTransaction::TYPE_EXPENSE, 20, $previousDate, AdvanceAccountTransaction::STATUS_APPROVED],
+            [AdvanceAccountTransaction::TYPE_RETURN, 50, $currentDate, AdvanceAccountTransaction::STATUS_APPROVED],
+        ] as [$type, $amount, $date, $status]) {
+            $ids[] = $this->createTransaction($context->organization->id, $user->id, $project->id, [
+                'type' => $type, 'amount' => $amount, 'document_date' => $date, 'reporting_status' => $status,
+            ])->id;
+        }
+        $this->createTransaction($context->organization->id, $user->id, $otherProject->id, ['amount' => 9000, 'document_date' => $currentDate]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $foreignUser = $this->createOrganizationUser($foreignOrganization);
+        $this->createTransaction($foreignOrganization->id, $foreignUser->id, $project->id, ['amount' => 99000, 'document_date' => $currentDate]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/advance-transactions?project_id={$project->id}")->assertOk()->assertJsonPath('meta.total', 5);
+        $this->assertEqualsCanonicalizing($ids, collect($response->json('data'))->pluck('id')->all());
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/advance-transactions/stats?project_id={$project->id}")->assertOk();
+        foreach ([
+            'total_issued' => 1100, 'total_expenses' => 220, 'total_returned' => 50,
+            'current_balance' => 830, 'monthly_issued' => 1000, 'monthly_expenses' => 200,
+            'pending_approval_count' => 1, 'pending_report_count' => 2,
+        ] as $key => $expected) {
+            $this->assertEquals($expected, $response->json("data.{$key}"), $key);
+        }
+        $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/advance-transactions/stats')->assertOk();
+        $this->assertEquals(10100, $response->json('data.total_issued'));
+        $this->assertEquals(10000, $response->json('data.monthly_issued'));
+        $this->assertEquals(9830, $response->json('data.current_balance'));
+        $response->assertJsonPath('data.pending_report_count', 3);
+    }
+
+    public function test_shared_project_accepts_advances_and_preserves_archived_history_without_allowing_new_entries(): void
+    {
+        $context = $this->createContextWithAdvancePermissions(['advance_transactions.view', 'advance_transactions.create']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value]);
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $project = Project::factory()->create(['organization_id' => $ownerOrganization->id]);
+        $project->organizations()->attach($context->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value, 'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+            'is_active' => true, 'invited_at' => now(), 'accepted_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $user = $this->createOrganizationUser($context->organization, ['current_balance' => 0, 'total_issued' => 0]);
+        $payload = ['user_id' => $user->id, 'project_id' => $project->id, 'type' => AdvanceAccountTransaction::TYPE_ISSUE, 'amount' => 250];
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/advance-transactions', $payload)
+            ->assertCreated()->assertJsonPath('data.project_id', $project->id);
+        $this->assertDatabaseHas('advance_account_transactions', ['organization_id' => $context->organization->id, 'project_id' => $project->id, 'amount' => 250]);
+
+        $project->forceFill(['is_archived' => true])->save();
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/advance-transactions?project_id={$project->id}")
+            ->assertOk()->assertJsonPath('meta.total', 1);
+        $response = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/advance-transactions/stats?project_id={$project->id}")->assertOk();
+        $this->assertEquals(250, $response->json('data.total_issued'));
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/advance-transactions', $payload)->assertStatus(422);
+
+        $project->forceFill(['is_archived' => false])->save();
+        $project->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        foreach (['', '/stats'] as $endpoint) {
+            $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/advance-transactions{$endpoint}?project_id={$project->id}")->assertStatus(422);
+        }
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/advance-transactions', $payload)->assertStatus(422);
+        $this->assertSame(1, AdvanceAccountTransaction::query()->where('organization_id', $context->organization->id)->count());
+    }
+
+    public function test_advance_project_filters_reject_invalid_foreign_and_unassigned_projects(): void
+    {
+        $context = $this->createContextWithAdvancePermissions(['advance_transactions.view', 'advance_transactions.create']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => Organization::factory()->verified()->create()->id]);
+        foreach ([$project->id, $foreignProject->id, 0, 'invalid'] as $projectId) {
+            foreach (['', '/stats'] as $endpoint) {
+                $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/advance-transactions{$endpoint}?project_id={$projectId}")->assertStatus(422);
+            }
+        }
+        $user = $this->createOrganizationUser($context->organization);
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/advance-transactions', [
+            'user_id' => $user->id, 'project_id' => $project->id, 'type' => AdvanceAccountTransaction::TYPE_ISSUE, 'amount' => 100,
+        ])->assertStatus(422);
+        $this->assertDatabaseCount('advance_account_transactions', 0);
+    }
+
+    public function test_available_advance_projects_match_actor_access_and_preserve_recipient_and_search_filters(): void
+    {
+        $context = $this->createContextWithAdvancePermissions(['advance_transactions.create']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value]);
+        $own = Project::factory()->create(['organization_id' => $context->organization->id, 'name' => 'Own catalog project']);
+        Project::factory()->create(['organization_id' => $context->organization->id, 'is_archived' => true]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $shared = Project::factory()->create(['organization_id' => $foreignOrganization->id, 'name' => 'Shared catalog project']);
+        Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $shared->organizations()->attach($context->organization->id, [
+            'role' => ProjectOrganizationRole::CONTRACTOR->value, 'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+            'is_active' => true, 'invited_at' => now(), 'accepted_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $recipient = $this->createOrganizationUser($context->organization);
+        $recipient->assignedProjects()->attach($shared->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $url = '/api/v1/admin/advance-transactions/available-projects';
+        $response = $this->withHeaders($context->authHeaders())->getJson($url)->assertOk();
+        $this->assertEqualsCanonicalizing([$own->id, $shared->id], collect($response->json('data'))->pluck('id')->all());
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?search=Shared')
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value]);
+        $context->user->assignedProjects()->attach($own->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $this->withHeaders($context->authHeaders())->getJson($url)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $own->id);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(0, 'data');
+
+        $context->user->assignedProjects()->attach($shared->id, ['role' => 'member', 'is_active' => true, 'assigned_at' => now()]);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $shared->id);
+        $shared->organizations()->updateExistingPivot($context->organization->id, ['is_active' => false]);
+        $this->withHeaders($context->authHeaders())->getJson($url . '?user_id=' . $recipient->id)
+            ->assertOk()->assertJsonCount(0, 'data');
     }
 
     private function createOrganizationUser(Organization $organization, array $overrides = []): User

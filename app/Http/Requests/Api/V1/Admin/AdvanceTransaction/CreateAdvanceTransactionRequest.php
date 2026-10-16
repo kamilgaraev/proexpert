@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Api\V1\Admin\AdvanceTransaction;
 
+use App\Rules\ProjectAccessibleRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -31,7 +32,9 @@ class CreateAdvanceTransactionRequest extends FormRequest
             ],
             'project_id' => [
                 'nullable',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                'integer',
+                'min:1',
+                new ProjectAccessibleRule($organizationId ? (int) $organizationId : null),
             ],
             'type' => 'required|in:issue,expense,return',
             'amount' => 'required|numeric|min:0.01',

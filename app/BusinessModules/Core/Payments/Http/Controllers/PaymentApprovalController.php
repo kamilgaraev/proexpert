@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
+use App\BusinessModules\Core\Payments\Http\Requests\PaymentProjectScopeRequest;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
@@ -24,12 +25,12 @@ class PaymentApprovalController extends Controller
         private readonly PaymentDocumentAccessService $access
     ) {}
 
-    public function myApprovals(Request $request): JsonResponse
+    public function myApprovals(PaymentProjectScopeRequest $request): JsonResponse
     {
         try {
             $userId = (int) $request->user()->id;
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId, $this->actor($request));
+            $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId, $this->actor($request), $request->projectId());
             $page = max(1, (int) $request->input('page', 1));
             $perPage = max(1, min(100, (int) $request->input('per_page', 20)));
             $total = $approvals->count();

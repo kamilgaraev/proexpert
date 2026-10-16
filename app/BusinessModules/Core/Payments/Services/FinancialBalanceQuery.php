@@ -29,10 +29,10 @@ final class FinancialBalanceQuery
         PaymentTransactionStatus::REFUNDED->value,
     ];
 
-    public function forOrganization(int $organizationId, ?string $direction = null): FinancialBalance
+    public function forOrganization(int $organizationId, ?string $direction = null, ?int $projectId = null): FinancialBalance
     {
-        $documents = $this->documents($organizationId, null, $direction);
-        $transactions = $this->transactions($organizationId, null, $direction);
+        $documents = $this->documents($organizationId, null, $direction, $projectId);
+        $transactions = $this->transactions($organizationId, null, $direction, $projectId);
 
         return FinancialBalance::fromLedger(
             (string) ((clone $documents)->sum('payment_documents.amount') ?? 0),
@@ -132,7 +132,8 @@ final class FinancialBalanceQuery
     private function documents(
         int $organizationId,
         ?array $contractIds = null,
-        ?string $direction = null
+        ?string $direction = null,
+        ?int $projectId = null
     ): Builder {
         return DB::table('payment_documents')
             ->leftJoin('contract_performance_acts', function ($join): void {
@@ -141,6 +142,7 @@ final class FinancialBalanceQuery
             })
             ->where('payment_documents.organization_id', $organizationId)
             ->whereNull('payment_documents.deleted_at')
+            ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('payment_documents.project_id', $projectId))
             ->whereIn('payment_documents.status', self::DOCUMENT_STATUSES)
             ->when($direction !== null, static fn (Builder $query): Builder => $query
                 ->where('payment_documents.direction', $direction))
@@ -157,9 +159,10 @@ final class FinancialBalanceQuery
     private function transactions(
         int $organizationId,
         ?array $contractIds = null,
-        ?string $direction = null
+        ?string $direction = null,
+        ?int $projectId = null
     ): Builder {
-        return $this->documents($organizationId, $contractIds, $direction)
+        return $this->documents($organizationId, $contractIds, $direction, $projectId)
             ->join(
                 'payment_transactions',
                 'payment_transactions.payment_document_id',

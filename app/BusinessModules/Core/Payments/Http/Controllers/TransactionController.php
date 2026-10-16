@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentTransactionAccessService;
 use App\BusinessModules\Core\Payments\Services\PaymentTransactionWorkflowService;
 use App\Http\Controllers\Controller;
+use App\Rules\ProjectAccessibleRule;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -47,7 +48,7 @@ class TransactionController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    new ProjectAccessibleRule($organizationId, includeArchived: true),
                 ],
                 'status' => ['nullable', 'string'],
                 'payment_method' => ['nullable', 'string'],

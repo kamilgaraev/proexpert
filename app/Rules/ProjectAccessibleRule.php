@@ -14,7 +14,7 @@ use function trans_message;
 
 class ProjectAccessibleRule implements RuleContract
 {
-    public function __construct(private readonly ?int $organizationId = null)
+    public function __construct(private readonly ?int $organizationId = null, private readonly bool $includeArchived = false)
     {
     }
 
@@ -33,7 +33,8 @@ class ProjectAccessibleRule implements RuleContract
             return false;
         }
 
-        return app(UserProjectAccessService::class)->canAccessProject($user, $project, (int) $currentOrgId);
+        return app(UserProjectAccessService::class)->queryAccessibleProjects($user, (int) $currentOrgId, $this->includeArchived)
+            ->where('projects.id', $project->id)->exists();
     }
 
     public function message(): string

@@ -19,6 +19,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\BudgetingTestEntitlements;
@@ -208,6 +209,26 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         $this->assertSame(0, $document->approvals()->count());
         $this->assertSame('0.00', $document->fresh()->paid_amount);
         $this->assertDatabaseCount('payment_transactions', 0);
+    }
+
+    public function test_my_approvals_filters_before_pagination_and_does_not_backfill_other_projects(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $selected = $this->createPendingApprovalDocument($context);
+        $selected->forceFill(['project_id' => $project->id])->save();
+        $other = $this->createPendingApprovalDocument($context);
+        $other->forceFill(['project_id' => $otherProject->id])->save();
+        $other->approvals()->delete();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/approvals/my?project_id={$project->id}&per_page=1")
+            ->assertOk()->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('data.0.payment_document_id', $selected->id)
+            ->assertJsonPath('summary.total_amount', 1000);
+        $this->assertSame(0, $other->approvals()->count());
     }
 
     private function createPendingApprovalDocument(AdminApiTestContext $context): PaymentDocument

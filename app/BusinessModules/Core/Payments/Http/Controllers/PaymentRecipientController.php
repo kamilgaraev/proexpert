@@ -8,12 +8,12 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentConfirmationService;
 use App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService;
 use App\Http\Controllers\Controller;
+use App\Rules\ProjectAccessibleRule;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 
 use function trans_message;
 
@@ -33,7 +33,7 @@ class PaymentRecipientController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    new ProjectAccessibleRule($organizationId, includeArchived: true),
                 ],
                 'date_from' => ['nullable', 'date'],
                 'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],

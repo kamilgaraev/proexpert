@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentAccessService;
 use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
+use App\BusinessModules\Core\Payments\Http\Requests\PaymentProjectScopeRequest;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
@@ -125,18 +126,16 @@ class ScheduleController extends Controller
         }
     }
 
-    public function upcoming(Request $request): JsonResponse
+    public function upcoming(PaymentProjectScopeRequest $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $validated = $request->validate([
-                'days' => ['nullable', 'integer', 'min:1', 'max:365'],
-            ]);
-            $days = (int) ($validated['days'] ?? 30);
+            $days = (int) ($request->validated('days') ?? 30);
 
             $schedules = PaymentSchedule::query()
                 ->with(['paymentDocument.project', 'paymentDocument.counterpartyOrganization'])
-                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view'))
+                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view')
+                    ->when($request->projectId() !== null, fn ($documents) => $documents->where('project_id', $request->projectId())))
                 ->where('status', 'pending')
                 ->whereBetween('due_date', [now(), now()->addDays($days)])
                 ->orderBy('due_date')
@@ -224,13 +223,14 @@ class ScheduleController extends Controller
         }
     }
 
-    public function overdue(Request $request): JsonResponse
+    public function overdue(PaymentProjectScopeRequest $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $schedules = PaymentSchedule::query()
                 ->with(['paymentDocument.project', 'paymentDocument.counterpartyOrganization'])
-                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view'))
+                ->whereHas('paymentDocument', fn ($query) => $this->access->scope($query, $organizationId, $this->actor($request), 'payments.schedule.view')
+                    ->when($request->projectId() !== null, fn ($documents) => $documents->where('project_id', $request->projectId())))
                 ->where('status', 'pending')
                 ->where('due_date', '<', now())
                 ->orderBy('due_date')
