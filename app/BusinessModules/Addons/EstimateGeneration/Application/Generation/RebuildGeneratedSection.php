@@ -40,6 +40,7 @@ final class RebuildGeneratedSection
                     throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Подтвердите стоимость пересборки перед запуском.']);
                 }
                 $attemptId = strtolower($approval['request_id']);
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->lockForReservation();
                 $prior = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $attemptId)
                     ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
                     ->where('session_id', $session->id)->where('actor_user_id', $actor->id)->where('kind', 'rebuild')->lockForUpdate()->first();

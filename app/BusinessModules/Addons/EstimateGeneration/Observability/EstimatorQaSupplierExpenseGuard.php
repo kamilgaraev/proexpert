@@ -16,6 +16,35 @@ final readonly class EstimatorQaSupplierExpenseGuard
 
     public function __construct(private Connection $database) {}
 
+    public function lockForReservation(): void
+    {
+        if (config('estimate-generation.live_qa.enabled') !== true) {
+            return;
+        }
+        $runId = config('estimate-generation.live_qa.run_id');
+        if ($this->database->transactionLevel() < 1 || ! is_string($runId) || ! Str::isUuid($runId)) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_configuration_invalid');
+        }
+        $this->database->selectOne('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', ['estimate_generation_live_qa:'.strtolower($runId)]);
+    }
+
+    public function assertReservationBudget(array $plan, int $maximumUnitsMinor): void
+    {
+        $budget = $this->quoteBudget();
+        if ($budget === null) {
+            return;
+        }
+        $approved = $plan['qa_expense_budget'] ?? [];
+        foreach (['contract_version', 'run_id', 'unit_cost_micro_rub', 'unit_minor', 'price_version'] as $key) {
+            if (($approved[$key] ?? null) !== $budget[$key]) {
+                throw new SessionAiCostLimitReached('estimator_live_qa_configuration_changed');
+            }
+        }
+        if ($maximumUnitsMinor < 1 || $maximumUnitsMinor > $budget['remaining_units_minor']) {
+            throw new SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached');
+        }
+    }
+
     public function quoteBudget(): ?array
     {
         if (config('estimate-generation.live_qa.enabled') !== true) {
@@ -46,6 +75,19 @@ final readonly class EstimatorQaSupplierExpenseGuard
         foreach ($this->exposureGroups($runId) as $group) {
             $costs[$group->operation_key] = (string) $group->supplier_exposure;
             $charged[$group->operation_key] = (int) $group->charged_units_minor;
+        }
+        foreach ($this->database->select(<<<'SQL'
+SELECT operations.operation_id::text AS operation_key, reservations.reserved_minor
+FROM estimate_generation_credit_operations operations
+JOIN ai_credit_reservations reservations ON reservations.id=operations.reservation_id
+WHERE reservations.status='reserved' AND (
+  operations.processing_plan->'qa_expense_budget'->>'run_id'=?
+  OR EXISTS (SELECT 1 FROM estimate_generation_qa_expense_attempts attempts
+    JOIN estimate_generation_vision_physical_attempts physical ON physical.attempt_id=attempts.attempt_id
+    WHERE attempts.run_id=? AND physical.credit_operation_id=operations.operation_id))
+SQL, [$runId, $runId]) as $hold) {
+            $costs[$hold->operation_key] ??= '0';
+            $charged[$hold->operation_key] = max($charged[$hold->operation_key] ?? 0, (int) $hold->reserved_minor);
         }
         $remaining = intdiv(max(0, self::MAXIMUM_UNITS_MINOR - self::exposureUnitsMinor($costs, $unitCost, $charged)), 50) * 50;
         if ($remaining < 50) {

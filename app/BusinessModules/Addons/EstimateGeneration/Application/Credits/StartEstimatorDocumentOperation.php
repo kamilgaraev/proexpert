@@ -34,6 +34,7 @@ final readonly class StartEstimatorDocumentOperation
                 ->where('project_id', $projectId)->lockForUpdate()->firstOrFail();
             $this->authorization->authorize($actor, $session, 'estimate_generation.generate');
             app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->lockForReservation();
             $id = strtolower($approval['request_id']);
             $operation = $this->database->table('estimate_generation_credit_operations')->where('operation_id', $id)
                 ->where('organization_id', $session->organization_id)->where('project_id', $projectId)->where('session_id', $sessionId)

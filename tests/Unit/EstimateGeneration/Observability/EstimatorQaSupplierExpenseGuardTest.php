@@ -67,7 +67,14 @@ final class EstimatorQaSupplierExpenseGuardTest extends TestCase
         self::assertNull((new EstimatorQaSupplierExpenseGuard($database))->quoteBudget());
     }
 
-    private function guard(array $groups): EstimatorQaSupplierExpenseGuard
+    public function test_an_active_reservation_replaces_its_own_measured_exposure_without_double_counting(): void
+    {
+        $budget = $this->guard([['operation_key' => 'active', 'supplier_exposure' => '180000', 'charged_units_minor' => 0]],
+            [['operation_key' => 'active', 'reserved_minor' => 1000]])->quoteBudget();
+        self::assertSame(49000, $budget['remaining_units_minor']);
+    }
+
+    private function guard(array $groups, array $holds = []): EstimatorQaSupplierExpenseGuard
     {
         $database = $this->createMock(Connection::class);
         $database->method('transactionLevel')->willReturn(1);
@@ -75,8 +82,11 @@ final class EstimatorQaSupplierExpenseGuardTest extends TestCase
         $database->method('table')->with('estimate_generation_qa_expense_runs')->willReturn($query);
         $query->method('where')->with('run_id', '11111111-1111-5111-8111-111111111111')->willReturnSelf();
         $query->method('first')->willReturn(null);
-        $database->method('select')->with(self::callback(static fn (string $sql): bool => str_contains($sql, 'GROUP BY operation_key')),
-            ['11111111-1111-5111-8111-111111111111'])->willReturn(array_map(static fn (array $row): object => (object) $row, $groups));
+        $database->method('select')->willReturnCallback(static function (string $sql) use ($groups, $holds): array {
+            $rows = str_contains($sql, 'JOIN ai_credit_reservations') ? $holds : $groups;
+
+            return array_map(static fn (array $row): object => (object) $row, $rows);
+        });
 
         return new EstimatorQaSupplierExpenseGuard($database);
     }
