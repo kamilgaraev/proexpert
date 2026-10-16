@@ -150,7 +150,7 @@ final class MobilePaymentDocumentService
         $document = $this->idempotency->run(
             $organizationId,
             (int) $user->id,
-            $key,
+            hash('sha256', 'payments.documents.create:'.$key),
             'payments.documents.create',
             $data,
             function () use ($organizationId, $data, $user, &$created, &$warnings): PaymentDocument {

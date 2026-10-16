@@ -125,7 +125,7 @@ final class MobilePaymentDocumentsTest extends TestCase
         $this->activatePaymentsModule((int) $context->organization->id);
         $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
         $payee = Contractor::query()->create(['organization_id' => $context->organization->id, 'name' => 'Legacy mobile payee']);
-        $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile-legacy-origin-0001'];
+        $headers = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'mobile.legacy:origin-0001'];
         $payload = [
             'document_type' => PaymentDocumentType::PAYMENT_REQUEST->value,
             'document_date' => now()->toDateString(), 'amount' => 100,
@@ -133,9 +133,12 @@ final class MobilePaymentDocumentsTest extends TestCase
         ];
         $first = $this->withHeaders($headers)->postJson('/api/v1/mobile/payments/documents', $payload)->assertCreated();
         $id = $first->json('data.id');
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $id, 'origin_key' => 'mobile:'.$context->user->id.':mobile.legacy:origin-0001',
+        ]);
         \Illuminate\Support\Facades\DB::table('mobile_mutation_idempotencies')
             ->where('organization_id', $context->organization->id)->where('user_id', $context->user->id)
-            ->where('idempotency_key', 'mobile-legacy-origin-0001')->delete();
+            ->where('operation', 'payments.documents.create')->where('resource_id', $id)->delete();
         $this->withHeaders($headers)
             ->postJson('/api/v1/mobile/payments/documents', array_replace($payload, ['amount' => 200]))
             ->assertStatus(409);
@@ -145,7 +148,7 @@ final class MobilePaymentDocumentsTest extends TestCase
             ->assertOk()->assertJsonPath('data.id', $id);
         $this->assertDatabaseHas('mobile_mutation_idempotencies', [
             'organization_id' => $context->organization->id, 'user_id' => $context->user->id,
-            'idempotency_key' => 'mobile-legacy-origin-0001', 'resource_id' => $id,
+            'operation' => 'payments.documents.create', 'resource_id' => $id,
         ]);
         self::assertSame(1, PaymentDocument::query()->forOrganization((int) $context->organization->id)->count());
     }
