@@ -33,7 +33,7 @@ final class EstimatorProcessingPlanTest extends TestCase
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 1, 32, false, $this->tariff());
         self::assertSame(15, $plan['roles']['vision']['max_calls']);
-        self::assertSame(4096, $plan['roles']['vision']['output_ceiling']);
+        self::assertSame(8192, $plan['roles']['vision']['output_ceiling']);
         self::assertArrayNotHasKey('project_synthesis', $plan['roles']);
         self::assertSame(0, $plan['synthesis_part_limit']);
         self::assertSame(1, $plan['composer_part_limit']);
@@ -49,6 +49,20 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertArrayNotHasKey('estimate_audit', $plan['roles']);
         self::assertArrayNotHasKey('estimate_composer_correction', $plan['roles']);
         self::assertSame(0, $plan['composer_part_limit']);
+    }
+
+    public function test_vision_quotes_freeze_the_configured_completion_ceiling_and_its_cost(): void
+    {
+        config()->set('estimate-generation.vision.primary_max_output_tokens', 4096);
+        $old = (new EstimatorProcessingPlan)->build('documents', 1, 32, false, $this->tariff());
+        config()->set('estimate-generation.vision.primary_max_output_tokens', 8192);
+        $new = (new EstimatorProcessingPlan)->build('documents', 1, 32, false, $this->tariff());
+
+        self::assertSame(4096, $old['roles']['vision']['output_ceiling']);
+        self::assertSame(8192, $new['roles']['vision']['output_ceiling']);
+        self::assertSame(732672, $old['roles']['vision']['maximum_cost_micro_rub']);
+        self::assertSame(1009152, $new['roles']['vision']['maximum_cost_micro_rub']);
+        self::assertSame(4147200, $new['maximum_provider_cost_micro_rub'] - $old['maximum_provider_cost_micro_rub']);
     }
 
     public function test_text_reserve_uses_a_frozen_enforced_byte_bound_and_the_effective_output_limit(): void

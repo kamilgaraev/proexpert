@@ -20,6 +20,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantVi
 use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\VisionModelPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\VisionOutputTokenPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
@@ -813,7 +814,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts)))],
                 ['role' => 'user', 'content' => $content],
             ],
-            'max_completion_tokens' => $this->maxOutputTokens($input),
+            'max_completion_tokens' => VisionOutputTokenPolicy::ceiling(),
             'response_format' => $this->responseFormat($input, $model),
         ];
         VisionModelPolicy::assertSupported($model);
@@ -1204,11 +1205,6 @@ final readonly class TimewebVisionProvider implements VisionProvider
         return $value;
     }
 
-    private function maxOutputTokens(VisionDocumentInput $input): int
-    {
-        return max(256, min(4_096, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
-    }
-
     /** @param array<string, mixed> $payload */
     private function maximumWireCost(
         VisionDocumentInput $input,
@@ -1221,7 +1217,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
         $maxOutputTokens = isset($payload['max_completion_tokens']) && is_int($payload['max_completion_tokens'])
             ? $payload['max_completion_tokens']
-            : $this->maxOutputTokens($input);
+            : VisionOutputTokenPolicy::ceiling();
         $reasoningTokens = $priceSnapshot->reasoningMode === 'included_in_output' ? $maxOutputTokens : 0;
 
         return $this->costCalculator->calculate(
