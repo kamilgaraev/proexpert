@@ -1214,6 +1214,7 @@ class ReportService
                 'warehouse_balances.expiry_date',
                 'warehouse_balances.location_code',
                 'measurement_units.short_name as unit',
+                'measurement_units.id as unit_id',
                 DB::raw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) as total_quantity'),
                 DB::raw('(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value')
             );
@@ -1263,6 +1264,7 @@ class ReportService
                 'reserved_quantity' => (float)$stock->reserved_quantity,
                 'total_quantity' => (float)$stock->total_quantity,
                 'unit' => $stock->unit,
+                'unit_id' => $stock->unit_id === null ? null : (int) $stock->unit_id,
                 'unit_price' => (float)$stock->unit_price,
                 'total_value' => (float)$stock->total_value,
                 'min_stock_level' => (float)$stock->min_stock_level,
@@ -1274,9 +1276,22 @@ class ReportService
             ];
         });
 
+        $quantityByUnit = $stocks->groupBy(static fn (array $stock): int|string => $stock['unit_id'] ?? 'unknown')
+            ->map(static function (\Illuminate\Support\Collection $group): array {
+                $first = $group->first();
+
+                return [
+                    'unit_id' => $first['unit_id'],
+                    'unit' => $first['unit'],
+                    'quantity' => $first['unit_id'] !== null && is_string($first['unit']) && trim($first['unit']) !== ''
+                        ? $group->sum('total_quantity') : null,
+                ];
+            })->values()->all();
+
         $totals = [
             'total_items' => $stocks->count(),
             'total_quantity' => $stocks->sum('total_quantity'),
+            'quantity_by_unit' => $quantityByUnit,
             'total_value' => $stocks->sum('total_value'),
             'critical_items' => $stocks->filter(fn($s) => $s['is_critical'])->count(),
             'expired_items' => $stocks->filter(fn($s) => $s['is_expired'])->count(),

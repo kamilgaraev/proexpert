@@ -6,6 +6,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Material;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Report\ReportService;
@@ -101,6 +102,31 @@ class WarehouseStockReportTest extends TestCase
 
         $this->assertSame(['Screwdriver'], $report['data']->pluck('material_name')->all());
         $this->assertSame('tool', $report['filters']['asset_type']);
+    }
+
+    public function test_warehouse_quantity_totals_keep_distinct_units_and_do_not_sum_unknown_units(): void
+    {
+        [$organization, $warehouse, $material, $tool, $user] = $this->createStockReportContext();
+        $kilograms = MeasurementUnit::query()->firstOrCreate(['organization_id' => $organization->id, 'short_name' => 'кг'], ['name' => 'Килограмм', 'type' => 'work', 'is_system' => false]);
+        $pieces = MeasurementUnit::query()->firstOrCreate(['organization_id' => $organization->id, 'short_name' => 'шт'], ['name' => 'Штука', 'type' => 'work', 'is_system' => false]);
+        $material->update(['measurement_unit_id' => $kilograms->id]);
+        $tool->update(['measurement_unit_id' => $pieces->id]);
+        $unknown = Material::query()->create(['organization_id' => $organization->id, 'name' => 'Без единицы', 'code' => 'UNKNOWN', 'is_active' => true]);
+        $extra = Material::query()->create(['organization_id' => $organization->id, 'name' => 'Цемент дополнительный', 'code' => 'EXTRA', 'measurement_unit_id' => $kilograms->id, 'is_active' => true]);
+        foreach ([[$material, 12], [$tool, 3], [$unknown, 2], [$extra, 5.25]] as [$asset, $quantity]) {
+            $this->createBalance((int) $organization->id, (int) $warehouse->id, (int) $asset->id, $quantity);
+        }
+        $report = $this->reportService->getWarehouseStockReport($this->makeWarehouseStockRequest($organization, $user));
+        $this->assertEqualsCanonicalizing([
+            ['unit_id' => $kilograms->id, 'unit' => 'кг', 'quantity' => 17.25],
+            ['unit_id' => $pieces->id, 'unit' => 'шт', 'quantity' => 3.0],
+            ['unit_id' => null, 'unit' => null, 'quantity' => null],
+        ], $report['totals']['quantity_by_unit']);
+        $this->assertSame(2225.0, $report['totals']['total_value']);
+        $html = view('reports.warehouse-stock-pdf', ['data' => $report['data'], 'totals' => $report['totals'], 'generated_at' => '16.10.2026 00:00'])->render();
+        $this->assertStringContainsString('17,25 кг', $html);
+        $this->assertStringContainsString('3,00 шт', $html);
+        $this->assertStringNotContainsString('22,25', $html);
     }
 
     public function test_get_warehouse_stock_report_excludes_zero_balance_assets_without_movements(): void

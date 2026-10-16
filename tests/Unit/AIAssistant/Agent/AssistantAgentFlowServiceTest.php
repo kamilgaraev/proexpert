@@ -111,6 +111,25 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('completed', $conversation->context['agent_state']['status']);
     }
 
+    public function test_fixed_report_finalizer_keeps_actor_context_for_private_artifacts(): void
+    {
+        foreach ([7 => true, 70 => false] as $ownerId => $allowed) {
+            $conversation = new AgentFlowConversation(202, ['agent_state' => $this->pendingScheduleReportState()->toArray()]);
+            $manager = new AgentFlowConversationManager($conversation);
+            $registry = new AIToolRegistry;
+            $registry->registerTool(new AgentFlowTool('generate_project_timelines_report', [
+                'status' => 'success', 'pdf_url' => 'https://storage.example.test/private.pdf',
+                'filename' => 'private.pdf', 'storage_disk' => 's3',
+                'storage_path' => "org-15/personal-files/user-{$ownerId}/reports/private.pdf",
+            ]));
+            $result = $this->makeService($manager, $registry)->ask('за последний месяц', 15, $this->makeUser(), 202, ['context' => ['source_module' => 'ai-assistant']]);
+            $metadata = $manager->assistantMessages()[0]->metadata;
+            $this->assertSame($allowed ? 'Отчет сформирован. Файл доступен ниже.' : 'Не удалось сформировать файл отчета по текущему запросу. Попробуйте повторить запрос или уточнить период и проект.', $result['message']['content']);
+            $this->assertCount($allowed ? 1 : 0, $metadata['artifacts']);
+            $this->assertSame($allowed ? 'completed' : 'failed', $metadata['agent_state']['status']);
+        }
+    }
+
     public function test_report_period_follow_up_uses_saved_agent_state_when_current_message_is_not_report_intent(): void
     {
         $conversation = new AgentFlowConversation(212, [
