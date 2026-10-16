@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Errors;
 
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -60,8 +61,12 @@ final class ReportContractException extends RuntimeException
         ReportErrorCode $errorCode,
         array $safeFields = [],
         ?Throwable $previous = null,
+        public readonly ?ReportSourceReadinessIssues $sourceIssues = null,
     ) {
         $this->assertSafeFields($safeFields);
+        if ($sourceIssues !== null && $errorCode !== ReportErrorCode::REPORT_SOURCE_UNAVAILABLE) {
+            throw new InvalidArgumentException('report_source_readiness_issues_invalid');
+        }
 
         $this->errorCode = $errorCode;
         $this->safeFields = $safeFields;
@@ -73,8 +78,9 @@ final class ReportContractException extends RuntimeException
         ReportErrorCode $errorCode,
         array $safeFields = [],
         ?Throwable $previous = null,
+        ?ReportSourceReadinessIssues $sourceIssues = null,
     ): self {
-        return new self($errorCode, $safeFields, $previous);
+        return new self($errorCode, $safeFields, $previous, $sourceIssues);
     }
 
     private function assertSafeFields(array $safeFields): void

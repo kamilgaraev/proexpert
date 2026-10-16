@@ -18,8 +18,9 @@ use ReflectionClass;
 final readonly class InventoryRiskCandidateContract
 {
     public const CODE = 'inventory_risk';
+    public const SOURCE_SCHEMA_VERSION = 'inventory-planning.v2';
     public const FORMULA_HASH = '38ab50fe5b126ce090eb54f73fd230136c4bae9623c04eb60710680786a4fcd3';
-    public const SOURCE_HASH = '7be6a337ff9fc3a1328ebebc3b6222b5b36aef6190ea8d8a604484a4d84d5260';
+    public const SOURCE_HASH = 'fda9c5b79456ae1e4fc64c31ef8be4c98939f4ef9dc0ad0db3b7e520964fd019';
 
     public function filters(): array
     {
@@ -68,7 +69,7 @@ final readonly class InventoryRiskCandidateContract
         if ($definition->code !== self::CODE || $definition->sourceModule !== 'basic-warehouse'
             || $definition->coreAccessMode !== ReportCoreAccessMode::SOURCE_MODULE_REPORT
             || $definition->formulaVersion !== 'inventory-planning.v1'
-            || $definition->sourceSchemaVersion !== 'inventory-planning.v1'
+            || $definition->sourceSchemaVersion !== self::SOURCE_SCHEMA_VERSION
             || $definition->filters !== self::canonicalItems($this->filters())
             || $definition->columns !== self::canonicalItems($this->columns())
             || $definition->sorts !== self::canonicalItems($this->sorts())

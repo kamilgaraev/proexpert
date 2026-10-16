@@ -70,6 +70,7 @@ final readonly class InventoryRiskSnapshotMaterializer
         private OwnerSnapshotResultFactory $results,
         private ReportSourceAccessPolicy $sourceAccess,
         private OwnerReportFilterApplier $filters,
+        private InventoryRiskPeriod $period,
     ) {}
 
     public function materialize(
@@ -90,6 +91,7 @@ final readonly class InventoryRiskSnapshotMaterializer
     ): ReportSnapshotRef {
         $this->assertScope($context, $query);
         $this->statuses($query);
+        $cutoff = $this->period->cutoff($query);
         $allowedWarehouseIds = $this->sourceAccess->allowedIds(
             $context->scope->resources,
             'warehouse',
@@ -132,7 +134,7 @@ final readonly class InventoryRiskSnapshotMaterializer
             ->get();
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
-            ->where('occurred_at', '<=', $query->asOf)
+            ->where('occurred_at', '<=', $cutoff)
             ->whereIn('warehouse_id', $balanceRows->pluck('warehouse_id')->unique()->all())
             ->whereIn('material_id', $balanceRows->pluck('material_id')->unique()->all())
             ->when(
@@ -147,9 +149,9 @@ final readonly class InventoryRiskSnapshotMaterializer
             ->get();
         $demands = InventoryDemandSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where('approved_at', '<=', $query->asOf)
-            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
+            ->where('effective_from', '<=', $cutoff)
+            ->where('approved_at', '<=', $cutoff)
+            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $cutoff))
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->where(
@@ -163,8 +165,8 @@ final readonly class InventoryRiskSnapshotMaterializer
             ->get();
         $policies = InventoryReorderPolicyVersion::query()
             ->where('organization_id', $context->scope->organizationId)
-            ->where('effective_from', '<=', $query->asOf)
-            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf))
+            ->where('effective_from', '<=', $cutoff)
+            ->where(fn ($builder) => $builder->whereNull('effective_to')->orWhere('effective_to', '>', $cutoff))
             ->when(
                 $context->scope->projectIds !== [],
                 static fn (Builder $builder): Builder => $builder->where(
@@ -546,7 +548,10 @@ final readonly class InventoryRiskSnapshotMaterializer
             (string) $snapshot->source_hash,
             new DateTimeImmutable((string) $snapshot->generated_at),
             $snapshot->stale_at === null ? null : new DateTimeImmutable((string) $snapshot->stale_at),
-            ['as_of' => $snapshot->as_of->format(DATE_ATOM)],
+            [
+                'as_of' => $snapshot->as_of->format(DATE_ATOM),
+                'period_cutoff' => $this->period->cutoff($query)->format('Y-m-d\TH:i:s.uP'),
+            ],
         );
     }
 

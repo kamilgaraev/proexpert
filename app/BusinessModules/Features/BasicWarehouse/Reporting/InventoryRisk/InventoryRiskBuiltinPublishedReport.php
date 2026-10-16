@@ -63,7 +63,7 @@ final readonly class InventoryRiskBuiltinPublishedReport
             'versions' => [
                 'contract' => self::CONTRACT_VERSION,
                 'formula' => 'inventory-planning.v1',
-                'source_schema' => 'inventory-planning.v1',
+                'source_schema' => InventoryRiskCandidateContract::SOURCE_SCHEMA_VERSION,
                 'renderer' => self::RENDERER_VERSION,
             ],
             'semantic_fingerprints' => [

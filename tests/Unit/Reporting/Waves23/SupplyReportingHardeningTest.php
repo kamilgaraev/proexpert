@@ -650,7 +650,8 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('?string $rowSourceIdsColumn = null', $resolver);
         self::assertStringContainsString('?string $sourceCutoffColumn = null', $resolver);
         self::assertStringContainsString("\$query->whereIn('id', \$sourceIds)", $resolver);
-        self::assertStringContainsString("\$snapshot->dimensions['as_of']", $resolver);
+        self::assertStringContainsString("\$snapshot->watermarks['as_of']", $resolver);
+        self::assertStringContainsString("array_key_exists('period_cutoff', \$snapshot->watermarks)", $resolver);
         self::assertStringContainsString("\$query->where(\$sourceCutoffColumn, '<=', \$cutoff)", $resolver);
 
         foreach ([
@@ -747,7 +748,7 @@ final class SupplyReportingHardeningTest extends TestCase
             "->where('conversion_version', \$row->getAttribute('conversion_version'))",
             "->where('effective_from', '<=', \$asOf)",
             "->orWhere('effective_to', '>', \$asOf)",
-            "->where('approved_at', '<=', \$asOf)",
+            "->where('approved_at', '<=', \$cutoff)",
             "\$balanceDate = \$row->getAttribute('balance_date')",
             "'as_of' => \$asOf",
             "'evidence_kind' => \$kind",

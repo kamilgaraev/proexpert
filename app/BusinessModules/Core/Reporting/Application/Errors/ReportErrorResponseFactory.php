@@ -27,7 +27,10 @@ final readonly class ReportErrorResponseFactory
                 'code' => $exception->errorCode->value,
                 'correlation_id' => $correlationId,
                 'retryable' => $descriptor->retryable,
-                'details' => $exception->safeFields,
+                'details' => [
+                    ...$exception->safeFields,
+                    ...($exception->sourceIssues === null ? [] : ['source_readiness' => $exception->sourceIssues->toArray()]),
+                ],
             ],
         );
     }

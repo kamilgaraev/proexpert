@@ -4,24 +4,27 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Readiness;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadinessProbe;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRunReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadinessIssues;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Models\WarehouseInventoryEvent;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskGrainUniverse;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskPeriod;
 use App\Support\Reporting\OwnerReportFilterApplier;
 use App\Support\Reporting\ReportSourceAccessPolicy;
 use App\Support\Reporting\SourceReadinessResult;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 
-final readonly class InventoryRiskReadinessProbe implements ReportDefinitionReadinessProbe
+final readonly class InventoryRiskReadinessProbe implements ReportRunReadinessProbe
 {
     public function __construct(
         private ReportSourceAccessPolicy $sourceAccess,
         private OwnerReportFilterApplier $filters,
         private InventoryRiskGrainUniverse $grainUniverse,
+        private InventoryRiskPeriod $period,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -37,6 +40,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
+        $cutoff = $this->period->cutoff($query);
         $projects = $context->scope->projectIds;
         $allowedWarehouseIds = $this->sourceAccess->allowedIds(
             $context->scope->resources,
@@ -50,7 +54,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
                 static fn ($builder) => $builder->whereIn('warehouse_inventory_events.warehouse_id', $allowedWarehouseIds),
             )
             ->when($projects !== [], static fn ($builder) => $builder->whereIn('warehouse_inventory_events.project_id', $projects))
-            ->where('warehouse_inventory_events.occurred_at', '<=', $query->asOf);
+            ->where('warehouse_inventory_events.occurred_at', '<=', $cutoff);
         $this->filters->apply($events, $this->filters->only($query->filters, [
             'organization', 'organization_id', 'warehouse', 'warehouse_id', 'project', 'project_id',
             'material', 'material_id', 'category', 'abc', 'xyz',
@@ -72,7 +76,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             ->get();
         $grains = $this->grainUniverse->collect(
             $context->scope->organizationId,
-            $query->asOf,
+            $cutoff,
             $allowedWarehouseIds,
             $projects,
             $query->filters,
@@ -118,7 +122,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             ->fromSub(
                 WarehouseInventoryEvent::query()
                     ->where('organization_id', $context->scope->organizationId)
-                    ->where('occurred_at', '<=', $query->asOf)
+                    ->where('occurred_at', '<=', $cutoff)
                     ->whereIn(
                         'transfer_pair_key',
                         (clone $events)
@@ -133,14 +137,18 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             )
             ->count();
 
+        $invalidVersions = (clone $events)->where('source_version', '<', 1)->count();
+        $invalidHashes = (clone $events)->whereRaw('LENGTH(source_hash) <> 64')->count();
+
         return new SourceReadinessResult(
             $eligible,
             $projected,
             max(0, $eligible - $projected) + $missingOpening + $invalidTransfers,
             $unknown,
-            (clone $events)->where('source_version', '<', 1)->count(),
-            (clone $events)->whereRaw('LENGTH(source_hash) <> 64')->count(),
+            $invalidVersions,
+            $invalidHashes,
             new DateTimeImmutable,
+            new ReportSourceReadinessIssues($missingOpening, $unknown, $invalidTransfers, $invalidVersions, $invalidHashes),
         );
     }
 }

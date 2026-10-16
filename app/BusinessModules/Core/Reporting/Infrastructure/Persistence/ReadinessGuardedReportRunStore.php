@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunCreationStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Application\Readiness\ReportCandidateReadinessGate;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceReadinessProbe;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRunReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
@@ -25,7 +27,7 @@ use DateTimeImmutable;
 final readonly class ReadinessGuardedReportRunStore implements ReportRunStore
 {
     public function __construct(
-        private ReportRunStore $runs,
+        private ReportRunCreationStore $runs,
         private ReportDefinitionBindingMap $bindings,
         private ReportCandidateReadinessGate $gate,
     ) {}
@@ -36,16 +38,14 @@ final readonly class ReadinessGuardedReportRunStore implements ReportRunStore
         ?ReportSavedViewRef $savedView,
         IdempotencyKey $idempotencyKey,
     ): ReportRun {
-        $binding = $this->bindings->get($query->definition->code);
-        $probe = $binding->readinessProbe;
-        if ($probe instanceof ReportSourceReadinessProbe) {
-            $this->gate->assertReady(
-                $query->definition->code,
-                $probe->inspect($context, $query),
-            );
-        }
-
-        return $this->runs->createOrReuse($context, $query, $savedView, $idempotencyKey);
+        return $this->runs->createOrReuse($context, $query, $savedView, $idempotencyKey, function () use ($context, $query): void {
+            $probe = $this->bindings->get($query->definition->code)->readinessProbe;
+            if ($probe instanceof ReportSourceReadinessProbe) {
+                $this->gate->assertReady($query->definition->code, $probe->inspect($context, $query));
+            } elseif ($probe instanceof ReportRunReadinessProbe) {
+                $probe->assertReady($context, $query);
+            }
+        });
     }
 
     public function get(ReportExecutionContext $context, string $runId): ReportRun

@@ -98,7 +98,9 @@ final readonly class EloquentOwnerDrillDown
                 : $query->whereIn('id', $sourceIds);
         }
         if ($sourceCutoffColumn !== null) {
-            $cutoff = $snapshot->dimensions['as_of'] ?? null;
+            $cutoff = array_key_exists('period_cutoff', $snapshot->watermarks)
+                ? $snapshot->watermarks['period_cutoff']
+                : ($snapshot->watermarks['as_of'] ?? null);
             if (! is_string($cutoff) || trim($cutoff) === '') {
                 throw new DomainException('Report drill-down cutoff is unavailable.');
             }

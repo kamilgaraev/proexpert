@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use DateTimeImmutable;
+use DateTimeZone;
 
 final readonly class InventoryRiskPeriod
 {
@@ -23,10 +24,19 @@ final readonly class InventoryRiskPeriod
             || $periodStart > $periodEnd) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_REQUEST_INVALID,
-                ['fields' => 'filters'],
+                ['fields' => ['filters']],
             );
         }
 
         return [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')];
+    }
+
+    public function cutoff(ReportQuery $query): DateTimeImmutable
+    {
+        [, $end] = $this->resolve($query);
+        $utc = new DateTimeZone('UTC');
+        $periodEnd = (new DateTimeImmutable($end.' 23:59:59.999999', $query->scope->timezone))->setTimezone($utc);
+
+        return ($query->asOf < $periodEnd ? $query->asOf : $periodEnd)->setTimezone($utc);
     }
 }

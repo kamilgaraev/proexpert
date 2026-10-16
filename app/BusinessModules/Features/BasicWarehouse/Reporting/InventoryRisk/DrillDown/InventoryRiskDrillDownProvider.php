@@ -125,8 +125,11 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
         ReportDrillDownInput $input,
         InventoryRiskRow $row,
     ): ReportDrillDownResult {
-        $asOf = $snapshot->dimensions['as_of'] ?? null;
-        if (! is_string($asOf) || trim($asOf) === '') {
+        $asOf = $snapshot->watermarks['as_of'] ?? null;
+        $cutoff = array_key_exists('period_cutoff', $snapshot->watermarks)
+            ? $snapshot->watermarks['period_cutoff']
+            : $asOf;
+        if (! is_string($asOf) || trim($asOf) === '' || ! is_string($cutoff) || trim($cutoff) === '') {
             throw new DomainException('Report drill-down cutoff is unavailable.');
         }
         $offset = $input->cursor === null ? 0 : (int) $input->cursor;
@@ -141,13 +144,13 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
                 InventoryDemandSnapshot::query(),
                 $context,
                 $row,
-                $asOf,
+                $cutoff,
             )
                 ->whereKey((int) $demandId)
-                ->where('approved_at', '<=', $asOf)
+                ->where('approved_at', '<=', $cutoff)
                 ->first();
             if ($demand instanceof InventoryDemandSnapshot) {
-                $records->push($this->serializePlanningEvidence('demand_snapshot', $demand, $row, $asOf));
+                $records->push($this->serializePlanningEvidence('demand_snapshot', $demand, $row, $asOf, $cutoff));
             }
         }
 
@@ -157,12 +160,12 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
                 InventoryReorderPolicyVersion::query(),
                 $context,
                 $row,
-                $asOf,
+                $cutoff,
             )
                 ->whereKey((int) $policyId)
                 ->first();
             if ($policy instanceof InventoryReorderPolicyVersion) {
-                $records->push($this->serializePlanningEvidence('reorder_policy', $policy, $row, $asOf));
+                $records->push($this->serializePlanningEvidence('reorder_policy', $policy, $row, $asOf, $cutoff));
             }
         }
 
@@ -207,6 +210,7 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
         Model $record,
         InventoryRiskRow $row,
         string $asOf,
+        string $periodCutoff,
     ): array {
         $serialized = $record->toArray();
         $balanceDate = $row->getAttribute('balance_date');
@@ -235,6 +239,7 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
                 ? $balanceDate->format('Y-m-d')
                 : (string) $balanceDate,
             'as_of' => $asOf,
+            'period_cutoff' => $periodCutoff,
         ];
     }
 }

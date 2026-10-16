@@ -7,7 +7,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunCreationStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
@@ -26,6 +26,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -33,7 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-final class EloquentReportRunStore implements ReportRunStore
+final class EloquentReportRunStore implements ReportRunCreationStore
 {
     public function __construct(
         private readonly ReportExecutionClock $clock,
@@ -50,7 +51,25 @@ final class EloquentReportRunStore implements ReportRunStore
         }
     }
 
-    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey): ReportRun
+    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey, ?Closure $beforeCreate = null): ReportRun
+    {
+        $connection = DB::connection();
+        $lockKey = 'reports:run:'.$context->scope->organizationId.':'.$idempotencyKey->hash;
+        if ($connection->transactionLevel() > 0) {
+            $connection->selectOne('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$lockKey], false);
+
+            return $this->createUnderKeyLock($context, $query, $savedView, $idempotencyKey, $beforeCreate);
+        }
+
+        $connection->selectOne('SELECT pg_advisory_lock(hashtextextended(?, 0))', [$lockKey], false);
+        try {
+            return $this->createUnderKeyLock($context, $query, $savedView, $idempotencyKey, $beforeCreate);
+        } finally {
+            $connection->selectOne('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$lockKey], false);
+        }
+    }
+
+    private function createUnderKeyLock(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey, ?Closure $beforeCreate): ReportRun
     {
         if ($query->scope->organizationId !== $context->scope->organizationId) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
@@ -82,13 +101,19 @@ final class EloquentReportRunStore implements ReportRunStore
             $now,
         );
 
+        $existing = $this->reuseForKey($context, $idempotencyKey, $fingerprint);
+        if ($existing !== null) {
+            return $existing;
+        }
+        $beforeCreate?->__invoke();
+
         return DB::transaction(function () use ($context, $query, $savedView, $idempotencyKey, $fingerprint, $id, $payload, $now): ReportRun {
             $columns = array_keys($payload);
             $bindings = array_values($payload);
             $sql = 'INSERT INTO report_runs ('.implode(', ', $columns).') VALUES ('.
                 implode(', ', array_fill(0, count($columns), '?')).
                 ') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id';
-            $inserted = DB::selectOne($sql, $bindings);
+            $inserted = DB::selectOne($sql, $bindings, false);
 
             if ($inserted !== null) {
                 $this->dispatchIntents->addRunIntent(
@@ -138,6 +163,23 @@ final class EloquentReportRunStore implements ReportRunStore
 
             return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
         });
+    }
+
+    private function reuseForKey(ReportExecutionContext $context, IdempotencyKey $key, string $fingerprint): ?ReportRun
+    {
+        $record = ReportRunRecord::query()
+            ->useWritePdo()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('idempotency_key_hash', $key->hash)
+            ->first();
+        if (! $record instanceof ReportRunRecord) {
+            return null;
+        }
+        if (! hash_equals((string) $record->input_fingerprint, $fingerprint)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
+        }
+
+        return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
     }
 
     public function get(ReportExecutionContext $context, string $runId): ReportRun
