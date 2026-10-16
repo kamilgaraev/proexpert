@@ -474,9 +474,15 @@ final class AssistantDataAccessPolicy
 
     private function checkOrganizationMembership(User $user, int $organizationId): bool
     {
-        return $organizationId > 0 && (int) $user->current_organization_id === $organizationId
-            && $user->is_active && User::query()->whereKey($user->id)->where('is_active', true)->where('current_organization_id', $organizationId)->exists()
-            && $user->belongsToOrganization($organizationId);
+        if ($organizationId <= 0 || (int) $user->current_organization_id !== $organizationId || ! $user->is_active) { return false; }
+        $currentUser = User::query()->whereKey($user->id)->where('is_active', true)->where('current_organization_id', $organizationId);
+        if ($user::class === User::class) {
+            $membership = $user->organizations()->where('organization_user.organization_id', $organizationId)->where('organization_user.is_active', true);
+            if ($currentUser->getQuery()->getConnection() === $membership->getQuery()->getQuery()->getConnection()) {
+                return $membership->whereExists($currentUser->selectRaw('1')->toBase())->exists();
+            }
+        }
+        return $currentUser->exists() && $user->belongsToOrganization($organizationId);
     }
 
     public function canReadDomain(User $user, int $organizationId, string $domain): bool
