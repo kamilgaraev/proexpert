@@ -29,8 +29,9 @@ final class TimewebChatCompletionPayloadFactory
         if ($policy !== null) {
             $policy = EstimatorTextWirePolicy::validate($policy);
         }
+        $inputBudgetLimits = $policy === null ? null : EstimatorTextWirePolicy::inputBudgetLimits($policy);
         $prepared = (new TokenBudgetService)->prepare($messages, (array) ($options['tools'] ?? []),
-            $policy['profile'] ?? (string) ($options['profile'] ?? 'detailed'), $policy['token_limits'] ?? null);
+            $policy['profile'] ?? (string) ($options['profile'] ?? 'detailed'), $inputBudgetLimits);
         if ($prepared['messages'] !== array_values($messages)) {
             throw new \DomainException('estimate_text_context_cannot_be_trimmed');
         }
@@ -41,7 +42,8 @@ final class TimewebChatCompletionPayloadFactory
         return [
             'model' => $model,
             'messages' => $prepared['messages'],
-            'max_completion_tokens' => min($prepared['max_completion_tokens'], max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? 240))),
+            'max_completion_tokens' => min($policy['token_limits']['output_tokens'] ?? $prepared['max_completion_tokens'],
+                max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? 240))),
             'reasoning_effort' => 'none',
         ];
     }

@@ -39,7 +39,7 @@ final class EstimatorTextPayloadBudget
                     return false;
                 }
             }
-            (new TokenBudgetService)->prepare($messages, [], 'json', $policy['token_limits'] ?? null);
+            (new TokenBudgetService)->prepare($messages, [], 'json', $policy === null ? null : EstimatorTextWirePolicy::inputBudgetLimits($policy));
 
             return true;
         } catch (DomainException $exception) {

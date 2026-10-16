@@ -115,10 +115,10 @@ final class EstimatorProcessingPlanTest extends TestCase
         config()->set('ai-assistant-credits.profiles.normal', ['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4]);
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());
         self::assertSame(65536, $plan['roles']['estimate_composition']['input_ceiling']);
-        self::assertSame(2048, $plan['roles']['estimate_composition']['output_ceiling']);
-        self::assertSame(['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4], $plan['text_payload_policy']['token_limits']);
+        self::assertSame(8192, $plan['roles']['estimate_composition']['output_ceiling']);
+        self::assertSame(['input_tokens' => 16384, 'output_tokens' => 8192, 'max_calls' => 4], $plan['text_payload_policy']['token_limits']);
         config()->set('ai-assistant-credits.profiles.normal', ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6]);
-        self::assertSame(2048, $plan['text_payload_policy']['token_limits']['output_tokens']);
+        self::assertSame(8192, $plan['text_payload_policy']['token_limits']['output_tokens']);
     }
 
     public function test_a_large_operation_reserves_three_audits_two_corrections_and_three_sends_per_part(): void
