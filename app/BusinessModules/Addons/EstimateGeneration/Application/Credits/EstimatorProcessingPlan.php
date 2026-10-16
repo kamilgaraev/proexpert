@@ -56,11 +56,11 @@ final class EstimatorProcessingPlan
             }
             if ($kind !== 'documents') {
                 $roles['estimate_composition'] = $this->role($composerParts * 3, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
-                    (int) config('estimate-generation.estimate_composer.max_output_tokens', 8192), $tariff);
+                    \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::STRUCTURED_OUTPUT_TOKENS, $tariff);
                 $roles['estimate_audit'] = $this->role($auditParts * 9, (int) config('estimate-generation.estimate_auditor.max_input_bytes', 2097152),
-                    (int) config('estimate-generation.estimate_auditor.max_output_tokens', 8192), $tariff);
+                    \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::STRUCTURED_OUTPUT_TOKENS, $tariff);
                 $roles['estimate_composer_correction'] = $this->role($auditParts * 6, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
-                    (int) config('estimate-generation.estimate_composer.max_output_tokens', 8192), $tariff);
+                    \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::STRUCTURED_OUTPUT_TOKENS, $tariff);
                 if ($rerank) {
                     $roles['rerank'] = $this->role(max(1, $workItems) * 3, 12000, 800, $tariff);
                 }
