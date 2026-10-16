@@ -23,11 +23,12 @@ class MdmImportService
     {
         $issues = [];
         $accepted = 0;
+        $references = $this->scopedReferences($organizationId, $entityType, $rows);
 
         foreach (array_values($rows) as $index => $row) {
             $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
             $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
-            $referenceErrors = $this->referenceErrors($organizationId, $entityType, $data);
+            $referenceErrors = $this->referenceErrors($entityType, $data, $references);
 
             if ($referenceErrors !== []) {
                 $referenceIssues = [];
@@ -95,6 +96,7 @@ class MdmImportService
             $rejected = 0;
             $issues = $batch->issues ?? [];
             $modelClass = $this->registry->get($entityType)['model'];
+            $references = $this->scopedReferences($organizationId, $entityType, $rows, true);
 
             foreach ($rows as $index => $row) {
                 $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
@@ -106,7 +108,7 @@ class MdmImportService
                     continue;
                 }
 
-                $this->assertScopedReferences($organizationId, $entityType, $data, $index);
+                $this->assertScopedReferences($entityType, $data, $references, $index);
                 $data['organization_id'] = $organizationId;
                 $record = $this->findRecordByQuality($organizationId, $entityType, $quality);
 
@@ -153,10 +155,10 @@ class MdmImportService
         });
     }
 
-    private function assertScopedReferences(int $organizationId, string $entityType, array $values, int|string $rowIndex): void
+    private function assertScopedReferences(string $entityType, array $values, array $references, int|string $rowIndex): void
     {
         $errors = [];
-        foreach ($this->referenceErrors($organizationId, $entityType, $values, true) as $field => $messages) {
+        foreach ($this->referenceErrors($entityType, $values, $references) as $field => $messages) {
             $errors["rows.{$rowIndex}.{$field}"] = $messages;
         }
 
@@ -165,26 +167,52 @@ class MdmImportService
         }
     }
 
-    private function referenceErrors(int $organizationId, string $entityType, array $values, bool $lock = false): array
+    private function scopedReferences(int $organizationId, string $entityType, array $rows, bool $lock = false): array
+    {
+        $referenceFields = $this->registry->referenceFields($entityType);
+        $idsByField = array_fill_keys(array_keys($referenceFields), []);
+        foreach ($rows as $row) {
+            $values = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
+            foreach (array_keys($referenceFields) as $field) {
+                if (array_key_exists($field, $values) && $values[$field] !== null && $values[$field] !== '') {
+                    $idsByField[$field][(int) $values[$field]] = true;
+                }
+            }
+        }
+
+        $references = array_fill_keys(array_keys($referenceFields), []);
+        foreach ($referenceFields as $field => $referenceEntityType) {
+            $ids = array_keys($idsByField[$field]);
+            sort($ids, SORT_NUMERIC);
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $query = $referenceEntityType === 'measurement_unit'
+                    ? MeasurementUnit::query()->where(fn (Builder $query) => $query
+                        ->where('organization_id', $organizationId)->orWhere('is_system', true))
+                    : $this->registry->query((string) $referenceEntityType, $organizationId);
+
+                $query->whereKey($chunk)->orderBy('id');
+                if ($lock) {
+                    $query->sharedLock();
+                }
+
+                foreach ($query->get(['id']) as $reference) {
+                    $references[$field][(int) $reference->getKey()] = true;
+                }
+            }
+        }
+
+        return $references;
+    }
+
+    private function referenceErrors(string $entityType, array $values, array $references): array
     {
         $errors = [];
-        foreach ($this->registry->referenceFields($entityType) as $field => $referenceEntityType) {
+        foreach (array_keys($this->registry->referenceFields($entityType)) as $field) {
             if (! array_key_exists($field, $values) || $values[$field] === null || $values[$field] === '') {
                 continue;
             }
 
-            $referenceId = (int) $values[$field];
-            $query = $referenceEntityType === 'measurement_unit'
-                ? MeasurementUnit::query()->where(fn (Builder $query) => $query
-                    ->where('organization_id', $organizationId)->orWhere('is_system', true))
-                : $this->registry->query((string) $referenceEntityType, $organizationId);
-
-            $query->whereKey($referenceId);
-            if ($lock) {
-                $query->sharedLock();
-            }
-
-            if ($query->first(['id']) === null) {
+            if (! isset($references[$field][(int) $values[$field]])) {
                 $errors[$field] = [trans_message('mdm.validation.reference_not_found', [
                     'field' => $this->registry->fieldLabel($entityType, (string) $field),
                 ])];

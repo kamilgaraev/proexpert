@@ -21,6 +21,42 @@ use Tests\TestCase;
 
 final class MdmTenantReferenceSecurityTest extends TestCase
 {
+    public function test_large_import_batches_reference_queries_and_locks_before_writes(): void
+    {
+        [$actor, $ownUnit, $foreignUnit, $systemUnit] = $this->catalog();
+        $rows = [$this->row('BATCH-OWN', $ownUnit), $this->row('BATCH-SYSTEM', $systemUnit)];
+        foreach (range(900000000, 900000501) as $id) {
+            $rows[] = $this->row('BATCH-MISSING-'.$id, $id);
+        }
+        foreach (range(1, 40) as $index) {
+            $rows[] = $this->row('BATCH-FOREIGN-'.$index, $foreignUnit);
+        }
+        $before = $this->snapshot($actor->organization->id);
+        $service = app(MdmImportService::class);
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $preview = $service->preview($actor->organization->id, 'material', $rows, $actor->user->id);
+            self::assertSame(2, (int) $preview->accepted_rows);
+            self::assertSame(542, (int) $preview->rejected_rows);
+            self::assertSame(3, $preview->issues[0]['row']);
+            self::assertSame('measurement_unit_id', $preview->issues[0]['issues'][0]['field']);
+            $previewQueries = array_values(array_filter(DB::getQueryLog(), fn (array $query) => preg_match('/^select .* from "measurement_units"/i', $query['query']) === 1));
+            self::assertCount(2, $previewQueries);
+            $preview->delete();
+
+            DB::flushQueryLog();
+            $this->assertValidationRejected(fn () => $service->apply($actor->organization->id, 'material', $rows, $actor->user->id), 'rows.2.measurement_unit_id');
+            $applyQueries = array_values(array_filter(DB::getQueryLog(), fn (array $query) => preg_match('/^select .* from "measurement_units"/i', $query['query']) === 1));
+            self::assertCount(4, $applyQueries);
+            self::assertCount(2, array_filter($applyQueries, fn (array $query) => str_contains(strtolower($query['query']), 'for share')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame($before, $this->snapshot($actor->organization->id));
+    }
+
     public function test_rows_and_csv_preview_report_foreign_references_as_rejected_rows(): void
     {
         [$actor, $ownUnit, $foreignUnit] = $this->catalog();
