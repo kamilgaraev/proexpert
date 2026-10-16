@@ -6,12 +6,108 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\FinalizedPackageDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class FinalizedPackageDraftProjectorTest extends TestCase
 {
     private const INPUT_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    #[Test]
+    #[DataProvider('normativeRoundingVersions')]
+    public function it_preserves_the_recorded_rounding_version(string $version, string $total, string $lastAmount): void
+    {
+        $item = $this->resourceRoundedItem(false);
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = $total;
+        $snapshot['coefficients']['pricing_formula_version'] = $version;
+        $evidence = $snapshot['coefficients']['resource_evidence'][0];
+        $trace = $snapshot['coefficients']['provenance']['resources'][0];
+        $stored = $item->resources['labor'][0];
+        $snapshot['coefficients']['resource_evidence'] = [];
+        $snapshot['coefficients']['provenance']['resources'] = [];
+        $resources = ['materials' => [], 'labor' => [], 'machinery' => [], 'other' => []];
+        foreach (['0.005', '0.005', '1'] as $index => $price) {
+            $id = 701 + $index;
+            $priceId = 901 + $index;
+            $snapshot['coefficients']['resource_evidence'][] = [...$evidence, 'norm_resource_id' => $id,
+                'resource_price_id' => $priceId, 'base_price' => $price, 'final_amount' => $index < 2 ? '0.01' : '1.00'];
+            $snapshot['coefficients']['provenance']['resources'][] = [...$trace, 'norm_resource_id' => $id, 'price_id' => $priceId];
+            $resources['labor'][] = [...$stored, 'normative_ref' => ['norm_resource_id' => $id, 'price_id' => $priceId]];
+        }
+        if ($version === 'semantic_project_resource:v8') {
+            unset($snapshot['coefficients']['rounding_policy']);
+            foreach ($snapshot['coefficients']['resource_evidence'] as &$resource) {
+                unset($resource['final_amount']);
+            }
+            unset($resource);
+        }
+        $this->replaceRawAttributes($item, ['price_snapshot' => $snapshot, 'resources' => $resources,
+            'unit_price' => $total, 'direct_cost' => $total, 'total_cost' => $total]);
+        $draft = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $work = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame($total, $work['total_cost']);
+        self::assertSame(['0.01', '0.01', $lastAmount], array_column($work['labor'], 'total_price'));
+    }
+
+    public static function normativeRoundingVersions(): array
+    {
+        return ['historical_v8' => ['semantic_project_resource:v8', '1.01', '0.99'],
+            'resource_v9' => ['semantic_project_resource:v9', '1.02', '1.00']];
+    }
+
+    #[Test]
+    public function it_checks_normative_and_supplementary_resource_amounts_in_the_new_snapshot(): void
+    {
+        $draft = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$this->resourceRoundedItem(true)]);
+        $work = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('0.02', $work['total_cost']);
+        self::assertSame('0.01', $work['labor_cost']);
+        self::assertSame('0.01', $work['materials_cost']);
+    }
+
+    #[Test]
+    #[DataProvider('tamperedResourceAmounts')]
+    public function it_rejects_tampered_resource_amounts_in_the_new_snapshot(string $path): void
+    {
+        $item = $this->resourceRoundedItem(true);
+        $snapshot = $item->price_snapshot;
+        data_set($snapshot, $path, '0.02');
+        $this->replaceRawAttributes($item, ['price_snapshot' => $snapshot]);
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Finalized resource evidence amount is inconsistent.');
+        (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+    }
+
+    public static function tamperedResourceAmounts(): array
+    {
+        return ['normative' => ['coefficients.resource_evidence.0.final_amount'],
+            'supplementary' => ['coefficients.project_material_evidence.0.final_amount']];
+    }
+
+    #[Test]
+    public function it_allocates_machine_component_cents_only_within_the_proven_source_resource(): void
+    {
+        $item = $this->resourceRoundedItem(false);
+        $snapshot = $item->price_snapshot;
+        $snapshot['coefficients']['resource_evidence'][0]['resource_type'] = 'machine';
+        $snapshot['coefficients']['resource_evidence'][0]['base_price'] = '0.01';
+        $snapshot['coefficients']['provenance']['resources'][0] = [
+            ...$snapshot['coefficients']['provenance']['resources'][0], 'resource_type' => 'machine',
+            'machine_salary_price' => '0.005', 'machine_price_without_salary' => '0.005',
+            'machine_labor_quantity' => '1', 'driver_code' => '4-100-040', 'machinist_category' => '4.0'];
+        $resources = $item->resources;
+        $resources['machinery'] = $resources['labor'];
+        $resources['labor'] = [];
+        $this->replaceRawAttributes($item, ['price_snapshot' => $snapshot, 'resources' => $resources]);
+        $draft = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $work = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('0.01', $work['total_cost']);
+        self::assertSame('0.01', $work['machinery'][0]['total_price']);
+        self::assertSame('0.00', $work['labor'][0]['total_price']);
+        self::assertSame('-0.01', $work['labor'][0]['rounding_adjustment']);
+    }
 
     #[Test]
     public function it_projects_prices_and_resources_from_finalized_snapshot_instead_of_stored_draft_values(): void
@@ -563,6 +659,34 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
                 ]],
             ]],
         ];
+    }
+
+    private function resourceRoundedItem(bool $supplementary): EstimateGenerationPackageItem
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = $supplementary ? '0.02' : '0.01';
+        $snapshot['coefficients']['pricing_formula_version'] = $supplementary ? 'supplementary_project_material:v5' : 'semantic_project_resource:v9';
+        $snapshot['coefficients']['rounding_policy'] = 'resource_half_up_2';
+        $snapshot['coefficients']['resource_evidence'][0]['norm_quantity'] = '1';
+        $snapshot['coefficients']['resource_evidence'][0]['base_price'] = '0.005';
+        $snapshot['coefficients']['resource_evidence'][0]['final_amount'] = '0.01';
+        $resources = $item->resources;
+        if ($supplementary) {
+            $snapshot['coefficients']['project_material_amount'] = '0.01';
+            $snapshot['coefficients']['project_material_evidence'][0]['quantity_per_work_unit'] = '1';
+            $snapshot['coefficients']['project_material_evidence'][0]['base_price'] = '0.005';
+            $snapshot['coefficients']['project_material_evidence'][0]['final_amount'] = '0.01';
+        } else {
+            unset($snapshot['coefficients']['project_material_amount']);
+            $snapshot['coefficients']['project_material_evidence'] = [];
+            $resources['materials'] = [];
+        }
+        $this->replaceRawAttributes($item, ['quantity' => '1.000000000000000000',
+            'unit_price' => $snapshot['final_amount'], 'direct_cost' => $snapshot['final_amount'],
+            'total_cost' => $snapshot['final_amount'], 'price_snapshot' => $snapshot, 'resources' => $resources]);
+
+        return $item;
     }
 
     private function finalizedItem(): EstimateGenerationPackageItem

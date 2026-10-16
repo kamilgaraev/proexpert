@@ -1094,6 +1094,13 @@ final class NormativeSemanticCompatibilityService
     private function containsAny(string $text, array $needles): bool
     {
         foreach ($needles as $needle) {
+            if ($needle === 'пол') {
+                if (preg_match('/(?<![\p{L}\p{N}_])(?:пол(?:а|у|ом|е|ы|ов|ам|ами|ах)?|напольн\p{L}*)(?![\p{L}\p{N}_])/iu', $text) === 1) {
+                    return true;
+                }
+
+                continue;
+            }
             if ($needle !== '' && str_contains($text, $needle)) {
                 return true;
             }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
@@ -25,7 +26,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
     public function __construct(private CurrentProjectDerivedQuantityService $quantities, private WorkItemQuantityMapper $mapper,
         private AcceptedQuantityEvidenceMaterializer $evidence, private EstimateNormativeMatcher $normatives,
         private ResourceAssemblyService $resources, private EstimatePricingService $pricing,
-        private ResolveCommercialWorkPrice $commercial) {}
+        private ResolveCommercialWorkPrice $commercial, private AssembleMatchedResources $matchedResources = new AssembleMatchedResources) {}
 
     public function recalculate(array $draft, PipelineContext $context, ProjectModelSnapshot $snapshot, array $decisions = [],
         ?User $actor = null, ?EstimateGenerationSession $session = null): array
@@ -128,6 +129,11 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         if ($match !== null && ($match['version']['version_key'] ?? null) === $regional['normative_dataset_version']) {
                             $item['pricing_blocker'] = 'normative_required';
                             $item = $this->resources->applySelectedNormativeMatch($item, $match, $regional);
+                            $assembled = $this->matchedResources->handle([
+                                'local_estimates' => [['sections' => [['work_items' => [$item]]]]],
+                                'supplementary_materials' => $draft['supplementary_materials'] ?? [],
+                            ]);
+                            $item = $assembled['data']['local_estimates'][0]['sections'][0]['work_items'][0];
                             $item = $this->pricing->price([$item], $regional, $context)[0];
                             $item['evaluation_price_basis_quantity'] = $item['quantity'];
                         } elseif ($changed) {

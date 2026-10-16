@@ -19,9 +19,9 @@ use Illuminate\Support\Facades\Log;
 
 class EstimateGenerationPackagePersistenceService implements TargetedPackageDraftWriter
 {
-    private const NORMATIVE_PRICING_FORMULA_VERSION = 'semantic_project_resource:v8';
+    private const NORMATIVE_PRICING_FORMULA_VERSION = 'semantic_project_resource:v9';
 
-    private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v4';
+    private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v5';
 
     private const PRICING_CALCULATION_IDENTITY = 'authoritative_package_pricing:v1';
 

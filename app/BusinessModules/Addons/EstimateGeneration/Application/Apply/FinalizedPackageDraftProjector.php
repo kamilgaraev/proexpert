@@ -15,7 +15,9 @@ final class FinalizedPackageDraftProjector
     private const ALLOWED_FORMULA_VERSIONS = [
         'project_resource:v3',
         'semantic_project_resource:v8',
+        'semantic_project_resource:v9',
         'supplementary_project_material:v4',
+        'supplementary_project_material:v5',
     ];
 
     private const ALLOWED_PACKAGE_STATUSES = ['ready_for_review', 'review_required', 'approved'];
@@ -277,7 +279,12 @@ final class FinalizedPackageDraftProjector
         if (! is_array($projectEvidence)) {
             throw new \DomainException('Finalized project material evidence is invalid.');
         }
-        if (($formulaVersion === 'supplementary_project_material:v4') !== ($projectEvidence !== [])) {
+        $supplementary = in_array($formulaVersion, ['supplementary_project_material:v4', 'supplementary_project_material:v5'], true);
+        $resourceRounding = in_array($formulaVersion, ['semantic_project_resource:v9', 'supplementary_project_material:v5'], true);
+        if ($resourceRounding && data_get($snapshot, 'coefficients.rounding_policy') !== 'resource_half_up_2') {
+            throw new \DomainException('Finalized resource rounding policy is invalid.');
+        }
+        if ($supplementary !== ($projectEvidence !== [])) {
             throw new \DomainException('Finalized project material evidence does not match the pricing formula.');
         }
 
@@ -311,6 +318,7 @@ final class FinalizedPackageDraftProjector
             $machineBreakdown = $this->machinePriceBreakdown($evidence, $trace, $quantity, $unitPrice);
             $projectedUnitPrice = $machineBreakdown['machine_unit_price'] ?? $unitPrice;
             $projectedExact = $machineBreakdown['machine_exact'] ?? $exact;
+            $resourceStart = count($resources);
             $resources[] = [
                 'group' => $group,
                 'exact' => $projectedExact,
@@ -383,7 +391,14 @@ final class FinalizedPackageDraftProjector
                     ],
                 ];
             }
-            $baseExactTotal = $baseExactTotal->plus($exact);
+            if ($resourceRounding) {
+                $rounded = $this->verifiedResourceAmount($evidence, $exact);
+                $sourceRows = array_slice($resources, $resourceStart);
+                array_splice($resources, $resourceStart, count($sourceRows), $this->allocateRoundingDifference($sourceRows, $rounded, true));
+                $baseExactTotal = $baseExactTotal->plus($rounded);
+            } else {
+                $baseExactTotal = $baseExactTotal->plus($exact);
+            }
             unset($stored['normative'][$normResourceId]);
             unset($provenanceByResource[$normResourceId]);
         }
@@ -438,7 +453,7 @@ final class FinalizedPackageDraftProjector
                     ),
                 ]),
             ];
-            $projectExactTotal = $projectExactTotal->plus($exact);
+            $projectExactTotal = $projectExactTotal->plus($resourceRounding ? $this->verifiedResourceAmount($evidence, $exact) : $exact);
             unset($stored['project'][$identity]);
         }
 
@@ -448,7 +463,7 @@ final class FinalizedPackageDraftProjector
 
         $baseTotal = $baseExactTotal->toScale(2, RoundingMode::HalfUp);
         $projectTotal = $projectExactTotal->toScale(2, RoundingMode::HalfUp);
-        if ($formulaVersion === 'supplementary_project_material:v4'
+        if ($supplementary
             && $this->money(data_get($snapshot, 'coefficients.project_material_amount'), 'project material amount')
                 ->compareTo($projectTotal) !== 0) {
             throw new \DomainException('Finalized project material evidence total is inconsistent.');
@@ -639,7 +654,7 @@ final class FinalizedPackageDraftProjector
      * @param  list<array{group: string, exact: BigDecimal, resource: array<string, mixed>}>  $resources
      * @return list<array{group: string, exact: BigDecimal, resource: array<string, mixed>}>
      */
-    private function allocateRoundingDifference(array $resources, BigDecimal $total): array
+    private function allocateRoundingDifference(array $resources, BigDecimal $total, bool $allowZero = false): array
     {
         if ($resources === []) {
             throw new \DomainException('Finalized resource projection is empty.');
@@ -659,13 +674,23 @@ final class FinalizedPackageDraftProjector
             throw new \DomainException('Finalized resource rounding allocation failed.');
         }
         $adjusted = $this->money($resources[$last]['resource']['total_price'], 'resource total')->plus($difference);
-        if ($adjusted->isLessThanOrEqualTo(0)) {
+        if ($adjusted->isLessThan(0) || (! $allowZero && $adjusted->isZero())) {
             throw new \DomainException('Finalized resource rounding allocation is invalid.');
         }
         $resources[$last]['resource']['total_price'] = $this->decimal($adjusted, 2);
         $resources[$last]['resource']['rounding_adjustment'] = $this->decimal($difference, 2);
 
         return $resources;
+    }
+
+    private function verifiedResourceAmount(array $evidence, BigDecimal $exact): BigDecimal
+    {
+        $rounded = $exact->toScale(2, RoundingMode::HalfUp);
+        if ($this->money($evidence['final_amount'] ?? null, 'resource evidence amount')->compareTo($rounded) !== 0) {
+            throw new \DomainException('Finalized resource evidence amount is inconsistent.');
+        }
+
+        return $rounded;
     }
 
     /** @param list<array<string, mixed>> $resources */

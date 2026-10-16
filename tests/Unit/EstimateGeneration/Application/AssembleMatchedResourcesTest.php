@@ -52,6 +52,14 @@ final class AssembleMatchedResourcesTest extends TestCase
         self::assertSame('region-16-q2-2026', $item['materials'][0]['price_source_version']);
         self::assertSame('calculated', $item['pricing_status']);
 
+        $blocked = $assembler->handle([...$data, 'supplementary_materials' => []])['data'];
+        self::assertSame('project_material_price_missing', $blocked['local_estimates'][0]['sections'][0]['work_items'][0]['pricing_blocker']);
+        $recovered = $assembler->handle([...$blocked, 'supplementary_materials' => $data['supplementary_materials']])['data']['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertNotContains('project_material_price_missing', $recovered['validation_flags']);
+        self::assertArrayNotHasKey('pricing_blocker', $recovered);
+        self::assertCount(1, $recovered['materials']);
+        self::assertSame('7560.00', $recovered['materials'][0]['total_price']);
+
         $priced = (new EstimatePricingService(new ResolveRegionalPrice(static fn (int $priceId): array => [
             'id' => $priceId,
             'base_price' => '72000',
