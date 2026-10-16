@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Subscriptions;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
@@ -17,6 +19,8 @@ use DateTimeZone;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
+use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportSubscriptionPeriodResolverTest extends TestCase
 {
@@ -70,6 +74,47 @@ final class ReportSubscriptionPeriodResolverTest extends TestCase
         $data = (new ReportSubscriptionPeriodResolver)->runData($input, new DateTimeImmutable('2026-10-15T22:00:00Z'));
 
         self::assertSame(['period_end' => '2026-10-15', 'period_start' => '2026-10-15'], $data->filters->values);
+    }
+
+    #[DataProvider('dateOperators')]
+    public function test_relative_period_keeps_normalized_saved_view_filter_shape(string $fromOperator, string $toOperator): void
+    {
+        $definition = (new ReportDefinitionBuilder)->filters([
+            ['id' => 'period_from', 'type' => 'date', 'operators' => [$fromOperator]],
+            ['id' => 'period_to', 'type' => 'date', 'operators' => [$toOperator]],
+        ])->payload();
+        $context = (new ReportExecutionContextBuilder)->build();
+        $references = $this->createMock(ReportFilterReferenceResolver::class);
+        $references->expects(self::never())->method('resolve');
+        $normalizer = new ReportFilterNormalizer($references);
+        $filters = $normalizer->normalize($context, $definition, [
+            'period_from' => ['operator' => $fromOperator, 'value' => '2026-09-01'],
+            'period_to' => ['operator' => $toOperator, 'value' => '2026-09-30'],
+        ]);
+        $input = $this->input(['mode' => 'previous_week'], 'Europe/Moscow', $filters->values);
+        $bytes = $input->canonicalBytes();
+
+        $data = (new ReportSubscriptionPeriodResolver)->runData($input, new DateTimeImmutable('2026-10-16T09:00:00Z'));
+
+        self::assertSame(['operator' => $fromOperator, 'value' => '2026-10-05'], $data->filters->values['period_from']);
+        self::assertSame(['operator' => $toOperator, 'value' => '2026-10-11'], $data->filters->values['period_to']);
+        self::assertSame($data->filters->values, $normalizer->normalize($context, $definition, $data->filters->values)->values);
+        self::assertSame($bytes, $input->canonicalBytes());
+    }
+
+    public static function dateOperators(): array
+    {
+        return [['eq', 'eq'], ['gte', 'lte']];
+    }
+
+    public function test_relative_period_rejects_a_list_filter_instead_of_silently_changing_its_shape(): void
+    {
+        $input = $this->input(['mode' => 'previous_week'], 'UTC', [
+            'period_from' => ['operator' => 'in', 'value' => ['2026-09-01']],
+            'period_to' => ['operator' => 'eq', 'value' => '2026-09-30'],
+        ]);
+        $this->expectException(ReportContractException::class);
+        (new ReportSubscriptionPeriodResolver)->validate($input);
     }
 
     #[DataProvider('legacyPolicies')]

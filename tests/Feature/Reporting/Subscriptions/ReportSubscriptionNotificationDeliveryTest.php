@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportA
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -22,7 +24,6 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionEventR
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscription;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInput;
@@ -293,17 +294,20 @@ final class ReportSubscriptionNotificationDeliveryTest extends TestCase
             ->scope(new ReportScope((int) $organization->id, [(int) $organization->id], $projectIds, [], $timezone))
             ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, [(int) $organization->id], $projectIds, [], $timezone, 'subscription-delivery-test', null))
             ->build();
-        $definition = (new ReportDefinitionBuilder)->payload();
+        $definition = (new ReportDefinitionBuilder)->filters([['id' => 'project_id', 'type' => 'integer', 'operators' => ['eq']]])->payload();
+        $filters = (new ReportFilterNormalizer($this->createMock(ReportFilterReferenceResolver::class)))->normalize(
+            $context, $definition, $scoped ? ['project_id' => ['operator' => 'eq', 'value' => (string) $projectIds[0]]] : [],
+        );
         $savedViewId = (string) Str::ulid();
         $now = new DateTimeImmutable;
         DB::table('report_saved_views')->insert([
             'id' => $savedViewId, 'organization_id' => $organization->id, 'owner_id' => $user->id,
             'report_code' => $definition->code, 'contract_version' => $definition->contractVersion, 'name' => 'Отчёт',
-            'visibility' => 'private', 'filters_json' => '{}', 'comparison_json' => '{}', 'sort_json' => '{"field":"name","direction":"asc"}',
+            'visibility' => 'private', 'filters_json' => json_encode($filters->values, JSON_THROW_ON_ERROR), 'comparison_json' => '{}', 'sort_json' => '{"field":"name","direction":"asc"}',
             'columns_json' => '["name"]', 'status' => 'active', 'is_default' => false, 'created_at' => $now, 'updated_at' => $now,
         ]);
         $input = new ReportSubscriptionExecutionInput(
-            $definition->code, new ReportFilterSet($scoped ? ['project_id' => (string) $projectIds[0]] : []), [], 'ru', $savedViewId, 'csv', ['name'],
+            $definition->code, $filters, [], 'ru', $savedViewId, 'csv', ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC), $timezone, ['mode' => 'previous_day'],
             $definition->contractVersion, $definition->definitionHash,
         );

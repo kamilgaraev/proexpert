@@ -14,6 +14,8 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportRunData;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
+use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterReferenceResolver;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionDeliveryProcessor;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
@@ -27,7 +29,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -65,12 +66,12 @@ final class ReportSubscriptionRunCreationTest extends TestCase
     public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt, bool $holding = false): void
     {
         $fixture = $this->fixture($status, $attempt, $holding);
-        [$context, $delivery, , $input] = $fixture;
+        [$context, $delivery, $definition, $input] = $fixture;
         DB::table('report_subscriptions')->where('id', $delivery->subscriptionId)->update(['report_code' => 'new_report', 'timezone' => 'UTC']);
         $run = (new ReportRunBuilder)->queued();
         $runs = $this->createMock(CreateReportRunAction::class);
         $runs->expects(self::once())->method('handle')->willReturnCallback(
-            function (ReportExecutionContext $actual, CreateReportRunData $data, IdempotencyKey $key) use ($context, $delivery, $input, $run): ReportRun {
+            function (ReportExecutionContext $actual, CreateReportRunData $data, IdempotencyKey $key) use ($context, $delivery, $definition, $input, $run): ReportRun {
                 self::assertSame(0, DB::transactionLevel());
                 self::assertSame('repeatable read', (new StableReportingSourceView)->capture(static fn (): string => DB::selectOne('SHOW transaction_isolation')->transaction_isolation));
                 $this->assertDatabaseHas('report_subscription_deliveries', ['id' => $delivery->id, 'status' => 'building_run', 'attempt' => 1, 'run_id' => null]);
@@ -79,6 +80,8 @@ final class ReportSubscriptionRunCreationTest extends TestCase
                 self::assertSame($input->savedViewReference->hash->value, $data->savedViewReference?->hash->value);
                 self::assertSame($delivery->scheduledFor->format(DATE_ATOM), $data->asOf->format(DATE_ATOM));
                 self::assertSame($delivery->runIdempotencyKey()->hash, $key->hash);
+                self::assertSame($input->filters->values['project_id'], $data->filters->values['project_id']);
+                self::assertSame($data->filters->values, (new ReportFilterNormalizer($this->createMock(ReportFilterReferenceResolver::class)))->normalize($actual, $definition, $data->filters->values)->values);
 
                 return $run;
             },
@@ -261,20 +264,28 @@ final class ReportSubscriptionRunCreationTest extends TestCase
         $context = (new ReportExecutionContextBuilder)
             ->actor(new ReportActor((int) $user->id, 'active', ['reports.view', 'reports.run']))->scope($scope)
             ->authorization(new AuthorizationDecisionContext('subscription', (int) $organization->id, $holdingIds, [(int) $project->id], [], $timezone, 'subscription-creation-test', null))->build();
-        $definition = (new ReportDefinitionBuilder)->payload();
+        $definition = (new ReportDefinitionBuilder)->filters([
+            ['id' => 'project_id', 'type' => 'integer', 'operators' => ['eq']],
+            ['id' => 'period_from', 'type' => 'date', 'operators' => ['eq']],
+            ['id' => 'period_to', 'type' => 'date', 'operators' => ['eq']],
+        ])->payload();
         $viewId = (string) Str::ulid();
         $now = new DateTimeImmutable;
-        $filters = ['project_id' => (string) $project->id, 'period_from' => '2026-10-01', 'period_to' => '2026-10-07'];
+        $filters = (new ReportFilterNormalizer($this->createMock(ReportFilterReferenceResolver::class)))->normalize($context, $definition, [
+            'project_id' => ['operator' => 'eq', 'value' => (string) $project->id],
+            'period_from' => ['operator' => 'eq', 'value' => '2026-10-01'],
+            'period_to' => ['operator' => 'eq', 'value' => '2026-10-07'],
+        ]);
         DB::table('report_saved_views')->insert([
             'id' => $viewId, 'organization_id' => $organization->id, 'owner_id' => $user->id,
             'report_code' => $definition->code, 'contract_version' => $definition->contractVersion, 'name' => 'Own report',
-            'visibility' => 'private', 'filters_json' => json_encode($filters, JSON_THROW_ON_ERROR), 'comparison_json' => '{}',
+            'visibility' => 'private', 'filters_json' => json_encode($filters->values, JSON_THROW_ON_ERROR), 'comparison_json' => '{}',
             'sort_json' => '{"field":"name","direction":"asc"}', 'columns_json' => '["name"]', 'status' => 'active',
             'is_default' => false, 'created_at' => $now, 'updated_at' => $now,
         ]);
         $view = app(ReportSavedViewStore::class)->getVisible((int) $organization->id, (int) $user->id, $viewId);
         $input = new ReportSubscriptionExecutionInput(
-            $definition->code, new ReportFilterSet($filters), [], 'ru', $viewId, 'csv', ['name'],
+            $definition->code, $filters, [], 'ru', $viewId, 'csv', ['name'],
             new ReportWindowSort('name', ReportSortDirection::ASC), $timezone, ['mode' => 'previous_week'],
             $definition->contractVersion, $definition->definitionHash, 1, ReportSavedViewRef::fromView($view),
         );
