@@ -92,7 +92,7 @@ final class HandoverAcceptanceController extends Controller
             $validated = $request->validate([
                 'title' => ['required', 'string', 'max:255'],
                 'items' => ['required', 'array', 'min:1'],
-                'items.*.code' => ['required', 'string', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
+                'items.*.code' => ['required', 'string', 'distinct', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
                 'items.*.title' => ['required', 'string', 'max:255'],
                 'items.*.is_required' => ['nullable', 'boolean'],
                 'items.*.comment' => ['nullable', 'string', 'max:1000'],

@@ -69,6 +69,23 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $scopeResponse->assertJsonPath('data.status', 'planned');
         $scopeId = (int) $scopeResponse->json('data.id');
 
+        $duplicateChecklistResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/checklists", [
+                'title' => 'Invalid duplicate codes',
+                'items' => [
+                    ['code' => 'walls_accepted', 'title' => 'Walls accepted'],
+                    ['code' => 'walls_accepted', 'title' => 'Duplicate walls'],
+                ],
+            ]);
+
+        $duplicateChecklistResponse->assertUnprocessable();
+        $duplicateChecklistResponse->assertJsonValidationErrors(['items.0.code', 'items.1.code']);
+        $this->assertDatabaseMissing('acceptance_checklists', [
+            'acceptance_scope_id' => $scopeId,
+            'title' => 'Invalid duplicate codes',
+        ]);
+        $this->assertDatabaseCount('acceptance_checklist_items', 0);
+
         $checklistResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/checklists", [
                 'title' => 'Apartment readiness',
@@ -80,6 +97,18 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
 
         $checklistResponse->assertCreated();
         $checklistResponse->assertJsonCount(2, 'data.items');
+        $itemsByTitle = collect($checklistResponse->json('data.items'))->keyBy('title');
+        foreach (['Walls accepted' => 'walls_accepted', 'Keys prepared' => 'keys_prepared'] as $title => $code) {
+            $item = $itemsByTitle->get($title);
+            $this->assertNotNull($item);
+            $this->assertSame($code, $item['code']);
+            $this->assertDatabaseHas('acceptance_checklist_items', [
+                'id' => $item['id'],
+                'acceptance_checklist_id' => (int) $checklistResponse->json('data.id'),
+                'title' => $title,
+                'code' => $code,
+            ]);
+        }
 
         $sessionResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/sessions", [

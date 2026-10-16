@@ -128,6 +128,7 @@ final class HandoverAcceptanceService
 
             foreach ($data['items'] as $item) {
                 $checklist->items()->create([
+                    'code' => $item['code'] ?? null,
                     'title' => $item['title'],
                     'is_required' => $item['is_required'] ?? true,
                     'status' => 'pending',
