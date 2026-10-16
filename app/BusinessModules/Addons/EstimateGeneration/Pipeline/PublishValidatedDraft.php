@@ -91,6 +91,8 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             $creditReceipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
                 ->publish($published, $claim->context->creditOperationId, $draft);
             $published->update(['analysis_payload' => [...($published->analysis_payload ?? []), 'credit_operation_receipt' => $creditReceipt]]);
+        } elseif (\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft::isCandidateOnly($draft)) {
+            $this->quota->releaseCandidateOnlyReservation($published);
         } else {
             $this->quota->confirmUsableDraft($published);
         }

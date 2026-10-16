@@ -52,12 +52,32 @@ final class NormativeCandidateFeedbackService
      */
     public function apply(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
     {
+        if ((new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->pending($session->draft_payload ?? [])) {
+            return \Illuminate\Support\Facades\DB::transaction(function () use ($session, $feedback): ?array {
+                $locked = EstimateGenerationSession::query()->whereKey($session->getKey())
+                    ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+                    ->lockForUpdate()->firstOrFail();
+
+                $draft = $this->applyDraft($locked, $feedback);
+                $session->refresh();
+
+                return $draft;
+            }, 3);
+        }
+
+        return $this->applyDraft($session, $feedback);
+    }
+
+    private function applyDraft(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
+    {
         if (! in_array($feedback->feedback_type, ['normative_rejection', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'], true)) {
             return null;
         }
 
         $payload = is_array($feedback->payload) ? $feedback->payload : [];
         $draft = is_array($session->draft_payload ?? null) ? $session->draft_payload : [];
+        $reviews = new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates;
+        $candidateFlow = $reviews->pending($draft);
         $draft = match ($feedback->feedback_type) {
             'quantity_confirmation' => $this->applyQuantityConfirmationToDraft(
                 $draft,
@@ -91,14 +111,28 @@ final class NormativeCandidateFeedbackService
             ),
         };
         if ($feedback->feedback_type === 'quantity_confirmation') {
-            $draft = $this->attachConfirmedQuantityEvidence($session, $feedback, $draft);
+            if ((new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->pending($draft)) {
+                $this->recordCandidateQuantityChoice($session, $feedback, $draft);
+            } else {
+                $draft = $this->attachConfirmedQuantityEvidence($session, $feedback, $draft);
+            }
+        }
+        if ($candidateFlow) {
+            $draft = $reviews->pruneRemovedReviews($draft);
+        }
+        if ($reviews->pending($draft)) {
+            $draft = $reviews->stash($draft);
         }
         $draft = $this->readinessProjector->project($this->validationService->validate($draft));
         $workItemKey = trim((string) $feedback->work_item_key);
-        $syncedPackage = $workItemKey !== ''
+        $pending = $candidateFlow || $reviews->pending($draft);
+        $syncedPackage = ! $pending && $workItemKey !== ''
             && $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey);
 
-        if (! $syncedPackage) {
+        if ($pending) {
+            unset($draft['independent_audit']);
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft);
+        } elseif (! $syncedPackage) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
         }
 
@@ -107,6 +141,7 @@ final class NormativeCandidateFeedbackService
             $this->draftRequiresReview($draft),
             [
                 'draft_payload' => $draft,
+                'input_payload' => $session->input_payload ?? [],
                 'problem_flags' => $draft['problem_flags'] ?? [],
                 'processing_stage' => 'validation_and_normalization',
                 'processing_progress' => 100,
@@ -115,6 +150,43 @@ final class NormativeCandidateFeedbackService
         );
 
         return $draft;
+    }
+
+    private function recordCandidateQuantityChoice(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback, array $draft): void
+    {
+        $item = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator)->find($draft, [], (string) $feedback->work_item_key);
+        $normalized = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit::normalize((string) $item['quantity'], (string) $item['unit']);
+        $actor = $feedback->user;
+        if ($normalized === null || ! \App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal::fitsQuantity($normalized['value'])
+            || ! $actor instanceof \App\Models\User || (int) $feedback->session_id !== (int) $session->id || (int) $feedback->id < 1) {
+            throw $this->validationException(['quantity' => [$this->message('estimate_generation.quantity_confirmation_quantity_required')]]);
+        }
+        $target = null;
+        $targetId = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
+        if ($targetId !== null) {
+            $snapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)
+                ->snapshotForPlanning((int) $session->organization_id, (int) $session->project_id, (int) $session->id, 10001)['snapshot'];
+            $target = is_string($targetId) ? (array_column($snapshot->entities, null, 'id')[$targetId] ?? null) : null;
+            if (count($snapshot->facts) > 10000 || $target === null) {
+                throw $this->validationException(['draft' => [$this->message('estimate_generation.stage6_snapshot_stale')]]);
+            }
+        }
+        $requestId = \App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext::deterministicId('candidate-quantity-feedback|'.$session->id.'|'.$feedback->id);
+        $reason = trim((string) ($item['quantity_basis'] ?? '')) ?: $this->message('estimate_generation.candidate_quantity_confirmed');
+        $source = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserWorkQuantityFactWriter::class)
+            ->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $reason, $requestId, target: $target);
+        $selection = ['answer_kind' => 'direct_quantity', 'work_item_key' => $item['key'],
+            'quantity_key' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::key($item['key']),
+            'source_fact_id' => $source->id, 'source_fact_version' => $source->version, 'source_version' => $source->sourceVersion,
+            'source_entity_id' => $source->entityId, 'source_unit' => $source->unit,
+            'source_value_hash' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::valueHash($source->value)];
+        $proof = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter::class)
+            ->write($actor, $session, 'work:'.$item['key'], 'evaluation_answer', $selection, $reason, $requestId);
+        $payload = $session->input_payload ?? [];
+        $payload['quantity_selections'][$item['key']] = [...$selection, ...$proof];
+        $payload['quantity_selection_revision'] = ($payload['quantity_selection_revision'] ?? 0) + 1;
+        unset($payload['confirmed_evaluation']);
+        $session->input_payload = $payload;
     }
 
     private function attachConfirmedQuantityEvidence(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback, array $draft): array
@@ -169,6 +241,7 @@ final class NormativeCandidateFeedbackService
      */
     public function applyDuplicateResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft);
         $action = $this->nullableString($payload['action'] ?? null);
 
         if (! in_array($action, ['remove_item', 'keep_item', 'merge_with_existing'], true)) {
@@ -220,6 +293,7 @@ final class NormativeCandidateFeedbackService
      */
     public function applyWorkItemResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft, $workItemKey);
         $action = $this->nullableString($payload['action'] ?? null);
 
         if ($action !== 'remove_item') {
@@ -267,6 +341,7 @@ final class NormativeCandidateFeedbackService
      */
     public function applyQuantityConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft, $workItemKey);
         $found = false;
         $quantity = $this->nullableFloat($payload['quantity'] ?? null);
 
@@ -320,6 +395,7 @@ final class NormativeCandidateFeedbackService
      */
     public function applyNormativeConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft, $workItemKey);
         $found = false;
         $normId = $this->nullableInt($payload['norm_id'] ?? null);
         $normativeCode = $this->nullableString($payload['normative_code'] ?? null);
@@ -373,6 +449,7 @@ final class NormativeCandidateFeedbackService
      */
     public function applyRejectionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft, $workItemKey);
         $found = false;
         $rejectedNormId = $this->nullableInt($payload['norm_id'] ?? null);
         $rejectedCode = $this->nullableString($payload['normative_code'] ?? null);
@@ -671,7 +748,7 @@ final class NormativeCandidateFeedbackService
         ?string $quantityBasis,
         ?string $comments
     ): array {
-        if ((string) ($workItem['item_type'] ?? '') !== 'quantity_review') {
+        if ((string) ($workItem['item_type'] ?? '') !== 'quantity_review' && ($workItem['metadata']['stage6_review_pending'] ?? false) !== true) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.quantity_confirmation_not_required')],
             ]);

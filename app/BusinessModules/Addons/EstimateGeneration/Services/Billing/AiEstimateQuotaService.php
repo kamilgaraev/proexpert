@@ -111,6 +111,20 @@ final readonly class AiEstimateQuotaService implements StoppedSessionQuotaReleas
         }, 3);
     }
 
+    public function releaseCandidateOnlyReservation(EstimateGenerationSession $session): void
+    {
+        $this->database->transaction(function () use ($session): void {
+            $locked = EstimateGenerationSession::query()->whereKey($session->getKey())
+                ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+                ->lockForUpdate()->firstOrFail();
+            if ($locked->status !== EstimateGenerationStatus::EstimateReviewRequired
+                || ! \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft::isCandidateOnly($locked->draft_payload ?? [])) {
+                throw new \DomainException('estimate_generation.ai_estimate_quota_candidate_boundary_missing');
+            }
+            $this->releaseTechnicalFailure((string) $locked->organization_id, (string) $locked->getKey());
+        }, 3);
+    }
+
     public function snapshot(string $organizationId): QuotaSnapshot
     {
         $organizationKey = $this->validatedId($organizationId, 'organization');

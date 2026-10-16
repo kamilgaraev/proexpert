@@ -89,7 +89,8 @@ final class EstimateGenerationReviewItemService
     public function forSession(EstimateGenerationSession $session, array $filters = []): array
     {
         $reviewQueueQuery = $this->reviewQueueQuery ?? new EstimateGenerationReviewQueueQuery;
-        if ($session->exists && $reviewQueueQuery->hasFreshProjection($session)) {
+        if ($session->exists && ! (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->pending($session->draft_payload ?? [])
+            && $reviewQueueQuery->hasFreshProjection($session)) {
             return ['state_version' => $session->state_version, ...DuplicateWorkGroupPreview::enrich($session->draft_payload ?? [], $reviewQueueQuery->paginate($session, $filters))];
         }
 
@@ -220,6 +221,12 @@ final class EstimateGenerationReviewItemService
      */
     private function draftReviewItems(array $draft): array
     {
+        $candidates = new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates;
+        if ($candidates->pending($draft)) {
+            $draft = $candidates->restore($draft);
+            $draft['stage6_review_items'] = array_values(array_filter($draft['stage6_review_items'] ?? [],
+                static fn (mixed $item): bool => ! is_array($item) || ($item['work_item_key'] ?? null) === null));
+        }
         $items = $this->stageSixReviewItems($draft);
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
@@ -337,7 +344,8 @@ final class EstimateGenerationReviewItemService
         $normativePriceRequired = ! $quantityReviewRequired && $this->normativePriceRequired($workItem, $flags);
         $normativeReviewRequired = ! $quantityReviewRequired && $this->normativeReviewRequired($workItem, $flags);
         $pricingNotCalculated = ! $quantityReviewRequired && $this->pricingNotCalculated($workItem, $flags);
-        $priceReviewRequired = ! $quantityReviewRequired && $this->priceReviewRequired($workItem, $flags);
+        $candidatePending = ($workItem['metadata']['stage6_review_pending'] ?? false) === true;
+        $priceReviewRequired = ! $quantityReviewRequired && ($candidatePending || $this->priceReviewRequired($workItem, $flags));
         $hasAlternative = ! $quantityReviewRequired && $this->hasNormativeAlternative($workItem);
         $hasNormativeResourceReference = ! $quantityReviewRequired && $this->hasNormativeResourceReference($workItem);
 
@@ -377,7 +385,7 @@ final class EstimateGenerationReviewItemService
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_SELECT_NORM;
         } elseif ($priceReviewRequired) {
-            $severity = self::SEVERITY_WARNING;
+            $severity = $candidatePending ? self::SEVERITY_BLOCKING : self::SEVERITY_WARNING;
             $requiredAction = self::ACTION_CHECK_PRICE;
         }
 

@@ -47,21 +47,22 @@ final class NormativeCandidateManualSearchService
      */
     private function findWorkItemContext(EstimateGenerationSession $session, string $workItemKey): array
     {
-        $draft = is_array($session->draft_payload ?? null) ? $session->draft_payload : [];
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)
+            ->restore(is_array($session->draft_payload ?? null) ? $session->draft_payload : [], $workItemKey);
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 

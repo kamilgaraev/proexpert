@@ -74,15 +74,34 @@ final readonly class RecalculateLegacyEstimateDraft
             $version = $this->versions->fromSession($session);
             $context = new PipelineContext($sessionId, $scope[0], $projectId, $stateVersion, $version, $session->status->value,
                 generationAttemptId: $requestId, baseInputVersion: $version);
+            $reviewCandidates = new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates;
+            $candidateReview = $reviewCandidates->pending($draft);
+            if ($candidateReview) {
+                $draft = $reviewCandidates->restore($draft);
+                foreach ($draft['local_estimates'] ?? [] as $estimateIndex => $estimate) {
+                    foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
+                        foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                            if (($item['item_type'] ?? null) === 'quantity_review' && isset($payload['quantity_selections'][$item['key']])) {
+                                $draft['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex]['item_type'] = 'priced_work';
+                            }
+                        }
+                    }
+                }
+            }
             $draft = $this->arithmetic->recalculate($draft, $context, $snapshot, $decisions, $actor, $session);
             $draft['source_input_version'] = $version;
             $draft['input_snapshot_hash'] = $capture['token'];
             $draft['scope_identity'] = ['organization_id' => $scope[0], 'project_id' => $projectId, 'session_id' => $sessionId,
                 'source_version' => $version, 'source_versions' => array_values(array_unique(array_map(static fn ($fact): string => $fact->sourceVersion, $snapshot->facts)))];
-            $this->packages->syncFromDraft($session, $draft, $version);
-            $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\FinalizedPackageDraftProjector::class)->project($session, $draft);
-            $draft = $this->readiness->project($this->validation->validate($this->artifacts->build($draft)));
-            $draft['evaluation_result'] = $this->results->build($draft, $snapshot, $decisions);
+            if ($candidateReview) {
+                $draft = $this->artifacts->build($reviewCandidates->prepareRebuild($draft));
+            }
+            if (! BuildMostEstimateDraft::isCandidateOnly($draft)) {
+                $this->packages->syncFromDraft($session, $draft, $version);
+                $draft = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\FinalizedPackageDraftProjector::class)->project($session, $draft);
+            }
+            $draft = $this->readiness->project($this->validation->validate($candidateReview ? $draft : $this->artifacts->build($draft)));
+            $draft['evaluation_result'] = $this->results->build($candidateReview ? $reviewCandidates->evaluationView($draft) : $draft, $snapshot, $decisions);
             $draft = $this->artifacts->seal($draft);
             $verified = $this->models->snapshotForPlanning(...[...$scope, 10001]);
             if (! hash_equals($capture['token'], $verified['token'])) {

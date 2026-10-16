@@ -12,6 +12,7 @@ final class EvaluationWorkItemLocator
     public function replace(array $draft, array $input, string $workKey, array $replacement): array
     {
         $this->find($draft, $input, $workKey);
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft);
         if (($replacement['key'] ?? null) !== $workKey) {
             throw ValidationException::withMessages(['work_item_key' => trans_message('estimate_evaluation.work_missing_or_ambiguous')]);
         }
@@ -35,6 +36,7 @@ final class EvaluationWorkItemLocator
 
     public function find(array $draft, array $input, string $workKey): array
     {
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\OrdinaryDraftReviewCandidates)->restore($draft);
         $matches = [];
         $selected = $input['selected_sections'] ?? [];
         foreach ($draft['local_estimates'] ?? [] as $estimate) {
@@ -46,7 +48,8 @@ final class EvaluationWorkItemLocator
             foreach ($estimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $candidate) {
                     if (($candidate['key'] ?? null) === $workKey
-                        && ! in_array($candidate['item_type'] ?? 'priced_work', ['operation', 'review_note', 'resource_note', 'quantity_review'], true)) {
+                        && ! in_array($candidate['item_type'] ?? 'priced_work', ['operation', 'review_note', 'resource_note'], true)
+                        && (($candidate['item_type'] ?? null) !== 'quantity_review' || ($candidate['metadata']['stage6_review_pending'] ?? false) === true)) {
                         $matches[] = $candidate;
                     }
                 }
