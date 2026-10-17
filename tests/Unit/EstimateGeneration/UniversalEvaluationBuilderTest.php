@@ -115,6 +115,47 @@ final class UniversalEvaluationBuilderTest extends TestCase
         self::assertSame('10.01', $rounded['scenarios'][0]['positions'][0]['total_cost']);
     }
 
+    public function test_zero_price_reconciliation_uses_the_full_selected_scope_for_linked_delivery(): void
+    {
+        $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('room:1', 1, 2, 3,
+            'sha256:'.str_repeat('a', 64), 'room', 'room:1');
+        $price = ['source_type' => 'catalog', 'source_reference' => 'catalog:6', 'source_hash' => str_repeat('a', 64),
+            'unit_price' => '520.00', 'unit' => 'm2', 'currency' => 'RUB', 'as_of_date' => '2026-10-16',
+            'verified' => true, 'applicable' => true, 'stale' => false, 'conditions_missing' => ['delivery_cost'],
+            'vat_mode' => 'excluded', 'vat_rate' => '22', 'delivery_included' => false, 'delivery_work_item_key' => 'delivery'];
+        $floor = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '8.51',
+            'metadata' => ['scope_entity_id' => $entity->id, 'requirement_key' => 'finishing'],
+            'commercial_price_snapshot' => $price];
+        $delivery = ['key' => 'delivery', 'name' => 'Доставка', 'unit' => 'pcs', 'quantity' => '1',
+            'metadata' => ['scope_entity_id' => $entity->id, 'requirement_key' => 'delivery'],
+            'commercial_price_snapshot' => [...$price, 'source_reference' => 'catalog:7', 'source_hash' => str_repeat('b', 64),
+                'unit_price' => '40.00', 'unit' => 'pcs', 'conditions_missing' => [], 'vat_mode' => 'not_applicable',
+                'vat_rate' => null, 'delivery_included' => true, 'delivery_work_item_key' => null]];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'audit_review_items' => [
+            ['finding_id' => 'audit:zero', 'item_key' => 'floor', 'type' => 'suspicious_zero', 'reason' => 'Итог ранее отсутствовал.'],
+        ], 'local_estimates' => [['key' => 'finish_finishing', 'sections' => [['work_items' => [$floor, $delivery]]]]]];
+        $builder = new UniversalEvaluationBuilder;
+        $snapshot = new ProjectModelSnapshot([$entity], [], [], []);
+        $result = $builder->build($draft, $snapshot);
+        self::assertSame([], $result['scenarios'][0]['price_conditions_unresolved']);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($result['audit_dispositions'], 'status'));
+        self::assertSame('4425.20', $result['audit_dispositions'][0]['calculated_amount']);
+        self::assertSame('5438.74', $result['scenarios'][0]['total_by_currency']['RUB']);
+        $invalidDeliveries = [null, [...$delivery, 'quantity' => null],
+            [...$delivery, 'metadata' => ['requirement_key' => 'delivery']],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'verified' => false]],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'currency' => 'USD']],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'vat_mode' => null]],
+        ];
+        foreach ($invalidDeliveries as $invalidDelivery) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'] = $invalidDelivery === null ? [$floor] : [$floor, $invalidDelivery];
+            $blocked = $builder->build($draft, $snapshot);
+            self::assertSame([], $blocked['audit_dispositions']);
+            self::assertContains('audit_finding', array_column($blocked['missing_requirements'], 'requirement'));
+            self::assertFalse($blocked['can_confirm_for_apply']);
+        }
+    }
+
     public function test_unresolved_source_rows_are_visible_without_becoming_positions_or_changing_selected_scope(): void
     {
         $draft = ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],
