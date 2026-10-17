@@ -21,7 +21,8 @@ final readonly class SaveSessionPricingSource
     public function handle(User $actor, int $projectId, int $sessionId, array $input): array
     {
         if (! Str::isUuid($input['request_id'] ?? '') || ! is_int($input['state_version'] ?? null) || $input['state_version'] < 0
-            || ! is_int($input['estimate_regional_price_version_id'] ?? null) || $input['estimate_regional_price_version_id'] < 1) {
+            || ! is_int($input['estimate_regional_price_version_id'] ?? null) || $input['estimate_regional_price_version_id'] < 1
+            || (array_key_exists('conditions', $input) && ! is_array($input['conditions']))) {
             throw ValidationException::withMessages(['price_source' => 'Укажите текущую версию сессии и действующий источник цен.']);
         }
 
@@ -49,13 +50,17 @@ final readonly class SaveSessionPricingSource
             }
             try {
                 $payload = $this->prices->replace($payload, $input['estimate_regional_price_version_id']);
+                $conditions = array_key_exists('conditions', $input)
+                    ? (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationRegionalPriceConditions)->normalize($input['conditions'], $payload['regional_context']) : null;
             } catch (\InvalidArgumentException) {
-                throw ValidationException::withMessages(['price_source' => 'Выбранный источник недоступен или не действует.']);
+                throw ValidationException::withMessages(['price_source' => trans_message('estimate_evaluation.regional_price_conditions_invalid')]);
             }
+            $selection = ['estimate_regional_price_version_id' => $input['estimate_regional_price_version_id'], 'regional_context' => $payload['regional_context'],
+                ...($conditions === null ? [] : ['conditions' => $conditions])];
             $proof = $this->choices->write($actor, $session, 'regional-price-source', 'evaluation_price',
-                ['estimate_regional_price_version_id' => $input['estimate_regional_price_version_id'], 'regional_context' => $payload['regional_context']],
+                $selection,
                 'Выбран региональный источник цен', $input['request_id']);
-            $payload['regional_price_selection'] = $proof;
+            $payload['regional_price_selection'] = [...$selection, ...$proof];
             unset($payload['confirmed_evaluation']);
             $result = ['request_id' => $input['request_id'], 'state_version' => (int) $session->state_version + 1,
                 'cost_units' => '0', 'recalculation_required' => $session->draft_payload !== null && $session->status->value !== 'cancelled'];

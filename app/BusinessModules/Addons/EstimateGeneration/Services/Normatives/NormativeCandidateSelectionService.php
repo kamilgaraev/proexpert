@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
@@ -30,6 +31,7 @@ class NormativeCandidateSelectionService
         protected EstimateGenerationLearningRecorder $learningRecorder,
         protected AdvanceEstimateGeneration $advanceGeneration,
         protected NormativeCandidateSelectionHardGate $selectionHardGate,
+        protected ResolveSelectedNormativeResources $pinnedResources,
         protected DraftReadinessProjector $readinessProjector = new DraftReadinessProjector,
     ) {}
 
@@ -87,6 +89,9 @@ class NormativeCandidateSelectionService
                             ? ($regionalContext['normative_dataset_version'] ?? null)
                             : null,
                         'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
+                        'organization_id' => (int) $session->organization_id,
+                        'project_id' => (int) $session->project_id,
+                        'session_id' => (int) $session->id,
                     ];
 
                     $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId, $context);
@@ -94,6 +99,23 @@ class NormativeCandidateSelectionService
                         $confirmedCurrentSelection = $this->withCurrentRetrieval($confirmedCurrentSelection);
                         $learningSelection = [$originalWorkItem, $confirmedCurrentSelection, $context];
                         $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $confirmedCurrentSelection;
+                        $updated = true;
+
+                        break 3;
+                    }
+
+                    if (($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT) {
+                        $selected = $this->pinnedResources->resolve($workItem, $normId, $context);
+                        if ($selected === null) {
+                            throw $this->validationException([
+                                'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
+                            ]);
+                        }
+                        $selected['normative_match']['selected_by_user'] = true;
+                        $selected['normative_match']['selection_source'] = $context['selection_source'];
+                        $workItem = $this->pricingService->price([$this->withCurrentRetrieval($selected)], $regionalContext)[0];
+                        $learningSelection = [$originalWorkItem, $workItem, $context];
+                        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $workItem;
                         $updated = true;
 
                         break 3;
@@ -142,6 +164,9 @@ class NormativeCandidateSelectionService
             $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft);
         } elseif (! $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
+        }
+        if (($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT) {
+            $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft);
         }
         if ($learningSelection !== null) {
             [$originalWorkItem, $selectedWorkItem, $context] = $learningSelection;

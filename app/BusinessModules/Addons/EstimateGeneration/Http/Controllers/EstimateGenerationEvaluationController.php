@@ -12,6 +12,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvalu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationRequirementDecisionRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationScopeSelectionRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveSessionPricingSourceRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -99,13 +101,10 @@ final class EstimateGenerationEvaluationController extends Controller
             ->header('Cache-Control', 'private, no-store');
     }
 
-    public function pricingSource(Request $request, Project $project, EstimateGenerationSession $session,
+    public function pricingSource(SaveSessionPricingSourceRequest $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource $prices): JsonResponse
     {
-        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'estimate_regional_price_version_id' => ['required', 'integer', 'min:1']]);
-
-        return AdminResponse::success($prices->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+        return AdminResponse::success($prices->handle($request->user(), (int) $project->id, (int) $session->id, $request->validated()))->header('Cache-Control', 'private, no-store');
     }
 
     public function quantitySources(Request $request, Project $project, EstimateGenerationSession $session,
@@ -131,15 +130,9 @@ final class EstimateGenerationEvaluationController extends Controller
         return AdminResponse::success($quantities->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
     }
 
-    public function scope(Request $request, Project $project, EstimateGenerationSession $session, SaveEvaluationScopeSelection $scopes): JsonResponse
+    public function scope(SaveEvaluationScopeSelectionRequest $request, Project $project, EstimateGenerationSession $session, SaveEvaluationScopeSelection $scopes): JsonResponse
     {
-        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'selected_sections' => ['required', 'array', 'min:1', 'max:12'], 'selected_sections.*' => ['required', 'string', 'distinct', 'max:120'],
-            'profile_id' => ['required', 'in:construction,renovation,industrial'],
-            'construction_type' => ['required', 'in:new_construction,current_repair,capital_repair,reconstruction'],
-            'price_policy' => ['required', 'in:normative,catalog,mixed']]);
-
-        return AdminResponse::success($scopes->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+        return AdminResponse::success($scopes->handle($request->user(), (int) $project->id, (int) $session->id, $request->validated()))->header('Cache-Control', 'private, no-store');
     }
 
     public function sources(Request $request, Project $project, EstimateGenerationSession $session, GetEvaluationPriceSources $sources): JsonResponse

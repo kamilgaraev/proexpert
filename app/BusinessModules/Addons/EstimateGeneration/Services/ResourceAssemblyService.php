@@ -680,6 +680,7 @@ class ResourceAssemblyService
                         'resource_code' => $resource['code'],
                         'resource_id' => $resource['linked_resource_id'],
                         'norm_resource_id' => $resource['norm_resource_id'] ?? null,
+                        'norm_source_resource_id' => $resource['norm_source_resource_id'] ?? null,
                         'price_id' => $resource['price_id'],
                         'price_source' => $resource['price_source'],
                         'embedded_price' => $resource['embedded_price'] ?? null,

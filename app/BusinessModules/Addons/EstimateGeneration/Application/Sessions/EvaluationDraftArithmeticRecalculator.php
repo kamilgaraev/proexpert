@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
@@ -16,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\Models\User;
 use Brick\Math\BigDecimal;
@@ -24,9 +26,10 @@ use Brick\Math\BigDecimal;
 final readonly class EvaluationDraftArithmeticRecalculator
 {
     public function __construct(private CurrentProjectDerivedQuantityService $quantities, private WorkItemQuantityMapper $mapper,
-        private AcceptedQuantityEvidenceMaterializer $evidence, private EstimateNormativeMatcher $normatives,
-        private ResourceAssemblyService $resources, private EstimatePricingService $pricing,
-        private ResolveCommercialWorkPrice $commercial, private AssembleMatchedResources $matchedResources = new AssembleMatchedResources) {}
+        private AcceptedQuantityEvidenceMaterializer $evidence, private ResolveSelectedNormativeResources $normatives,
+        private EstimatePricingService $pricing, private ResolveCommercialWorkPrice $commercial,
+        private EstimateNormativeMatcher $legacyNormatives, private ResourceAssemblyService $legacyResources,
+        private AssembleMatchedResources $legacyMaterials = new AssembleMatchedResources) {}
 
     public function recalculate(array $draft, PipelineContext $context, ProjectModelSnapshot $snapshot, array $decisions = [],
         ?User $actor = null, ?EstimateGenerationSession $session = null): array
@@ -62,7 +65,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     }
                     if (! $explicitQuantity && $quantity === null && is_string($expectedEntity)
                         && ($item['metadata']['quantity_reset_required'] ?? false) !== true) {
-                        $workKey = $item['work_key'] ?? $item['key'];
+                        $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
                         $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
                     }
                     $oldUnit = $item['unit'] ?? null;
@@ -82,6 +85,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                             $item['quantity_status'] = $quantity->assumptions === [] ? 'supported' : 'assumed';
                             $item['quantity_evidence'] = $quantity->toArray();
                             $item['quantity_basis_details'] = $quantity->toArray();
+                            $item['metadata']['quantity_key'] = $quantity->key;
                             $item['validation_flags'] = array_values(array_diff($item['validation_flags'] ?? [], ['quantity_review_required']));
                             $item['flags'] = array_values(array_diff($item['flags'] ?? [], ['quantity_review_required']));
                             unset($item['metadata']['requires_quantity_confirmation']);
@@ -112,31 +116,32 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     }
                     if ($item['quantity'] === null || $changed) {
                         // Resource totals and accepted money bases belong to a particular volume.
-                        foreach (['materials', 'labor', 'machinery', 'other_resources', 'equipment'] as $group) {
-                            $item[$group] = [];
-                        }
-                        unset($item['price_snapshot'], $item['evaluation_price_basis_quantity']);
-                        foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
-                            $item[$money] = null;
-                        }
+                        $item = $this->withoutPrice($item);
                         $item['pricing_status'] = 'not_calculated';
                         $item['pricing_blocker'] = $item['quantity'] === null ? 'quantity_unknown' : 'price_unknown';
                     }
                     $explicitPrice = $session !== null && isset($session->input_payload['price_selections'][$item['key']]);
                     if (! $explicitPrice && $item['quantity'] !== null && isset($item['normative_match']['norm_id']) && is_string($regional['normative_dataset_version'] ?? null)) {
-                        $match = $this->normatives->matchSelectedNorm((int) $item['normative_match']['norm_id'], $item, $regional);
-                        // matchSelectedNorm has a legacy fallback; only the exact pinned dataset is admissible here.
-                        if ($match !== null && ($match['version']['version_key'] ?? null) === $regional['normative_dataset_version']) {
-                            $item['pricing_blocker'] = 'normative_required';
-                            $item = $this->resources->applySelectedNormativeMatch($item, $match, $regional);
-                            $assembled = $this->matchedResources->handle([
-                                'local_estimates' => [['sections' => [['work_items' => [$item]]]]],
-                                'supplementary_materials' => $draft['supplementary_materials'] ?? [],
-                            ]);
-                            $item = $assembled['data']['local_estimates'][0]['sections'][0]['work_items'][0];
+                        $decisionContext = [
+                            'organization_id' => $context->organizationId, 'project_id' => $context->projectId,
+                            'session_id' => $context->sessionId, 'regional_context' => $regional,
+                            'scope_type' => $estimate['scope_type'] ?? null, 'section_title' => $section['title'] ?? null,
+                            'local_estimate_title' => $estimate['title'] ?? null,
+                            'object_type' => $draft['object_profile']['object_type'] ?? null,
+                            'source_refs' => $item['source_refs'] ?? [],
+                        ];
+                        $universal = ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT;
+                        $resolved = $universal
+                            ? $this->normatives->resolve($item, (int) $item['normative_match']['norm_id'], $decisionContext)
+                            : $this->resolveLegacyResources($item, $draft, $regional);
+                        if ($resolved !== null) {
+                            $resolved['normative_match']['selected_by_user'] = $item['normative_match']['selected_by_user'] ?? false;
+                            $item = $resolved;
                             $item = $this->pricing->price([$item], $regional, $context)[0];
                             $item['evaluation_price_basis_quantity'] = $item['quantity'];
-                        } elseif ($changed) {
+                        } elseif ($universal || $changed) {
+                            $item = $this->withoutPrice($item);
+                            $item['pricing_status'] = 'not_calculated';
                             $item['pricing_blocker'] = 'selected_normative_source_changed';
                         }
                     }
@@ -147,5 +152,34 @@ final readonly class EvaluationDraftArithmeticRecalculator
         $draft['quantity_coverage_warnings'] = $preview['warnings'];
 
         return $draft;
+    }
+
+    private function withoutPrice(array $item): array
+    {
+        foreach (['materials', 'labor', 'machinery', 'other_resources', 'equipment'] as $group) {
+            $item[$group] = [];
+        }
+        unset($item['price_snapshot'], $item['evaluation_price_basis_quantity']);
+        foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'labor_cost', 'machinery_cost', 'other_cost'] as $money) {
+            $item[$money] = null;
+        }
+
+        return $item;
+    }
+
+    private function resolveLegacyResources(array $item, array $draft, array $regional): ?array
+    {
+        $match = $this->legacyNormatives->matchSelectedNorm((int) $item['normative_match']['norm_id'], $item, $regional);
+        if ($match === null || ($match['version']['version_key'] ?? null) !== $regional['normative_dataset_version']) {
+            return null;
+        }
+        $item['pricing_blocker'] = 'normative_required';
+        $item = $this->legacyResources->applySelectedNormativeMatch($item, $match, $regional);
+        $assembled = $this->legacyMaterials->handle([
+            'local_estimates' => [['sections' => [['work_items' => [$item]]]]],
+            'supplementary_materials' => $draft['supplementary_materials'] ?? [],
+        ]);
+
+        return $assembled['data']['local_estimates'][0]['sections'][0]['work_items'][0];
     }
 }

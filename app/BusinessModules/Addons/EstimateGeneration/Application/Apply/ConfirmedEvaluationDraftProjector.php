@@ -83,12 +83,23 @@ final readonly class ConfirmedEvaluationDraftProjector
                     if (isset($consumed[$item['key']]) || ! is_array($position['money_breakdown'] ?? null)
                         || ! is_string($item['quantity'] ?? null)
                         || ! BigDecimal::of($item['quantity'])->isEqualTo($position['quantity'])
-                        || ! in_array($position['price_snapshot']['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog'], true)) {
+                        || ! in_array($position['price_snapshot']['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog', 'normative'], true)) {
                         $this->reject();
                     }
                     $consumed[$item['key']] = true;
                     $item['description'] ??= null;
                     $item['quantity_basis'] ??= 'Объём подтверждён в выбранном сценарии.';
+                    if ($position['price_snapshot']['source_type'] === 'normative') {
+                        $item['accepted_evaluation_price_snapshot'] = $position['price_snapshot'];
+                        $item['accepted_source_money'] = $position['money_breakdown'];
+                        $item['metadata']['evaluation_confirmation'] = $selection;
+                        if (! self::isPersistableNormativeItem($item)) {
+                            $this->reject();
+                        }
+                        $items[] = $item;
+
+                        continue;
+                    }
                     $item['total_cost'] = $position['money_breakdown']['net_amount'];
                     $item['item_type'] = 'confirmed_commercial_work';
                     $item['pricing_status'] = 'calculated';
@@ -149,6 +160,34 @@ final readonly class ConfirmedEvaluationDraftProjector
             || ! is_array($item['metadata']['evaluation_confirmation'] ?? null)) {
             return false;
         }
+
+        return self::acceptedMoneyMatches($item, $price);
+    }
+
+    public static function isPersistableNormativeItem(array $item): bool
+    {
+        $price = $item['accepted_evaluation_price_snapshot'] ?? null;
+        if (($item['item_type'] ?? 'priced_work') !== 'priced_work' || ! is_array($price)
+            || ($price['source_type'] ?? null) !== 'normative' || ($price['verified'] ?? null) !== true
+            || ($price['conditions_missing'] ?? []) !== [] || ($price['currency'] ?? null) !== 'RUB'
+            || ! is_string($price['source_hash'] ?? null)
+            || ($price['calculation_basis']['source_hash'] ?? null) !== $price['source_hash']
+            || ! in_array($price['vat_mode'] ?? null, ['excluded', 'not_applicable'], true)
+            || ($item['price_snapshot']['source_type'] ?? null) !== 'regional_resource_aggregate'
+            || ($item['price_snapshot']['source_reference'] ?? null) !== ($price['source_reference'] ?? null)
+            || ($item['price_snapshot']['final_amount'] ?? null) !== ($item['total_cost'] ?? null)
+            || ! is_string($item['quantity'] ?? null) || ! is_string($item['total_cost'] ?? null)
+            || ! is_array($item['accepted_source_money'] ?? null)
+            || ! is_array($item['metadata']['evaluation_confirmation'] ?? null)) {
+            return false;
+        }
+
+        return self::acceptedMoneyMatches($item, $price);
+    }
+
+    private static function acceptedMoneyMatches(array $item, array $price): bool
+    {
+        $money = $item['accepted_source_money'];
         try {
             $expected = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationVatProjection)->amount($money['quoted_amount'] ?? '', $price);
 

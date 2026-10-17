@@ -39,6 +39,7 @@ final readonly class UnderstandObjectStage implements LeaseAwarePipelineStage
                 'selected_sections' => $source['input']['selected_sections'] ?? [],
                 'construction_type' => $source['input']['construction_type'] ?? 'new_construction',
                 'scope_selection' => $source['input']['scope_selection'] ?? null,
+                'regional_price_selection' => $source['input']['regional_price_selection'] ?? null,
                 'scenario_selections' => $source['input']['scenario_selections'] ?? null,
                 'currency_selections' => $source['input']['currency_selections'] ?? [],
                 'contingency_selection' => $source['input']['contingency_selection'] ?? null,

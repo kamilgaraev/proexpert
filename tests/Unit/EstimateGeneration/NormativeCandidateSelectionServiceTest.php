@@ -184,6 +184,7 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
             (new \ReflectionClass(EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(AdvanceEstimateGeneration::class))->newInstanceWithoutConstructor(),
             $this->selectionHardGate(),
+            $this->createStub(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class),
         );
         $session = new EstimateGenerationSession;
         $session->forceFill([
@@ -223,6 +224,7 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
             (new \ReflectionClass(EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(AdvanceEstimateGeneration::class))->newInstanceWithoutConstructor(),
             $selectionHardGate ?? (new \ReflectionClass(NormativeCandidateSelectionHardGate::class))->newInstanceWithoutConstructor(),
+            $this->createStub(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class),
         );
     }
 

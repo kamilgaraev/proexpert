@@ -23,6 +23,117 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EvaluationScopeSelectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_explicit_work_scope_keeps_source_rows_and_audit_history_while_projecting_only_confirmed_keys(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $draft = $this->workDraft($session);
+        $session->update(['draft_payload' => $draft]);
+        $request = [...$this->request(['finishing']), 'selected_work_item_keys' => ['floor:one'],
+            'artifact_hash' => $draft['artifact_hash'], 'scope_reason' => 'Контрольный состав: только покрытие пола первого помещения.',
+            'excluded_audit_finding_ids' => ['finding:two', 'finding:fixture']];
+        $service = app(SaveEvaluationScopeSelection::class);
+        $saved = $service->handle($actor, (int) $session->project_id, (int) $session->id, $request);
+        self::assertEquals($saved, $service->handle($actor, (int) $session->project_id, (int) $session->id, $request));
+        $session->refresh();
+        self::assertSame(CanonicalPipelineJson::encode($draft), CanonicalPipelineJson::encode($session->draft_payload));
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshot(...$scope);
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $draft['evaluation_policy'] = [...$session->input_payload, 'scope_selection' => $session->input_payload['scope_selection']];
+        $result = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($draft, $snapshot, $decisions);
+        self::assertSame(['floor:one'], array_column($result['scenarios'][0]['positions'], 'key'));
+        self::assertSame(['floor:two'], array_column($result['excluded_work_items'], 'key'));
+        self::assertSame(['finding:two', 'finding:fixture'], array_column($result['audit_dispositions'], 'finding_id'));
+        self::assertSame(2, count(array_filter($result['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding')));
+        self::assertTrue($result['scope_confirmed']);
+        self::assertFalse($result['can_confirm_for_apply']);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['scope_entity_id'] = 'entity:changed';
+        $stale = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($draft, $snapshot, $decisions);
+        self::assertFalse($stale['scope_confirmed']);
+        self::assertCount(2, $stale['scenarios'][0]['positions']);
+        self::assertContains('work_scope_confirmation', array_column($stale['missing_requirements'], 'requirement'));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_work_scope_rejects_stale_unknown_empty_and_in_scope_audit_exclusions_atomically(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $draft = $this->workDraft($session);
+        $session->update(['draft_payload' => $draft]);
+        $base = [...$this->request(['finishing']), 'selected_work_item_keys' => ['floor:one'],
+            'artifact_hash' => $draft['artifact_hash'], 'scope_reason' => 'Подтверждённый контрольный состав первого помещения.'];
+        $invalid = [
+            ['selected_work_item_keys' => []], ['selected_work_item_keys' => ['floor:unknown']],
+            ['selected_work_item_keys' => ['floor:one', 'floor:one']], ['artifact_hash' => str_repeat('0', 64)],
+            ['excluded_audit_finding_ids' => ['finding:one']], ['excluded_audit_finding_ids' => ['finding:unkeyed']],
+            ['excluded_audit_finding_ids' => ['finding:missing']], ['accepted_material_finding_ids' => ['finding:one']],
+        ];
+        foreach ($invalid as $change) {
+            try {
+                app(SaveEvaluationScopeSelection::class)->handle($actor, (int) $session->project_id, (int) $session->id, [...$base, ...$change]);
+                self::fail('Invalid work scope was accepted.');
+            } catch (ValidationException) {
+                self::assertSame(0, $session->fresh()->state_version);
+                self::assertArrayNotHasKey('scope_selection', $session->fresh()->input_payload);
+            }
+        }
+        self::assertSame([], app(ProjectModelRepository::class)->currentFacts((int) $session->organization_id, (int) $session->project_id, (int) $session->id));
+        self::assertSame(CanonicalPipelineJson::encode($draft), CanonicalPipelineJson::encode($session->fresh()->draft_payload));
+    }
+
+    public function test_material_review_requires_an_explicit_current_norm_choice_and_cannot_survive_its_change(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $draft = $this->workDraft($session);
+        $item = &$draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $item['normative_match'] = ['norm_id' => 101, 'code' => '11-01-034-04', 'selected_by_user' => true, 'hard_gate_passed' => true];
+        $item['specialization_scenario'] = ['signature' => str_repeat('a', 64), 'assumption_code' => 'laminate', 'normative_rate_code' => '11-01-034-04'];
+        $item['metadata']['material_assumption'] = ['code' => 'laminate', 'message' => 'Ламинат принят для контрольного состава.'];
+        unset($item);
+        $draft['audit_review_items'][2]['type'] = 'unjustified_expense';
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft);
+        $session->update(['draft_payload' => $draft]);
+        $request = [...$this->request(['finishing']), 'selected_work_item_keys' => ['floor:one'],
+            'artifact_hash' => $draft['artifact_hash'], 'scope_reason' => 'Ламинат подтверждён как материал первого помещения.',
+            'accepted_material_finding_ids' => ['finding:one']];
+        app(SaveEvaluationScopeSelection::class)->handle($actor, (int) $session->project_id, (int) $session->id, $request);
+        $session->refresh();
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $snapshot = $models->snapshot(...$scope);
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $draft['evaluation_policy'] = $session->input_payload;
+        $builder = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder;
+        $result = $builder->build($draft, $snapshot, $decisions);
+        self::assertSame(['material_assumption_accepted'], array_column($result['audit_dispositions'], 'status'));
+        self::assertNotEmpty($result['scenarios'][0]['assumptions']);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['normative_match']['norm_id'] = 102;
+        $changed = $builder->build($draft, $snapshot, $decisions);
+        self::assertSame([], $changed['audit_dispositions']);
+        self::assertContains('Проверить включённую работу.', array_column($changed['missing_requirements'], 'reason'));
+        self::assertFalse($changed['can_confirm_for_apply']);
+    }
+
+    private function workDraft(EstimateGenerationSession $session): array
+    {
+        $item = ['key' => 'floor:one', 'name' => 'Первое помещение', 'unit' => 'm2', 'quantity' => '6',
+            'quantity_status' => 'supported', 'metadata' => ['composition_work_key' => 'finish.floor']];
+        $draft = ['generation_contract' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT,
+            'source_input_version' => 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session),
+            'local_estimates' => [['key' => 'finish_finishing', 'sections' => [['key' => 'floors', 'work_items' => [
+                $item, [...$item, 'key' => 'floor:two', 'name' => 'Второе помещение', 'quantity' => null, 'quantity_status' => 'unknown'],
+            ]]]]], 'audit_review_items' => [
+                ['finding_id' => 'finding:two', 'item_key' => 'floor:two', 'type' => 'quantity_mismatch', 'reason' => 'Нет объёма второго помещения.'],
+                ['finding_id' => 'finding:fixture', 'item_key' => 'fixture:missing', 'type' => 'omission', 'reason' => 'Нет сантехнического оборудования.'],
+                ['finding_id' => 'finding:one', 'item_key' => 'floor:one', 'type' => 'quantity_mismatch', 'reason' => 'Проверить включённую работу.'],
+                ['finding_id' => 'finding:unkeyed', 'type' => 'omission', 'reason' => 'Общий вопрос к исходным данным.'],
+            ]];
+
+        return (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)
+            ->seal((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft));
+    }
+
     public function test_scope_is_confirmed_by_a_real_choice_proof_and_replay_preserves_the_original_receipt(): void
     {
         [$actor, $session] = $this->fixture();
@@ -77,7 +188,7 @@ final class EvaluationScopeSelectionPostgresTest extends EstimateGenerationCanon
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
-        $project = Project::factory()->for($organization)->create();
+        $project = Project::factory()->for($organization)->createQuietly();
         $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $authorization = Mockery::mock(AuthorizationService::class);

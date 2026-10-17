@@ -108,6 +108,7 @@ final readonly class NormativeResourceRowData
                 ? $priceResourceId
                 : ($linkedResourceId ?? $priceResourceId),
             'norm_resource_id' => $normResourceId,
+            'norm_source_resource_id' => $linkedResourceId,
         ];
         if ($isProjectResourceSelection) {
             $resource['project_resource_selection'] = [
