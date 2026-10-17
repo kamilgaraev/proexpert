@@ -49,6 +49,12 @@ final class AssistantDesignAdditionalTest extends TestCase
             self::assertStringNotContainsString('"metadata"', $query);
             self::assertStringNotContainsString('failed_reason', $query);
         }
+        $sourceLinkQueries = array_values(array_filter($queries,
+            static fn (string $query): bool => str_starts_with($query, 'select "design_source_links".')));
+        self::assertNotEmpty($sourceLinkQueries);
+        foreach ($sourceLinkQueries as $query) {
+            self::assertStringContainsString('"design_ifc_model_elements"."express_id" = "design_source_links"."source_element_id"', $query);
+        }
         $chunk = array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'design_model_derivative' && (int) $chunk->entityId === $derivative->id))[0];
         self::assertSame(35, $chunk->metadata['progress_percent']);
         self::assertSame('processing', $chunk->metadata['status']);
@@ -240,11 +246,31 @@ final class AssistantDesignAdditionalTest extends TestCase
         }
         self::assertCount(2, $queries);
         foreach ($queries as $query) {
-            self::assertStringContainsString('"design_model_derivatives"."id" = "design_ifc_model_elements"."derivative_id"', $query);
+            self::assertStringContainsString(
+                '("design_ifc_model_elements"."derivative_id", "design_ifc_model_elements"."project_id", "design_ifc_model_elements"."version_id")'
+                    .' in (select "design_model_derivatives"."id", "design_model_derivatives"."project_id", "design_model_derivatives"."version_id"',
+                $query,
+            );
         }
         $derivative->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
         self::assertSame($withoutDerivative, $collect());
         $version->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertSame([], $collect());
+        $version->updateQuietly(['project_id' => $project->id]);
+        self::assertSame($withoutDerivative, $collect());
+        $project->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+        self::assertSame([], $collect());
+        DB::table('project_organization')->insert([
+            'project_id' => $project->id, 'organization_id' => $fixture->organization->id,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        self::assertSame($withoutDerivative, $collect());
+        DB::table('project_organization')->where('project_id', $project->id)
+            ->where('organization_id', $fixture->organization->id)->delete();
+        self::assertSame([], $collect());
+        $project->updateQuietly(['organization_id' => $fixture->organization->id]);
+        self::assertSame($withoutDerivative, $collect());
+        $project->deleteQuietly();
         self::assertSame([], $collect());
     }
 
