@@ -63,14 +63,18 @@ final class EvaluationArithmeticRecalculationPostgresTest extends EstimateGenera
         $draft = ['generation_contract' => UniversalDraftProjector::CONTRACT,
             'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session->fresh()),
             'evaluation_policy' => ['selected_sections' => ['equipment'], 'profile_id' => 'construction', 'construction_type' => 'new_construction'],
+            'audit_review_items' => [['finding_id' => 'audit:zero', 'item_key' => 'pump-buy', 'type' => 'suspicious_zero',
+                'severity' => 'material', 'reason' => 'Итог ранее отсутствовал.']],
             'local_estimates' => [['key' => 'equipment', 'sections' => [['key' => 'purchase', 'work_items' => [
                 ['key' => 'pump-buy', 'work_key' => 'equipment.purchase', 'name' => 'Покупка насоса P1', 'unit' => 'pcs', 'quantity' => '3',
+                    'pricing_status' => 'not_calculated', 'total_cost' => '0.00',
                     'quantity_status' => 'supported', 'quantity_basis_details' => $quantity, 'quantity_evidence' => $quantity,
                     'metadata' => ['quantity_key' => 'equipment.count', 'scope_entity_id' => $entityId, 'requirement_key' => 'equipment_purchase'],
                     'commercial_price_snapshot' => $price],
             ]]]]]];
         $draft['evaluation_result'] = app(UniversalEvaluationBuilder::class)->build($draft, app(ProjectModelRepository::class)->snapshot(...$scope));
         self::assertSame('37.02', $draft['evaluation_result']['scenarios'][0]['known_subtotals']['RUB']);
+        self::assertSame('37.02', $draft['evaluation_result']['audit_dispositions'][0]['calculated_amount']);
         $session->refresh()->update(['draft_payload' => app(BuildMostEstimateDraft::class)->seal(app(UniversalReviewSummaryProjector::class)->project($draft)),
             'status' => 'estimate_review_required']);
         $manual->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [
@@ -83,6 +87,11 @@ final class EvaluationArithmeticRecalculationPostgresTest extends EstimateGenera
         self::assertSame('49.36', $result['result']['scenarios'][0]['known_subtotals']['RUB']);
         self::assertSame('4', $result['result']['scenarios'][0]['positions'][0]['quantity']);
         self::assertSame($entityId, $result['result']['scenarios'][0]['positions'][0]['entity_id']);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($result['result']['audit_dispositions'], 'status'));
+        self::assertNotContains('audit_finding', array_column($result['result']['missing_requirements'], 'requirement'));
+        self::assertSame($price['source_hash'], $result['result']['audit_dispositions'][0]['source_hash']);
+        self::assertSame('49.36', $result['result']['audit_dispositions'][0]['calculated_amount']);
+        self::assertSame(CanonicalPipelineJson::encode($draft['audit_review_items']), CanonicalPipelineJson::encode($session->fresh()->draft_payload['audit_review_items']));
         self::assertSame('0', $result['cost_units']);
         self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode($recalculate->handle($actor, $scope[1], $scope[2], 2, $request)));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());

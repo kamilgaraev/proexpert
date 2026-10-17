@@ -174,11 +174,20 @@ final readonly class UniversalEvaluationBuilder
             }
             $currentItem = $currentItems[$findingKey]['item'] ?? null;
             if (is_array($currentItem) && ($finding['type'] ?? null) === 'suspicious_zero'
+                && ! is_array($currentItem['commercial_price_snapshot'] ?? null)
                 && is_string($currentItem['price_snapshot']['final_amount'] ?? null)
                 && $this->price($currentItem, $draft, $regionalTerms) !== null && is_numeric($currentItem['total_cost'] ?? null)
                 && BigDecimal::of((string) $currentItem['total_cost'])->isEqualTo((string) $currentItem['price_snapshot']['final_amount'])) {
                 $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'corrected_by_native_pricing',
                     'price_snapshot_hash' => hash('sha256', CanonicalPipelineJson::encode($currentItem['price_snapshot']))];
+
+                continue;
+            }
+            if (is_array($currentItem) && ($finding['type'] ?? null) === 'suspicious_zero'
+                && ($commercialMoney = $this->correctedCommercialMoney($currentItem)) !== null) {
+                $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'corrected_by_commercial_pricing',
+                    'source_hash' => $commercialMoney['price_snapshot']['source_hash'], 'calculated_amount' => $commercialMoney['amount'],
+                    'price_snapshot_hash' => hash('sha256', CanonicalPipelineJson::encode($commercialMoney['price_snapshot']))];
 
                 continue;
             }
@@ -313,6 +322,29 @@ final readonly class UniversalEvaluationBuilder
                 'delivery_included' => $terms['delivery'] === 'included', 'delivery_outside_scope' => $terms['delivery'] === 'outside_scope',
                 'conditions_basis' => $terms['basis'], 'conditions_decision_id' => $terms['decision_id']]),
             'conditions_missing' => [...($regionalOnly ? [] : ['price_level']), ...($terms === null ? ['vat_mode', 'delivery_included'] : [])]];
+    }
+
+    private function correctedCommercialMoney(array $item): ?array
+    {
+        $price = $item['commercial_price_snapshot'] ?? null;
+        if (! is_array($price) || ! in_array($price['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog'], true)
+            || ($price['stale'] ?? false) === true
+            || ! is_string($price['source_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $price['source_hash']) !== 1) {
+            return null;
+        }
+        $result = $this->calculator->calculate([['id' => 'base', 'assumptions' => [], 'positions' => [[
+            'key' => $item['key'], 'section' => 'audit_reconciliation', 'unit' => $item['unit'] ?? null,
+            'quantity' => $item['quantity'] ?? null, 'price_snapshot' => $price,
+        ]]]], ['audit_reconciliation'], [], true);
+        $scenario = $result['scenarios'][0];
+        $position = $scenario['positions'][0];
+        if ($scenario['unpriced_positions'] !== [] || $scenario['price_conditions_unresolved'] !== []
+            || $scenario['tax_breakdown_unknown_positions'] !== []
+            || ! BigDecimal::of($position['total_cost'])->isGreaterThan(0)) {
+            return null;
+        }
+
+        return ['price_snapshot' => $position['price_snapshot'], 'amount' => $position['total_cost']];
     }
 
     private function priceIdentity(array $snapshot): array
