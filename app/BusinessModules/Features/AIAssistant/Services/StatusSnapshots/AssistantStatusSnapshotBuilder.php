@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudget;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -110,9 +111,6 @@ final class AssistantStatusSnapshotBuilder
 
     private function generation(int $organizationId): ?string
     {
-        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
-        $snapshot = Cache::get('ai-rag-coverage:'.$organizationId.':0:*:'.$revision);
-
-        return is_array($snapshot) && is_string($snapshot['projection_generation'] ?? null) ? $snapshot['projection_generation'] : null;
+        return app(RagCoverageStateStore::class)->activeGeneration($organizationId);
     }
 }

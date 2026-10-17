@@ -274,6 +274,11 @@ final class RagCoverageService
 
     private function queueRefresh(int $organizationId, ?int $projectId, ?string $sourceType, string $key): void
     {
+        if (DB::connection()->transactionLevel() > 0) {
+            DB::afterCommit(fn () => $this->queueRefresh($organizationId, $projectId, $sourceType, $key));
+
+            return;
+        }
         if (! Cache::add($key.':queued', true, 7200)) {
             return;
         }

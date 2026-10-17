@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudget;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
@@ -57,7 +58,17 @@ final class AssistantIndexStatusService
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
+        $sourceRecoveryKey = $checkCurrentAccess && $section === 'sources'
+            ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':sources:background-recovery'
+            : null;
+        if ($sourceRecoveryKey !== null && Cache::has($sourceRecoveryKey)) {
+            Cache::put($sourceRecoveryKey, true, 180);
+
+            return $this->snapshotStatus($organizationId, $actor, $section);
+        }
+
         $phase = (object) ['value' => 'schema', 'missing_release' => false];
+        $budgetExceeded = false;
         $started = hrtime(true);
         $metricsRequest = request();
         $processingPhase = 'rag_prepare';
@@ -134,6 +145,7 @@ final class AssistantIndexStatusService
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
             }
+            $budgetExceeded = true;
             \Illuminate\Support\Facades\Log::warning('assistant.rag_status_budget_exceeded', [
                 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'section' => $section,
                 'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
@@ -142,6 +154,12 @@ final class AssistantIndexStatusService
             if ($checkCurrentAccess && ! $phase->missing_release) { AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section); }
         } finally {
             $setProcessingPhase(null);
+        }
+
+        if ($budgetExceeded && $sourceRecoveryKey !== null && ! $phase->missing_release) {
+            Cache::put($sourceRecoveryKey, true, 180);
+
+            return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
         if ($checkCurrentAccess && ($result['status_available'] ?? false)) { AssistantStatusSnapshotDiagnostics::request('fresh_read', $section); }
@@ -160,14 +178,20 @@ final class AssistantIndexStatusService
         $ip = request()->ip();
         $epoch = $this->snapshotEpoch ?? app(AssistantStatusSnapshotEpoch::class);
         $inputs = $this->snapshotInputs ?? app(AssistantStatusSnapshotInputs::class);
+        $lookupKey = $this->snapshotLookupKey($organizationId, $actor, $section, $surface, $ip, $inputs);
+        if ($lookupKey === null) {
+            return $this->unavailableStatus();
+        }
+        $candidate = Cache::get($lookupKey);
+        $refresh = null;
 
-        return $this->inRepeatableRead(function () use ($organizationId, $actor, $section, $surface, $ip, $epoch, $inputs): array {
+        $result = $this->inRepeatableRead(function () use ($organizationId, $actor, $section, $surface, $ip, $epoch, $inputs, $lookupKey, $candidate, &$refresh): array {
             $currentActor = User::query()->find($actor->id);
             if ($currentActor === null || ! $currentActor->is_active || (int) $currentActor->current_organization_id !== $organizationId) {
                 throw new AuthorizationException;
             }
 
-            return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $epoch, $inputs): array {
+            return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $epoch, $inputs, $lookupKey, $candidate, &$refresh): array {
                 if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
                 $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
                 if ($fingerprint === null) {
@@ -176,7 +200,7 @@ final class AssistantIndexStatusService
                     return $this->unavailableStatus();
                 }
                 $key = $this->snapshotKey($organizationId, (int) $currentActor->id, $surface).':'.$section.':'.$fingerprint;
-                $snapshot = Cache::get($key);
+                $snapshot = $key === $lookupKey ? $candidate : null;
                 $age = $inputs->age(is_array($snapshot) ? ($snapshot['generated_at'] ?? null) : null);
                 $canReindex = $authorization->canCurrent($currentActor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
                 if (is_array($snapshot) && is_array($snapshot['status'] ?? null) && is_array($snapshot['epoch'] ?? null)
@@ -199,20 +223,46 @@ final class AssistantIndexStatusService
 
                     return $status;
                 }
-                $queued = Cache::add($key.':queued', true, 90);
-                AssistantStatusSnapshotDiagnostics::request(is_array($snapshot) ? 'snapshot_rejected' : 'snapshot_missing', $section, $key, $age, $queued);
-                if ($queued) {
-                    try {
-                        RefreshAssistantIndexStatusJob::dispatch($organizationId, (int) $currentActor->id, $surface, $key, $section, $ip)->afterCommit();
-                    } catch (Throwable $exception) {
-                        Cache::forget($key.':queued');
-                        throw $exception;
-                    }
-                }
+                $refresh = ['key' => $key, 'actor_id' => (int) $currentActor->id, 'age' => $age,
+                    'phase' => is_array($snapshot) ? 'snapshot_rejected' : 'snapshot_missing'];
 
                 return $this->unavailableStatus();
             }, fresh: true);
         });
+        if ($refresh !== null) {
+            $queued = Cache::add($refresh['key'].':queued', true, 90);
+            AssistantStatusSnapshotDiagnostics::request($refresh['phase'], $section, $refresh['key'], $refresh['age'], $queued);
+            if ($queued) {
+                try {
+                    RefreshAssistantIndexStatusJob::dispatch($organizationId, $refresh['actor_id'], $surface, $refresh['key'], $section, $ip)->afterCommit();
+                } catch (Throwable $exception) {
+                    Cache::forget($refresh['key'].':queued');
+                    throw $exception;
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    private function snapshotLookupKey(int $organizationId, User $actor, string $section, KnowledgeSurface $surface, ?string $ip, AssistantStatusSnapshotInputs $inputs): ?string
+    {
+        $currentActor = User::query()->find($actor->id);
+        if ($currentActor === null || ! $currentActor->is_active || (int) $currentActor->current_organization_id !== $organizationId) {
+            throw new AuthorizationException;
+        }
+
+        return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $inputs): ?string {
+            if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
+            $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
+            if ($fingerprint === null) {
+                AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
+
+                return null;
+            }
+
+            return $this->snapshotKey($organizationId, (int) $currentActor->id, $surface).':'.$section.':'.$fingerprint;
+        }, fresh: true);
     }
 
     public function refreshSnapshot(int $organizationId, int $actorId, KnowledgeSurface $surface, string $cacheKey): void
@@ -397,12 +447,7 @@ final class AssistantIndexStatusService
 
     private function currentProjectionGeneration(int $organizationId): ?string
     {
-        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
-        $projection = Cache::get('ai-rag-coverage:'.$organizationId.':0:*:'.$revision);
-
-        return is_array($projection) && is_string($projection['projection_generation'] ?? null)
-            ? $projection['projection_generation']
-            : null;
+        return app(RagCoverageStateStore::class)->activeGeneration($organizationId);
     }
 
     private function sourceProofRow(object $source): array
