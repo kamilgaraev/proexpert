@@ -28,6 +28,92 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_role_catalog_redis_reads_keep_only_numeric_opt_in_request_local_aggregates(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $connection = new class {
+            public function getName(): string { return 'private-connection'; }
+        };
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v2'], 2.5, $connection);
+        ApiQueryMetrics::recordRoleCatalogRedisGet($request, $event);
+        $second = clone $event;
+        $second->command = 'GET';
+        $second->time = 3.0;
+        ApiQueryMetrics::recordRoleCatalogRedisGet($request, $second);
+        $badValues = [
+            ['command', 'mget'], ['command', new \stdClass],
+            ['parameters', ['private-other-key']], ['parameters', ['authorization_roles:v2', 'private-value']],
+            ['parameters', [new \stdClass]], ['parameters', null],
+            ['parameters', [str_repeat('x', 4097).'authorization_roles:v2']],
+            ['time', INF], ['time', NAN], ['time', -1], ['time', '2.0'], ['time', new \stdClass],
+        ];
+        foreach ($badValues as [$property, $value]) {
+            $invalid = clone $event;
+            $invalid->{$property} = $value;
+            ApiQueryMetrics::recordRoleCatalogRedisGet($request, $invalid);
+        }
+        self::assertSame(['observed' => true, 'count' => 2, 'total_ms' => 5.5, 'max_ms' => 3.0], $metrics->summary()['role_catalog_redis_get']);
+        foreach (['private-prefix', 'authorization_roles', 'private-connection', 'private-value', 'parameters', 'connectionName'] as $private) {
+            self::assertStringNotContainsString($private, json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        }
+        [$disabledRequest, $disabled] = $this->metrics(false);
+        ApiQueryMetrics::recordRoleCatalogRedisGet($disabledRequest, $event);
+        self::assertArrayNotHasKey('role_catalog_redis_get', $disabled->summary());
+        [, $fresh] = $this->metrics();
+        self::assertSame(['observed' => false, 'count' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0], $fresh->summary()['role_catalog_redis_get']);
+    }
+
+    public function test_existing_redis_tracing_records_client_read_and_cpu_without_hiding_original_errors(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $tracing = new \App\Services\Monitoring\TracingService(new \OpenTelemetry\API\Trace\NoopTracerProvider);
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v2'], 1.5, new class {
+            public function getName(): string { return 'private-connection'; }
+        });
+        $tracing->recordRedis($event);
+        self::assertSame(1, $metrics->summary()['processing_phases']['redis_tracing']['count']);
+        self::assertSame(1, $metrics->summary()['role_catalog_redis_get']['count']);
+        $failure = new \RuntimeException('original tracer failure');
+        $event->connectionName = new class($failure) {
+            public function __construct(private \RuntimeException $failure) {}
+            public function __toString(): string { throw $this->failure; }
+        };
+        try {
+            $tracing->recordRedis($event);
+            self::fail('Original tracing error must propagate.');
+        } catch (\RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        self::assertSame(2, $metrics->summary()['processing_phases']['redis_tracing']['count']);
+        self::assertSame(2, $metrics->summary()['role_catalog_redis_get']['count']);
+        [$request, $disabled] = $this->metrics(false);
+        app()->instance('request', $request);
+        $event->connectionName = 'private-connection';
+        $tracing->recordRedis($event);
+        self::assertArrayNotHasKey('processing_phases', $disabled->summary());
+        self::assertArrayNotHasKey('role_catalog_redis_get', $disabled->summary());
+    }
+
+    public function test_redis_diagnostic_failure_does_not_prevent_original_tracing(): void
+    {
+        $request = Request::create('/api/v1/admin/example', 'GET');
+        $request->attributes = new class extends \Symfony\Component\HttpFoundation\ParameterBag {
+            public function get(string $key, mixed $default = null): mixed { throw new \RuntimeException('diagnostic failure'); }
+        };
+        app()->instance('request', $request);
+        $name = new class {
+            public int $calls = 0;
+            public function __toString(): string { $this->calls++; return 'primary'; }
+        };
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['authorization_roles:v2'], 1.5, new class {
+            public function getName(): string { return 'primary'; }
+        });
+        $event->connectionName = $name;
+        (new \App\Services\Monitoring\TracingService(new \OpenTelemetry\API\Trace\NoopTracerProvider))->recordRedis($event);
+        self::assertSame(1, $name->calls);
+    }
+
     public function test_entity_build_diagnostics_keep_known_types_numeric_request_local_and_opt_in(): void
     {
         [$request, $metrics] = $this->metrics();
@@ -137,7 +223,8 @@ final class ApiQuerySourceMetricsTest extends TestCase
         $payload = ['cookie' => '[REDACTED]', 'safe' => 3];
         $channel->shouldReceive('log')->once()->with('warning', '[SECURITY] event.checked', $payload);
         $channel->shouldReceive('log')->once()->with('error', '[SECURITY] event.checked', $payload);
-        Log::shouldReceive('channel')->twice()->with('security')->andReturn($channel);
+        $channel->shouldReceive('log')->once()->with('critical', '[SECURITY] event.checked', $payload);
+        Log::shouldReceive('channel')->times(3)->with('security')->andReturn($channel);
         $logger = new class(new SafeLogWriter) extends SecurityLogger {
             public int $entries = 0;
             public int $alerts = 0;
@@ -156,12 +243,14 @@ final class ApiQuerySourceMetricsTest extends TestCase
             protected function sendSecurityAlert(string $event, array $context, string $level): void { $this->alerts++; }
         };
         try {
-            foreach (['INFO', 'warning', 'error'] as $level) {
+            foreach (['INFO', 'warning', 'error', 'critical'] as $level) {
                 $logger->log('event.checked', ['cookie' => 'private-cookie', 'safe' => 3], $level);
             }
-            self::assertSame(2, $logger->entries);
-            self::assertSame(1, $logger->alerts);
-            self::assertSame(2, $metrics->summary()['processing_phases']['security_emit']['count']);
+            self::assertSame(3, $logger->entries);
+            self::assertSame(2, $logger->alerts);
+            self::assertSame(3, $metrics->summary()['processing_phases']['security_emit']['count']);
+            self::assertSame(3, $metrics->summary()['processing_phases']['security_prepare']['count']);
+            self::assertSame(3, $metrics->summary()['processing_phases']['security_write']['count']);
             $failure = new \RuntimeException('entry failure');
             $logger->failure = $failure;
             try {
@@ -170,11 +259,59 @@ final class ApiQuerySourceMetricsTest extends TestCase
             } catch (\RuntimeException $actual) {
                 self::assertSame($failure, $actual);
             }
-            self::assertSame(3, $metrics->summary()['processing_phases']['security_emit']['count']);
+            self::assertSame(4, $metrics->summary()['processing_phases']['security_emit']['count']);
+            self::assertSame(4, $metrics->summary()['processing_phases']['security_prepare']['count']);
+            self::assertSame(3, $metrics->summary()['processing_phases']['security_write']['count']);
         } finally {
             Log::clearResolvedInstance('log');
             Facade::setFacadeApplication($previousFacadeApp);
             \Mockery::close();
+        }
+    }
+
+    public function test_security_phase_diagnostics_preserve_real_formatter_and_both_redaction_layers(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $previousFacadeApp = Facade::getFacadeApplication();
+        Facade::setFacadeApplication(Container::getInstance());
+        $stream = fopen('php://memory', 'w+');
+        $handler = new \Monolog\Handler\StreamHandler($stream, \Monolog\Level::Warning);
+        $handler->setFormatter(new \Monolog\Formatter\JsonFormatter);
+        $monolog = new \Monolog\Logger('security', [$handler]);
+        $channel = new \Illuminate\Log\Logger($monolog);
+        (new \App\Services\Logging\EnsureLogFailuresAreNonFatal)($channel);
+        $beforeProcessor = [];
+        $monolog->pushProcessor(static function (\Monolog\LogRecord $record) use (&$beforeProcessor): \Monolog\LogRecord {
+            $beforeProcessor[] = $record->context;
+
+            return $record;
+        });
+        Log::shouldReceive('channel')->once()->with('security')->andReturn($channel);
+        $logger = new class(new SafeLogWriter) extends SecurityLogger {
+            public function __construct(SafeLogWriter $writer) { $this->writer = $writer; }
+            protected function createSecurityEntry(string $event, array $context, string $level): array { return $context; }
+        };
+        try {
+            $logger->log('event.checked', ['cookie' => 'private-cookie', 'note' => 'Bearer private-token', 'safe' => 3]);
+            rewind($stream);
+            $record = json_decode(stream_get_contents($stream), true, 512, JSON_THROW_ON_ERROR);
+            $expected = ['cookie' => '[REDACTED]', 'note' => '[REDACTED]', 'safe' => 3];
+            self::assertSame([$expected], $beforeProcessor);
+            self::assertCount(2, $monolog->getProcessors());
+            self::assertSame($expected, $record['context']);
+            self::assertSame('[SECURITY] event.checked', $record['message']);
+            self::assertSame('WARNING', $record['level_name']);
+            foreach (['security_emit', 'security_prepare', 'security_write'] as $phase) {
+                self::assertSame(1, $metrics->summary()['processing_phases'][$phase]['count']);
+            }
+            self::assertStringNotContainsString('private-', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        } finally {
+            Log::clearResolvedInstance('log');
+            Facade::setFacadeApplication($previousFacadeApp);
+            \Mockery::close();
+            $handler->close();
+            if (is_resource($stream)) { fclose($stream); }
         }
     }
 
