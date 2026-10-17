@@ -75,7 +75,7 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
         foreach ($parents as $column => $parent) {
             $parentQuery = $this->query($parent['type'], $organizationId, $hasProject ? null : $projectId);
             $parentTable = $parentQuery->getModel()->getTable();
-            if ($type !== 'design_ifc_model_element') {
+            if ($type !== 'design_ifc_model_element' || $column !== 'derivative_id' || ! $parent['nullable']) {
                 if ($parent['match_project'] ?? false) { $parentQuery->whereColumn($parentTable.'.project_id', $table.'.project_id'); }
                 foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
                 $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
@@ -99,16 +99,13 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
                 $childColumns[] = $table.'.'.$childColumn;
                 $parentColumns[] = $parentTable.'.'.$parentColumn;
             }
-            $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $table, $childColumns, $parentColumns): void {
+            $query->where(static function (Builder $scope) use ($column, $parentQuery, $table, $childColumns, $parentColumns): void {
                 $parentQuery->select($parentColumns);
                 $grammar = $scope->getQuery()->getGrammar();
                 $left = '('.implode(', ', array_map(static fn (string $name): string => $grammar->wrap($name), $childColumns)).')';
                 $predicate = $left.' in ('.$parentQuery->toSql().')';
                 $bindings = $parentQuery->getBindings();
-                if ($parent['nullable']) {
-                    $scope->whereNull($table.'.'.$column)->orWhereRaw($predicate, $bindings);
-                }
-                else { $scope->whereRaw($predicate, $bindings); }
+                $scope->whereNull($table.'.'.$column)->orWhereRaw($predicate, $bindings);
             });
         }
         if ($type === 'schedule_task') {

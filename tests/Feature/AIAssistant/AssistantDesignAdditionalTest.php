@@ -247,6 +247,15 @@ final class AssistantDesignAdditionalTest extends TestCase
         self::assertCount(2, $queries);
         foreach ($queries as $query) {
             self::assertStringContainsString(
+                '"design_ifc_model_elements"."version_id" in (select "design_artifact_versions"."id"',
+                $query,
+            );
+            self::assertStringContainsString(
+                '"design_artifact_versions"."project_id" = "design_ifc_model_elements"."project_id"',
+                $query,
+            );
+            self::assertStringNotContainsString('("design_ifc_model_elements"."version_id", ', $query);
+            self::assertStringContainsString(
                 '("design_ifc_model_elements"."derivative_id", "design_ifc_model_elements"."project_id", "design_ifc_model_elements"."version_id")'
                     .' in (select "design_model_derivatives"."id", "design_model_derivatives"."project_id", "design_model_derivatives"."version_id"',
                 $query,
