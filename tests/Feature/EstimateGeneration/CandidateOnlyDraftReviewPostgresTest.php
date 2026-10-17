@@ -162,10 +162,13 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
             'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
         $conversionItems = $probeItems;
         $conversionItems[0]['labor'][0] = [...$conversionItems[0]['labor'][0], 'unit' => '10 h', 'price_unit' => 'h',
-            'unit_conversion_version' => $conversionVersion];
+            'quantity_per_unit' => '0.1', 'quantity_per_work_unit' => '0.1', 'unit_conversion_version' => $conversionVersion];
         $conversionItems[0]['labor'][0]['normative_ref'] = [...$conversionItems[0]['labor'][0]['normative_ref'],
             'unit_conversion_id' => $conversionId, 'unit_conversion_fingerprint' => $conversionFingerprint,
             'unit_conversion_factor' => $conversionFactor];
+        $conversionResourceId = $conversionItems[0]['labor'][0]['normative_ref']['norm_resource_id'];
+        $originalConversionResource = (array) DB::table('estimate_norm_resources')->where('id', $conversionResourceId)->first();
+        DB::table('estimate_norm_resources')->where('id', $conversionResourceId)->update(['unit' => '10 h', 'quantity' => '0.100000']);
         DB::flushQueryLog();
         DB::enableQueryLog();
         try {
@@ -173,13 +176,15 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 ->verify(array_merge(...array_fill(0, 25, $conversionItems)), $session->fresh()->draft_payload['regional_context']));
             self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_resource_prices"')));
             self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_generation_unit_conversions"')));
+            self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_norm_resources"')));
+            $conversionItems[0]['labor'][0]['normative_ref']['unit_conversion_fingerprint'] = str_repeat('d', 64);
+            self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
+                ->verify($conversionItems, $session->fresh()->draft_payload['regional_context']));
         } finally {
             DB::disableQueryLog();
             DB::flushQueryLog();
+            DB::table('estimate_norm_resources')->where('id', $conversionResourceId)->update($originalConversionResource);
         }
-        $conversionItems[0]['labor'][0]['normative_ref']['unit_conversion_fingerprint'] = str_repeat('d', 64);
-        self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
-            ->verify($conversionItems, $session->fresh()->draft_payload['regional_context']));
         $invalidItems = $probeItems;
         $invalidItems[0]['materials'][0]['price_id'] = PHP_INT_MAX;
         self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
@@ -190,6 +195,36 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         self::assertContains('apply', array_column($readySnapshot->availableActions, 'action'));
         self::assertSame('1989.58', $readySnapshot->evaluationConfirmation['total_by_currency']['RUB']);
         self::assertSame($factsBeforeRead, app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token']);
+        $normResourceId = $probeItems[0]['labor'][0]['normative_ref']['norm_resource_id'];
+        $originalResource = (array) DB::table('estimate_norm_resources')->where('id', $normResourceId)->first();
+        foreach (['coefficient', 'unit', 'code', 'type', 'insert', 'delete'] as $change) {
+            $insertedResourceId = null;
+            try {
+                $resources = DB::table('estimate_norm_resources');
+                match ($change) {
+                    'coefficient' => $resources->where('id', $normResourceId)->update(['quantity' => '1.250000']),
+                    'unit' => $resources->where('id', $normResourceId)->update(['unit' => '10 h']),
+                    'code' => $resources->where('id', $normResourceId)->update(['resource_code' => 'changed-resource-code']),
+                    'type' => $resources->where('id', $normResourceId)->update(['resource_type' => 'material']),
+                    'insert' => $insertedResourceId = $resources->insertGetId(['estimate_norm_id' => $catalog['norm_id'], 'resource_code' => 'additional-resource',
+                        'resource_name' => 'Дополнительный ресурс', 'unit' => 'h', 'quantity' => '1.000000',
+                        'resource_type' => 'labor', 'created_at' => now(), 'updated_at' => now()]),
+                    'delete' => $resources->where('id', $normResourceId)->delete(),
+                };
+                $stale = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+                    ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
+                self::assertFalse($stale->canApply, $change);
+                self::assertNotContains('apply', array_column($stale->availableActions, 'action'), $change);
+            } finally {
+                if ($insertedResourceId !== null) {
+                    DB::table('estimate_norm_resources')->where('id', $insertedResourceId)->delete();
+                } elseif ($change === 'delete') {
+                    DB::table('estimate_norm_resources')->insert($originalResource);
+                } else {
+                    DB::table('estimate_norm_resources')->where('id', $normResourceId)->update($originalResource);
+                }
+            }
+        }
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
             (int) $session->id, (int) $organization->id, (int) $project->id, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);

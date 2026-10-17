@@ -16,8 +16,13 @@ final class VerifyCurrentNormativeResourcePrices
 {
     public function verify(array $items, array $regional): bool
     {
-        $ids = $conversions = [];
+        $ids = $conversions = $normIds = [];
         foreach ($items as $item) {
+            $normId = (int) ($item['normative_match']['norm_id'] ?? 0);
+            if ($normId < 1) {
+                return false;
+            }
+            $normIds[$normId] = $normId;
             foreach ($this->resources($item) as $resource) {
                 $id = (int) ($resource['price_id'] ?? $resource['normative_ref']['price_id'] ?? 0);
                 if ($id > 0) {
@@ -27,6 +32,13 @@ final class VerifyCurrentNormativeResourcePrices
                 if ($from !== $to) {
                     $conversions[CanonicalPipelineJson::encode([$from, $to, $version])] = [$from, $to, $version];
                 }
+            }
+        }
+        $normResources = [];
+        foreach (array_chunk(array_values($normIds), 1000) as $chunk) {
+            foreach (DB::table('estimate_norm_resources')->whereIn('estimate_norm_id', $chunk)
+                ->get(['id', 'estimate_norm_id', 'resource_code', 'resource_type', 'unit', 'quantity']) as $row) {
+                $normResources[(int) $row->estimate_norm_id][(int) $row->id] = $row;
             }
         }
         $prices = [];
@@ -52,6 +64,9 @@ final class VerifyCurrentNormativeResourcePrices
         try {
             foreach ($items as $item) {
                 $resources = $this->resources($item);
+                if (! $this->compositionMatches($item, $resources, $normResources)) {
+                    return false;
+                }
                 $evidence = $item['price_snapshot']['coefficients']['resource_evidence'] ?? null;
                 if (! is_array($evidence) || ! array_is_list($evidence) || $resources === [] || count($resources) !== count($evidence)) {
                     return false;
@@ -79,6 +94,38 @@ final class VerifyCurrentNormativeResourcePrices
             }
         } catch (MissingRegionalPrice|\Brick\Math\Exception\MathException) {
             return false;
+        }
+
+        return true;
+    }
+
+    private function compositionMatches(array $item, array $resources, array $normResources): bool
+    {
+        $normId = (int) $item['normative_match']['norm_id'];
+        $current = $normResources[$normId] ?? [];
+        if ($resources === [] || count($resources) !== count($current)) {
+            return false;
+        }
+        $seen = [];
+        foreach ($resources as $resource) {
+            $reference = $resource['normative_ref'] ?? [];
+            $id = (int) ($reference['norm_resource_id'] ?? 0);
+            $row = $current[$id] ?? null;
+            $type = match ($row->resource_type ?? null) {
+                'material', 'equipment' => 'material',
+                'labor', 'machine_labor' => 'labor',
+                'machine', 'machinery' => 'machinery',
+                default => 'other',
+            };
+            if ($row === null || isset($seen[$id]) || (int) ($reference['norm_id'] ?? 0) !== $normId
+                || ($resource['quantity_basis'] ?? null) !== 'normative_resource'
+                || ($reference['resource_code'] ?? null) !== trim((string) $row->resource_code)
+                || ($resource['resource_type'] ?? null) !== $type
+                || ($resource['unit'] ?? null) !== $row->unit
+                || ! BigDecimal::of((string) ($resource['quantity_per_unit'] ?? '-1'))->isEqualTo((string) $row->quantity)) {
+                return false;
+            }
+            $seen[$id] = true;
         }
 
         return true;
