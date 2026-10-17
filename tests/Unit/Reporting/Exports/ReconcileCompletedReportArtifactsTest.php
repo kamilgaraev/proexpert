@@ -111,7 +111,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         self::assertSame(['claim', 'seal'], $mutations);
     }
 
-    public function test_reconciliation_denies_source_export_after_module_revocation(): void
+    public function test_reconciliation_denies_source_export_after_export_permission_revocation(): void
     {
         [$context, $export, $source, $published, $subject] = $this->fixture(true);
         $recovery = $this->createMock(ReportCompletedArtifactRecoveryStore::class);
@@ -119,9 +119,9 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         $exports->expects(self::once())->method('get')->willReturn($export);
         $authorizer = new PolicyBackedCurrentReportAuthorizer(
             new ReportDefinitionVisibilityResolver(
-                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement([], [1])),
+                new ReportDefinitionModuleAuthorizer(new DeterministicReportModuleEntitlement(['reports', 'act-reporting'], [1])),
             ),
-            ['act_reports.view', 'act_reports.export.excel'],
+            ['act_reports.view'],
         );
 
         $this->expectException(ReportContractException::class);

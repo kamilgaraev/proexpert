@@ -17,9 +17,13 @@ final readonly class AssistantRequestProjectScope
         $projects = [];
         foreach (['entity_refs', 'entity_references'] as $key) {
             foreach (is_array($context[$key] ?? null) ? $context[$key] : [] as $reference) {
-                if (! is_array($reference) || ($reference['entity_type'] ?? $reference['type'] ?? null) !== 'project') { continue; }
+                if (! is_array($reference) || ($reference['entity_type'] ?? $reference['type'] ?? null) !== 'project') {
+                    continue;
+                }
                 $id = self::positiveId($reference['entity_id'] ?? $reference['id'] ?? null);
-                if ($id !== null) { $projects[$id] = true; }
+                if ($id !== null) {
+                    $projects[$id] = true;
+                }
             }
         }
 
@@ -28,7 +32,7 @@ final readonly class AssistantRequestProjectScope
 
     public static function organizationWide(string $question): bool
     {
-        $scope = '(?:во?\s+всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац)';
+        $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац)';
 
         return preg_match('/(?<![\pL\pN])'.$scope.'/iu', $question) === 1
             && preg_match('/(?<![\pL\pN])(?:не(?!\s+(?:только|забуд[а-яё]*|забыва[а-яё]*|прекраща[а-яё]*|перестава[а-яё]*|упуска[а-яё]*)(?!\pL))|кроме|исключая)\s+(?:[\pL\pN-]+\s+){0,4}(?:во?\s+)?'.$scope.'/iu', $question) !== 1;
@@ -36,26 +40,44 @@ final readonly class AssistantRequestProjectScope
 
     public static function bindSearchScope(string $question, array $arguments, ?int $contextProjectId, bool $projectFilterSupported): array
     {
-        if (self::organizationWide($question)) { $arguments['project_id'] = null; }
-        elseif (! array_key_exists('project_id', $arguments) && $projectFilterSupported) { $arguments['project_id'] = $contextProjectId; }
+        if (self::organizationWide($question)) {
+            $arguments['project_id'] = null;
+        } elseif (! array_key_exists('project_id', $arguments) && $projectFilterSupported) {
+            $arguments['project_id'] = $contextProjectId;
+        }
+
         return $arguments;
     }
 
     public function allowsReferences(array $references, array $results = []): bool
     {
-        if (! $this->requested) { return true; }
-        if ($this->projectId === null) { return false; }
+        if (! $this->requested) {
+            return true;
+        }
+        if ($this->projectId === null) {
+            return false;
+        }
         $contractors = $this->linkedContractors($results);
         foreach ($references as $reference) {
-            if (! is_array($reference)) { return false; }
-            if (self::positiveId($reference['project_id'] ?? null) === $this->projectId) { continue; }
+            if (! is_array($reference)) {
+                return false;
+            }
+            if (self::positiveId($reference['project_id'] ?? null) === $this->projectId) {
+                continue;
+            }
             $type = $reference['entity_type'] ?? null;
             $id = self::positiveId($reference['entity_id'] ?? null);
-            if ($type === 'project' && $id === $this->projectId) { continue; }
+            if ($type === 'project' && $id === $this->projectId) {
+                continue;
+            }
             if ($type === 'live_project_financial_projection' && ($reference['project_id'] ?? null) === null
                 && ($reference['projection_name'] ?? null) === $type && $id === $this->projectId
-                && self::positiveId($reference['composite_key']['project_id'] ?? null) === $this->projectId) { continue; }
-            if ($type === 'contractor' && $id !== null && isset($contractors[$id])) { continue; }
+                && self::positiveId($reference['composite_key']['project_id'] ?? null) === $this->projectId) {
+                continue;
+            }
+            if ($type === 'contractor' && $id !== null && isset($contractors[$id])) {
+                continue;
+            }
 
             return false;
         }
@@ -67,17 +89,25 @@ final readonly class AssistantRequestProjectScope
     {
         $references = is_array($result['source_refs'] ?? null) ? $result['source_refs'] : [];
         foreach (['structured_fact_evidence', 'financial_evidence'] as $key) {
-            if (is_array($result[$key]['source_refs'] ?? null)) { $references = [...$references, ...$result[$key]['source_refs']]; }
+            if (is_array($result[$key]['source_refs'] ?? null)) {
+                $references = [...$references, ...$result[$key]['source_refs']];
+            }
             foreach ($result[$key]['rows'] ?? [] as $row) {
-                if (is_array($row['source_ref'] ?? null)) { $references[] = $row['source_ref']; }
+                if (is_array($row['source_ref'] ?? null)) {
+                    $references[] = $row['source_ref'];
+                }
             }
         }
         if (is_array($result['domain_search_count_evidence']['source_ref'] ?? null)) {
             $references[] = $result['domain_search_count_evidence']['source_ref'];
         }
-        if (is_array($result['rag_context']['sources'] ?? null)) { $references = [...$references, ...$result['rag_context']['sources']]; }
+        if (is_array($result['rag_context']['sources'] ?? null)) {
+            $references = [...$references, ...$result['rag_context']['sources']];
+        }
         foreach (array_slice(is_array($result['live_entity_reads'] ?? null) ? $result['live_entity_reads'] : [], 0, AssistantStructuredFactFormatter::MAX_ROWS) as $read) {
-            if (! is_array($read)) { continue; }
+            if (! is_array($read)) {
+                continue;
+            }
             unset($read['live_entity_reads']);
             $references = [...$references, ...self::references($read)];
         }
@@ -92,10 +122,14 @@ final readonly class AssistantRequestProjectScope
 
     public function withAnchorReferences(array $references, array $results): array
     {
-        if (! $this->requested) { return $references; }
+        if (! $this->requested) {
+            return $references;
+        }
         $contractors = $this->linkedContractors($results);
         foreach ($references as $reference) {
-            if (($reference['entity_type'] ?? null) !== 'contractor') { continue; }
+            if (($reference['entity_type'] ?? null) !== 'contractor') {
+                continue;
+            }
             $id = self::positiveId($reference['entity_id'] ?? null);
             if ($id !== null && isset($contractors[$id]) && ! in_array($contractors[$id], $references, true)) {
                 $references[] = $contractors[$id];
@@ -109,14 +143,22 @@ final readonly class AssistantRequestProjectScope
     {
         $contractors = [];
         foreach ($results as $result) {
-            if (! is_array($result)) { continue; }
+            if (! is_array($result)) {
+                continue;
+            }
             $reads = [$result, ...array_slice(is_array($result['live_entity_reads'] ?? null) ? $result['live_entity_reads'] : [], 0, AssistantStructuredFactFormatter::MAX_ROWS)];
             foreach ($reads as $read) {
-                if (! is_array($read)) { continue; }
+                if (! is_array($read)) {
+                    continue;
+                }
                 foreach ($read['results'] ?? [] as $row) {
-                    if (($row['entity_type'] ?? null) !== 'contract') { continue; }
+                    if (($row['entity_type'] ?? null) !== 'contract') {
+                        continue;
+                    }
                     $contractorId = self::positiveId($row['fields']['contractor_id'] ?? null);
-                    if ($contractorId === null) { continue; }
+                    if ($contractorId === null) {
+                        continue;
+                    }
                     foreach ($read['source_refs'] ?? [] as $reference) {
                         if (($reference['entity_type'] ?? null) === 'contract'
                             && (string) ($reference['entity_id'] ?? '') === (string) ($row['id'] ?? '')

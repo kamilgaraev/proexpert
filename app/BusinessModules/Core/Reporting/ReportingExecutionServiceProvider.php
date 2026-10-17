@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportDri
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportRowsHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportRunHandler;
+use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\ReadReportExportFileHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportRunHandler;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportAuditOutboxScheduler;
@@ -30,13 +31,13 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloa
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportProjectScopeResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportCompletedArtifactRecoveryStore;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentPromptPublisher;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportAsyncContextSeedReader;
@@ -57,6 +58,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownA
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReadReportExportFileAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\BestEffortReportDispatchIntentPromptPublisher;
@@ -222,6 +224,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
             RetryReportExportAction::class => RetryReportExportHandler::class,
             CancelReportExportAction::class => CancelReportExportHandler::class,
             CreateReportDownloadLinkAction::class => CreateReportDownloadLinkHandler::class,
+            ReadReportExportFileAction::class => ReadReportExportFileHandler::class,
         ];
         foreach ($bindings as $contract => $handler) {
             $this->app->bind($contract, $handler);

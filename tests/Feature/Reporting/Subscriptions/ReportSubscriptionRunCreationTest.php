@@ -62,6 +62,41 @@ use Tests\TestCase;
 #[Group('postgres-contract')]
 final class ReportSubscriptionRunCreationTest extends TestCase
 {
+    public function test_stale_dispatch_claim_recovers_nonterminal_work_and_throttles_retries(): void
+    {
+        [, $delivery] = $this->fixture();
+        $store = app(EloquentReportSubscriptionDeliveryStore::class);
+        $now = new DateTimeImmutable;
+        foreach (['scheduled', 'building_run', 'building_export', 'ready'] as $status) {
+            DB::table('report_subscription_deliveries')->where('id', $delivery->id)->update([
+                'status' => $status, 'updated_at' => $now->modify('-5 minutes'), 'retry_at' => null,
+            ]);
+            self::assertSame([$delivery->id], $store->claimStaleDispatches($now, 100, 120));
+            self::assertSame([], $store->claimStaleDispatches($now, 100, 120));
+        }
+        foreach ([['status' => 'notified'], ['status' => 'failed'], ['status' => 'expired'],
+            ['retry_at' => $now->modify('+5 minutes')], ['execution_expires_at' => $now->modify('-1 second')],
+            ['updated_at' => $now]] as $changes) {
+            DB::table('report_subscription_deliveries')->where('id', $delivery->id)->update(array_replace([
+                'status' => 'scheduled', 'updated_at' => $now->modify('-5 minutes'), 'retry_at' => null,
+                'execution_expires_at' => $now->modify('+1 hour'),
+            ], $changes));
+            self::assertSame([], $store->claimStaleDispatches($now, 100, 120));
+        }
+    }
+
+    public function test_scheduler_dispatches_claimed_stale_delivery_through_the_same_dispatcher(): void
+    {
+        $subscriptions = $this->createMock(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSubscriptionStore::class);
+        $subscriptions->method('selectDueLocked')->willReturn([]);
+        $deliveries = $this->createMock(ReportSubscriptionDeliveryStore::class);
+        $deliveries->expects(self::once())->method('claimStaleDispatches')->willReturn(['01J00000000000000000000000']);
+        $dispatcher = $this->createMock(ReportSubscriptionDeliveryDispatcher::class);
+        $dispatcher->expects(self::once())->method('dispatch')->with('01J00000000000000000000000', 0);
+        (new \App\BusinessModules\Core\Reporting\Infrastructure\Jobs\ScheduleDueReportSubscriptionsJob)->handle($subscriptions, $deliveries,
+            $dispatcher, app(\App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionScheduleCalculator::class));
+    }
+
     #[DataProvider('creationStates')]
     public function test_run_creation_uses_committed_claim_and_frozen_scope(string $status, int $attempt, bool $holding = false, bool $frozenProject = false): void
     {

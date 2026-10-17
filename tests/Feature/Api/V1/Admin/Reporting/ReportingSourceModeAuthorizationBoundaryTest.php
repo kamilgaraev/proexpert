@@ -36,7 +36,7 @@ final class ReportingSourceModeAuthorizationBoundaryTest extends TestCase
         self::assertNull($record['code']);
         self::assertSame(1, $record['action_calls']);
         self::assertSame(1, $record['actor_loads']);
-        self::assertGreaterThanOrEqual(2, $record['module_checks']);
+        self::assertSame(0, $record['module_checks']);
     }
 
     #[DataProvider('deniedCases')]
@@ -70,14 +70,27 @@ final class ReportingSourceModeAuthorizationBoundaryTest extends TestCase
         yield ['export_retry', 202];
         yield ['export_cancel', 200];
         yield ['export_download', 200];
+        yield ['export_download_file', 200];
+        yield ['download_file_source_module_unavailable', 200];
+        yield ['source_module_unavailable_report_read_allowed', 200];
     }
 
     public static function deniedCases(): iterable
     {
-        yield ['module_revoked_before_http', 1, 0];
-        yield ['module_revoked_at_final_decision', 2, 1];
-        yield ['view_permission_revoked', 2, 1];
-        yield ['xlsx_permission_revoked', 2, 1];
-        yield ['pdf_permission_cannot_export_xlsx', 2, 1];
+        yield ['view_permission_revoked', 0, 1];
+        yield ['xlsx_permission_revoked', 0, 1];
+        yield ['pdf_permission_cannot_export_xlsx', 0, 1];
+        yield ['download_file_permission_revoked', 0, 1];
+    }
+
+    public function test_download_stream_returns_attachment_bytes_without_a_signed_url(): void
+    {
+        $record = (new HermeticReportingHttpHarness(true))->runSourceModeAuthorizationCase('export_download_file');
+
+        self::assertSame(200, $record['status']);
+        self::assertSame("project,total\nМОСТ,42\n", $record['body']);
+        self::assertSame('text/csv; charset=UTF-8', $record['content_type']);
+        self::assertSame('attachment; filename="report.csv"', $record['content_disposition']);
+        self::assertStringNotContainsString('https://', $record['body']);
     }
 }

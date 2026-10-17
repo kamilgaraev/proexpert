@@ -23,6 +23,7 @@ final class AssistantCapabilityRegistryTest extends TestCase
         $capability = (new AssistantCapabilityRegistry)->match('Есть на нашем объекте просроченные задачи? Сколько их?',
             ['source_module' => 'project-management', 'source_route' => '/projects/52']);
         self::assertSame('schedule', $capability['domain']);
+        self::assertSame('schedule', (new AssistantCapabilityRegistry)->match('Сделай Excel по просроченным задачам всех проектов организации, которые ещё не завершены и не отменены: задача, проект, ответственный, плановая дата окончания и статус. На втором листе — количество таких задач по проектам.')['domain']);
     }
 
     public function test_generic_equipment_is_machinery_and_explicit_bim_equipment_remains_design(): void
@@ -52,6 +53,7 @@ final class AssistantCapabilityRegistryTest extends TestCase
             $this->assertSame($definition->module, $matching[0]['module'], $domain);
             if ($definition->navigation === '') {
                 $this->assertSame([], $matching[0]['actions'], $domain);
+
                 continue;
             }
             $this->assertNotEmpty($matching[0]['actions'], $domain);

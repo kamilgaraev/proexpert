@@ -4,14 +4,21 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 final readonly class AssistantCustomReportBuilder
 {
+    private const READ_BUDGET_MILLISECONDS = 10_000;
+
+    private const PROJECTION_CHUNK_SIZE = 250;
+
     public function __construct(private AssistantCustomReportSource $sources, private AssistantCustomReportReference $references,
         private AssistantDataAccessPolicy $policy) {}
 
@@ -62,8 +69,8 @@ final readonly class AssistantCustomReportBuilder
             return $report;
         }, true);
 
-        return app()->bound(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext::class)
-            ? app(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext::class)->withOperationBudget($build, 10000, 'pgsql')
+        return app()->bound(AssistantRequestExecutionContext::class)
+            ? app(AssistantRequestExecutionContext::class)->withOperationBudget($build, self::READ_BUDGET_MILLISECONDS, 'pgsql')
             : $build();
     }
 
@@ -90,13 +97,14 @@ final readonly class AssistantCustomReportBuilder
         $query = $source['query'];
         $model = $query->getModel();
         $table = $model->getTable();
+        $projection = $source['projection'] ?? null;
         foreach ($section['filters'] as $filter) {
-            $this->filter($query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
+            $this->filter($projection !== null ? clone $query : $query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
         }
         foreach ($section['order_by'] as $order) {
-            if ($section['metrics'] === []) {
+            if ($section['metrics'] === [] && $projection === null) {
                 $query->orderBy($table.'.'.$order['field'], $order['direction']);
-            } elseif (! in_array($order['field'], [...$section['group_by'], ...$metricAliases], true)) {
+            } elseif ($section['metrics'] !== [] && ! in_array($order['field'], [...$section['group_by'], ...$metricAliases], true)) {
                 throw ValidationException::withMessages(['order_by' => trans_message('ai_custom_reports.invalid_sort')]);
             }
         }
@@ -120,12 +128,17 @@ final readonly class AssistantCustomReportBuilder
                 ? \Illuminate\Support\Facades\DB::raw('LEFT(CAST('.$grammar->wrap($table.'.'.$field).' AS text), 4001) AS '.$grammar->wrap($field))
                 : $table.'.'.$field;
         }
-        $rows = $query->select($select)
-            ->orderBy($model->getQualifiedKeyName())->limit(1001)->get();
-        if ($rows->count() > 1000) {
-            throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.too_many_rows')]);
+        if ($projection !== null) {
+            $selectedFields = array_fill_keys($selected, true);
+            [$rows, $raw] = $this->projectedRows($query,
+                static fn ($row): array => array_intersect_key($projection->row($row), $selectedFields), $section, $source['fields']);
+        } else {
+            $rows = $query->select($select)->orderBy($model->getQualifiedKeyName())->limit(1001)->get();
+            if ($rows->count() > 1000) {
+                throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.too_many_rows')]);
+            }
+            $raw = $rows->map(static fn ($row): array => $row->getRawOriginal())->all();
         }
-        $raw = $rows->map(static fn ($row): array => $row->getRawOriginal())->all();
         foreach ($raw as $row) {
             foreach ($row as $value) {
                 if (is_string($value) && mb_strlen($value) > 4000) {
@@ -216,10 +229,46 @@ final readonly class AssistantCustomReportBuilder
         return [$data, [$reference, ...$labelRefs], [$source['domain'], ...$labelDomains]];
     }
 
+    private function projectedRows(Builder $query, callable $project, array $section, array $fields): array
+    {
+        $model = $query->getModel();
+        $rows = $model->newCollection();
+        $raw = [];
+        $scanned = 0;
+        $deadline = hrtime(true) + self::READ_BUDGET_MILLISECONDS * 1_000_000;
+        $context = app()->bound(AssistantRequestExecutionContext::class) ? app(AssistantRequestExecutionContext::class) : null;
+        $checkBudget = static function () use ($context, $deadline): void {
+            $context?->assertCanContinue();
+            $context?->remainingMilliseconds();
+            if (hrtime(true) >= $deadline) {
+                throw new AssistantRequestDeadlineExceeded;
+            }
+        };
+        $checkBudget();
+        foreach ((clone $query)->select($model->getTable().'.*')->reorder()
+            ->lazyById(self::PROJECTION_CHUNK_SIZE, $model->getQualifiedKeyName(), $model->getKeyName()) as $row) {
+            if ($scanned++ % self::PROJECTION_CHUNK_SIZE === 0) {
+                $checkBudget();
+            }
+            $values = $project($row);
+            if (! AssistantCustomReportProjectedRows::matchesFilters($values, $section['filters'], $fields)) {
+                continue;
+            }
+            $rows->push($row);
+            $raw[] = $values;
+            if ($rows->count() > 1000) {
+                throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.too_many_rows')]);
+            }
+        }
+        $checkBudget();
+
+        return [$rows, AssistantCustomReportProjectedRows::filterAndSort($raw, $section, $fields)];
+    }
+
     private function relatedLabels(array $rows, array $fields, User $actor, int $organizationId, ?int $projectId, string $fetchedAt): array
     {
-        $types = ['project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'supplier_id' => ['supplier', 'name'], 'contract_id' => ['contract', 'number'],
-            'user_id' => ['user', 'name'], 'assigned_to' => ['user', 'name'], 'warehouse_id' => ['warehouse', 'name'], 'material_id' => ['material', 'name']];
+        $types = ['project_id' => ['project', 'name'], 'current_project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'supplier_id' => ['supplier', 'name'], 'contract_id' => ['contract', 'number'],
+            'user_id' => ['user', 'name'], 'assigned_to' => ['user', 'name'], 'assigned_user_id' => ['user', 'name'], 'warehouse_id' => ['warehouse', 'name'], 'material_id' => ['material', 'name']];
         $refs = $domains = [];
         foreach ($fields as $index => $field) {
             if (! isset($types[$field])) {
