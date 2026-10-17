@@ -1,0 +1,51 @@
+name: Project delivery invariants
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/project-delivery-invariants.yml
+      - app/BusinessModules/Features/BasicWarehouse/**
+      - app/Services/Project/UserProjectAccessService.php
+      - tests/Feature/BasicWarehouse/ProjectMaterialDelivery*.php
+      - tests/Feature/Reporting/Waves23/SupplyReportingPostgresInvariantTest.php
+      - tests/Support/Reporting/PostgresProcessRaceHarness.php
+      - tests/Support/IsolatedPostgresTestDatabase.php
+      - tests/Runtime/**
+      - tests/bootstrap.php
+      - phpunit.xml
+      - composer.json
+      - composer.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-delivery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install PHP extensions
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php8.3-bcmath php8.3-curl php8.3-gd php8.3-intl php8.3-mbstring php8.3-pgsql php8.3-xml php8.3-zip
+          php -r 'exit(function_exists("pcntl_fork") && function_exists("pcntl_waitpid") && function_exists("posix_kill") ? 0 : 1);'
+
+      - name: Install locked dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress --no-scripts
+
+      - name: Verify delivery movements
+        shell: pwsh
+        run: ./tests/Runtime/run-postgres-tests.ps1 -TestPath tests/Feature/BasicWarehouse/ProjectMaterialDeliveryMovementTest.php
+
+      - name: Verify concurrent shipment
+        shell: pwsh
+        run: ./tests/Runtime/run-postgres-tests.ps1 -TestPath tests/Feature/BasicWarehouse/ProjectMaterialDeliveryConcurrencyTest.php
