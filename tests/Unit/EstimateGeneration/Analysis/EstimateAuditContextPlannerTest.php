@@ -151,13 +151,13 @@ final class EstimateAuditContextPlannerTest extends TestCase
             'maximum_serialized_input_bytes' => 65536];
         $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
         self::assertGreaterThan(1, count($parts));
-        $seen = [];
+        $seen = $diagnostics = [];
         foreach ($parts as $part) {
             $input = $part['input'];
             $wire = $input->canonicalPayload();
             self::assertArrayNotHasKey('quantities', $wire['draft']['building_quantities']);
             self::assertArrayNotHasKey('derived_quantities', $wire['draft']['estimate_composition']);
-            self::assertSame(['retain coverage warning'], $wire['draft']['building_quantities']['diagnostics']);
+            array_push($diagnostics, ...$wire['draft']['building_quantities']['diagnostics']);
             self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
             foreach ($wire['draft']['local_estimates'][0]['sections'][0]['work_items'] as $row) {
                 self::assertSame(1, preg_match('/^audit_input\.derived_quantities\[([0-9]+)\]\.quantity_basis$/D', $row['quantity_basis_details_ref'], $matches));
@@ -173,6 +173,7 @@ final class EstimateAuditContextPlannerTest extends TestCase
             array_push($seen, ...$input->derivedQuantities);
         }
         self::assertEqualsCanonicalizing($quantities, $seen);
+        self::assertSame(['retain coverage warning'], $diagnostics);
         self::assertSame($draft, $root->draft);
     }
 
@@ -259,6 +260,8 @@ final class EstimateAuditContextPlannerTest extends TestCase
                 self::assertIsInt($context['draft_field_bytes']['title']);
                 self::assertIsInt($context['largest_work_field_bytes']['name']);
                 self::assertGreaterThan(1000, $context['facts_bytes']);
+                self::assertSame($context['facts_bytes'], $context['failed_part_sizes']['field_bytes']['facts']);
+                self::assertGreaterThan(500, $context['failed_part_sizes']['serialized_input_upper']);
                 self::assertStringNotContainsString('private drawing', json_encode($context, JSON_THROW_ON_ERROR));
 
                 return true;
@@ -280,6 +283,68 @@ final class EstimateAuditContextPlannerTest extends TestCase
             \Illuminate\Support\Facades\Log::clearResolvedInstance('log');
             \Illuminate\Support\Facades\Facade::setFacadeApplication($previousApplication);
         }
+    }
+
+    public function test_room_diagnostics_and_review_records_are_preserved_across_bounded_context_parts(): void
+    {
+        $facts = $items = $diagnostics = $reviews = [];
+        for ($i = 0; $i < 40; $i++) {
+            $entity = 'room:'.$i;
+            $facts[] = ['id' => 'fact:'.$i, 'entity_id' => $entity, 'type' => 'room_name', 'value' => 'Комната '.$i];
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Подготовка пола комнаты '.$i, 'entity_id' => $entity,
+                'quantity' => null, 'unit' => 'm2', 'quantity_status' => 'unknown',
+                'source_refs' => [['fact_id' => 'fact:'.$i]]];
+            $diagnostics[] = ['code' => 'canonical_quantity_unresolved', 'severity' => 'error',
+                'path' => 'quantities.stage6', 'details' => ['entity_id' => $entity, 'logical_id' => 'quantity:'.$i,
+                    'inputs' => [['fact_id' => 'fact:'.$i, 'source_locator' => ['page' => 1,
+                        'native_reference' => str_repeat('room dimensions require verification ', 40)]]]]];
+            $reviews[] = ['type' => 'quantity_blocking', 'code' => 'room_dimensions_required',
+                'work_item_key' => null, 'entity_id' => $entity, 'message_key' => 'estimate_generation.geometry_coverage_review',
+                'source_refs' => [['fact_id' => 'fact:'.$i, 'native_reference' => str_repeat('room source locator ', 30)]]];
+        }
+        $diagnostics[] = $diagnostics[0];
+        $diagnostics[] = ['code' => 'canonical_quantity_aggregate_unresolved', 'severity' => 'error',
+            'path' => 'quantities.stage6', 'details' => ['quantity_ids' => ['unresolved:global']]];
+        $draft = ['building_quantities' => ['quantities' => [], 'diagnostics' => $diagnostics, 'metrics' => ['unresolved' => 40]],
+            'stage6_review_items' => $reviews,
+            'local_estimates' => [['key' => 'floors', 'sections' => [['key' => 'rooms', 'work_items' => $items]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertGreaterThan(1, count($parts));
+        $seenDiagnostics = $seenReviews = $seenWorks = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            $entities = array_fill_keys(array_column($input->facts, 'entity_id'), true);
+            foreach ($input->draft['building_quantities']['diagnostics'] as $record) {
+                if (isset($record['details']['entity_id'])) {
+                    self::assertArrayHasKey($record['details']['entity_id'], $entities);
+                }
+                $seenDiagnostics[] = $record;
+            }
+            foreach ($input->draft['stage6_review_items'] as $record) {
+                self::assertArrayHasKey($record['entity_id'], $entities);
+                $seenReviews[] = $record;
+            }
+            array_push($seenWorks, ...$part['work_keys']);
+            self::assertSame(['building_quantities.diagnostics' => 42, 'stage6_review_items' => 40], $input->contextManifest['draft_record_counts']);
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            self::assertSame(['unresolved' => 40], $input->draft['building_quantities']['metrics']);
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
+            ]));
+        }
+        self::assertEqualsCanonicalizing($diagnostics, $seenDiagnostics);
+        self::assertEqualsCanonicalizing($reviews, $seenReviews);
+        self::assertEqualsCanonicalizing(array_column($items, 'key'), $seenWorks);
+        self::assertSame($draft, $root->draft);
+        self::assertSame($facts, $root->facts);
+        self::assertSame(array_column($parts, 'id'), array_column((new EstimateAuditContextPlanner($policy))->prepare($root, 458752), 'id'));
     }
 
     private function root(): EstimateAuditInput

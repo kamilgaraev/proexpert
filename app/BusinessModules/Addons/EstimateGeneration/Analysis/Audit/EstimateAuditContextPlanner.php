@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextPayloadBudget;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -12,10 +13,13 @@ use InvalidArgumentException;
 /** Preserve all facts/evidence across parts, including facts not yet used by a work. */
 final class EstimateAuditContextPlanner
 {
+    private array $lastFailedPartSizes = [];
+
     public function __construct(private ?array $wirePolicy = null) {}
 
     public function prepare(EstimateAuditInput $root, int $maximumBytes): array
     {
+        $this->lastFailedPartSizes = [];
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft, $size);
             $inputs = $this->prepareParts($root, $parts, $maximumBytes);
@@ -173,20 +177,37 @@ final class EstimateAuditContextPlanner
             'work_manifest' => array_map(static fn (array $item): array => array_intersect_key($item,
                 array_flip(['key', 'name', 'unit', 'entity_id', 'quantity_formula'])), $this->items($root->draft)),
             'scope' => 'part_dependencies_and_assigned_unused_facts'];
-        $prepared = [];
+        $contexts = [];
         foreach ($parts as $index => $part) {
             $id = $part['id'] === 'whole' ? 'part:'.substr(hash('sha256', CanonicalPipelineJson::encode($part['work_keys'])), 0, 40) : $part['id'];
             $facts = array_values(array_filter($root->facts, static fn (array $fact): bool => isset($wanted[$index][$fact['id']])));
             $quantities = array_values(array_filter($root->derivedQuantities, static fn (array $quantity): bool => isset($quantityIds[$index][$quantity['id']])));
             $evidence = array_values(array_filter($root->evidence, static fn (array $record): bool => isset($wanted[$index][$record['fact_id']])));
             $draft = EstimateAuditDraftWireProjection::forContextPart($part['draft'], $root->derivedQuantities, $quantities);
-            $payload = [...$full, 'facts' => $facts, 'derived_quantities' => $quantities, 'evidence' => $evidence,
-                'draft' => EstimateAuditDraftWireProjection::project($draft, $quantities), 'part_id' => $id, 'context_manifest' => $manifest];
+            $contexts[$index] = [...$part, 'id' => $id, 'draft' => $draft, 'facts' => $facts,
+                'derived_quantities' => $quantities, 'evidence' => $evidence, 'entity_ids' => array_keys($entities[$index])];
+        }
+        $distribution = (new EstimateAuditDraftRecordPlanner)->distribute($root->draft, $contexts);
+        $manifest['draft_record_counts'] = $distribution['counts'];
+        $prepared = [];
+        foreach ($distribution['parts'] as $part) {
+            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => $part['derived_quantities'], 'evidence' => $part['evidence'],
+                'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
+                'part_id' => $part['id'], 'context_manifest' => $manifest];
             if (! $this->fits($payload, $maximumBytes)) {
+                $bytes = static fn (mixed $value): int => strlen(CanonicalPipelineJson::encode([$value])) - 2;
+                $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
+                $this->lastFailedPartSizes = ['payload_bytes' => strlen($encoded),
+                    'serialized_input_upper' => EstimatorTextWirePolicy::serializedInputUpper([
+                        ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                        ['role' => 'user', 'content' => $encoded],
+                    ]),
+                    'field_bytes' => array_map($bytes, $payload), 'draft_field_bytes' => array_map($bytes, $payload['draft'])];
+
                 return null;
             }
-            $input = $root->withContextPart($draft, $id, $facts, $quantities, $evidence, $manifest);
-            $prepared[] = [...$part, 'id' => $id, 'draft' => $draft, 'input' => $input];
+            $input = $root->withContextPart($part['draft'], $part['id'], $part['facts'], $part['derived_quantities'], $part['evidence'], $manifest);
+            $prepared[] = ['id' => $part['id'], 'work_keys' => $part['work_keys'], 'draft' => $part['draft'], 'input' => $input];
         }
 
         return $prepared;
@@ -223,6 +244,7 @@ final class EstimateAuditContextPlanner
             'draft_field_bytes' => array_map($bytes, $draft), 'largest_work_bytes' => $largestBytes,
             'largest_work_field_bytes' => $largestWork, 'facts_bytes' => $bytes($root->facts),
             'derived_quantities_bytes' => $bytes($root->derivedQuantities), 'evidence_bytes' => $bytes($root->evidence),
+            'failed_part_sizes' => $this->lastFailedPartSizes,
         ]);
     }
 
