@@ -82,6 +82,63 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertSame('{}', json_encode($result['summary']['statuses'], JSON_THROW_ON_ERROR));
     }
 
+    public function test_ignored_system_failure_preserves_diagnostics_and_allows_manual_input_but_active_failures_still_block(): void
+    {
+        $session = new EstimateGenerationSession;
+        $session->forceFill(['id' => 41, 'organization_id' => 7, 'state_version' => 9, 'status' => 'ready_to_generate',
+            'input_payload' => ['evaluation_mode' => 'universal', 'manual_input_revision' => 1]]);
+        $document = new EstimateGenerationDocument;
+        $document->forceFill(['id' => 42, 'filename' => 'Проект.pdf', 'status' => 'ignored',
+            'processing_stage' => 'completed', 'error_code' => 'document_processing_system_failed',
+            'facts_summary' => ['processing_outcome' => ['type' => 'system_failure']]]);
+        $session->setRelation('documents', collect([$document]));
+        $service = new DocumentGenerationReadinessService(universalEnabled: true);
+
+        $allowed = $service->evaluate($session);
+        self::assertTrue($allowed['can_generate']);
+        self::assertSame(0, $allowed['summary']['system_failure_count']);
+        self::assertSame(1, $allowed['summary']['ignored_count']);
+        self::assertTrue($allowed['summary']['items'][0]['is_system_failure']);
+        self::assertSame('document_processing_system_failed', $allowed['summary']['items'][0]['error_code']);
+
+        $document->status = 'failed';
+        self::assertFalse($service->evaluate($session)['can_generate']);
+        $document->status = 'ignored';
+        $pending = new EstimateGenerationDocument;
+        $pending->forceFill(['id' => 43, 'filename' => 'Второй.pdf', 'status' => 'queued', 'processing_stage' => 'preflight', 'facts_summary' => []]);
+        $session->setRelation('documents', collect([$document, $pending]));
+        self::assertFalse($service->evaluate($session)['can_generate']);
+    }
+
+    public function test_ignored_system_failure_does_not_suppress_quality_settings_for_active_documents(): void
+    {
+        $settings = $this->settings(true, '0.7000');
+        $store = new class($settings) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(private readonly EffectiveEstimateGenerationSettings $settings) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->settings, $this->settings);
+            }
+        };
+        $session = new EstimateGenerationSession;
+        $session->forceFill(['id' => 41, 'organization_id' => 7, 'state_version' => 9, 'status' => 'draft',
+            'input_payload' => ['evaluation_mode' => 'universal', 'manual_input_revision' => 1]]);
+        $ignored = new EstimateGenerationDocument;
+        $ignored->forceFill(['id' => 42, 'filename' => 'Проект.pdf', 'status' => 'ignored',
+            'processing_stage' => 'completed', 'error_code' => 'document_processing_system_failed', 'facts_summary' => []]);
+        $session->setRelation('documents', collect([$ignored, $this->qualitySignalDocument([
+            'classification' => ['confidence' => 0.69], 'geometry' => ['confidence' => 0.81],
+        ])]));
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store), universalEnabled: true))->evaluate($session);
+
+        self::assertFalse($result['can_generate']);
+        self::assertSame(1, $result['summary']['quality_review_count']);
+        self::assertSame(0, $result['summary']['system_failure_count']);
+    }
+
     public function test_stopped_processing_document_is_settled_without_pinning_ai_settings(): void
     {
         $store = new class implements EffectiveSettingsOperationStore
