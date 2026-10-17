@@ -6,6 +6,9 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
+use App\BusinessModules\Features\AIAssistant\Http\Resources\RagIndexStatusResource;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
@@ -26,6 +29,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Organization;
+use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
@@ -242,6 +246,139 @@ final class AssistantStatusSnapshotTest extends TestCase
         $service->status($organization->id, $actor, 'sources');
     }
 
+    public function test_document_budget_recovery_uses_current_populated_snapshots_and_keeps_sections_separate(): void
+    {
+        [$organization, $actor, $project, $service, $policy, $permissions] = $this->scope();
+        $path = 'org-'.$organization->id.'/snapshot-recovery.pdf';
+        $file = File::withoutEvents(fn () => File::query()->create([
+            'organization_id' => $organization->id, 'user_id' => $actor->id,
+            'fileable_type' => Project::class, 'fileable_id' => $project->id,
+            'name' => 'snapshot-recovery.pdf', 'original_name' => 'snapshot-recovery.pdf',
+            'disk' => 's3', 'path' => $path, 'mime_type' => 'application/pdf', 'size' => 100,
+        ]));
+        $document = AIAssistantDocument::withoutEvents(fn () => AIAssistantDocument::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'file_id' => $file->id,
+            'parent_entity_type' => 'project', 'parent_entity_id' => (string) $project->id,
+            'storage_path' => $path, 'filename' => 'snapshot-recovery.pdf', 'mime_type' => 'application/pdf',
+            'checksum' => hash('sha256', $path), 'size_bytes' => 100, 'status' => 'ready', 'extracted_text' => 'Prepared text',
+        ]));
+        foreach ([1, 2] as $index) {
+            AIAssistantDocumentUnit::query()->create([
+                'document_id' => $document->id, 'unit_type' => $index === 1 ? 'ocr_page' : 'text_chunk',
+                'unit_index' => $index, 'text' => 'unit', 'checksum' => hash('sha256', $document->id.'-'.$index),
+            ]);
+        }
+        RagSource::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+            'source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id,
+            'title' => 'Document recovery', 'checksum' => hash('sha256', $path),
+        ]);
+        $slowSection = 'sources';
+        $slow = true;
+        $queries = ['sources' => 0, 'documents' => 0];
+        DB::listen(static function ($query) use (&$slowSection, &$slow, &$queries): void {
+            $section = str_contains($query->sql, 'coverage_state') && str_contains($query->sql, 'COUNT(*) AS total')
+                ? 'documents' : (str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count') ? 'sources' : null);
+            if ($section === null) { return; }
+            $queries[$section]++;
+            if ($slow && $section === $slowSection) { $slow = false; usleep(2_600_000); }
+        });
+
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        $sourceJob = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
+        self::assertInstanceOf(RefreshAssistantIndexStatusJob::class, $sourceJob);
+        self::assertSame('sources', $sourceJob->section);
+        $live = $service->status($organization->id, $actor, 'documents');
+        self::assertTrue($live['status_available']);
+        self::assertSame(1, $live['document_coverage']['ready']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+
+        $slowSection = 'documents';
+        $slow = true;
+        $unknown = $service->status($organization->id, $actor, 'documents');
+        self::assertFalse($unknown['status_available']);
+        $resource = (new RagIndexStatusResource($unknown))->resolve(request());
+        self::assertArrayHasKey('document_coverage', $resource);
+        self::assertNull($resource['document_coverage']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
+        $documentJob = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
+        self::assertInstanceOf(RefreshAssistantIndexStatusJob::class, $documentJob);
+        self::assertSame('documents', $documentJob->section);
+        self::assertNotSame($sourceJob->cacheKey, $documentJob->cacheKey);
+        $beforeRead = $queries['documents'];
+        self::assertFalse($service->status($organization->id, $actor, 'documents')['status_available']);
+        self::assertSame($beforeRead, $queries['documents']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
+        $documentJob->handle($service, $policy);
+        $beforeRead = $queries['documents'];
+        $ready = $service->status($organization->id, $actor, 'documents');
+        self::assertTrue($ready['status_available']);
+        self::assertSame(1, $ready['document_coverage']['ready']);
+        self::assertSame(2, $ready['document_coverage']['processed_units']);
+        self::assertSame($beforeRead, $queries['documents']);
+        $beforeSourceRead = $queries['sources'];
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame($beforeSourceRead, $queries['sources']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
+
+        DB::table('ai_assistant_document_units')->where('document_id', $document->id)->where('unit_index', 2)->delete();
+        $changed = $service->status($organization->id, $actor, 'documents');
+        self::assertFalse($changed['status_available']);
+        self::assertNull($changed['document_coverage']['processed_units'] ?? null);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 3);
+        $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last()->handle($service, $policy);
+        $current = $service->status($organization->id, $actor, 'documents');
+        self::assertTrue($current['status_available']);
+        self::assertSame(1, $current['document_coverage']['processed_units']);
+
+        $actor->assignedProjects()->detach($project->id);
+        $revoked = $service->status($organization->id, $actor, 'documents');
+        self::assertFalse($revoked['status_available']);
+        self::assertNull($revoked['document_coverage']['ready'] ?? null);
+        $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last()->handle($service, $policy);
+        $current = $service->status($organization->id, $actor, 'documents');
+        self::assertTrue($current['status_available']);
+        self::assertSame(0, $current['document_coverage']['total']);
+        $permissions->denied = ['ai_assistant.chat'];
+        $this->expectException(AuthorizationException::class);
+        $service->status($organization->id, $actor, 'documents');
+    }
+
+    public function test_unavailable_recovery_markers_are_not_extended_by_polling_and_expire_back_to_fresh_reads(): void
+    {
+        $previous = config('cache.default');
+        config(['cache.default' => 'database', 'cache.stores.database.connection' => 'pgsql']);
+        $store = Cache::store('database')->getStore();
+        self::assertInstanceOf(DatabaseStore::class, $store);
+        $slow = false;
+        $section = 'sources';
+        DB::listen(static function ($query) use (&$slow, &$section): void {
+            $target = $section === 'sources'
+                ? str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')
+                : str_contains($query->sql, 'coverage_state') && str_contains($query->sql, 'COUNT(*) AS total');
+            if ($slow && $target) { $slow = false; usleep(2_600_000); }
+        });
+        try {
+            foreach (['sources', 'documents'] as $section) {
+                Cache::store('database')->flush();
+                [$organization, $actor, , $service] = $this->scope();
+                $slow = true;
+                self::assertFalse($service->status($organization->id, $actor, $section)['status_available']);
+                $marker = DB::table('cache')->where('key', 'like', '%:'.$section.':background-recovery')->sole(['key', 'expiration']);
+                $expiration = now()->addSeconds(20)->timestamp;
+                self::assertSame(1, DB::table('cache')->where('key', $marker->key)->update(['expiration' => $expiration]));
+                self::assertFalse($service->status($organization->id, $actor, $section)['status_available']);
+                self::assertSame($expiration, (int) DB::table('cache')->where('key', $marker->key)->value('expiration'));
+                self::assertSame(1, DB::table('cache')->where('key', $marker->key)->update(['expiration' => now()->subSecond()->timestamp]));
+                self::assertTrue($service->status($organization->id, $actor, $section)['status_available']);
+                self::assertFalse(Cache::has(substr($marker->key, strlen($store->getPrefix()))));
+            }
+        } finally {
+            Cache::store('database')->flush();
+            config(['cache.default' => $previous]);
+        }
+    }
+
     public function test_database_cache_refresh_and_expired_snapshot_cleanup_run_outside_read_only_transactions(): void
     {
         $previous = config('cache.default');
@@ -250,27 +387,28 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertInstanceOf(DatabaseStore::class, $store);
         $slow = false;
         DB::listen(static function ($query) use (&$slow): void {
-            if ($slow && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
+            if ($slow && (str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')
+                || (str_contains($query->sql, 'coverage_state') && str_contains($query->sql, 'COUNT(*) AS total')))) {
                 $slow = false;
                 usleep(2_600_000);
             }
         });
 
         try {
-            foreach (['sources', 'all'] as $section) {
+            foreach (['sources', 'documents', 'all'] as $section) {
                 Cache::store('database')->flush();
                 [$organization, $actor, , $service, $policy, $permissions] = $this->scope();
                 $legacyKeys = ['ai-rag-coverage-revision:'.$organization->id, 'ai-rag-coverage:'.$organization->id.':0:*:0'];
                 foreach ($legacyKeys as $legacyKey) { Cache::put($legacyKey, ['projection_generation' => 'expired-cache-generation'], 60); }
                 self::assertSame(2, DB::table('cache')->whereIn('key', array_map(fn (string $key): string => $store->getPrefix().$key, $legacyKeys))
                     ->update(['expiration' => now()->subSecond()->timestamp]));
-                $slow = $section === 'sources';
+                $slow = $section !== 'all';
                 self::assertFalse($service->status($organization->id, $actor, $section)['status_available']);
                 $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
                 self::assertInstanceOf(RefreshAssistantIndexStatusJob::class, $job);
                 self::assertSame($section, $job->section);
                 $job->handle($service, $policy);
-                Queue::assertPushed(RefreshRagCoverageJob::class);
+                if ($section !== 'documents') { Queue::assertPushed(RefreshRagCoverageJob::class); }
                 self::assertTrue($service->status($organization->id, $actor, $section)['status_available']);
                 self::assertSame(1, DB::table('cache')->where('key', $store->getPrefix().$job->cacheKey)
                     ->update(['expiration' => now()->subSecond()->timestamp]));
