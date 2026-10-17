@@ -2,6 +2,7 @@
 
 namespace App\Services\Project;
 
+use App\BusinessModules\Core\Payments\Services\ProjectPaymentOutstandingQuery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectAllocationAvailabilityService;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
@@ -992,7 +993,7 @@ class ProjectService
                 ->all();
             $materials = $this->buildProjectDashboardMaterialSlices($project);
             $schedule = $this->buildProjectDashboardSchedule($projectId);
-            $payments = $this->buildProjectDashboardPayments($projectId);
+            $payments = $this->buildProjectDashboardPayments($projectId, (int) $this->getCurrentOrgId($request));
             $overview = $this->buildProjectDashboardOverview($project, $statistics, $workTypes, $schedule, $payments);
 
             return [
@@ -1060,24 +1061,9 @@ class ProjectService
         ];
     }
 
-    private function buildProjectDashboardPayments(int $projectId): array
+    private function buildProjectDashboardPayments(int $projectId, int $organizationId): array
     {
-        $documents = DB::table('payment_documents')
-            ->where('project_id', $projectId)
-            ->whereNull('deleted_at')
-            ->select([
-                'id',
-                'document_number',
-                'amount',
-                'paid_amount',
-                'remaining_amount',
-                'status',
-                'direction',
-                'due_date',
-                'scheduled_at',
-                'paid_at',
-            ])
-            ->get();
+        $documents = app(ProjectPaymentOutstandingQuery::class)->forProject($organizationId, $projectId);
 
         $activeStatuses = ['submitted', 'pending_approval', 'approved', 'scheduled', 'partially_paid'];
         $today = now()->startOfDay();
