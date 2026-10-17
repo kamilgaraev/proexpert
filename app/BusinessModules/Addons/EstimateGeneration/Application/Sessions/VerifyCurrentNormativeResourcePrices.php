@@ -37,7 +37,7 @@ final class VerifyCurrentNormativeResourcePrices
         $normResources = [];
         foreach (array_chunk(array_values($normIds), 1000) as $chunk) {
             foreach (DB::table('estimate_norm_resources')->whereIn('estimate_norm_id', $chunk)
-                ->get(['id', 'estimate_norm_id', 'resource_code', 'resource_type', 'unit', 'quantity']) as $row) {
+                ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'resource_type', 'unit', 'quantity']) as $row) {
                 $normResources[(int) $row->estimate_norm_id][(int) $row->id] = $row;
             }
         }
@@ -120,6 +120,9 @@ final class VerifyCurrentNormativeResourcePrices
             if ($row === null || isset($seen[$id]) || (int) ($reference['norm_id'] ?? 0) !== $normId
                 || ($resource['quantity_basis'] ?? null) !== 'normative_resource'
                 || ($reference['resource_code'] ?? null) !== trim((string) $row->resource_code)
+                || ($resource['name'] ?? null) !== $row->resource_name
+                || ! array_key_exists('norm_source_resource_id', $reference)
+                || $reference['norm_source_resource_id'] !== ($row->construction_resource_id === null ? null : (int) $row->construction_resource_id)
                 || ($resource['resource_type'] ?? null) !== $type
                 || ($resource['unit'] ?? null) !== $row->unit
                 || ! BigDecimal::of((string) ($resource['quantity_per_unit'] ?? '-1'))->isEqualTo((string) $row->quantity)) {

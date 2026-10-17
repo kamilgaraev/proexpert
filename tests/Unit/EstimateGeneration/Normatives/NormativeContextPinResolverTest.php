@@ -1301,6 +1301,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame(7001, $mapped->resource['norm_resource_id']);
         self::assertSame(9001, $mapped->resource['price_id']);
         self::assertSame(501, $mapped->resource['linked_resource_id']);
+        self::assertSame(501, $mapped->resource['norm_source_resource_id']);
         self::assertSame('100 pcs', $mapped->resource['price_unit']);
         self::assertSame('125.450000', $mapped->resource['unit_price']);
         self::assertSame('regional_catalog', $mapped->resource['price_source']);
@@ -1334,6 +1335,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame(9001, $mapped->resource['price_id']);
         self::assertSame('04.1.02.05', $mapped->resource['code']);
         self::assertSame(502, $mapped->resource['linked_resource_id']);
+        self::assertNull($mapped->resource['norm_source_resource_id']);
         self::assertSame([
             'group_code' => '04.1.02.05',
             'selected_resource_code' => '04.1.02.05-0123',

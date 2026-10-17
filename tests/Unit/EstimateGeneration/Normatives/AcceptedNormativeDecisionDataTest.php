@@ -404,6 +404,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     {
         $record = $this->catalogCandidate();
         $record['resources']['materials'][0]['quantity'] = '0.0000000100';
+        $record['resources']['materials'][0]['norm_source_resource_id'] = 501;
         $service = new ResourceAssemblyService(
             $this->createMock(EstimateNormativeMatcher::class),
             new NormativeMatchDecisionService,
@@ -434,6 +435,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
 
         self::assertSame('999999999999.12345678', $assembled['quantity']);
         self::assertSame('0.00000001', $assembled['materials'][0]['quantity_per_unit']);
+        self::assertSame(501, $assembled['materials'][0]['normative_ref']['norm_source_resource_id']);
         self::assertSame('9999.9999999912345678', $assembled['materials'][0]['quantity']);
         self::assertDoesNotMatchRegularExpression('/[eE]/', (string) $assembled['materials'][0]['quantity']);
 

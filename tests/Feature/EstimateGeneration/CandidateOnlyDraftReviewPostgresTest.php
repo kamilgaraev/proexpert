@@ -197,7 +197,12 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         self::assertSame($factsBeforeRead, app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token']);
         $normResourceId = $probeItems[0]['labor'][0]['normative_ref']['norm_resource_id'];
         $originalResource = (array) DB::table('estimate_norm_resources')->where('id', $normResourceId)->first();
-        foreach (['coefficient', 'unit', 'code', 'type', 'insert', 'delete'] as $change) {
+        $constructionResourceId = DB::table('construction_resources')->insertGetId([
+            'dataset_version_id' => DB::table('estimate_norm_collections')->where('id', DB::table('estimate_norms')->where('id', $catalog['norm_id'])->value('collection_id'))->value('dataset_version_id'),
+            'ksr_code' => 'test-'.Str::uuid(), 'name' => 'Проверяемая связь ресурса', 'unit' => 'h', 'resource_type' => 'labor',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        foreach (['coefficient', 'unit', 'code', 'type', 'name', 'relation', 'insert', 'delete'] as $change) {
             $insertedResourceId = null;
             try {
                 $resources = DB::table('estimate_norm_resources');
@@ -206,6 +211,8 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                     'unit' => $resources->where('id', $normResourceId)->update(['unit' => '10 h']),
                     'code' => $resources->where('id', $normResourceId)->update(['resource_code' => 'changed-resource-code']),
                     'type' => $resources->where('id', $normResourceId)->update(['resource_type' => 'material']),
+                    'name' => $resources->where('id', $normResourceId)->update(['resource_name' => 'Изменённое наименование']),
+                    'relation' => $resources->where('id', $normResourceId)->update(['construction_resource_id' => $constructionResourceId]),
                     'insert' => $insertedResourceId = $resources->insertGetId(['estimate_norm_id' => $catalog['norm_id'], 'resource_code' => 'additional-resource',
                         'resource_name' => 'Дополнительный ресурс', 'unit' => 'h', 'quantity' => '1.000000',
                         'resource_type' => 'labor', 'created_at' => now(), 'updated_at' => now()]),
