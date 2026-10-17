@@ -75,6 +75,9 @@ final readonly class AssistantCustomReportSource
                 continue;
             }
             $label = trans_message('ai_assistant_facts.fields.'.$field);
+            if ($entityType === 'machinery_asset' && $field === 'current_project_id') {
+                $label = trans_message('ai_custom_reports.current_project');
+            }
             $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
             $cast = $model->getCasts()[$field] ?? null;
             $values = $entityType === 'project' && $field === 'status' ? ['draft', 'active', 'completed', 'paused', 'cancelled'] : [];
@@ -96,7 +99,11 @@ final readonly class AssistantCustomReportSource
             }
             $fields['project_id'] = ['type' => 'number', 'label' => trans_message('ai_assistant_facts.fields.project_id')];
             $fields['is_overdue'] = ['type' => 'boolean', 'label' => trans_message('ai_assistant_facts.fields.is_overdue')];
-            $query = (new AssistantScheduleTaskReportProjection)->apply($query, $schedules);
+            if (isset($fields['assigned_user_id'])) {
+                $fields['assigned_user_id']['label'] = trans_message('ai_custom_reports.assignee_id');
+                $fields['assigned_user_name'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.assigned_user_id')];
+            }
+            $query = (new AssistantScheduleTaskReportProjection)->apply($query, $schedules, $organizationId);
         }
         if ($entityType === 'contract') {
             $fields['counterparty_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.counterparty_name')];

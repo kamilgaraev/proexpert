@@ -4,17 +4,25 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use Illuminate\Database\Eloquent\Model;
 
 class PendingActionStateResolver
 {
-    public function snapshot(string $toolName, array $arguments, int $organizationId): array
+    public function snapshot(string $toolName, array $arguments, int $organizationId, ?int $actorId = null): array
     {
+        if (in_array($toolName, \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::TOOLS, true)) {
+            $actor = $actorId === null ? null : \App\Models\User::query()->find($actorId);
+            if ($actor === null) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+
+            return app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::class)->snapshot($toolName, $arguments, $actor, $organizationId);
+        }
         if (in_array($toolName, ['update_measurement_unit', 'delete_measurement_unit'], true)) {
             return $this->measurementUnitSnapshot($arguments, $organizationId);
         }

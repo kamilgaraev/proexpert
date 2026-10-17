@@ -13,12 +13,25 @@ use ZipArchive;
 
 final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
 {
+    public function test_accepted_excel_headers_are_localized_without_mutating_persisted_schema(): void
+    {
+        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];
+        [$source] = $this->source(0, rowSchema: $schema, reportCode: 'accepted_production_progress');
+        $stream = new InMemoryReportArtifactStream;
+        (new XlsxReportExportRenderer)->render($source, $this->data('xlsx', array_column($schema, 'id')), [], $stream);
+        $xml = $this->archiveEntries($stream->bytes())['xl/worksheets/sheet1.xml'];
+        foreach (['Принятый объём', 'Состояние приёмки', 'Дата признания'] as $label) {
+            self::assertStringContainsString('<t>'.$label.'</t>', $xml);
+        }
+        self::assertSame($schema, $source->result->rowSchema);
+    }
+
     public function test_streams_minimal_ooxml_with_inline_strings_and_numeric_fidelity(): void
     {
         [$source] = $this->source(2, ['amount' => '13.75']);
-        $stream = new InMemoryReportArtifactStream();
+        $stream = new InMemoryReportArtifactStream;
 
-        $count = (new XlsxReportExportRenderer())->render(
+        $count = (new XlsxReportExportRenderer)->render(
             $source,
             $this->data('xlsx', ['name', 'amount', 'date'], 'en-US'),
             [$this->chunk($source, [
@@ -75,9 +88,9 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
             $this->chunk($source, [['name' => 'A', 'amount' => '1', 'date' => '2026-07-29']]),
             $this->chunk($source, [['name' => 'B', 'amount' => '2', 'date' => '2026-07-30']], 1),
         ];
-        $first = new InMemoryReportArtifactStream();
-        $second = new InMemoryReportArtifactStream();
-        $renderer = new XlsxReportExportRenderer();
+        $first = new InMemoryReportArtifactStream;
+        $second = new InMemoryReportArtifactStream;
+        $renderer = new XlsxReportExportRenderer;
         $renderer->render($source, $this->data('xlsx'), $chunks, $first);
         $renderer->render($source, $this->data('xlsx'), $chunks, $second);
 
@@ -100,7 +113,7 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
             ['name' => 'A', 'amount' => '1', 'date' => '2026-07-29'],
             ['name' => 'B', 'amount' => '2', 'date' => '2026-07-30'],
         ])];
-        $stream = new InMemoryReportArtifactStream();
+        $stream = new InMemoryReportArtifactStream;
         $sheetLimited = new XlsxReportExportRenderer(new ReportExportLimits(2, 3, 1_000_000, 2, 60));
 
         try {
@@ -127,7 +140,7 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
         $path = tempnam(sys_get_temp_dir(), 'most-xlsx-test-');
         self::assertIsString($path);
         self::assertSame(strlen($bytes), file_put_contents($path, $bytes));
-        $zip = new ZipArchive();
+        $zip = new ZipArchive;
         self::assertTrue($zip->open($path) === true);
         $entries = [];
 

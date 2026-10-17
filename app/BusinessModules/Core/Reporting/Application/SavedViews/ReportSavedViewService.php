@@ -45,6 +45,13 @@ final readonly class ReportSavedViewService
 
     public function create(ReportExecutionContext $c, array $input): ReportSavedView
     {
+        $data = $this->prepareCreate($c, $input);
+
+        return $this->store->create($c->scope->organizationId, $c->actor->id, $data, $this->definition($data->reportCode)->contractVersion);
+    }
+
+    public function prepareCreate(ReportExecutionContext $c, array $input): CreateReportSavedViewData
+    {
         $code = (string) ($input['report_code'] ?? '');
         $d = $this->definition($code);
         $this->manage($c, $code);
@@ -56,7 +63,7 @@ final readonly class ReportSavedViewService
         $filters = $this->filters->normalize($c, $d, is_array($input['filters'] ?? null) ? $input['filters'] : []);
         $comparison = is_array($input['comparison'] ?? null) ? $input['comparison'] : [];
 
-        return $this->store->create($c->scope->organizationId, $c->actor->id, new CreateReportSavedViewData($code, $name, (string) ($input['visibility'] ?? 'private'), $filters, $comparison, $sort, $columns, (bool) ($input['is_default'] ?? false)), $d->contractVersion);
+        return new CreateReportSavedViewData($code, $name, (string) ($input['visibility'] ?? 'private'), $filters, $comparison, $sort, $columns, (bool) ($input['is_default'] ?? false));
     }
 
     public function update(ReportExecutionContext $c, string $id, array $input): ReportSavedView

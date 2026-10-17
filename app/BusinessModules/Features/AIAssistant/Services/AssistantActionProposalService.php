@@ -17,7 +17,7 @@ final class AssistantActionProposalService
         foreach ($conversation->messages()->where('role', 'assistant')->orderByDesc('created_at')->orderByDesc('id')->limit(30)->get() as $message) {
             $metadata = $message->metadata ?? [];
             $requestId = $metadata['request_id'] ?? null;
-            if ((int) ($metadata['actor_user_id'] ?? 0) !== (int) $actor->id || !is_string($requestId)) {
+            if ((int) ($metadata['actor_user_id'] ?? 0) !== (int) $actor->id || ! is_string($requestId)) {
                 continue;
             }
             if (isset($candidate['origin_request_id']) && $candidate['origin_request_id'] !== $requestId) {
@@ -28,15 +28,16 @@ final class AssistantActionProposalService
                     && ($action['type'] ?? null) === 'act' && ($action['requires_confirmation'] ?? false)
             )));
             foreach ($proposals as $proposal) {
-                if (!is_array($proposal) || !hash_equals($this->fingerprint($proposal), $fingerprint)) {
+                if (! is_array($proposal) || ! hash_equals($this->fingerprint($proposal), $fingerprint)) {
                     continue;
                 }
                 $origin = Message::query()->where('conversation_id', $conversation->id)->where('role', 'user')
                     ->where('metadata->request_id', $requestId)->where('metadata->actor_user_id', $actor->id)->first();
-                if ($origin === null || !($origin->metadata['request']['allow_actions'] ?? false) || !($proposal['allowed'] ?? false)
-                    || !$this->supportsGoal((string) $proposal['tool_name'], $origin->content)) {
+                if ($origin === null || ! ($origin->metadata['request']['allow_actions'] ?? false) || ! ($proposal['allowed'] ?? false)
+                    || ! $this->supportsGoal((string) $proposal['tool_name'], $origin->content)) {
                     throw new AuthorizationException(trans_message('ai_assistant.action_origin_invalid'));
                 }
+
                 return array_merge($proposal, ['allow_actions' => true, 'origin_request_id' => $requestId]);
             }
         }
@@ -45,6 +46,12 @@ final class AssistantActionProposalService
 
     public function supportsGoal(string $tool, string $query): bool
     {
+        if (in_array($tool, ['create_report_subscription', 'update_report_subscription'], true)) {
+            $intent = \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantReportSubscriptionIntent::type($query);
+
+            return $intent === ($tool === 'create_report_subscription' ? 'create' : 'update')
+                && ! (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query)->blocksActions();
+        }
         $text = mb_strtolower(trim($query));
         if (preg_match('/^(?:(?:пожалуйста|можешь|можете|хочу|нужно|надо|давай|прошу)\s+)*(создай|создать|добавь|добавить|сделай|измени|изменить|обнови|обновить|переименуй|удали|удалить|утверди|утвердить|одобри|одобрить|отправь|отправить|уведоми|отметь|заверши|закрой|переведи|запланируй)\b/u', $text, $matched) !== 1) {
             return false;
@@ -58,7 +65,7 @@ final class AssistantActionProposalService
             'send_project_notification' => ['отправь', 'отправить', 'уведоми'],
             default => [],
         };
-        if (!in_array($matched[1], $verbs, true)) {
+        if (! in_array($matched[1], $verbs, true)) {
             return false;
         }
         $domain = match ($tool) {
@@ -68,6 +75,7 @@ final class AssistantActionProposalService
             'send_project_notification' => 'уведом|сообщ|сотруд|команд|проект',
             default => null,
         };
+
         return $domain !== null && preg_match('/(?:'.$domain.')/u', $text) === 1;
     }
 
@@ -75,12 +83,13 @@ final class AssistantActionProposalService
     {
         $arguments = is_array($proposal['arguments'] ?? null) ? $proposal['arguments'] : [];
         $this->sort($arguments);
+
         return hash('sha256', json_encode([(string) ($proposal['tool_name'] ?? ''), $arguments], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     }
 
     private function sort(array &$arguments): void
     {
-        if (!array_is_list($arguments)) {
+        if (! array_is_list($arguments)) {
             ksort($arguments);
         }
         foreach ($arguments as &$value) {

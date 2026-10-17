@@ -113,7 +113,13 @@ final class AssistantToolSurface
             array_push($selected, ...$reports);
         }
         if (($plan['request_understanding']['action_policy'] ?? 'read_only') === 'requires_confirmation') {
-            array_push($selected, ...$registered);
+            $subscriptionIntent = \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantReportSubscriptionIntent::type($query);
+            if ($subscriptionIntent === null) {
+                array_push($selected, ...$registered);
+            } else {
+                array_push($selected, $subscriptionIntent === 'create' ? 'create_report_subscription' : 'update_report_subscription',
+                    'get_report_subscription_catalog', 'get_own_report_subscriptions');
+            }
         }
         do {
             $before = count(array_unique($selected));

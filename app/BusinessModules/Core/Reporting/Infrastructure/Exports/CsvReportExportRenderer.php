@@ -144,15 +144,8 @@ final class CsvReportExportRenderer implements ReportExportRenderer
         }
 
         return array_map(
-            static function (string $columnId) use ($schema, $data): string {
-                $column = $schema[$columnId];
-                $labels = $column['labels'] ?? null;
-                $label = is_array($labels) && isset($labels[$data->locale])
-                    ? $labels[$data->locale]
-                    : ($column['label'] ?? $columnId);
-
-                return is_string($label) && trim($label) !== '' ? $label : $columnId;
-            },
+            static fn (string $columnId): string => \App\BusinessModules\Core\Reporting\Application\Exports\ReportExportColumnLabels::resolve(
+                $source->run->reportCode, $columnId, $data->locale, $schema[$columnId]),
             $data->columns,
         );
     }

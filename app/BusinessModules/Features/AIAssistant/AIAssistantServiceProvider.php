@@ -95,11 +95,11 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportCom
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdfWriterInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
 use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenBudgetService;
-use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime;
-use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -223,6 +223,8 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerFactory('generate_operational_pdf_report', fn () => $app->make(GenerateOperationalPdfReportTool::class));
             $registry->registerFactory('generate_custom_report', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateCustomReportTool::class));
             $registry->registerFactory('describe_custom_report_source', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\DescribeCustomReportSourceTool::class));
+            $registry->registerFactory('create_report_subscription', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateReportSubscriptionTool::class));
+            $registry->registerFactory('update_report_subscription', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateReportSubscriptionTool::class));
             $registry->registerFactory('generate_rag_pdf_report', fn () => $app->make(GenerateRagPdfReportTool::class));
             $registry->registerFactory('get_project_snapshot', fn () => $app->make(GetProjectSnapshotTool::class));
             $registry->registerFactory('get_procurement_snapshot', fn () => $app->make(GetProcurementSnapshotTool::class));
