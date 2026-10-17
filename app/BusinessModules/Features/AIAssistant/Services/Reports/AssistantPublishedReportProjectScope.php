@@ -13,9 +13,10 @@ final class AssistantPublishedReportProjectScope
         $scope = AssistantRequestProjectScope::fromPlan(['request' => $requestPayload]);
         $message = (string) ($requestPayload['message'] ?? '');
         $organizationWide = AssistantRequestProjectScope::organizationWide($message);
+        $current = $scope->requested && AssistantReportEntityQuery::extract($message, 'project') === null;
 
-        return ! (($scope->requested && $scope->projectId === null)
-            || ($scope->requested && $scope->projectId !== null && $projectId !== $scope->projectId)
+        return ! (($current && $scope->projectId === null)
+            || ($current && $scope->projectId !== null && $projectId !== $scope->projectId)
             || ($organizationWide && $projectId !== null)
             || (! $organizationWide && $projectId === null
                 && preg_match('/(?<![\pL\pN])(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $message) === 1));

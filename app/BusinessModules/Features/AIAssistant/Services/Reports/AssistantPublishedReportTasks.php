@@ -213,8 +213,7 @@ final readonly class AssistantPublishedReportTasks
             throw new AuthorizationException;
         }
         $message = (string) ($request->payload['message'] ?? '');
-        if (AssistantRequestProjectScope::fromPlan(['request' => $request->payload])->requested
-            || AssistantRequestProjectScope::organizationWide($message)) {
+        if (AssistantRequestProjectScope::organizationWide($message)) {
             return;
         }
         $query = AssistantReportEntityQuery::extract($message, 'project');

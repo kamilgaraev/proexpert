@@ -67,11 +67,11 @@ final class AssistantPublishedReportTasksTest extends TestCase
 
     public static function interruptions(): array
     {
-        return [['normal'], ['run'], ['export'], 'definition_change' => ['definition'], 'named_project' => ['normal', true]];
+        return [['normal'], ['run'], ['export'], 'definition_change' => ['definition'], 'named_project' => ['normal', true], 'our_named_project' => ['normal', true, true]];
     }
 
     #[DataProvider('interruptions')]
-    public function test_source_only_actor_gets_real_nonempty_excel_and_reuses_native_work_after_interruption(string $interruption, bool $namedProject = false): void
+    public function test_source_only_actor_gets_real_nonempty_excel_and_reuses_native_work_after_interruption(string $interruption, bool $namedProject = false, bool $possessiveProject = false): void
     {
         $selectedProjectId = (int) $this->project->id;
         if ($namedProject) {
@@ -89,7 +89,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
         $this->seedAcceptedSource($organizationId, (int) $this->project->id, $acceptedAt);
         $root = $this->root($actor, $acceptedAt->modify('+1 day'),
-            $namedProject ? 'Сформируй Excel о принятой выработке по проекту «'.$this->project->name.'»' : null,
+            $namedProject ? 'Сформируй Excel о принятой выработке по '.($possessiveProject ? 'нашему ' : '').'проекту «'.$this->project->name.'»' : null,
             $selectedProjectId);
         $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR)]);
         $tasks = app(AssistantPublishedReportTasks::class);

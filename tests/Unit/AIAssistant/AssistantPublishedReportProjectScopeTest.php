@@ -15,6 +15,7 @@ final class AssistantPublishedReportProjectScopeTest extends TestCase
     {
         return [
             'named_project_differs_from_ui' => ['Сформируй Excel по проекту «Учебный ПТО»', 52, 102, true],
+            'our_named_project_differs_from_ui' => ['Сформируй Excel по нашему проекту «Учебный ПТО»', 52, 102, true],
             'named_object_differs_from_ui' => ['Сформируй Excel по объекту СевГУ', 52, 102, true],
             'named_project_without_ui' => ['Сформируй Excel по проекту «Учебный ПТО»', null, 102, true],
             'named_project_cannot_expand_to_organization' => ['Сформируй Excel о состоянии проекта «Учебный ПТО»', 52, null, false],
