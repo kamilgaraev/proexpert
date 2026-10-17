@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Estimate;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\Models\Estimate;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -12,6 +13,11 @@ class EstimateResource extends JsonResource
     {
         /** @var Estimate $estimate */
         $estimate = $this->resource;
+        app(EstimateStructureVatProjection::class)->bindEstimate(
+            $estimate,
+            $estimate->relationLoaded('sections') ? $estimate->getRelation('sections') : [],
+            $estimate->relationLoaded('items') ? $estimate->getRelation('items') : [],
+        );
 
         $coverage = app(EstimateCoverageService::class)->getCoverageForEstimate($estimate);
         $primaryContract = $coverage['primary_contract']['contract'] ?? null;

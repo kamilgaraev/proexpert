@@ -13,6 +13,34 @@ use Illuminate\Http\Request;
 
 final class EstimateStructureVatProjection
 {
+    public function bindEstimate(Estimate $estimate, iterable $sections = [], iterable $items = []): void
+    {
+        $visited = new \SplObjectStorage;
+        $bind = function (EstimateItem|EstimateSection $node) use (&$bind, $estimate, $visited): void {
+            if ($visited->contains($node)) {
+                return;
+            }
+            if ((int) $node->estimate_id !== (int) $estimate->id) {
+                throw new DomainException('estimate_structure_scope_mismatch');
+            }
+            $visited->attach($node);
+            $node->setRelation('estimate', $estimate);
+            foreach (['items', 'children', 'childItems'] as $relation) {
+                if ($node->relationLoaded($relation)) {
+                    foreach ($node->getRelation($relation) as $child) {
+                        $bind($child);
+                    }
+                }
+            }
+        };
+        foreach ($sections as $section) {
+            $bind($section);
+        }
+        foreach ($items as $item) {
+            $bind($item);
+        }
+    }
+
     public function item(Estimate $estimate, EstimateItem $item): float
     {
         return $this->itemAmount($estimate, $item)->toFloat();

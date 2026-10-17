@@ -7,6 +7,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSnapshotResponse;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateStatusWorkflowService;
 use App\Http\Controllers\Controller;
@@ -337,8 +338,13 @@ class EstimateController extends Controller
             ->orderBy('sort_order')
             ->get();
 
-        return AdminResponse::success(($estimateModel->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD
-            ? EstimateSectionResource::collection($sections) : $sections);
+        if (($estimateModel->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD) {
+            app(EstimateStructureVatProjection::class)->bindEstimate($estimateModel, $sections);
+
+            return AdminResponse::success(EstimateSectionResource::collection($sections));
+        }
+
+        return AdminResponse::success($sections);
     }
 
     private function streamEstimateWithStructureSnapshot(Request $request, Estimate $estimate): StreamedResponse

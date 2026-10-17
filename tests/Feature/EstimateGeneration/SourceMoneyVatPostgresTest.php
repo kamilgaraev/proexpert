@@ -148,7 +148,11 @@ final class SourceMoneyVatPostgresTest extends EstimateGenerationCanonicalPostgr
         $request->attributes->set('current_organization_id', $estimate->organization_id);
         Bus::fake([GenerateEstimateSnapshotJob::class]);
         $controller = app(EstimateController::class);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
         $structure = $controller->structure($request, $estimate->project_id, (int) $estimate->id)->getData(true);
+        self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimates"')));
+        DB::disableQueryLog();
         self::assertSame(120, $structure['data'][0]['section_total_amount_with_vat']);
         self::assertSame(120, $structure['data'][0]['items'][0]['total_amount_with_vat']);
         $show = $controller->show($request, $estimate->project_id, (int) $estimate->id)->getData(true);
