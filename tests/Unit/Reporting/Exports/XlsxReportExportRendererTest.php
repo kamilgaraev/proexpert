@@ -15,12 +15,12 @@ final class XlsxReportExportRendererTest extends ReportExportRendererTestCase
 {
     public function test_accepted_excel_headers_are_localized_without_mutating_persisted_schema(): void
     {
-        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on'], ['id' => 'row_key'], ['id' => 'drill']];
+        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];
         [$source] = $this->source(0, rowSchema: $schema, reportCode: 'accepted_production_progress');
         $stream = new InMemoryReportArtifactStream;
         (new XlsxReportExportRenderer)->render($source, $this->data('xlsx', array_column($schema, 'id')), [], $stream);
         $xml = $this->archiveEntries($stream->bytes())['xl/worksheets/sheet1.xml'];
-        foreach (['Принятый объём', 'Состояние приёмки', 'Дата признания', 'Ключ строки', 'Детализация'] as $label) {
+        foreach (['Принятый объём', 'Состояние приёмки', 'Дата признания'] as $label) {
             self::assertStringContainsString('<t>'.$label.'</t>', $xml);
         }
         self::assertSame($schema, $source->result->rowSchema);

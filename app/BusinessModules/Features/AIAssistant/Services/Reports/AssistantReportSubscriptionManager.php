@@ -204,6 +204,9 @@ final readonly class AssistantReportSubscriptionManager
                 'sort' => $arguments['sort'] ?? ($view === null ? ['field' => $definition->sorts[0]['id'], 'direction' => 'asc']
                     : ['field' => $view->sort->field, 'direction' => $view->sort->direction->value])];
             $validated = $this->viewService->prepareCreate($context, $viewInput);
+            if (array_diff($validated->columns, array_column(AssistantPublishedReportColumns::exportable($definition->code, $definition->columns), 'id')) !== []) {
+                $this->invalid();
+            }
             if ((! $context->visibility->canViewSensitive && array_intersect($validated->columns, $definition->outputClassification->sensitiveColumnIds) !== [])
                 || (! $context->visibility->canViewAudit && array_intersect($validated->columns, $definition->outputClassification->auditColumnIds) !== [])) {
                 throw new AuthorizationException;

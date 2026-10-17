@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAu
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportColumns;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\Models\User;
 
@@ -50,7 +51,7 @@ final readonly class AssistantReportSubscriptionCatalogReader extends AssistantO
             'supported_total' => count($supported), 'available_total' => count($available),
             'items' => array_map(static fn (ReportCatalogDefinitionView $definition): array => [
                 'code' => $definition->code, 'title' => trans_message($definition->titleKey), 'formats' => $definition->formats,
-                'filters' => $definition->filters, 'columns' => $definition->columns, 'sorts' => $definition->sorts,
+                'filters' => $definition->filters, 'columns' => AssistantPublishedReportColumns::exportable($definition->code, $definition->columns), 'sorts' => $definition->sorts,
                 'can_view_sensitive' => $definition->visibility->canViewSensitive, 'can_view_audit' => $definition->visibility->canViewAudit,
             ], array_slice($available, 0, 20))];
     }

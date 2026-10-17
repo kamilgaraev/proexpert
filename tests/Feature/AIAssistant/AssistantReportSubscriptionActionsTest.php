@@ -140,6 +140,7 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
     {
         $before = DB::table('report_saved_views')->count();
         foreach ([['filters_json' => '{"organization_id":1}'], ['scope' => 'organization'], ['columns' => ['not_a_column']],
+            ['columns' => ['row_key']], ['columns' => ['drill']],
             ['weekday' => 8], ['local_time' => '25:00'], ['period_mode' => 'whenever'], ['filters_json' => '[]'], ['filters_json' => '{"unknown":1}']] as $changes) {
             try {
                 $arguments = array_replace($this->arguments(), $changes);
@@ -161,6 +162,30 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
         $id = $this->manager->create($this->arguments(), $this->fixture->owner, $this->fixture->organization)['subscription_id'];
         $this->expectException(InvalidArgumentException::class);
         $this->manager->update(['subscription_id' => $id, 'operation' => 'pause', 'local_time' => '10:00'], $this->fixture->owner, $this->fixture->organization);
+    }
+
+    public function test_catalog_and_update_only_accept_columns_present_in_export_data(): void
+    {
+        $catalog = app(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantReportSubscriptionCatalogReader::class)
+            ->read($this->fixture->owner, $this->fixture->organization->id, ['scope' => 'organization']);
+        $definition = array_values(array_filter($catalog['data']['items'], static fn (array $item): bool => $item['code'] === 'accepted_production_progress'))[0];
+        $columns = array_column($definition['columns'], 'id');
+        self::assertCount(19, $columns);
+        self::assertNotContains('row_key', $columns);
+        self::assertNotContains('drill', $columns);
+        $id = $this->manager->create($this->arguments(), $this->fixture->owner, $this->fixture->organization)['subscription_id'];
+        $subscription = $this->own($id);
+        $before = DB::table('report_saved_views')->count();
+        foreach (['row_key', 'drill'] as $column) {
+            try {
+                $this->manager->update(['subscription_id' => $id, 'operation' => 'update', 'columns' => [$column]], $this->fixture->owner, $this->fixture->organization);
+                self::fail('Non-exportable column accepted');
+            } catch (InvalidArgumentException) {
+                self::assertSame($before, DB::table('report_saved_views')->count());
+                self::assertSame($subscription->executionInputBytes, $this->own($id)->executionInputBytes);
+                self::assertSame($subscription->transitionVersion, $this->own($id)->transitionVersion);
+            }
+        }
     }
 
     public function test_legacy_period_can_be_paused_after_confirmation_and_resumed_without_reconfiguration(): void

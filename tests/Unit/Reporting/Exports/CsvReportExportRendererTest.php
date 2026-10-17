@@ -65,7 +65,6 @@ abstract class ReportExportRendererTestCase extends TestCase
         parent::setUp();
 
         $container = new Container;
-        $container->instance('log', new \Psr\Log\NullLogger);
         $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
         $container->instance('translator', new Translator(
             new FileLoader(new Filesystem, dirname(__DIR__, 4).'/lang'),
@@ -398,12 +397,12 @@ final class CsvReportExportRendererTest extends ReportExportRendererTestCase
 {
     public function test_accepted_report_localizes_id_only_schema_without_changing_snapshot(): void
     {
-        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on'], ['id' => 'row_key'], ['id' => 'drill']];
+        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];
         [$source] = $this->source(0, rowSchema: $schema, reportCode: 'accepted_production_progress');
         $stream = new InMemoryReportArtifactStream;
         $hash = $source->resultHash->value;
         (new CsvReportExportRenderer)->render($source, $this->data('csv', array_column($schema, 'id')), [], $stream);
-        self::assertSame(['Принятый объём', 'Состояние приёмки', 'Дата признания', 'Ключ строки', 'Детализация'], str_getcsv(substr($stream->bytes(), 3), ';', '"', ''));
+        self::assertSame(['Принятый объём', 'Состояние приёмки', 'Дата признания'], str_getcsv(substr($stream->bytes(), 3), ';', '"', ''));
         self::assertSame($schema, $source->result->rowSchema);
         self::assertSame($hash, $source->resultHash->value);
     }

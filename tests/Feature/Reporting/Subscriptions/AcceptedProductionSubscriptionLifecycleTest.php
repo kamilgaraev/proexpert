@@ -99,6 +99,11 @@ final class AcceptedProductionSubscriptionLifecycleTest extends TestCase
         $run = app(ReportRunStore::class)->get($context, $current->runId);
         self::assertSame('ready', $run->status->value);
         self::assertSame(1, $run->rowCount);
+        $source = app(ReportRunStore::class)->exportSource($context, $current->runId);
+        $exportable = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportColumns::exportable(
+            $source->query->definition->code, $source->query->definition->columns);
+        self::assertCount(19, $exportable);
+        self::assertSame(array_column($source->result->rowSchema, 'id'), array_column($exportable, 'id'));
         $exports = app(CreateReportExportAction::class);
         $exportAction = $this->createMock(CreateReportExportAction::class);
         $exportAction->method('handle')->willReturnCallback(function (...$arguments) use ($exports, $mode, $delivery) {

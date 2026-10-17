@@ -14,7 +14,6 @@ return [
         'status_label' => 'Состояние',
     ],
     'accepted_production_columns' => [
-        'row_key' => 'Ключ строки', 'drill' => 'Детализация',
         'recognized_on' => 'Дата признания', 'project_id' => 'Проект', 'wbs_code' => 'Код работы по графику',
         'work_id' => 'Работа', 'performance_act_id' => 'Акт', 'source_line_type' => 'Вид строки', 'source_line_id' => 'Строка источника',
         'planned_quantity' => 'Плановый объём', 'reported_quantity' => 'Предъявленный объём', 'accepted_quantity' => 'Принятый объём',
