@@ -14,6 +14,8 @@ interface ReportSubscriptionDeliveryStore
     /** @return array{0:ReportSubscriptionDelivery,1:ReportSubscription} */
     public function lockWithSubscription(string $id): array;
 
+    public function claimStaleDispatches(DateTimeImmutable $now, int $limit, int $staleSeconds): array;
+
     public function createCalendarScheduledLocked(
         ReportSubscription $subscription,
         DateTimeImmutable $scheduledFor,

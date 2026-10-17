@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownA
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReadReportExportFileAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportDownloadLinkData;
@@ -26,6 +27,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExportFile;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRowsWindow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
@@ -59,6 +61,8 @@ final class FakeReportingActions
 
     public readonly CreateReportDownloadLinkAction $downloadLinkAction;
 
+    public readonly ReadReportExportFileAction $readExportFileAction;
+
     public array $calls = [
         'catalog' => [],
         'createRun' => [],
@@ -72,6 +76,7 @@ final class FakeReportingActions
         'retryExport' => [],
         'cancelExport' => [],
         'downloadLink' => [],
+        'readExportFile' => [],
     ];
 
     private array $exceptions = [];
@@ -188,6 +193,15 @@ final class FakeReportingActions
                 return $this->fake->downloadLink($context, $data);
             }
         };
+        $this->readExportFileAction = new class($this) implements ReadReportExportFileAction
+        {
+            public function __construct(private readonly FakeReportingActions $fake) {}
+
+            public function handle(ReportExecutionContext $context, string $exportId): ReportExportFile
+            {
+                return $this->fake->readExportFile($context, $exportId);
+            }
+        };
     }
 
     public function willThrow(string $method, Throwable $exception): void
@@ -296,6 +310,14 @@ final class FakeReportingActions
     {
         $result = $this->record('downloadLink', [$context, $data]);
         assert($result instanceof ReportDownloadLink);
+
+        return $result;
+    }
+
+    public function readExportFile(ReportExecutionContext $context, string $exportId): ReportExportFile
+    {
+        $result = $this->record('readExportFile', [$context, $exportId]);
+        assert($result instanceof ReportExportFile);
 
         return $result;
     }

@@ -42,7 +42,10 @@ final readonly class AssistantCustomReportSource
         if ($entityType === 'contract') {
             (new \App\BusinessModules\Features\AIAssistant\Services\AssistantContractOrganizationScope)->apply($query, $organizationId, true);
         }
-        if ($projectId !== null && ! $this->policy->applyEntityProjectScope($actor, $organizationId, $entityType, $query, $projectId)) {
+        $projection = $entityType === 'machinery_asset' ? new AssistantMachineryReportProjection($this->policy) : null;
+        if ($projection !== null) {
+            $query = $projection->scope($query, $actor, $organizationId, $projectId);
+        } elseif ($projectId !== null && ! $this->policy->applyEntityProjectScope($actor, $organizationId, $entityType, $query, $projectId)) {
             throw ValidationException::withMessages(['project_id' => trans_message('ai_custom_reports.unsupported_project')]);
         }
         $model = $query->getModel();
@@ -75,6 +78,9 @@ final readonly class AssistantCustomReportSource
             $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
             $cast = $model->getCasts()[$field] ?? null;
             $values = $entityType === 'project' && $field === 'status' ? ['draft', 'active', 'completed', 'paused', 'cancelled'] : [];
+            if ($entityType === 'machinery_asset' && $field === 'status') {
+                $values = ['available', 'assigned', 'in_operation', 'maintenance', 'unavailable', 'archived', 'under_maintenance', 'out_of_service'];
+            }
             if (is_string($cast) && enum_exists($cast) && is_subclass_of($cast, \BackedEnum::class)) {
                 $values = array_column($cast::cases(), 'value');
             }
@@ -82,6 +88,15 @@ final readonly class AssistantCustomReportSource
                 $fields[$field]['choices'] = array_map(static fn (string|int $value): array => ['value' => $value,
                     'label' => \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactLabels::display($entityType, $field, (string) $value)], $values);
             }
+        }
+        if ($entityType === 'schedule_task') {
+            $schedules = $this->policy->entityQuery($actor, $organizationId, 'schedule');
+            if ($schedules === null) {
+                throw new AccessDeniedHttpException;
+            }
+            $fields['project_id'] = ['type' => 'number', 'label' => trans_message('ai_assistant_facts.fields.project_id')];
+            $fields['is_overdue'] = ['type' => 'boolean', 'label' => trans_message('ai_assistant_facts.fields.is_overdue')];
+            $query = (new AssistantScheduleTaskReportProjection)->apply($query, $schedules);
         }
         if ($entityType === 'contract') {
             $fields['counterparty_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.counterparty_name')];
@@ -99,7 +114,7 @@ final readonly class AssistantCustomReportSource
             $fields[$field]['dimensions'] = $metadata['type'] === 'number' ? AssistantCustomReportMeasure::dimensions($field, $fields) : [];
         }
 
-        return ['query' => $query, 'fields' => $fields, 'domain' => $policyDomain];
+        return ['query' => $query, 'fields' => $fields, 'domain' => $policyDomain, 'projection' => $projection];
     }
 
     public function assertFields(array $fields, array $available): void

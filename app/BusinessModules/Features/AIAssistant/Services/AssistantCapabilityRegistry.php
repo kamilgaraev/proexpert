@@ -53,6 +53,7 @@ class AssistantCapabilityRegistry
     public function domainKeywords(string $domain): array
     {
         $domain = $this->intentDomain($domain);
+
         return match ($domain) {
             'projects' => ['проект', 'объект', 'стройк'],
             'estimates' => ['смет', 'расценк', 'estimate'],
@@ -101,8 +102,7 @@ class AssistantCapabilityRegistry
             'core_commercial' => ['подписк', 'тариф', 'счет организации', 'счёт организации'],
             'core_journals' => ['журнал', 'журнал работ', 'запись журнала'],
             'core_notifications' => ['уведомлен', 'напоминан'],
-            default => array_values(array_filter(array_map(static fn (string $type): ?string =>
-                AssistantExtendedDomainRegistry::values('entityLabels')[$type] ?? null, $this->domainCatalog->definition($domain)?->entityTypes ?? []))),
+            default => array_values(array_filter(array_map(static fn (string $type): ?string => AssistantExtendedDomainRegistry::values('entityLabels')[$type] ?? null, $this->domainCatalog->definition($domain)?->entityTypes ?? []))),
         };
     }
 
@@ -305,6 +305,11 @@ class AssistantCapabilityRegistry
                 }
             }
         }
+        if (preg_match('/организац/iu', $query) === 1 && preg_match('/холдинг|дочерн|сайт|лендинг/iu', $query) !== 1
+            && array_diff(array_map($this->intentDomain(...), $explicitDomains), ['holding', 'core_organizations', 'projects']) !== []) {
+            $explicitDomains = array_values(array_filter($explicitDomains,
+                fn (string $domain): bool => ! in_array($this->intentDomain($domain), ['holding', 'core_organizations'], true)));
+        }
         $explicitIntentDomains = array_values(array_unique(array_map($this->intentDomain(...), $explicitDomains)));
         if ($selectedEstimate && ($explicitIntentDomains === [] || array_diff($explicitIntentDomains, ['estimates', 'projects']) === [] && in_array('estimates', $explicitIntentDomains, true))) {
             foreach ($capabilities as $capability) {
@@ -365,7 +370,10 @@ class AssistantCapabilityRegistry
         }
 
         $domain = $this->intentDomain($this->domainCatalog->definition($capabilityId)?->domain ?? $capabilityId);
-        $routeCapability = match ($domain) { 'finance' => 'payments', 'schedule' => 'schedules', default => $domain };
+        $routeCapability = match ($domain) {
+            'finance' => 'payments', 'schedule' => 'schedules', default => $domain
+        };
+
         return match ($routeCapability) {
             'projects' => str_contains($route, '/projects') && ! str_contains($route, '/schedules') && ! str_contains($route, '/estimates'),
             'contracts' => str_contains($route, '/contracts') && ! str_contains($route, '/procurement'),

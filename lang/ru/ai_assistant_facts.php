@@ -76,6 +76,8 @@ return [
         'estimate_date' => 'Дата сметы',
         'planned_start_date' => 'Плановое начало',
         'planned_end_date' => 'Плановое окончание',
+        'assigned_user_id' => 'Ответственный',
+        'is_overdue' => 'Просрочена',
         'planned_finish_date' => 'Плановое окончание',
         'required_date' => 'Требуемая дата',
         'priority' => 'Приоритет',

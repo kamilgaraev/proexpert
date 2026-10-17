@@ -4,18 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Middleware;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
+use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
-use App\BusinessModules\Core\MultiOrganization\Reporting\IntercompanyContractFlowCandidateContract;
-use App\BusinessModules\Core\MultiOrganization\Reporting\HoldingPerformanceCandidateContract;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Features\Budgeting\Reporting\BudgetPlanFactCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\ProjectEvmControlCandidateContract;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastCandidateContract;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectMarginCandidateContract;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessCandidateContract;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityCandidateContract;
@@ -100,7 +100,7 @@ final readonly class AuthorizeReportDefinitionAccess
                 $this->routeId($request, 'exportId'),
                 ReportOperation::EXPORT,
             ),
-            'admin.reports.exports.download-link' => $this->targets->export(
+            'admin.reports.exports.download-link', 'admin.reports.exports.download' => $this->targets->export(
                 $this->routeId($request, 'exportId'),
                 ReportOperation::DOWNLOAD,
             ),

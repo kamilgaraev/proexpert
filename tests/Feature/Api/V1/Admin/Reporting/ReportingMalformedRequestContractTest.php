@@ -16,7 +16,7 @@ final class ReportingMalformedRequestContractTest extends TestCase
         int $requestCount,
         int $assertions,
     ): void {
-        $record = (new HermeticReportingHttpHarness())->runMalformedCase($caseId);
+        $record = (new HermeticReportingHttpHarness)->runMalformedCase($caseId);
 
         self::assertSame([
             'case_id',
@@ -63,6 +63,7 @@ final class ReportingMalformedRequestContractTest extends TestCase
         yield ['invalid_export_retry_idempotency_key', 1, 6];
         yield ['invalid_export_cancel_ulid', 1, 6];
         yield ['invalid_export_download_ulid', 1, 6];
+        yield ['invalid_export_download_file_ulid', 1, 6];
         yield ['missing_run_as_of', 1, 6];
         yield ['rows_limit_101', 1, 6];
         yield ['missing_drill_down_token', 1, 6];

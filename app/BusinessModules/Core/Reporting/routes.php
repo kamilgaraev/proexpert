@@ -18,10 +18,11 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectEvmControlR
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectLaborCostReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectMarginReportOptionsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectPortfolioHealthReportOptionsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectReportExportHistoryController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
-use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ProjectReportExportHistoryController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportFileController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportSavedViewController;
@@ -251,4 +252,7 @@ Route::prefix('api/v1/admin/reports')
         Route::post('/exports/{exportId}/download-link', [ReportExportController::class, 'downloadLink'])
             ->middleware($resourceAccess)
             ->name('exports.download-link');
+        Route::get('/exports/{exportId}/download', ReportExportFileController::class)
+            ->middleware($resourceAccess)
+            ->name('exports.download');
     });

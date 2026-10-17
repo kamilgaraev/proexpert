@@ -597,6 +597,84 @@ final class AssistantCustomReportsTest extends TestCase
         }
     }
 
+    public function test_machinery_report_matches_native_projection_before_filtering_grouping_and_limiting(): void
+    {
+        $this->extraModules = ['machinery-operations'];
+        [$org, $actor, $project] = $this->fixture();
+        $assets = [];
+        foreach (['active', 'retired', 'retired'] as $index => $lifecycle) {
+            $asset = \Tests\Support\MachineryOperationsAssetFactory::create($org->id,
+                ['asset_code' => 'REPORT-'.$index, 'name' => 'Каноническая техника '.$index, 'current_project_id' => $project->id]);
+            $asset->organizationAsset->updateQuietly(['lifecycle_status' => $lifecycle]);
+            $asset->updateQuietly(['name' => 'Устаревшее имя', 'status' => 'available']);
+            $assets[] = $asset->refresh()->load('organizationAsset.operationProfile');
+        }
+        $section = ['domain' => 'machinery', 'entity_type' => 'machinery_asset', 'project_id' => $project->id,
+            'columns' => ['id', 'name', 'inventory_number', 'status', 'current_project_id'], 'order_by' => [['field' => 'name', 'direction' => 'asc']]];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        foreach ($assets as $index => $asset) {
+            $native = app(\App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetProjection::class)->project($asset);
+            self::assertSame([$native['id'], $native['name'], $native['inventory_number'],
+                \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactLabels::display('machinery_asset', 'status', $native['status']),
+                '#'.$project->id.' — '.$project->name], $report['sections'][0]['rows'][$index]);
+        }
+        $grouped = array_replace($section, ['columns' => ['status'], 'group_by' => ['status'],
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'archived']],
+            'metrics' => [['field' => null, 'operation' => 'count', 'label' => 'Единиц']], 'order_by' => [], 'row_limit' => 1]);
+        $summary = $this->builder->build($this->plan($grouped), $actor, $org->id);
+        self::assertSame(2, $summary['sections'][0]['source_row_count']);
+        self::assertSame(2, $summary['sections'][0]['rows'][0][1]);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $summary['source_refs'][0]));
+    }
+
+    public function test_machinery_current_project_scope_and_download_recheck_ignore_stale_legacy_placement(): void
+    {
+        $this->extraModules = ['machinery-operations'];
+        [$org, $actor, $project] = $this->fixture();
+        $asset = \Tests\Support\MachineryOperationsAssetFactory::create($org->id,
+            ['asset_code' => 'REPORT-MOVE', 'name' => 'Перемещённая техника', 'current_project_id' => $project->id]);
+        $section = ['domain' => 'machinery', 'entity_type' => 'machinery_asset', 'project_id' => $project->id, 'columns' => ['id', 'name']];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame(1, $report['sections'][0]['source_row_count']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $next = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($next->id, ['is_active' => true, 'role' => 'member']);
+        $asset->organizationAsset->updateQuietly(['current_project_id' => $next->id]);
+        self::assertSame(0, $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['source_row_count']);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        self::assertSame(1, $this->builder->build($this->plan(array_replace($section, ['project_id' => $next->id])), $actor, $org->id)['sections'][0]['source_row_count']);
+        $actor->assignedProjects()->updateExistingPivot($next->id, ['is_active' => false]);
+        self::assertSame(0, $this->builder->build($this->plan(array_replace($section, ['project_id' => null])), $actor, $org->id)['sections'][0]['source_row_count']);
+    }
+
+    public function test_overdue_task_report_projects_parent_scope_and_responsible_before_grouping(): void
+    {
+        $this->extraModules = ['schedule-management', 'users'];
+        [$org, $actor, $project] = $this->fixture();
+        $schedule = \App\Models\ProjectSchedule::query()->create(['organization_id' => $org->id, 'project_id' => $project->id,
+            'name' => 'Действующий график', 'created_by_user_id' => $actor->id, 'planned_start_date' => '2026-01-01', 'planned_end_date' => '2026-12-31']);
+        foreach ([['not_started', 0], ['in_progress', 50], ['completed', 100], ['cancelled', 0], ['in_progress', 100]] as [$status, $progress]) {
+            \App\Models\ScheduleTask::query()->create(['schedule_id' => $schedule->id, 'organization_id' => $org->id,
+                'created_by_user_id' => $actor->id, 'assigned_user_id' => $actor->id, 'name' => 'Задача '.$status.' '.$progress,
+                'task_type' => 'task', 'planned_start_date' => now()->subDays(5)->toDateString(), 'planned_end_date' => now()->subDay()->toDateString(),
+                'planned_duration_days' => 4, 'planned_work_hours' => 8, 'quantity' => 10, 'progress_percent' => $progress, 'status' => $status]);
+        }
+        $section = ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'columns' => ['name', 'project_id', 'assigned_user_id', 'status'],
+            'filters' => [['field' => 'is_overdue', 'operator' => 'eq', 'value' => true]]];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        foreach ($report['sections'][0]['rows'] as $row) {
+            self::assertSame('#'.$project->id.' — '.$project->name, $row[1]);
+            self::assertSame('#'.$actor->id.' — '.$actor->name, $row[2]);
+        }
+        $grouped = array_replace($section, ['columns' => ['project_id'], 'group_by' => ['project_id'],
+            'metrics' => [['field' => null, 'operation' => 'count', 'label' => 'Просроченных задач']]]);
+        self::assertSame([['#'.$project->id.' — '.$project->name, 2]], $this->builder->build($this->plan($grouped), $actor, $org->id)['sections'][0]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
     private function fixture(): array
     {
         $org = Organization::factory()->create();

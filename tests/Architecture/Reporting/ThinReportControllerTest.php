@@ -62,7 +62,8 @@ final class ThinReportControllerTest extends TestCase
         self::assertCount(1, $parameters);
         self::assertSame($request, (string) $parameters[0]->getType());
         self::assertTrue(is_subclass_of($request, ReportFormRequest::class));
-        self::assertSame(JsonResponse::class, (string) $reflection->getReturnType());
+        self::assertSame(str_ends_with($controller, 'ReportExportFileController')
+            ? \Symfony\Component\HttpFoundation\StreamedResponse::class : JsonResponse::class, (string) $reflection->getReturnType());
 
         $constructor = (new ReflectionClass($controller))->getConstructor();
         self::assertNotNull($constructor);
@@ -102,6 +103,7 @@ final class ThinReportControllerTest extends TestCase
             $namespace.'ReportRowsController' => ['__invoke'],
             $namespace.'ReportDrillDownController' => ['__invoke'],
             $namespace.'ReportExportController' => ['cancel', 'downloadLink', 'retry', 'show', 'store'],
+            $namespace.'ReportExportFileController' => ['__invoke'],
             $namespace.'ReportSavedViewController' => ['destroy', 'index', 'setDefault', 'show', 'store', 'update'],
             $namespace.'ReportSubscriptionController' => ['destroy', 'index', 'pause', 'resume', 'runNow', 'store', 'update'],
             $namespace.'ReportWorkspacePreferencesController' => ['recordRecent', 'setFavourites', 'show', 'updatePreferences'],
@@ -123,8 +125,11 @@ final class ThinReportControllerTest extends TestCase
 
     public function test_every_controller_endpoint_has_exact_thin_topology_and_no_forbidden_nodes(): void
     {
-        $files = glob(dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/Http/Admin/Controllers/*.php') ?: [];
-        self::assertCount(8, $files);
+        $files = array_map(
+            static fn (string $controller): string => (string) (new ReflectionClass($controller))->getFileName(),
+            array_values(array_unique(array_column(self::controllerMethodProvider(), 0))),
+        );
+        self::assertCount(9, $files);
 
         foreach ($files as $file) {
             $source = (string) file_get_contents($file);
@@ -184,6 +189,16 @@ final class ThinReportControllerTest extends TestCase
                 '',
                 '\\App\\Http\\Responses\\AdminResponse::success($run); \\App\\Http\\Responses\\AdminResponse::success($run);',
             ],
+            'second stream response' => [
+                'admin_response_calls',
+                'use Symfony\\Component\\HttpFoundation\\StreamedResponse;',
+                'new StreamedResponse($callback); new StreamedResponse($callback);',
+            ],
+            'resource with stream response' => [
+                'resource_constructions',
+                'use Symfony\\Component\\HttpFoundation\\StreamedResponse;',
+                'new \\App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Resources\\ReportRunResource($run); new StreamedResponse($callback);',
+            ],
         ];
     }
 
@@ -209,6 +224,7 @@ final class ThinReportControllerTest extends TestCase
             'retry export' => [$root.'Application\\Contracts\\RetryReportExportAction', [$context, 'string', $root.'Domain\\ValueObjects\\IdempotencyKey'], $root.'Domain\\DTO\\ReportExport'],
             'cancel export' => [$root.'Application\\Contracts\\CancelReportExportAction', [$context, 'string'], $root.'Domain\\DTO\\ReportExport'],
             'download' => [$root.'Application\\Contracts\\CreateReportDownloadLinkAction', [$context, $root.'Application\\Input\\CreateReportDownloadLinkData'], $root.'Domain\\DTO\\ReportDownloadLink'],
+            'download file' => [$root.'Application\\Contracts\\ReadReportExportFileAction', [$context, 'string'], $root.'Domain\\DTO\\ReportExportFile'],
         ];
     }
 
@@ -230,6 +246,7 @@ final class ThinReportControllerTest extends TestCase
             [$controllers.'ReportExportController', 'retry', $requests.'ReportExportRouteRequest'],
             [$controllers.'ReportExportController', 'cancel', $requests.'ReportExportRouteRequest'],
             [$controllers.'ReportExportController', 'downloadLink', $requests.'CreateReportDownloadLinkRequest'],
+            [$controllers.'ReportExportFileController', '__invoke', $requests.'ReportExportRouteRequest'],
             [$controllers.'ReportSavedViewController', 'index', $requests.'ListReportSavedViewsRequest'],
             [$controllers.'ReportSavedViewController', 'store', $requests.'CreateReportSavedViewRequest'],
             [$controllers.'ReportSavedViewController', 'show', $requests.'ReportSavedViewRouteRequest'],
@@ -378,6 +395,8 @@ final class ThinControllerContractAnalyzer
                     && str_ends_with(self::className($node->class), '\\AdminResponse')
                     && self::identifier($node->name) === 'success',
             ));
+            $streams = count($finder->find($nodes, static fn (Node $node): bool => $node instanceof New_
+                && self::className($node->class) === '\\'.\Symfony\Component\HttpFoundation\StreamedResponse::class));
 
             if ($contextCalls !== 1) {
                 $violations[] = 'context_calls';
@@ -386,10 +405,10 @@ final class ThinControllerContractAnalyzer
                 $violations[] = 'action_calls';
             }
             $isEmptyResponse = self::isEmptySuccessResponse($finder, $nodes);
-            if ($resources !== ($isEmptyResponse ? 0 : 1)) {
+            if ($resources !== ($isEmptyResponse || $streams === 1 ? 0 : 1)) {
                 $violations[] = 'resource_constructions';
             }
-            if ($responses !== 1) {
+            if ($responses + $streams !== 1) {
                 $violations[] = 'admin_response_calls';
             }
         }

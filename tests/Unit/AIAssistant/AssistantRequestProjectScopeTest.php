@@ -9,6 +9,15 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantRequestProjectScopeTest extends TestCase
 {
+    public function test_genitive_all_projects_scope_clears_selected_project_and_preserves_negation(): void
+    {
+        $question = 'Сделай Excel по просроченным задачам всех проектов организации';
+        self::assertTrue(AssistantRequestProjectScope::organizationWide($question));
+        self::assertNull(AssistantRequestProjectScope::fromPlan($this->plan($question))->projectId);
+        self::assertSame(['project_id' => null], AssistantRequestProjectScope::bindSearchScope($question, ['project_id' => 52], 52, true));
+        self::assertFalse(AssistantRequestProjectScope::organizationWide('Не всех проектов организации, только нашего объекта'));
+    }
+
     public function test_current_object_uses_only_one_trusted_project_reference(): void
     {
         foreach (['на этом объекте', 'на текущем объекте', 'в выбранном проекте', 'в данном проекте', 'на нашем объекте', 'нашего объекта', 'наш проект', 'по нашему проекту'] as $scope) {

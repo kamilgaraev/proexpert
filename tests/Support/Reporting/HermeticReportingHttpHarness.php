@@ -25,6 +25,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportDrillDownA
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\ReadReportExportFileAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
@@ -36,6 +37,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExportFile;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
@@ -87,6 +89,7 @@ use Psr\Log\AbstractLogger;
 use ReflectionClass;
 use ReflectionObject;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tymon\JWTAuth\JWT;
 
@@ -261,6 +264,7 @@ final class HermeticReportingHttpHarness
             'admin.reports.exports.retry' => [['POST'], 'api/v1/admin/reports/exports/{exportId}/retry'],
             'admin.reports.exports.cancel' => [['POST'], 'api/v1/admin/reports/exports/{exportId}/cancel'],
             'admin.reports.exports.download-link' => [['POST'], 'api/v1/admin/reports/exports/{exportId}/download-link'],
+            'admin.reports.exports.download' => [['GET', 'HEAD'], 'api/v1/admin/reports/exports/{exportId}/download'],
         ];
     }
 
@@ -508,6 +512,9 @@ final class HermeticReportingHttpHarness
             'action_calls' => $this->actionCallCount(),
             'actor_loads' => $this->actors->loads,
             'module_checks' => $this->reportModules->checks,
+            'body' => $response['body'],
+            'content_type' => $response['content_type'] ?? null,
+            'content_disposition' => $response['content_disposition'] ?? null,
         ];
     }
 
@@ -605,6 +612,9 @@ final class HermeticReportingHttpHarness
                 new DateTimeImmutable('2026-01-01T00:00:00+00:00'),
                 new DateTimeImmutable('2026-01-01T00:05:00+00:00'),
             ),
+            'readExportFile' => new ReportExportFile('report.csv', 'text/csv; charset=UTF-8', static function (): void {
+                echo "project,total\nМОСТ,42\n";
+            }),
         ]);
     }
 
@@ -623,6 +633,7 @@ final class HermeticReportingHttpHarness
             RetryReportExportAction::class => $actions->retryExportAction,
             CancelReportExportAction::class => $actions->cancelExportAction,
             CreateReportDownloadLinkAction::class => $actions->downloadLinkAction,
+            ReadReportExportFileAction::class => $actions->readExportFileAction,
         ];
         foreach ($bindings as $interface => $implementation) {
             $app->instance($interface, $implementation);
@@ -696,6 +707,7 @@ final class HermeticReportingHttpHarness
             RetryReportExportAction::class,
             CancelReportExportAction::class,
             CreateReportDownloadLinkAction::class,
+            ReadReportExportFileAction::class,
         ];
     }
 
@@ -739,7 +751,17 @@ final class HermeticReportingHttpHarness
             return ['status' => 404, 'code' => null, 'body' => '{"status":404}'];
         }
 
-        $body = (string) $response->getContent();
+        if ($response instanceof StreamedResponse) {
+            ob_start();
+            try {
+                $response->sendContent();
+                $body = (string) ob_get_contents();
+            } finally {
+                ob_end_clean();
+            }
+        } else {
+            $body = (string) $response->getContent();
+        }
         $decoded = json_decode($body, true);
         $code = is_array($decoded)
             ? ($decoded['code'] ?? $decoded['error']['code'] ?? $decoded['data']['code'] ?? null)
@@ -747,7 +769,11 @@ final class HermeticReportingHttpHarness
 
         $this->assertOutputFingerprint();
 
-        return ['status' => $response->getStatusCode(), 'code' => $code, 'body' => $body];
+        return [
+            'status' => $response->getStatusCode(), 'code' => $code, 'body' => $body,
+            'content_type' => $response->headers->get('Content-Type'),
+            'content_disposition' => $response->headers->get('Content-Disposition'),
+        ];
     }
 
     private function authorizationScenario(string $caseId): array
@@ -761,11 +787,12 @@ final class HermeticReportingHttpHarness
         $runCreate = [['POST', '/api/v1/admin/reports/report/runs', $this->validRunBody()]];
         $exportCreate = [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/exports', $this->validExportBody()]];
         $download = [['POST', '/api/v1/admin/reports/exports/'.self::EXPORT_ID.'/download-link']];
+        $downloadFile = [['GET', '/api/v1/admin/reports/exports/'.self::EXPORT_ID.'/download']];
 
         return match ($caseId) {
             'unauthenticated_catalog_denied' => [$all, true, [['GET', '/api/v1/admin/reports/catalog', [], false]], ['active']],
             'non_admin_catalog_denied' => [['reports.view'], true, $catalog, ['active']],
-            'module_disabled_catalog_denied' => [$all, false, $catalog, ['active']],
+            'module_unavailable_catalog_permissions_allowed' => [$all, false, $catalog, ['active']],
             'missing_global_permission_catalog_denied' => [['admin.access'], true, $catalog, ['active']],
             'view_actor_catalog_allowed' => [$view, true, $catalog, ['active']],
             'view_actor_run_status_allowed' => [$view, true, [['GET', '/api/v1/admin/reports/runs/'.self::RUN_ID]], ['active']],
@@ -773,12 +800,15 @@ final class HermeticReportingHttpHarness
             'view_actor_run_create_denied' => [$view, true, $runCreate, ['active']],
             'view_actor_export_create_denied' => [$view, true, $exportCreate, ['active']],
             'view_actor_download_denied' => [$view, true, $download, ['active']],
+            'view_actor_download_file_denied' => [$view, true, $downloadFile, ['active']],
             'runner_run_create_allowed' => [$runner, true, $runCreate, ['active']],
             'runner_run_retry_allowed' => [$runner, true, [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/retry']], ['active']],
             'runner_run_cancel_allowed' => [$runner, true, [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/cancel']], ['active']],
             'runner_export_denied' => [$runner, true, $exportCreate, ['active']],
             'exporter_export_allowed' => [$exporter, true, $exportCreate, ['active']],
             'exporter_download_denied' => [$exporter, true, $download, ['active']],
+            'exporter_download_file_denied' => [$exporter, true, $downloadFile, ['active']],
+            'downloader_download_file_allowed' => [$downloader, true, $downloadFile, ['active']],
             'downloader_revoked_definition_denied' => $this->revokedDefinitionScenario($downloader, $download),
             'manage_does_not_expand_operational_permissions' => [
                 ['admin.access', 'reports.view', 'reports.manage'],
@@ -859,8 +889,10 @@ final class HermeticReportingHttpHarness
             'export_retry' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/retry']],
             'export_cancel' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/cancel']],
             'export_download' => [$excel, [true], ['POST', '/api/v1/admin/reports/exports/'.$exportId.'/download-link']],
-            'module_revoked_before_http' => [$all, [false], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
-            'module_revoked_at_final_decision' => [$all, [true, false], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
+            'export_download_file' => [$excel, [true], ['GET', '/api/v1/admin/reports/exports/'.$exportId.'/download']],
+            'download_file_permission_revoked' => [$view, [true], ['GET', '/api/v1/admin/reports/exports/'.$exportId.'/download']],
+            'download_file_source_module_unavailable' => [$excel, [false], ['GET', '/api/v1/admin/reports/exports/'.$exportId.'/download']],
+            'source_module_unavailable_report_read_allowed' => [$all, [false], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
             'view_permission_revoked' => [['admin.access', 'act_reports.export.excel'], [true], ['GET', '/api/v1/admin/reports/runs/'.$runId]],
             'xlsx_permission_revoked' => [$view, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $xlsxBody]],
             'pdf_permission_cannot_export_xlsx' => [$pdf, [true], ['POST', '/api/v1/admin/reports/runs/'.$runId.'/exports', $xlsxBody]],
@@ -916,6 +948,7 @@ final class HermeticReportingHttpHarness
             'invalid_export_retry_idempotency_key' => [['POST', '/api/v1/admin/reports/exports/'.self::EXPORT_ID.'/retry', [], true, 'invalid']],
             'invalid_export_cancel_ulid' => [['POST', '/api/v1/admin/reports/exports/'.$invalid.'/cancel']],
             'invalid_export_download_ulid' => [['POST', '/api/v1/admin/reports/exports/'.$invalid.'/download-link']],
+            'invalid_export_download_file_ulid' => [['GET', '/api/v1/admin/reports/exports/'.$invalid.'/download']],
             'missing_run_as_of' => [['POST', '/api/v1/admin/reports/report/runs', ['filters' => []]]],
             'rows_limit_101' => [['GET', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/rows?cursor&limit=101&sort_by=name&sort_dir=asc']],
             'missing_drill_down_token' => [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/drill-down', ['cursor' => null, 'limit' => 50]]],

@@ -90,13 +90,14 @@ final readonly class AssistantCustomReportBuilder
         $query = $source['query'];
         $model = $query->getModel();
         $table = $model->getTable();
+        $projection = $source['projection'] ?? null;
         foreach ($section['filters'] as $filter) {
-            $this->filter($query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
+            $this->filter($projection !== null ? clone $query : $query, $table.'.'.$filter['field'], $source['fields'][$filter['field']], $filter);
         }
         foreach ($section['order_by'] as $order) {
-            if ($section['metrics'] === []) {
+            if ($section['metrics'] === [] && $projection === null) {
                 $query->orderBy($table.'.'.$order['field'], $order['direction']);
-            } elseif (! in_array($order['field'], [...$section['group_by'], ...$metricAliases], true)) {
+            } elseif ($section['metrics'] !== [] && ! in_array($order['field'], [...$section['group_by'], ...$metricAliases], true)) {
                 throw ValidationException::withMessages(['order_by' => trans_message('ai_custom_reports.invalid_sort')]);
             }
         }
@@ -120,12 +121,17 @@ final readonly class AssistantCustomReportBuilder
                 ? \Illuminate\Support\Facades\DB::raw('LEFT(CAST('.$grammar->wrap($table.'.'.$field).' AS text), 4001) AS '.$grammar->wrap($field))
                 : $table.'.'.$field;
         }
-        $rows = $query->select($select)
+        $rows = $query->select($projection !== null ? [$table.'.*'] : $select)
             ->orderBy($model->getQualifiedKeyName())->limit(1001)->get();
         if ($rows->count() > 1000) {
             throw ValidationException::withMessages(['filters' => trans_message('ai_custom_reports.too_many_rows')]);
         }
-        $raw = $rows->map(static fn ($row): array => $row->getRawOriginal())->all();
+        $raw = $rows->map(static fn ($row): array => $projection !== null
+            ? array_intersect_key($projection->row($row), array_fill_keys($selected, true)) : $row->getRawOriginal())->all();
+        if ($projection !== null) {
+            $raw = AssistantCustomReportProjectedRows::filterAndSort($raw, $section, $source['fields']);
+            $rows = $rows->whereIn($model->getKeyName(), array_column($raw, $model->getKeyName()));
+        }
         foreach ($raw as $row) {
             foreach ($row as $value) {
                 if (is_string($value) && mb_strlen($value) > 4000) {
@@ -218,8 +224,8 @@ final readonly class AssistantCustomReportBuilder
 
     private function relatedLabels(array $rows, array $fields, User $actor, int $organizationId, ?int $projectId, string $fetchedAt): array
     {
-        $types = ['project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'supplier_id' => ['supplier', 'name'], 'contract_id' => ['contract', 'number'],
-            'user_id' => ['user', 'name'], 'assigned_to' => ['user', 'name'], 'warehouse_id' => ['warehouse', 'name'], 'material_id' => ['material', 'name']];
+        $types = ['project_id' => ['project', 'name'], 'current_project_id' => ['project', 'name'], 'contractor_id' => ['contractor', 'name'], 'supplier_id' => ['supplier', 'name'], 'contract_id' => ['contract', 'number'],
+            'user_id' => ['user', 'name'], 'assigned_to' => ['user', 'name'], 'assigned_user_id' => ['user', 'name'], 'warehouse_id' => ['warehouse', 'name'], 'material_id' => ['material', 'name']];
         $refs = $domains = [];
         foreach ($fields as $index => $field) {
             if (! isset($types[$field])) {

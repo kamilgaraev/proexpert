@@ -21,6 +21,24 @@ final class EloquentReportSubscriptionDeliveryStore implements ReportSubscriptio
 {
     public function __construct(private readonly ReportSubscriptionStore $subscriptions) {}
 
+    public function claimStaleDispatches(DateTimeImmutable $now, int $limit, int $staleSeconds): array
+    {
+        return DB::transaction(function () use ($now, $limit, $staleSeconds): array {
+            $ids = ReportSubscriptionDeliveryRecord::query()
+                ->whereIn('status', ['scheduled', 'building_run', 'building_export', 'ready'])
+                ->where('updated_at', '<=', $now->modify('-'.max(60, $staleSeconds).' seconds'))
+                ->where('execution_expires_at', '>', $now)
+                ->where(static fn ($query) => $query->whereNull('retry_at')->orWhere('retry_at', '<=', $now))
+                ->orderBy('updated_at')->orderBy('id')->limit(max(1, min(1000, $limit)))
+                ->lock('FOR UPDATE SKIP LOCKED')->pluck('id')->all();
+            if ($ids !== []) {
+                ReportSubscriptionDeliveryRecord::query()->whereIn('id', $ids)->update(['updated_at' => $now]);
+            }
+
+            return $ids;
+        });
+    }
+
     public function lockWithSubscription(string $id): array
     {
         $delivery = ReportSubscriptionDeliveryRecord::query()

@@ -19,6 +19,12 @@ final class ScheduleDueReportSubscriptionsJob implements ShouldQueue
     use Dispatchable;
     use Queueable;
 
+    public function __construct()
+    {
+        $this->onConnection((string) config('reporting_subscriptions.connection'));
+        $this->onQueue((string) config('reporting_subscriptions.queue'));
+    }
+
     public function handle(
         ReportSubscriptionStore $subscriptions,
         ReportSubscriptionDeliveryStore $deliveries,
@@ -61,6 +67,10 @@ final class ScheduleDueReportSubscriptionsJob implements ShouldQueue
         });
 
         foreach ($ids as $id) {
+            $dispatcher->dispatch($id, 0);
+        }
+        foreach ($deliveries->claimStaleDispatches(new DateTimeImmutable, (int) config('reporting_subscriptions.scheduler_batch_size'),
+            (int) config('reporting_subscriptions.dispatch_recovery_seconds')) as $id) {
             $dispatcher->dispatch($id, 0);
         }
     }

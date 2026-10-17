@@ -29,14 +29,18 @@ final class ReportingRouteSnapshotTest extends TestCase
         self::assertFalse($snapshot['application_booted']);
         self::assertFalse($snapshot['kernel_bootstrapped']);
         self::assertSame([
+            \App\Http\Middleware\ResetJwtRequestState::class,
+            \App\Http\Middleware\RecordApiResponseTime::class,
+            \App\Http\Middleware\TraceHttpRequest::class,
             \App\Http\Middleware\CorsMiddleware::class,
             \App\Http\Middleware\CorrelationIdMiddleware::class,
+            \Illuminate\Http\Middleware\ValidatePathEncoding::class,
             \Illuminate\Foundation\Http\Middleware\InvokeDeferredCallbacks::class,
             \Illuminate\Http\Middleware\TrustProxies::class,
             \Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance::class,
             \Illuminate\Http\Middleware\ValidatePostSize::class,
-            \Illuminate\Foundation\Http\Middleware\TrimStrings::class,
-            \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
+            \App\Http\Middleware\TrimStringsPreservingDocumentText::class,
+            \App\Http\Middleware\ConvertEmptyStringsToNullPreservingDocumentText::class,
             \App\Http\Middleware\PrometheusMiddleware::class,
         ], $snapshot['topology']['global_middleware']);
         self::assertSame([
@@ -48,11 +52,11 @@ final class ReportingRouteSnapshotTest extends TestCase
             \App\Http\Middleware\SetOrganizationContext::class,
             \App\Http\Middleware\AddWebSecurityHeaders::class,
         ], $snapshot['topology']['api_middleware']);
-        self::assertCount(9, $snapshot['topology']['global_middleware']);
+        self::assertCount(13, $snapshot['topology']['global_middleware']);
         self::assertCount(7, $snapshot['topology']['api_middleware']);
         self::assertSame(['global_middleware', 'api_middleware'], array_keys($snapshot['topology']));
-        self::assertSame(\App\Http\Middleware\CorsMiddleware::class, $snapshot['topology']['global_middleware'][0]);
-        self::assertSame(\App\Http\Middleware\PrometheusMiddleware::class, $snapshot['topology']['global_middleware'][8]);
+        self::assertSame(\App\Http\Middleware\ResetJwtRequestState::class, $snapshot['topology']['global_middleware'][0]);
+        self::assertSame(\App\Http\Middleware\PrometheusMiddleware::class, $snapshot['topology']['global_middleware'][12]);
         self::assertSame(\Illuminate\Routing\Middleware\SubstituteBindings::class, $snapshot['topology']['api_middleware'][0]);
         self::assertSame(\App\Http\Middleware\AddWebSecurityHeaders::class, $snapshot['topology']['api_middleware'][6]);
         self::assertNotContains(\App\Http\Middleware\PrometheusMiddleware::class, $snapshot['topology']['api_middleware']);
@@ -76,7 +80,7 @@ final class ReportingRouteSnapshotTest extends TestCase
             self::assertCount(1, $matches, $name);
         }
 
-        self::assertCount(12, $routes->filter(
+        self::assertCount(13, $routes->filter(
             static fn (Route $route): bool => in_array($route->getName(), array_keys($expected), true),
         ));
         foreach (HermeticReportingHttpHarness::legacyUris() as $uri) {
@@ -92,7 +96,7 @@ final class ReportingRouteSnapshotTest extends TestCase
         $actual = $this->harness->rawMiddlewareByRoute();
 
         self::assertSame(HermeticReportingHttpHarness::expectedRawMiddlewareByRoute(), $actual);
-        self::assertCount(12, $actual);
+        self::assertCount(13, $actual);
         self::assertSame(array_keys(HermeticReportingHttpHarness::expectedRoutes()), array_keys($actual));
         foreach ($actual as $middleware) {
             self::assertNotContains('module.access:reports', $middleware);
@@ -108,6 +112,10 @@ final class ReportingRouteSnapshotTest extends TestCase
         self::assertSame(
             [\App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class],
             array_slice($actual['admin.reports.exports.download-link'], -1),
+        );
+        self::assertSame(
+            [\App\BusinessModules\Core\Reporting\Http\Admin\Middleware\AuthorizeReportDefinitionAccess::class],
+            array_slice($actual['admin.reports.exports.download'], -1),
         );
     }
 
@@ -133,7 +141,7 @@ final class ReportingRouteSnapshotTest extends TestCase
     {
         $gathered = $this->harness->gatheredMiddlewareByRoute();
 
-        self::assertCount(12, $gathered);
+        self::assertCount(13, $gathered);
         self::assertContains(\App\Http\Middleware\NormalizeAdminResponse::class, $gathered['admin.reports.catalog']);
         self::assertContains(\App\Http\Middleware\JwtMiddleware::class.':api_admin', $gathered['admin.reports.catalog']);
         self::assertContains(\App\Http\Middleware\SetOrganizationContext::class, $gathered['admin.reports.catalog']);
@@ -166,7 +174,7 @@ final class ReportingRouteSnapshotTest extends TestCase
     {
         $unbound = $this->harness->productionProviderUnboundActions();
 
-        self::assertCount(12, $unbound);
+        self::assertCount(13, $unbound);
         foreach ($unbound as $action => $isUnbound) {
             self::assertTrue($isUnbound, $action);
         }

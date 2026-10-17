@@ -563,6 +563,11 @@ final class FakeReportSubscriptionStore implements ReportSubscriptionStore
 
 final class FakeReportSubscriptionDeliveryStore implements ReportSubscriptionDeliveryStore
 {
+    public function claimStaleDispatches(DateTimeImmutable $now, int $limit, int $staleSeconds): array
+    {
+        return [];
+    }
+
     /** @var array<string, ReportSubscriptionDelivery> */
     private array $manualDeliveries = [];
 
