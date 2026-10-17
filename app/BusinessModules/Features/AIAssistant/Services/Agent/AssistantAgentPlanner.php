@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskSlot;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
 use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportIntentResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSlotResolver;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
@@ -269,8 +270,8 @@ final readonly class AssistantAgentPlanner
             'contract_id' => 'contract',
         ] as $slotName => $entityType) {
             if (! $this->hasStateSlot($state, $slotName)) {
-                if ($this->namedEntityQuery($message, $entityType) !== null
-                    || $this->namedEntityQuery($state->sourceMessage, $entityType) !== null
+                if (AssistantReportEntityQuery::extract($message, $entityType) !== null
+                    || AssistantReportEntityQuery::extract($state->sourceMessage, $entityType) !== null
                     || $this->refersToCurrentEntity($message, $entityType)
                     || $this->refersToCurrentEntity($state->sourceMessage, $entityType)) {
                     $slots = $state->slots;
@@ -284,10 +285,10 @@ final readonly class AssistantAgentPlanner
                 continue;
             }
             $scopeSlot = '__scope_'.$entityType;
-            $namedQuery = $this->namedEntityQuery($message, $entityType);
+            $namedQuery = AssistantReportEntityQuery::extract($message, $entityType);
             $requestedCurrent = $this->refersToCurrentEntity($message, $entityType);
             $currentScope = $requestedCurrent || $this->refersToCurrentEntity($state->sourceMessage, $entityType);
-            $query = $namedQuery ?? $state->slotValue($scopeSlot) ?? $this->namedEntityQuery($state->sourceMessage, $entityType);
+            $query = $namedQuery ?? $state->slotValue($scopeSlot) ?? AssistantReportEntityQuery::extract($state->sourceMessage, $entityType);
             $query = ! $requestedCurrent && is_string($query) ? $query : null;
             if ($namedQuery === null && ($state->slotValue($scopeSlot) === '__organization' && ! $requestedCurrent
                 || preg_match('/\b(?:всей\s+организации|всем\s+проектам)\b/iu', $message) === 1)) {
@@ -369,28 +370,6 @@ final readonly class AssistantAgentPlanner
         }
 
         return null;
-    }
-
-    private function namedEntityQuery(string $message, string $type): ?string
-    {
-        $noun = match ($type) {
-            'project' => '(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)',
-            'warehouse' => 'склад(?:а|у|ом|е)?',
-            'contract' => 'договор(?:а|у|ом|е)?',
-            'contractor' => '(?:подрядчик(?:а|у|ом|е)?|контрагент(?:а|у|ом|е)?)',
-            'user' => '(?:сотрудник(?:а|у|ом|е)?|пользовател(?:ь|я|ю|ем|е))',
-            default => '',
-        };
-        if ($noun === '' || preg_match('/\b'.$noun.'\s+(.+?)$/iu', $message, $matches) !== 1) {
-            return null;
-        }
-        $parts = preg_split('/\s+(?:за|с|по|для|на|от|проекта|объекта|склада|сотрудника|подрядчика)\b|[,;\n]/iu', $matches[1], 2);
-        $name = trim((string) ($parts[0] ?? ''), " \t\r\n\"'«»“”.:");
-        if ($name === '' || preg_match('/^(?:(?:за|с|по|для|на|от|этот|этого|весь|всем|все|сегодня|проекта|объекта|склада|подрядчика|сотрудника)\b|текущ|выполн)/iu', $name) === 1) {
-            return null;
-        }
-
-        return $name;
     }
 
     private function hasStateSlot(AssistantTaskState $state, string $name): bool
