@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 
-use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectFinanceHealthData;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentForecastQuery;
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectFinanceHealthData;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\ProjectOrganizationRole;
@@ -19,8 +20,8 @@ final class ProjectFinanceHealthBuilder
 {
     public function __construct(
         private readonly EVMService $evmService,
-    ) {
-    }
+        private readonly PaymentDocumentForecastQuery $paymentForecast,
+    ) {}
 
     public function build(Project $project, ProjectContext $projectContext, CarbonImmutable $asOf, ProjectCommandCenterPeriod $period): ProjectFinanceHealthData
     {
@@ -47,8 +48,7 @@ final class ProjectFinanceHealthBuilder
         array $facts,
         CarbonImmutable $asOf,
         ?ProjectCommandCenterPeriod $period = null,
-    ): ProjectFinanceHealthData
-    {
+    ): ProjectFinanceHealthData {
         $metrics = $facts['metrics'] ?? [];
         $payments = $facts['payments'] ?? [];
         $periodMetricsAvailable = $period === null || $period->preset === 'project';
@@ -108,10 +108,10 @@ final class ProjectFinanceHealthBuilder
                         : null),
                 ],
                 'actual_costs' => [
-                'available' => $periodMetricsAvailable && $actualCost !== null,
-                'reason_key' => ! $periodMetricsAvailable
-                    ? 'project_command_center.finance.period_metrics_unavailable'
-                    : ($actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null),
+                    'available' => $periodMetricsAvailable && $actualCost !== null,
+                    'reason_key' => ! $periodMetricsAvailable
+                        ? 'project_command_center.finance.period_metrics_unavailable'
+                        : ($actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null),
                 ],
                 'payment_schedule' => [
                     'available' => $cashFlow['available'],
@@ -123,24 +123,7 @@ final class ProjectFinanceHealthBuilder
 
     private function paymentFacts(int $projectId, ?int $visibleOrganizationId): array
     {
-        $query = DB::table('payment_documents')
-            ->where('project_id', $projectId)
-            ->whereNull('deleted_at')
-            ->whereNotIn('status', ['cancelled', 'rejected'])
-            ->where('remaining_amount', '>', 0)
-            ->select(['direction', 'remaining_amount', 'due_date']);
-
-        if ($visibleOrganizationId !== null) {
-            $query->where('organization_id', $visibleOrganizationId);
-        }
-
-        return $query->get()
-            ->map(static fn (object $row): array => [
-                'direction' => (string) $row->direction,
-                'amount' => (float) $row->remaining_amount,
-                'due_at' => (string) $row->due_date,
-            ])
-            ->all();
+        return $this->paymentForecast->forProject($projectId, $visibleOrganizationId);
     }
 
     private function cashFlow(array $payments, CarbonImmutable $asOf): array
@@ -172,6 +155,7 @@ final class ProjectFinanceHealthBuilder
 
             if ($days < 0) {
                 $overdue[$payment['direction']] += (float) $payment['amount'];
+
                 continue;
             }
 

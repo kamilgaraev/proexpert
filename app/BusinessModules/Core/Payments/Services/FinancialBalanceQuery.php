@@ -8,7 +8,6 @@ use App\BusinessModules\Core\Payments\DTOs\FinancialBalance;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use Brick\Math\BigDecimal;
@@ -91,16 +90,16 @@ final class FinancialBalanceQuery
         }
 
         $documents = $this->documents($organizationId, $contractIds)
-            ->selectRaw($this->contractIdentitySql().' AS resolved_contract_id')
+            ->selectRaw(PaymentRequestOrderQuery::contractIdentitySql().' AS resolved_contract_id')
             ->selectRaw('SUM('.$this->invoicedAmountSql().') AS invoiced_amount')
-            ->groupByRaw($this->contractIdentitySql())
+            ->groupByRaw(PaymentRequestOrderQuery::contractIdentitySql())
             ->get();
         foreach ($documents as $row) {
             $balances[(int) $row->resolved_contract_id]['invoiced'] = (string) $row->invoiced_amount;
         }
 
         $transactions = $this->transactions($organizationId, $contractIds)
-            ->selectRaw($this->contractIdentitySql().' AS resolved_contract_id')
+            ->selectRaw(PaymentRequestOrderQuery::contractIdentitySql().' AS resolved_contract_id')
             ->selectRaw(
                 'SUM(CASE WHEN payment_transactions.amount > 0 THEN payment_transactions.amount ELSE 0 END) AS paid_amount'
             )
@@ -110,7 +109,7 @@ final class FinancialBalanceQuery
             ->selectRaw(
                 "SUM(CASE WHEN payment_documents.invoice_type = 'advance' THEN payment_transactions.amount ELSE 0 END) AS advance_amount"
             )
-            ->groupByRaw($this->contractIdentitySql())
+            ->groupByRaw(PaymentRequestOrderQuery::contractIdentitySql())
             ->get();
         foreach ($transactions as $row) {
             $contractId = (int) $row->resolved_contract_id;
@@ -176,46 +175,17 @@ final class FinancialBalanceQuery
 
     private function invoicedAmountSql(): string
     {
-        $documentClass = str_replace("'", "''", PaymentDocument::class);
         $requestType = PaymentDocumentType::PAYMENT_REQUEST->value;
-        $orderType = PaymentDocumentType::PAYMENT_ORDER->value;
         $statuses = implode(', ', array_map(static fn (string $status): string => "'{$status}'", self::DOCUMENT_STATUSES));
-        $dimensions = implode(' AND ', array_map(
-            static fn (string $field): string => "linked_order.{$field} IS NOT DISTINCT FROM payment_documents.{$field}",
-            ['project_id', 'payer_organization_id', 'payer_contractor_id', 'payee_organization_id', 'payee_contractor_id',
-                'contractor_id', 'counterparty_organization_id'],
-        ));
         $actClass = str_replace("'", "''", ContractPerformanceAct::class);
-        $requestContract = $this->contractIdentitySql();
-        $orderContract = $this->contractIdentitySql('linked_order', 'linked_order_act');
+        $matches = PaymentRequestOrderQuery::matchingOrderSql();
 
         return "CASE WHEN payment_documents.document_type = '{$requestType}' AND payment_documents.amount > 0 THEN "
             .'GREATEST(payment_documents.amount - (SELECT COALESCE(SUM(GREATEST(linked_order.amount, 0)), 0) '
             .'FROM payment_documents AS linked_order '
             .'LEFT JOIN contract_performance_acts AS linked_order_act ON linked_order_act.id = linked_order.invoiceable_id '
             ."AND linked_order.invoiceable_type = '{$actClass}' "
-            .'WHERE linked_order.organization_id = payment_documents.organization_id '
-            .'AND linked_order.deleted_at IS NULL '
-            ."AND linked_order.document_type = '{$orderType}' AND linked_order.source_type = '{$documentClass}' "
-            .'AND linked_order.source_id = payment_documents.id '
-            ."AND linked_order.status IN ({$statuses}) "
-            .'AND linked_order.currency = payment_documents.currency '
-            ."AND COALESCE(linked_order.direction, 'outgoing') = COALESCE(payment_documents.direction, 'outgoing') "
-            ."AND {$dimensions} "
-            ."AND (({$requestContract}) IS NOT NULL AND ({$requestContract}) = ({$orderContract}) "
-            .'OR linked_order.invoiceable_type IS NOT DISTINCT FROM payment_documents.invoiceable_type '
-            .'AND linked_order.invoiceable_id IS NOT DISTINCT FROM payment_documents.invoiceable_id)), 0) '
+            ."WHERE {$matches} AND linked_order.status IN ({$statuses})), 0) "
             .'ELSE payment_documents.amount END';
-    }
-
-    private function contractIdentitySql(
-        string $documentAlias = 'payment_documents',
-        string $actAlias = 'contract_performance_acts',
-    ): string
-    {
-        $contractClass = str_replace("'", "''", Contract::class);
-
-        return "CASE WHEN {$documentAlias}.invoiceable_type = '{$contractClass}' "
-            ."THEN {$documentAlias}.invoiceable_id ELSE {$actAlias}.contract_id END";
     }
 }

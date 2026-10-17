@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\BusinessModules\Features\ProjectCommandCenter;
 
-use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectFinanceHealthBuilder;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentForecastQuery;
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
+use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectFinanceHealthBuilder;
 use App\Services\Analytics\EVMService;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\TestCase;
@@ -159,6 +160,6 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
 
     private function builder(): ProjectFinanceHealthBuilder
     {
-        return new ProjectFinanceHealthBuilder($this->createMock(EVMService::class));
+        return new ProjectFinanceHealthBuilder($this->createMock(EVMService::class), new PaymentDocumentForecastQuery);
     }
 }
