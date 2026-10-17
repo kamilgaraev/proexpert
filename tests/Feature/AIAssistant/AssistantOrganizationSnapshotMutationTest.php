@@ -9,8 +9,10 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusScopedMutationGuard;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotEpoch;
 use App\Models\Organization;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 final class AssistantOrganizationSnapshotMutationTest extends TestCase
@@ -142,6 +144,38 @@ final class AssistantOrganizationSnapshotMutationTest extends TestCase
         self::assertFalse($this->valid($legacy));
     }
 
+    public function test_later_domain_tables_receive_idempotent_tracking_without_replacing_existing_guards(): void
+    {
+        $source = $this->source();
+        $original = DB::select("SELECT tgname, oid FROM pg_trigger WHERE tgrelid = 'public.ai_rag_sources'::regclass AND NOT tgisinternal ORDER BY tgname");
+        Schema::create('assistant_snapshot_late_domain_test', function (Blueprint $table): void {
+            $table->bigInteger('id')->primary();
+        });
+
+        try {
+            $relations = ['public.assistant_snapshot_late_domain_test'];
+            self::assertFalse($this->capture(null, $relations, false)['cacheable']);
+            $migration = require base_path('database/migrations/2026_10_17_123000_complete_assistant_snapshot_tracking_for_domain_tables.php');
+            $migration->up();
+            $first = DB::selectOne("SELECT oid, tgenabled FROM pg_trigger WHERE tgrelid = 'public.assistant_snapshot_late_domain_test'::regclass AND tgname = ?", [AssistantStatusSnapshotEpoch::TRIGGER_NAME]);
+            self::assertNotNull($first);
+            self::assertSame('A', $first->tgenabled);
+            $migration->up();
+            self::assertEquals($first, DB::selectOne("SELECT oid, tgenabled FROM pg_trigger WHERE tgrelid = 'public.assistant_snapshot_late_domain_test'::regclass AND tgname = ?", [AssistantStatusSnapshotEpoch::TRIGGER_NAME]));
+            self::assertEquals($original, DB::select("SELECT tgname, oid FROM pg_trigger WHERE tgrelid = 'public.ai_rag_sources'::regclass AND NOT tgisinternal ORDER BY tgname"));
+            $state = $this->capture(null, $relations);
+            self::assertTrue($this->valid($state));
+            DB::table('assistant_snapshot_late_domain_test')->insert(['id' => 1]);
+            self::assertFalse($this->valid($state));
+            self::assertTrue($this->capture((int) $source->organization_id)['cacheable']);
+            DB::statement('ALTER TABLE public.assistant_snapshot_late_domain_test DISABLE TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+            $migration->up();
+            self::assertFalse($this->capture(null, $relations, false)['cacheable']);
+        } finally {
+            Schema::dropIfExists('assistant_snapshot_late_domain_test');
+        }
+    }
+
     public function test_temporary_function_and_control_body_changes_cannot_hide_an_own_mutation(): void
     {
         $source = $this->source();
@@ -238,8 +272,27 @@ final class AssistantOrganizationSnapshotMutationTest extends TestCase
     private function capture(?int $organizationId, ?array $relations = null, bool $assertCacheable = true): array
     {
         $relations ??= array_map(static fn (string $table): string => 'public.'.$table, AssistantStatusScopedMutationGuard::TABLES);
-        $state = $this->readOnly(fn (): array => $this->epoch->capture($relations, $organizationId));
-        if ($assertCacheable) { self::assertTrue($state['cacheable'], json_encode($state, JSON_THROW_ON_ERROR)); }
+        $diagnostics = null;
+        $state = $this->readOnly(function () use ($relations, $organizationId, $assertCacheable, &$diagnostics): array {
+            $state = $this->epoch->capture($relations, $organizationId);
+            if ($assertCacheable && ! $state['cacheable']) {
+                $schema = (new \ReflectionMethod(AssistantStatusSnapshotEpoch::class, 'schemaState'))->invoke($this->epoch, $relations);
+                $excluded = implode(', ', array_map(static fn (string $table): string => "'".$table."'", AssistantStatusSnapshotEpoch::EXCLUDED_TABLES));
+                $diagnostics = [
+                    'state' => $state,
+                    'global_schema' => $schema,
+                    'global_flag_type' => get_debug_type($schema->cacheable),
+                    'scoped_schema' => AssistantStatusScopedMutationGuard::proof(DB::connection()),
+                    'epoch_function' => DB::selectOne('SELECT prosrc = ? AS body_matches, proconfig::text AS settings, prosecdef AS security_definer FROM pg_proc WHERE oid = to_regprocedure(?)', [AssistantStatusSnapshotEpoch::FUNCTION_BODY, 'public.'.AssistantStatusSnapshotEpoch::FUNCTION_NAME.'()']),
+                    'missing_relation_witnesses' => DB::select("SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relname <> 'ai_rag_sources' AND c.relname NOT IN (".$excluded.") AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = ? AND t.tgfoid = to_regprocedure(?) AND NOT t.tgisinternal AND t.tgtype = 60 AND t.tgenabled = 'A' AND t.tgconstraint = 0 AND t.tgnargs = 0 AND t.tgattr::text = '' AND t.tgqual IS NULL) ORDER BY c.relname LIMIT 20", [AssistantStatusSnapshotEpoch::TRIGGER_NAME, 'public.'.AssistantStatusSnapshotEpoch::FUNCTION_NAME.'()']),
+                    'source_triggers' => DB::select("SELECT t.tgname, t.tgenabled, t.tgattr::text AS columns, pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t WHERE t.tgrelid = 'public.ai_rag_sources'::regclass AND NOT t.tgisinternal ORDER BY t.tgname"),
+                    'control_columns' => DB::select("SELECT c.relname, a.attname, a.attnotnull, a.atttypid::regtype::text AS type FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid WHERE n.nspname = 'public' AND c.relname IN (?, ?) AND a.attnum > 0 ORDER BY c.relname, a.attnum", [AssistantStatusSnapshotEpoch::CHANGE_TABLE, AssistantStatusSnapshotEpoch::CONTROL_TABLE]),
+                ];
+            }
+
+            return $state;
+        });
+        if ($assertCacheable) { self::assertTrue($state['cacheable'], json_encode($diagnostics ?? $state, JSON_THROW_ON_ERROR)); }
 
         return $state;
     }
