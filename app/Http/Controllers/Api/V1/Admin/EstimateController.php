@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSnapshotResponse;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateCoverageService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateStatusWorkflowService;
 use App\Http\Controllers\Controller;
@@ -14,6 +16,7 @@ use App\Http\Requests\Admin\Estimate\UpdateEstimateRequest;
 use App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateListResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
+use App\Http\Resources\Api\V1\Admin\Estimate\EstimateSectionResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Repositories\EstimateRepository;
@@ -109,7 +112,7 @@ class EstimateController extends Controller
         $estimateModel->load(['project', 'approvedBy']);
 
         // Если снапшот есть - стримим его с огромной экономией RAM
-        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+        if ($this->structureSnapshotStorage->existsForEstimate($estimateModel)) {
             return $this->streamEstimateWithStructureSnapshot($request, $estimateModel);
         }
 
@@ -126,7 +129,7 @@ class EstimateController extends Controller
         }
 
         // Проверяем снова
-        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+        if ($this->structureSnapshotStorage->existsForEstimate($estimateModel)) {
             return $this->streamEstimateWithStructureSnapshot($request, $estimateModel);
         }
 
@@ -275,7 +278,7 @@ class EstimateController extends Controller
             return AdminResponse::error(trans_message('errors.unauthorized'), 403);
         }
 
-        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+        if ($this->structureSnapshotStorage->existsForEstimate($estimateModel)) {
             $snapshotPath = (string) $estimateModel->structure_cache_path;
 
             return response()->stream(function () use ($snapshotPath) {
@@ -334,6 +337,12 @@ class EstimateController extends Controller
             ])
             ->orderBy('sort_order')
             ->get();
+
+        if (($estimateModel->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD) {
+            app(EstimateStructureVatProjection::class)->bindEstimate($estimateModel, $sections);
+
+            return AdminResponse::success(EstimateSectionResource::collection($sections));
+        }
 
         return AdminResponse::success($sections);
     }

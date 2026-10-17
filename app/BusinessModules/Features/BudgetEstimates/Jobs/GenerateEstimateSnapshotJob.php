@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Jobs;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\Models\Estimate;
 use App\Services\Storage\OrganizationStoragePath;
 use App\Support\EstimatePositionOrder;
@@ -129,11 +131,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             // 2. Сборка дерева O(N) в памяти ссылками
             $itemsById = [];
-            $vatMultiplier = 1 + ((float) ($estimate->vat_rate ?? 0) / 100);
+            $vatProjection = app(EstimateStructureVatProjection::class)->project($estimate, $items, $sections);
             foreach ($items as &$item) {
                 // Фронтенд ожидает parent_item_id, а в базе хранится parent_work_id. Мапим для логики и фронта
                 $item['parent_item_id'] = $item['parent_work_id'];
-                $item['total_amount_with_vat'] = round((float) ($item['total_amount'] ?? 0) * $vatMultiplier, 2);
+                $item['total_amount_with_vat'] = $vatProjection['items'][$item['id']];
 
                 $item['resources'] = $resourcesByItemId[$item['id']] ?? [];
                 $item['totals'] = $totalsByItemId[$item['id']] ?? [];
@@ -175,7 +177,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
 
             $sectionsById = [];
             foreach ($sections as &$section) {
-                $section['section_total_amount_with_vat'] = round((float) ($section['section_total_amount'] ?? 0) * $vatMultiplier, 2);
+                $section['section_total_amount_with_vat'] = $vatProjection['sections'][$section['id']];
                 $section['items'] = $rootItemsWithSection[$section['id']] ?? [];
                 $section['children'] = [];
                 $sectionsById[$section['id']] = &$section;
@@ -204,9 +206,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             // 3. Сохранение в Storage
             // Распределяем файлы по папкам организаций, как это делает FileService
             $orgId = (int) $estimate->organization_id;
+            $snapshotPrefix = ($estimate->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD
+                ? EstimateStructureSnapshotStorage::SOURCE_VAT_SNAPSHOT_PREFIX : 'structure_snapshot_';
             $fileName = OrganizationStoragePath::forOrganization(
                 $orgId,
-                "estimates/{$this->estimateId}/structure_snapshot_".Str::uuid().'.json',
+                "estimates/{$this->estimateId}/".$snapshotPrefix.Str::uuid().'.json',
             );
 
             $structureSnapshotStorage->putJson($fileName, $payload);

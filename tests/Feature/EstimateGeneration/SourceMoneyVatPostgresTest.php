@@ -5,26 +5,162 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationVatProjection;
+use App\BusinessModules\Features\BudgetEstimates\Jobs\GenerateEstimateSnapshotJob;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\EstimateFinanceQuery;
 use App\BusinessModules\Features\BudgetEstimates\Services\SourceMoneyVatBasis;
 use App\BusinessModules\Features\BudgetEstimates\Services\Versioning\EstimateVersionRestoreService;
+use App\Http\Controllers\Api\V1\Admin\EstimateController;
+use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
+use App\Http\Resources\Api\V1\Admin\Estimate\EstimateSectionResource;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class SourceMoneyVatPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_cached_tree_and_resources_preserve_mixed_source_vat_and_nested_section_totals(): void
+    {
+        $this->ensureSnapshotSchema();
+        $estimate = $this->estimate();
+        $estimate->update(['vat_rate' => 0]);
+        $parent = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'name' => 'Parent', 'section_number' => '1']);
+        $child = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'name' => 'Child', 'section_number' => '1.1', 'parent_section_id' => $parent->id]);
+        $tiny = $this->line($estimate, 'tiny', '0.03', 'included');
+        $included = $this->line($estimate, 'included', '120.00', 'included');
+        $excluded = $this->line($estimate, 'excluded', '100.00', 'excluded');
+        $untaxed = $this->line($estimate, 'untaxed', '100.00', 'not_applicable');
+        $tiny->update(['estimate_section_id' => $child->id]);
+        $included->update(['estimate_section_id' => $child->id]);
+        $excluded->update(['estimate_section_id' => $parent->id]);
+        app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+        $detail = $included->replicate();
+        $detail->parent_work_id = $included->id;
+        $detail->save();
+        $ignored = $excluded->replicate();
+        $ignored->is_not_accounted = true;
+        $ignored->save();
+        $estimate->refresh();
+
+        $snapshot = [];
+        $storage = \Mockery::mock(EstimateStructureSnapshotStorage::class);
+        $storage->shouldReceive('putJson')->once()->withArgs(function (string $path, array $payload) use (&$snapshot): bool {
+            $snapshot = $payload;
+
+            return str_starts_with(basename($path), EstimateStructureSnapshotStorage::SOURCE_VAT_SNAPSHOT_PREFIX) && str_ends_with($path, '.json');
+        });
+        (new GenerateEstimateSnapshotJob((int) $estimate->id))->handle($storage);
+        self::assertSame(240.03, $snapshot['sections'][0]['section_total_amount_with_vat']);
+        self::assertSame(120.03, $snapshot['sections'][0]['children'][0]['section_total_amount_with_vat']);
+        self::assertSame(100.0, $snapshot['items'][0]['total_amount_with_vat']);
+        $childRows = collect($snapshot['sections'][0]['children'][0]['items'])->keyBy('id');
+        self::assertSame(0.03, $childRows[$tiny->id]['total_amount_with_vat']);
+        self::assertSame(120.0, $childRows[$included->id]['total_amount_with_vat']);
+        $parentRows = collect($snapshot['sections'][0]['items'])->keyBy('id');
+        self::assertSame(120.0, $parentRows[$excluded->id]['total_amount_with_vat']);
+        self::assertSame('340.03', $estimate->total_amount_with_vat);
+
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->allows('can')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+        $request = Request::create('/');
+        $request->setUserResolver(static fn (): User => $actor);
+        foreach ([$tiny, $included, $excluded, $untaxed] as $item) {
+            $item->setRelation('estimate', $estimate);
+        }
+        self::assertSame(120.0, (new EstimateItemResource($included))->resolve($request)['total_amount_with_vat']);
+        self::assertSame(120.0, (new EstimateItemResource($excluded))->resolve($request)['total_amount_with_vat']);
+        self::assertSame(0.03, (new EstimateItemResource($tiny))->resolve($request)['total_amount_with_vat']);
+        self::assertSame(100.0, (new EstimateItemResource($untaxed))->resolve($request)['total_amount_with_vat']);
+        $parent->setRelation('estimate', $estimate);
+        $child->setRelation('estimate', $estimate);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        self::assertSame(240.03, (new EstimateSectionResource($parent))->resolve($request)['section_total_amount_with_vat']);
+        self::assertSame(120.03, (new EstimateSectionResource($child))->resolve($request)['section_total_amount_with_vat']);
+        self::assertCount(2, DB::getQueryLog());
+        DB::disableQueryLog();
+    }
+
+    public function test_structure_projection_preserves_legacy_header_vat_and_rejects_changed_source_money(): void
+    {
+        $estimate = $this->estimate();
+        $item = $this->line($estimate, 'included', '120.00', 'included');
+        $legacy = clone $estimate;
+        $legacy->metadata = [];
+        $projection = app(EstimateStructureVatProjection::class);
+        self::assertSame(120.0, $projection->item($legacy, $item));
+        $legacySection = ['id' => 1, 'parent_section_id' => null, 'section_total_amount' => '100.00'];
+        self::assertSame(120.0, $projection->project($legacy, [$item], [$legacySection])['sections'][1]);
+        $item->quantity = '2';
+        $this->expectException(\DomainException::class);
+        $projection->project($estimate, [$item], []);
+    }
+
+    public function test_existing_source_snapshots_are_not_served_by_show_or_structure_and_legacy_paths_remain_valid(): void
+    {
+        $this->ensureSnapshotSchema();
+        $estimate = $this->estimate();
+        $section = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'name' => 'Source', 'section_number' => '1']);
+        $item = $this->line($estimate, 'included', '120.00', 'included');
+        $item->update(['estimate_section_id' => $section->id]);
+        $estimate->update(['vat_rate' => 0, 'structure_cache_path' => 'org-'.$estimate->organization_id.'/estimates/'.$estimate->id.'/structure_snapshot_old.json']);
+        $storage = \Mockery::mock(EstimateStructureSnapshotStorage::class)->makePartial();
+        $storage->shouldReceive('exists')->andReturn(true);
+        $storage->shouldNotReceive('readStream');
+        $this->app->instance(EstimateStructureSnapshotStorage::class, $storage);
+        self::assertFalse($storage->existsForEstimate($estimate));
+        $legacy = clone $estimate;
+        $legacy->metadata = [];
+        self::assertTrue($storage->existsForEstimate($legacy));
+        $current = clone $estimate;
+        $current->structure_cache_path = 'org-'.$estimate->organization_id.'/estimates/'.$estimate->id.'/'.EstimateStructureSnapshotStorage::SOURCE_VAT_SNAPSHOT_PREFIX.'new.json';
+        self::assertTrue($storage->existsForEstimate($current));
+
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->allows('can')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $actor = User::factory()->create(['current_organization_id' => $estimate->organization_id]);
+        $this->actingAs($actor);
+        Gate::before(static fn (): bool => true);
+        request()->setUserResolver(static fn (): User => $actor);
+        $request = Request::create('/');
+        $request->setUserResolver(static fn (): User => $actor);
+        $request->attributes->set('current_organization_id', $estimate->organization_id);
+        Bus::fake([GenerateEstimateSnapshotJob::class]);
+        $controller = app(EstimateController::class);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $structure = $controller->structure($request, $estimate->project_id, (int) $estimate->id)->getData(true);
+        self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimates"')));
+        DB::disableQueryLog();
+        self::assertSame(120, $structure['data'][0]['section_total_amount_with_vat']);
+        self::assertSame(120, $structure['data'][0]['items'][0]['total_amount_with_vat']);
+        $show = $controller->show($request, $estimate->project_id, (int) $estimate->id)->getData(true);
+        self::assertSame(120, $show['data']['sections'][0]['section_total_amount_with_vat']);
+        self::assertSame(120, $show['data']['items'][0]['total_amount_with_vat']);
+        Bus::assertDispatchedSync(GenerateEstimateSnapshotJob::class);
+    }
+
     public function test_source_vat_survives_two_standard_recalculations_and_export_including_three_kopecks(): void
     {
         $estimate = $this->estimate();
@@ -175,6 +311,16 @@ final class SourceMoneyVatPostgresTest extends EstimateGenerationCanonicalPostgr
         $this->expectException(\DomainException::class);
         $this->expectExceptionMessage('source_money_work_set_changed');
         app(EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+    }
+
+    private function ensureSnapshotSchema(): void
+    {
+        foreach (['estimate_item_works' => '2026_01_25_193159_create_estimate_item_works_table.php',
+            'estimate_item_totals' => '2026_01_25_193201_create_estimate_item_totals_table.php'] as $table => $migration) {
+            if (! Schema::hasTable($table)) {
+                (require database_path('migrations/'.$migration))->up();
+            }
+        }
     }
 
     private function line(Estimate $estimate, string $key, string $quoted, string $mode): EstimateItem

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1\Admin\Estimate;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\Models\EstimateSection;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -20,15 +21,12 @@ class EstimateSectionResource extends JsonResource
             'sort_order' => $this->sort_order,
             'is_summary' => $this->is_summary,
             'section_total_amount' => (float) $this->section_total_amount,
-            'section_total_amount_with_vat' => $this->estimate
-                ? round((float) $this->section_total_amount * (1 + ((float) ($this->estimate->vat_rate ?? 0) / 100)), 2)
-                : (float) $this->section_total_amount,
+            'section_total_amount_with_vat' => app(EstimateStructureVatProjection::class)->section($request, $this->resource),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
-            
+
             'children' => static::collection($this->whenLoaded('children')),
             'items' => EstimateItemResource::collection($this->whenLoaded('items')),
         ];
     }
 }
-
