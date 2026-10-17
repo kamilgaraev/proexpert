@@ -731,6 +731,30 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
     }
 
+    public function test_ignored_permanent_failure_does_not_change_the_active_document_failure_reason(): void
+    {
+        foreach (['temporary_failure' => 'document_processing_temporarily_unavailable', 'system_failure' => 'document_processing_system_failed'] as $type => $code) {
+            [$organization, $actor, $scope] = $this->fixture();
+            $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+            $session->update(['status' => 'processing_documents', 'processing_stage' => 'processing_documents']);
+            foreach ([['ignored', 'system_failure', 'document_processing_system_failed', 'd'], ['failed', $type, $code, 'e']] as [$status, $outcome, $error, $hash]) {
+                $session->documents()->create([
+                    'organization_id' => $organization->id, 'project_id' => $scope->projectId, 'user_id' => $actor->id,
+                    'filename' => $status.'.pdf', 'mime_type' => 'application/pdf', 'storage_path' => 'org-'.$organization->id.'/'.$status.'.pdf',
+                    'checksum_sha256' => str_repeat($hash, 64), 'source_version' => 'sha256:'.str_repeat($hash, 64),
+                    'status' => $status, 'processing_stage' => 'completed', 'error_code' => $error,
+                    'facts_summary' => ['processing_outcome' => ['type' => $outcome]],
+                ]);
+            }
+
+            $failed = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments::class)->reconcile($session);
+
+            self::assertSame('failed', $failed->status->value);
+            self::assertSame($code, $failed->failure_code);
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
+    }
+
     public function test_simple_paid_understanding_keeps_current_conflict_questions_without_any_model_expense(): void
     {
         $this->seedGlobalSettings();

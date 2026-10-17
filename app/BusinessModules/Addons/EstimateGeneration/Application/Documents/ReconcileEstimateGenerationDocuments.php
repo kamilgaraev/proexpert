@@ -85,7 +85,8 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
                 && (int) ($readiness['summary']['system_failure_count'] ?? 0) > 0) {
                 $failures = collect($readiness['summary']['items'] ?? [])
-                    ->where('is_system_failure', true);
+                    ->where('is_system_failure', true)
+                    ->where('status', '!=', 'ignored');
 
                 return $this->advance->failed(
                     $session,
