@@ -75,16 +75,40 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
         foreach ($parents as $column => $parent) {
             $parentQuery = $this->query($parent['type'], $organizationId, $hasProject ? null : $projectId);
             $parentTable = $parentQuery->getModel()->getTable();
-            if ($parent['match_project'] ?? false) { $parentQuery->whereColumn($parentTable.'.project_id', $table.'.project_id'); }
-            foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
-            $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
+            if ($type !== 'design_ifc_model_element') {
+                if ($parent['match_project'] ?? false) { $parentQuery->whereColumn($parentTable.'.project_id', $table.'.project_id'); }
+                foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
+                $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
+                    if ($parent['nullable']) {
+                        $parentKey = $parentTable.'.'.($parent['key'] ?? 'id');
+                        $scope->whereNull($table.'.'.$column)->orWhereExists(
+                            $parentQuery->select($parentKey)->whereColumn($parentKey, $table.'.'.$column)
+                        );
+                    }
+                    else { $scope->whereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
+                });
+                continue;
+            }
+            $childColumns = [$table.'.'.$column];
+            $parentColumns = [$parentTable.'.'.($parent['key'] ?? 'id')];
+            if ($parent['match_project'] ?? false) {
+                $childColumns[] = $table.'.project_id';
+                $parentColumns[] = $parentTable.'.project_id';
+            }
+            foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) {
+                $childColumns[] = $table.'.'.$childColumn;
+                $parentColumns[] = $parentTable.'.'.$parentColumn;
+            }
+            $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $table, $childColumns, $parentColumns): void {
+                $parentQuery->select($parentColumns);
+                $grammar = $scope->getQuery()->getGrammar();
+                $left = '('.implode(', ', array_map(static fn (string $name): string => $grammar->wrap($name), $childColumns)).')';
+                $predicate = $left.' in ('.$parentQuery->toSql().')';
+                $bindings = $parentQuery->getBindings();
                 if ($parent['nullable']) {
-                    $parentKey = $parentTable.'.'.($parent['key'] ?? 'id');
-                    $scope->whereNull($table.'.'.$column)->orWhereExists(
-                        $parentQuery->select($parentKey)->whereColumn($parentKey, $table.'.'.$column)
-                    );
+                    $scope->whereNull($table.'.'.$column)->orWhereRaw($predicate, $bindings);
                 }
-                else { $scope->whereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
+                else { $scope->whereRaw($predicate, $bindings); }
             });
         }
         if ($type === 'schedule_task') {
