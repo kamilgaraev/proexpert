@@ -16,7 +16,7 @@ class NormativeContextPinResolver
 
     public function resolve(array $regionalContext, array $workIntents = [], ?callable $progress = null): array
     {
-        $date = $this->date($regionalContext);
+        $date = $this->applicabilityDate($regionalContext);
         $values = [
             'dataset_id' => $regionalContext['normative_dataset_id'] ?? $regionalContext['dataset_id'] ?? null,
             'dataset_version' => $regionalContext['normative_dataset_version'] ?? null,
@@ -119,7 +119,7 @@ class NormativeContextPinResolver
         return $values;
     }
 
-    private function date(array $context): ?string
+    public function applicabilityDate(array $context): ?string
     {
         foreach (['applicability_date', 'estimate_date', 'business_date'] as $key) {
             $value = $context[$key] ?? null;

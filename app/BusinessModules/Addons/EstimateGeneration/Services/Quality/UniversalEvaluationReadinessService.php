@@ -21,20 +21,20 @@ final readonly class UniversalEvaluationReadinessService
         $accepted = $this->evaluations->read($session, $actor instanceof User || $actor instanceof SystemAdmin ? $actor : null);
         $blockers = [];
         if (! config('estimate-generation.universal_enabled', false)) {
-            $blockers[] = ['code' => 'universal_rollout_disabled', 'message' => 'Новые операции универсального процесса временно отключены.'];
+            $blockers[] = $this->issue('universal_rollout_disabled');
         }
         if ($accepted === null) {
-            $blockers[] = ['code' => 'current_scenario_confirmation_required', 'message' => 'Пересчитайте оценку и подтвердите актуальный сценарий, состав, объёмы и цены.'];
+            $blockers[] = $this->issue('current_scenario_confirmation_required');
         }
         if ((int) ($documents['pending'] ?? $documents['pending_count'] ?? 0) > 0) {
-            $blockers[] = ['code' => 'documents_pending', 'message' => 'Дождитесь окончания обработки выбранных документов.'];
+            $blockers[] = $this->issue('documents_pending');
         }
         if ((int) ($documents['action_required'] ?? $documents['action_required_count'] ?? 0) > 0) {
-            $blockers[] = ['code' => 'documents_require_review', 'message' => 'Разберите документы, требующие проверки, или явно исключите их.'];
+            $blockers[] = $this->issue('documents_require_review');
         }
         if ((string) ($session->draft_payload['contingency_amount'] ?? '0') !== '0'
             && ! \Brick\Math\BigDecimal::of((string) ($session->draft_payload['contingency_amount'] ?? '0'))->isZero()) {
-            $blockers[] = ['code' => 'contingency_tax_confirmation_required', 'message' => 'Подтвердите резерв и его налоговые условия.'];
+            $blockers[] = $this->issue('contingency_tax_confirmation_required');
         }
         $canApply = $session->status->value === 'ready_to_apply' && $blockers === [];
         $manualInputAvailable = \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::manualInputAvailable(
@@ -57,5 +57,12 @@ final readonly class UniversalEvaluationReadinessService
                 'vat_total' => $accepted['selected']['scenario']['vat_subtotals']['RUB'],
                 'package_count' => count(array_unique(array_column($accepted['selected']['scenario']['positions'], 'package_key'))),
                 'position_count' => count($accepted['selected']['scenario']['positions'])]);
+    }
+
+    private function issue(string $code): array
+    {
+        $key = 'estimate_evaluation.readiness.'.$code;
+
+        return ['code' => $code, 'message_key' => $key, 'message' => trans_message($key)];
     }
 }

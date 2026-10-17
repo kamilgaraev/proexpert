@@ -51,7 +51,7 @@ final readonly class SaveSessionPricingSource
             try {
                 $payload = $this->prices->replace($payload, $input['estimate_regional_price_version_id']);
                 $conditions = array_key_exists('conditions', $input)
-                    ? (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationRegionalPriceConditions)->normalize($input['conditions']) : null;
+                    ? (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationRegionalPriceConditions)->normalize($input['conditions'], $payload['regional_context']) : null;
             } catch (\InvalidArgumentException) {
                 throw ValidationException::withMessages(['price_source' => trans_message('estimate_evaluation.regional_price_conditions_invalid')]);
             }

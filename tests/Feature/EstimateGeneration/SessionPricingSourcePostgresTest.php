@@ -21,7 +21,7 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
         [$actor, $session, $version] = $this->fixture();
         $before = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'estimate_regional_price_version_id' => $version,
-            'conditions' => ['as_of_date' => '2099-12-31', 'vat_mode' => 'excluded', 'vat_rate' => '22.00',
+            'conditions' => ['as_of_date' => '2099-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '22.00',
                 'delivery' => 'outside_scope', 'basis' => 'Подтверждены условия прямых затрат; доставка за пределами состава.']];
         $service = app(SaveSessionPricingSource::class);
         $result = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
@@ -38,6 +38,7 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
         $accepted = $terms->accepted($draft, $snapshot, $decisions);
         self::assertNotNull($accepted);
         self::assertSame('22', $accepted['vat_rate']);
+        self::assertSame('2099-10-01', $accepted['as_of_date']);
         self::assertSame('outside_scope', $accepted['delivery']);
         $changed = $draft;
         $changed['evaluation_policy']['regional_price_selection']['conditions']['vat_rate'] = '20';
@@ -51,9 +52,9 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
     public function test_invalid_or_monetary_terms_cannot_be_saved_as_native_price_conditions(): void
     {
         [$actor, $session, $version] = $this->fixture();
-        $conditions = ['as_of_date' => '2099-12-31', 'vat_mode' => 'excluded', 'vat_rate' => '22',
+        $conditions = ['as_of_date' => '2099-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '22',
             'delivery' => 'outside_scope', 'basis' => 'Контрольная оценка выбранных работ без отдельной доставки.'];
-        foreach ([['as_of_date' => '2099-02-30'], ['vat_mode' => 'unknown'], ['vat_mode' => 'included'], ['vat_rate' => '101'],
+        foreach ([['as_of_date' => '2099-02-30'], ['as_of_date' => '2099-12-31'], ['vat_mode' => 'unknown'], ['vat_mode' => 'included'], ['vat_rate' => '101'],
             ['delivery' => 'unknown'], ['unit_price' => '999.99']] as $change) {
             try {
                 app(SaveSessionPricingSource::class)->handle($actor, (int) $session->project_id, (int) $session->id,

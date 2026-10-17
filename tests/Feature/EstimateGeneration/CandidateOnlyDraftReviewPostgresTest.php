@@ -28,7 +28,8 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function test_universal_native_selection_keeps_pinned_resources_through_scoped_apply_and_recalculation(): void
+    #[DataProvider('nativeDates')]
+    public function test_universal_native_selection_keeps_pinned_resources_through_scoped_apply_and_recalculation(bool $periodOnly): void
     {
         Queue::fake();
         Http::preventStrayRequests();
@@ -45,11 +46,26 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $permissions->allows('canCurrent')->andReturn(true);
         $this->app->instance(AuthorizationService::class, $permissions);
         $catalog = $this->catalog(true);
+        if ($periodOnly) {
+            unset($catalog['context']['business_date']);
+        }
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0,
             'input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['finishing'],
                 'profile_id' => 'construction', 'construction_type' => 'new_construction', 'price_policy' => 'normative',
                 'regional_context' => $catalog['context']]]);
+        $blockedSession = clone $session;
+        $blockedSession->draft_payload = ['contingency_amount' => '1.00'];
+        config(['estimate-generation.universal_enabled' => false]);
+        $blocked = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\UniversalEvaluationReadinessService::class)
+            ->evaluate($blockedSession, ['pending_count' => 1, 'action_required_count' => 1]);
+        self::assertCount(5, $blocked->blockingIssues);
+        foreach ($blocked->blockingIssues as $issue) {
+            self::assertSame('estimate_evaluation.readiness.'.$issue['code'], $issue['message_key']);
+            self::assertNotSame($issue['message_key'], $issue['message']);
+            self::assertNotSame('', $issue['message']);
+        }
+        config(['estimate-generation.universal_enabled' => true]);
         app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource::class)
             ->handle($actor, (int) $project->id, (int) $session->id, ['request_id' => (string) Str::uuid(), 'state_version' => 0,
                 'estimate_regional_price_version_id' => $catalog['context']['estimate_regional_price_version_id'],
@@ -135,6 +151,13 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 'revision_id' => $ready['revision_id'], 'content_hash' => $ready['content_hash'],
                 'scenario_id' => 'base', 'assumptions_accepted' => true]);
         $this->actingAs($actor);
+        $factsBeforeRead = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token'];
+        $readySnapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+            ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
+        self::assertTrue($readySnapshot->canApply, json_encode($readySnapshot->blockingIssues, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        self::assertContains('apply', array_column($readySnapshot->availableActions, 'action'));
+        self::assertSame('1989.58', $readySnapshot->evaluationConfirmation['total_by_currency']['RUB']);
+        self::assertSame($factsBeforeRead, app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token']);
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
             (int) $session->id, (int) $organization->id, (int) $project->id, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);
@@ -288,6 +311,11 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         return ['current_origin' => [false], 'legacy_without_location' => [true]];
     }
 
+    public static function nativeDates(): array
+    {
+        return ['explicit_business_date' => [false], 'price_period_date' => [true]];
+    }
+
     private function catalog(bool $abstract = false): array
     {
         $now = now();
@@ -330,7 +358,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         DB::table('estimate_regional_price_versions')->where('id', $version)->update(['status' => 'active']);
 
         return ['norm_id' => $norm, 'finish_norm_id' => $finishNorm ?? null, 'child_code' => '04.3.01.09-0054', 'context' => ['region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period,
-            ...($abstract ? ['business_date' => '2088-10-01', 'version_key' => $key] : []),
+            ...($abstract ? ['business_date' => '2088-10-01', 'year' => 2088, 'quarter' => 4, 'version_key' => $key] : []),
             'estimate_regional_price_version_id' => $version, 'normative_dataset_version' => $key]];
     }
 }

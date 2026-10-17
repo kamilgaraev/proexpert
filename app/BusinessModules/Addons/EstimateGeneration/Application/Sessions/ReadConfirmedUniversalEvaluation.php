@@ -51,13 +51,61 @@ final readonly class ReadConfirmedUniversalEvaluation
             return null;
         }
         $selected = (new SelectedEvaluationScenario)->select($result, $confirmation['scenario_id']);
+        $draft = $session->draft_payload ?? [];
+        $selectedKeys = array_fill_keys(array_column($selected['scenario']['positions'], 'key'), true);
+        $scoped = $draft;
+        foreach ($scoped['local_estimates'] ?? [] as $localIndex => $local) {
+            foreach ($local['sections'] ?? [] as $sectionIndex => $section) {
+                $scoped['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
+                    $section['work_items'] ?? [], static fn (array $item): bool => isset($selectedKeys[$item['key']])));
+            }
+        }
         try {
             app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class)
-                ->assertCurrent(...[...$scope, $session->draft_payload ?? [], false]);
+                ->assertCurrent(...[...$scope, $scoped, false]);
         } catch (\Illuminate\Validation\ValidationException) {
             return null;
         }
+        $nativeKeys = array_fill_keys(array_column(array_values(array_filter($selected['scenario']['positions'],
+            static fn (array $position): bool => ($position['price_snapshot']['source_type'] ?? null) === 'normative')), 'key'), true);
+        if ($nativeKeys !== []) {
+            $regional = $draft['regional_context'] ?? [];
+            $version = DB::table('estimate_regional_price_versions')->where('id', $regional['estimate_regional_price_version_id'] ?? 0)
+                ->where('region_id', $regional['region_id'] ?? 0)->where('price_zone_id', $regional['price_zone_id'] ?? 0)
+                ->where('period_id', $regional['period_id'] ?? 0)->whereIn('status', ['active', 'checked'])->exists();
+            $nativeItems = array_intersect_key((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)->items($draft), $nativeKeys);
+            $normIds = array_unique(array_map(static fn (array $entry): int => (int) ($entry['item']['normative_match']['norm_id'] ?? 0), $nativeItems));
+            $norms = DB::table('estimate_norms as norms')->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
+                ->join('estimate_dataset_versions as datasets', 'datasets.id', '=', 'collections.dataset_version_id')
+                ->whereIn('norms.id', $normIds)->where('datasets.version_key', $regional['normative_dataset_version'] ?? '')
+                ->where('datasets.source_type', 'fsnb_2022')->where('datasets.status', 'parsed')->count();
+            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms !== count($normIds)) {
+                return null;
+            }
+            foreach ($draft['local_estimates'] ?? [] as $localIndex => $local) {
+                foreach ($local['sections'] ?? [] as $sectionIndex => $section) {
+                    foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                        if (isset($nativeKeys[$item['key']])) {
+                            $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] =
+                                app(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService::class)->price([$item], $regional)[0];
+                        }
+                    }
+                }
+            }
+            try {
+                $current = (new SelectedEvaluationScenario)->select(
+                    (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($draft, $snapshot, $decisions), $confirmation['scenario_id']);
+            } catch (\InvalidArgumentException) {
+                return null;
+            }
+            if (! hash_equals($confirmation['scenario_hash'], $current['scenario_hash'])) {
+                return null;
+            }
+        }
         foreach ($selected['scenario']['positions'] as $position) {
+            if (isset($nativeKeys[$position['key']])) {
+                continue;
+            }
             $item = ['key' => $position['key'], 'unit' => $position['unit'], 'quantity' => $position['quantity'],
                 'commercial_price_snapshot' => $position['price_snapshot'], 'material_id' => $position['price_snapshot']['material_id'] ?? null];
             $current = isset($session->input_payload['price_selections'][$position['key']])

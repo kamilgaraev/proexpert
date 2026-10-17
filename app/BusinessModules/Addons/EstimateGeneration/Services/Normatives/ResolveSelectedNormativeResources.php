@@ -31,7 +31,7 @@ class ResolveSelectedNormativeResources
         $regional = $context['regional_context'] ?? [];
         $dataset = $regional['normative_dataset_version'] ?? null;
         $code = $this->database->table('estimate_norms')->where('id', $normId)->value('code');
-        $date = $regional['business_date'] ?? $regional['applicability_date'] ?? null;
+        $date = $this->pins->applicabilityDate($regional);
         if (! is_string($dataset) || ! is_string($code) || ! is_string($date)) {
             return null;
         }

@@ -9,7 +9,7 @@ use InvalidArgumentException;
 
 final readonly class EvaluationRegionalPriceConditions
 {
-    public function normalize(array $conditions): array
+    public function normalize(array $conditions, array $regionalContext): array
     {
         if (array_diff(array_keys($conditions), ['as_of_date', 'vat_mode', 'vat_rate', 'delivery', 'basis']) !== []
             || ! is_string($conditions['as_of_date'] ?? null) || ! is_string($conditions['basis'] ?? null)
@@ -19,7 +19,9 @@ final readonly class EvaluationRegionalPriceConditions
             throw new InvalidArgumentException('regional_price_conditions_invalid');
         }
         $date = DateTimeImmutable::createFromFormat('!Y-m-d', $conditions['as_of_date']);
-        if ($date === false || $date->format('Y-m-d') !== $conditions['as_of_date']) {
+        if ($date === false || $date->format('Y-m-d') !== $conditions['as_of_date']
+            || (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver)
+                ->applicabilityDate($regionalContext) !== $conditions['as_of_date']) {
             throw new InvalidArgumentException('regional_price_conditions_invalid');
         }
         $tax = (new EvaluationVatProjection)->amount('1.00', $conditions);
@@ -35,7 +37,7 @@ final readonly class EvaluationRegionalPriceConditions
             return null;
         }
         try {
-            $conditions = $this->normalize($selection['conditions']);
+            $conditions = $this->normalize($selection['conditions'], $draft['regional_context']);
         } catch (InvalidArgumentException) {
             return null;
         }
