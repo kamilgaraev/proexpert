@@ -1,6 +1,7 @@
 {
   "name": "Кладовщик",
   "slug": "storekeeper",
+  "primary_priority": 92,
   "version": "1.0.0",
   "context": "organization",
   "interface": "mobile",

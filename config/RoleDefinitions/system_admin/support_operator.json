@@ -1,6 +1,7 @@
 {
   "name": "Оператор поддержки",
   "slug": "support_operator",
+  "primary_priority": 108,
   "version": "1.0.0",
   "context": "system_admin",
   "interface": "admin",

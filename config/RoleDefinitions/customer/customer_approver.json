@@ -1,6 +1,7 @@
 {
   "name": "Customer approver",
   "slug": "customer_approver",
+  "primary_priority": 85,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

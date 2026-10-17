@@ -1,6 +1,7 @@
 {
   "name": "Контент-менеджер",
   "slug": "content_manager",
+  "primary_priority": 102,
   "version": "1.0.0",
   "context": "system_admin",
   "interface": "admin",

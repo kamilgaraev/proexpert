@@ -1,6 +1,7 @@
 {
   "name": "Менеджер бригады",
   "slug": "brigade_manager",
+  "primary_priority": 75,
   "version": "1.0.0",
   "context": "organization",
   "interface": "lk",

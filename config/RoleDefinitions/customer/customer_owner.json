@@ -1,6 +1,7 @@
 {
   "name": "Customer owner",
   "slug": "customer_owner",
+  "primary_priority": 35,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

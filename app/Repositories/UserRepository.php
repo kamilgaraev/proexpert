@@ -411,17 +411,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         string $sortDirection = 'asc'
     ): LengthAwarePaginator
     {
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-
         $query = $this->queryInOrganization($organizationId)
             ->with([
                 'organizations',
                 'assignedProjects' => function ($q) {
                     $q->wherePivot('is_active', true);
                 },
-                'roleAssignments' => function ($q) use ($context) {
-                    $q->where('context_id', $context->id)
-                        ->where('is_active', true);
+                'roleAssignments' => function ($q) use ($organizationId) {
+                    $q->availableInOrganization($organizationId)->with(['context', 'customRole']);
                 },
             ]);
 
@@ -449,10 +446,9 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         }
 
         if (!empty($filters['role'])) {
-            $query->whereHas('roleAssignments', function ($q) use ($filters, $context) {
+            $query->whereHas('roleAssignments', function ($q) use ($filters, $organizationId) {
                 $q->where('role_slug', $filters['role'])
-                    ->where('context_id', $context->id)
-                    ->where('is_active', true);
+                    ->availableInOrganization($organizationId);
             });
         }
 
@@ -474,8 +470,6 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         string $sortDirection = 'asc'
     ): LengthAwarePaginator
     {
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
-
         $query = $this->model->query()
             ->select([
                 'users.id',
@@ -490,9 +484,8 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                 $q->where('organization_user.organization_id', $organizationId);
             })
             ->with([
-                'roleAssignments' => function ($q) use ($context) {
-                    $q->where('context_id', $context->id)
-                        ->where('is_active', true);
+                'roleAssignments' => function ($q) use ($organizationId) {
+                    $q->availableInOrganization($organizationId)->with(['context', 'customRole']);
                 },
                 'organizations' => fn ($q) => $q->where('organizations.id', $organizationId),
             ]);
@@ -521,10 +514,9 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         }
 
         if (!empty($filters['role'])) {
-            $query->whereHas('roleAssignments', function ($q) use ($filters, $context) {
+            $query->whereHas('roleAssignments', function ($q) use ($filters, $organizationId) {
                 $q->where('role_slug', $filters['role'])
-                    ->where('context_id', $context->id)
-                    ->where('is_active', true);
+                    ->availableInOrganization($organizationId);
             });
         }
 

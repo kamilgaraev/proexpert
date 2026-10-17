@@ -1,6 +1,7 @@
 {
   "name": "Суперадминистратор",
   "slug": "super_admin",
+  "primary_priority": 0,
   "version": "1.0.0",
   "context": "system",
   "interface": "admin",

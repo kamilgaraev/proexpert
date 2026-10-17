@@ -1,6 +1,7 @@
 {
   "name": "Customer viewer",
   "slug": "customer_viewer",
+  "primary_priority": 119,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

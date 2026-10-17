@@ -1,6 +1,7 @@
 {
   "name": "Владелец организации",
   "slug": "organization_owner",
+  "primary_priority": 20,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

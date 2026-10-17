@@ -1,6 +1,7 @@
 {
   "name": "Представитель бригады",
   "slug": "brigade_representative",
+  "primary_priority": 98,
   "version": "1.0.0",
   "context": "organization",
   "interface": "lk",

@@ -1,6 +1,7 @@
 {
   "name": "Техподдержка",
   "slug": "support",
+  "primary_priority": 112,
   "version": "1.0.0",
   "context": "system",
   "interface": "admin",

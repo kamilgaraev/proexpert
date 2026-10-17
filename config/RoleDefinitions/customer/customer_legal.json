@@ -1,6 +1,7 @@
 {
   "name": "Customer legal",
   "slug": "customer_legal",
+  "primary_priority": 65,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

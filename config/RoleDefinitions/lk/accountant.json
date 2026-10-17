@@ -1,6 +1,7 @@
 {
   "name": "Бухгалтер",
   "slug": "accountant",
+  "primary_priority": 60,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

@@ -1,6 +1,7 @@
 {
   "name": "Наблюдатель админки",
   "slug": "admin_viewer",
+  "primary_priority": 114,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

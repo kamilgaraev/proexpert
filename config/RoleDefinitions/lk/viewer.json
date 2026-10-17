@@ -1,6 +1,7 @@
 {
   "name": "Наблюдатель",
   "slug": "viewer",
+  "primary_priority": 120,
   "version": "1.0.0",
   "context": "organization",
   "interface": "lk",

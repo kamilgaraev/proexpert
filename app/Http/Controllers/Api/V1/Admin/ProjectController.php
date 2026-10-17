@@ -97,6 +97,7 @@ class ProjectController extends Controller
             return AdminResponse::success(new ProjectResource($project->load([
                 'users' => fn ($query) => $query->wherePivot('is_active', true),
                 'users.organizations' => fn ($query) => $query->where('organizations.id', $organizationId),
+                'users.roleAssignments' => fn ($query) => $query->availableInOrganization($organizationId)->with(['context', 'customRole']),
                 'costCategory',
                 'customerCounterparty',
             ])));

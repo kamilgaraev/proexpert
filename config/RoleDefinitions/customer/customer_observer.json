@@ -1,6 +1,7 @@
 {
   "name": "Customer observer",
   "slug": "customer_observer",
+  "primary_priority": 118,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

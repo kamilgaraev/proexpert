@@ -137,6 +137,19 @@ class UserRoleAssignment extends Model
             });
     }
 
+    public function scopeAvailableInOrganization(Builder $query, int $organizationId): Builder
+    {
+        return $this->scopeActive($query)->whereHas('context', static fn (Builder $context): Builder => $context
+            ->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $organizationId))
+            ->where(static function (Builder $roles) use ($organizationId): void {
+                $roles->where('role_type', self::TYPE_SYSTEM)->orWhere(static function (Builder $custom) use ($organizationId): void {
+                    $custom->where('role_type', self::TYPE_CUSTOM)->whereHas('customRole', static fn (Builder $role): Builder => $role
+                        ->where('organization_id', $organizationId)->where('is_active', true)
+                        ->whereColumn('organization_custom_roles.slug', 'user_role_assignments.role_slug'));
+                });
+            });
+    }
+
     /**
      * Scope: назначения в определенном контексте
      */

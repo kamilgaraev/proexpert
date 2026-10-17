@@ -1,6 +1,7 @@
 {
   "name": "QA-инженер панели",
   "slug": "qa_engineer",
+  "primary_priority": 104,
   "version": "1.0.0",
   "context": "system_admin",
   "interface": "admin",

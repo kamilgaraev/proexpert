@@ -17,7 +17,7 @@ class RoleScanner
 {
     private const ROLES_PATH = 'config/RoleDefinitions';
 
-    private const CACHE_KEY = 'authorization_roles:v2';
+    private const CACHE_KEY = 'authorization_roles:v3';
 
     private const CACHE_REVISION_KEY = 'authorization_roles_revision';
 

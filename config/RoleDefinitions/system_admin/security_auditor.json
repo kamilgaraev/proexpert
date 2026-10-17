@@ -1,6 +1,7 @@
 {
   "name": "Аудитор безопасности",
   "slug": "security_auditor",
+  "primary_priority": 106,
   "version": "1.0.0",
   "context": "system_admin",
   "interface": "admin",

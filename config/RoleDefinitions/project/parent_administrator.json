@@ -1,6 +1,7 @@
 {
   "name": "Администратор холдинга",
   "slug": "parent_administrator",
+  "primary_priority": 25,
   "version": "1.0.0",
   "context": "project",
   "interface": "admin",

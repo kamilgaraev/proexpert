@@ -1,6 +1,7 @@
 {
   "name": "Финансовый администратор",
   "slug": "finance_admin",
+  "primary_priority": 40,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

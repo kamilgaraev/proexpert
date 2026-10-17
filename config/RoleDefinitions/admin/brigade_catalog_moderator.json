@@ -1,6 +1,7 @@
 {
   "name": "Модератор каталога бригад",
   "slug": "brigade_catalog_moderator",
+  "primary_priority": 68,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

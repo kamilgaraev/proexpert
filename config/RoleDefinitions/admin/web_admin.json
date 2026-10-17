@@ -1,6 +1,7 @@
 {
   "name": "Веб-администратор",
   "slug": "web_admin",
+  "primary_priority": 50,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",
