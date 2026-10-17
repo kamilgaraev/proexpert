@@ -106,6 +106,11 @@ final class UniversalEvaluationBuilderTest extends TestCase
             self::assertSame([], $blocked['audit_dispositions']);
             self::assertCount(2, array_filter($blocked['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding'));
         }
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [...$item,
+            'commercial_price_snapshot' => [...$price, 'stale' => true, 'stale_accepted' => true]];
+        $acceptedStale = $builder->build($draft, $snapshot);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($acceptedStale['audit_dispositions'], 'status'));
+        self::assertSame('4425.20', $acceptedStale['audit_dispositions'][0]['calculated_amount']);
         $item['quantity'] = '1';
         $item['unit_price'] = $item['commercial_price_snapshot']['unit_price'] = '10.005';
         $item['total_cost'] = '10.01';

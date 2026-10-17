@@ -338,7 +338,7 @@ final readonly class UniversalEvaluationBuilder
         foreach ($result['scenarios'][0]['positions'] as $position) {
             $price = $position['price_snapshot'];
             if (! is_array($price) || ! in_array($price['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog'], true)
-                || ($price['stale'] ?? false) === true || $position['pricing_status'] !== 'calculated'
+                || $position['pricing_status'] !== 'calculated'
                 || ($price['conditions_missing'] ?? []) !== [] || $position['money_breakdown'] === null
                 || ! is_string($price['source_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $price['source_hash']) !== 1
                 || ! BigDecimal::of($position['total_cost'])->isGreaterThan(0)) {
