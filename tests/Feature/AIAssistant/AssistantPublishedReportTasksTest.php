@@ -6,6 +6,8 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactVersionInventory;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\GenerateReportExportJob;
 use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
@@ -65,12 +67,16 @@ final class AssistantPublishedReportTasksTest extends TestCase
 
     public static function interruptions(): array
     {
-        return [['normal'], ['run'], ['export'], 'definition_change' => ['definition']];
+        return [['normal'], ['run'], ['export'], 'definition_change' => ['definition'], 'named_project' => ['normal', true]];
     }
 
     #[DataProvider('interruptions')]
-    public function test_source_only_actor_gets_real_nonempty_excel_and_reuses_native_work_after_interruption(string $interruption): void
+    public function test_source_only_actor_gets_real_nonempty_excel_and_reuses_native_work_after_interruption(string $interruption, bool $namedProject = false): void
     {
+        $selectedProjectId = (int) $this->project->id;
+        if ($namedProject) {
+            $this->project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        }
         $actor = Model::withoutEvents(fn () => $this->fixture->addMember([
             'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
             'project-management' => ['projects.view'],
@@ -82,7 +88,9 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $checkpoint = DB::table('production_acceptance_history_checkpoints')->where('organization_id', $organizationId)->sole();
         $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
         $this->seedAcceptedSource($organizationId, (int) $this->project->id, $acceptedAt);
-        $root = $this->root($actor, $acceptedAt->modify('+1 day'));
+        $root = $this->root($actor, $acceptedAt->modify('+1 day'),
+            $namedProject ? 'Сформируй Excel о принятой выработке по проекту «'.$this->project->name.'»' : null,
+            $selectedProjectId);
         $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR)]);
         $tasks = app(AssistantPublishedReportTasks::class);
         self::assertTrue(app(AIPermissionChecker::class)->canExecuteTool($actor, 'generate_published_report', $arguments));
@@ -97,6 +105,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $first = $tool->execute($arguments, $actor, $this->fixture->organization);
         self::assertSame($first, $tasks->create($arguments, $actor, $organizationId));
         $task = AssistantCoreReportTask::query()->findOrFail($first['report_task_id']);
+        self::assertSame((int) $this->project->id, $task->parameters['project_id']);
         self::assertSame($root->created_at->format('Y-m-d\TH:i:s.uP'), $task->parameters['as_of']);
         self::assertNull($tasks->read($task->id, $actor, $organizationId)['export_id']);
         $this->assertCanonicalArtifact($tasks, $task, $actor, $organizationId);
@@ -190,6 +199,24 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $this->denied(fn () => $tasks->create(array_replace($this->arguments(), ['project_id' => (int) $replacement->id]), $actor, $org));
         $task->update(['parameters' => array_replace($task->parameters, ['title' => 'Подмена'])]);
         $this->denied(fn () => $tasks->artifact($task->id, $actor, $org));
+    }
+
+    public function test_named_project_still_requires_current_project_and_organization_access(): void
+    {
+        $actor = Model::withoutEvents(fn () => $this->fixture->addMember([
+            'ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate'],
+            'project-management' => ['projects.view'],
+            'reports' => ['reports.production_progress.view', 'reports.production_progress.export'],
+        ]));
+        $actor->assignedProjects()->attach($this->project->id, ['is_active' => true, 'role' => 'member']);
+        $organizationId = (int) $this->fixture->organization->id;
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId]));
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id]));
+        $root = $this->root($actor, message: 'Сформируй Excel о принятой выработке по проекту «'.$other->name.'»');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $this->denied(fn () => $tasks->create(array_replace($this->arguments(), ['project_id' => (int) $other->id]), $actor, $organizationId));
+        $this->denied(fn () => $tasks->create(array_replace($this->arguments(), ['project_id' => (int) $foreign->id]), $actor, $organizationId));
+        self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
     }
 
     public function test_cancellation_deadline_lease_and_recovery_do_not_create_extra_work(): void
@@ -589,13 +616,13 @@ final class AssistantPublishedReportTasksTest extends TestCase
         app()->instance($interface, $replacement);
     }
 
-    private function root(User $actor, ?DateTimeImmutable $asOf = null): AssistantRequest
+    private function root(User $actor, ?DateTimeImmutable $asOf = null, ?string $message = null, ?int $contextProjectId = null): AssistantRequest
     {
         $root = AssistantRequest::query()->create(['request_id' => (string) Str::uuid(), 'organization_id' => $this->fixture->organization->id,
             'user_id' => $actor->id, 'request_hash' => hash('sha256', Str::random()), 'profile' => 'short', 'status' => 'running',
             'stage' => 'tools', 'max_calls' => 10, 'approved_max_minor' => 100, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(5),
-            'surface' => 'admin', 'payload' => ['message' => 'Сформируй Excel о принятой выработке текущего проекта',
-                'context' => ['entity_refs' => [['entity_type' => 'project', 'entity_id' => $this->project->id]]]],
+            'surface' => 'admin', 'payload' => ['message' => $message ?? 'Сформируй Excel о принятой выработке текущего проекта',
+                'context' => ['entity_refs' => [['entity_type' => 'project', 'entity_id' => $contextProjectId ?? $this->project->id]]]],
             'created_at' => $asOf ?? now()]);
         $root->refresh();
         app(AssistantCurrentRequest::class)->replace($root);
@@ -635,6 +662,8 @@ final class AssistantPublishedReportTasksTest extends TestCase
             self::fail('Expected current authorization denial');
         } catch (AuthorizationException|\Illuminate\Database\Eloquent\ModelNotFoundException) {
             self::assertTrue(true);
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
         }
     }
 

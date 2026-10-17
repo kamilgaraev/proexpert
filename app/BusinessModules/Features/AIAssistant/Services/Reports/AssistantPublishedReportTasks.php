@@ -208,7 +208,7 @@ final readonly class AssistantPublishedReportTasks
     {
         $scope = AssistantRequestProjectScope::fromPlan(['request' => $request->payload]);
         if (($scope->requested && $scope->projectId === null)
-            || ($scope->projectId !== null && $parameters['project_id'] !== $scope->projectId)
+            || ($scope->requested && $scope->projectId !== null && $parameters['project_id'] !== $scope->projectId)
             || (AssistantRequestProjectScope::organizationWide((string) ($request->payload['message'] ?? '')) && $parameters['project_id'] !== null)) {
             throw new AuthorizationException;
         }
