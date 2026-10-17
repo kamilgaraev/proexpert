@@ -64,6 +64,103 @@ final class UniversalEvaluationBuilderTest extends TestCase
         }
     }
 
+    public function test_zero_price_audit_finding_requires_matching_current_verified_commercial_money(): void
+    {
+        $price = ['source_type' => 'catalog', 'source_reference' => 'catalog:6', 'source_hash' => str_repeat('a', 64),
+            'unit_price' => '520.00', 'unit' => 'm2', 'currency' => 'RUB', 'as_of_date' => '2026-10-16',
+            'verified' => true, 'applicable' => true, 'stale' => false, 'conditions_missing' => [],
+            'vat_mode' => 'excluded', 'vat_rate' => '22', 'delivery_included' => true];
+        $item = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '8.51', 'unit_price' => '520.00',
+            'quantity_status' => 'supported', 'pricing_status' => 'calculated', 'total_cost' => '4425.20',
+            'price_snapshot' => ['final_amount' => '4425.20'],
+            'commercial_price_snapshot' => $price];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'audit_review_items' => [
+            ['finding_id' => 'audit:zero', 'item_key' => 'floor', 'type' => 'suspicious_zero', 'reason' => 'Итог ранее отсутствовал.'],
+            ['finding_id' => 'audit:quantity', 'item_key' => 'floor', 'type' => 'quantity_mismatch', 'reason' => 'Проверить исходный объём.'],
+        ], 'local_estimates' => [['key' => 'finish_finishing', 'sections' => [['work_items' => [$item]]]]]];
+        $builder = new UniversalEvaluationBuilder;
+        $snapshot = new ProjectModelSnapshot([], [], [], []);
+        $result = $builder->build($draft, $snapshot);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($result['audit_dispositions'], 'status'));
+        self::assertSame('4425.20', $result['scenarios'][0]['positions'][0]['total_cost']);
+        self::assertSame($price['source_hash'], $result['audit_dispositions'][0]['source_hash']);
+        self::assertSame('4425.20', $result['audit_dispositions'][0]['calculated_amount']);
+        self::assertCount(1, array_filter($result['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding'));
+        self::assertCount(2, $draft['audit_review_items']);
+        foreach ([['pricing_status' => 'not_calculated', 'total_cost' => null, 'unit_price' => null, 'pricing_blocker' => 'price_unknown'],
+            ['total_cost' => '0.00'], ['total_cost' => '4425.21'], ['unit_price' => '521.00']] as $change) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [...$item, ...$change];
+            $recalculated = $builder->build($draft, $snapshot);
+            self::assertSame('4425.20', $recalculated['scenarios'][0]['positions'][0]['total_cost']);
+            self::assertSame('4425.20', $recalculated['audit_dispositions'][0]['calculated_amount']);
+        }
+        $changes = [['quantity' => null], ['quantity' => '0']];
+        foreach ([['verified' => false], ['applicable' => false], ['stale' => true], ['source_type' => 'manual'],
+            ['source_reference' => ''], ['source_hash' => 'invalid'], ['unit' => 'm3'], ['as_of_date' => 'invalid'],
+            ['conditions_missing' => ['delivery_cost']], ['vat_mode' => null]] as $change) {
+            $changes[] = ['commercial_price_snapshot' => [...$price, ...$change]];
+        }
+        foreach ($changes as $change) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [...$item, ...$change];
+            $blocked = $builder->build($draft, $snapshot);
+            self::assertSame([], $blocked['audit_dispositions']);
+            self::assertCount(2, array_filter($blocked['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding'));
+        }
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [...$item,
+            'commercial_price_snapshot' => [...$price, 'stale' => true, 'stale_accepted' => true]];
+        $acceptedStale = $builder->build($draft, $snapshot);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($acceptedStale['audit_dispositions'], 'status'));
+        self::assertSame('4425.20', $acceptedStale['audit_dispositions'][0]['calculated_amount']);
+        $item['quantity'] = '1';
+        $item['unit_price'] = $item['commercial_price_snapshot']['unit_price'] = '10.005';
+        $item['total_cost'] = '10.01';
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0] = $item;
+        $rounded = $builder->build($draft, $snapshot);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($rounded['audit_dispositions'], 'status'));
+        self::assertSame('10.01', $rounded['scenarios'][0]['positions'][0]['total_cost']);
+    }
+
+    public function test_zero_price_reconciliation_uses_the_full_selected_scope_for_linked_delivery(): void
+    {
+        $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('room:1', 1, 2, 3,
+            'sha256:'.str_repeat('a', 64), 'room', 'room:1');
+        $price = ['source_type' => 'catalog', 'source_reference' => 'catalog:6', 'source_hash' => str_repeat('a', 64),
+            'unit_price' => '520.00', 'unit' => 'm2', 'currency' => 'RUB', 'as_of_date' => '2026-10-16',
+            'verified' => true, 'applicable' => true, 'stale' => false, 'conditions_missing' => ['delivery_cost'],
+            'vat_mode' => 'excluded', 'vat_rate' => '22', 'delivery_included' => false, 'delivery_work_item_key' => 'delivery'];
+        $floor = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '8.51',
+            'metadata' => ['scope_entity_id' => $entity->id, 'requirement_key' => 'finishing'],
+            'commercial_price_snapshot' => $price];
+        $delivery = ['key' => 'delivery', 'name' => 'Доставка', 'unit' => 'pcs', 'quantity' => '1',
+            'metadata' => ['scope_entity_id' => $entity->id, 'requirement_key' => 'delivery'],
+            'commercial_price_snapshot' => [...$price, 'source_reference' => 'catalog:7', 'source_hash' => str_repeat('b', 64),
+                'unit_price' => '40.00', 'unit' => 'pcs', 'conditions_missing' => [], 'vat_mode' => 'not_applicable',
+                'vat_rate' => null, 'delivery_included' => true, 'delivery_work_item_key' => null]];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'audit_review_items' => [
+            ['finding_id' => 'audit:zero', 'item_key' => 'floor', 'type' => 'suspicious_zero', 'reason' => 'Итог ранее отсутствовал.'],
+        ], 'local_estimates' => [['key' => 'finish_finishing', 'sections' => [['work_items' => [$floor, $delivery]]]]]];
+        $builder = new UniversalEvaluationBuilder;
+        $snapshot = new ProjectModelSnapshot([$entity], [], [], []);
+        $result = $builder->build($draft, $snapshot);
+        self::assertSame([], $result['scenarios'][0]['price_conditions_unresolved']);
+        self::assertSame(['corrected_by_commercial_pricing'], array_column($result['audit_dispositions'], 'status'));
+        self::assertSame('4425.20', $result['audit_dispositions'][0]['calculated_amount']);
+        self::assertSame('5438.74', $result['scenarios'][0]['total_by_currency']['RUB']);
+        $invalidDeliveries = [null, [...$delivery, 'quantity' => null],
+            [...$delivery, 'metadata' => ['requirement_key' => 'delivery']],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'verified' => false]],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'currency' => 'USD']],
+            [...$delivery, 'commercial_price_snapshot' => [...$delivery['commercial_price_snapshot'], 'vat_mode' => null]],
+        ];
+        foreach ($invalidDeliveries as $invalidDelivery) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'] = $invalidDelivery === null ? [$floor] : [$floor, $invalidDelivery];
+            $blocked = $builder->build($draft, $snapshot);
+            self::assertSame([], $blocked['audit_dispositions']);
+            self::assertContains('audit_finding', array_column($blocked['missing_requirements'], 'requirement'));
+            self::assertFalse($blocked['can_confirm_for_apply']);
+        }
+    }
+
     public function test_unresolved_source_rows_are_visible_without_becoming_positions_or_changing_selected_scope(): void
     {
         $draft = ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],

@@ -271,6 +271,41 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
+    public function test_linked_delivery_survives_confirmation_readiness_and_ordinary_publication_with_current_sources(): void
+    {
+        [$actor, $session, , $input, $deliveryCatalog] = $this->fixture(linkedDelivery: true);
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        $this->actingAs($actor);
+        $evaluation = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertNotNull($evaluation['confirmed_scenario']);
+        $snapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+            ->handle($session, ['estimate_generation.view', 'estimate_generation.apply']);
+        self::assertTrue($snapshot->canApply, json_encode($snapshot->blockingIssues));
+        self::assertSame('2140.00', $snapshot->evaluationConfirmation['total_by_currency']['RUB']);
+        self::assertSame('2000.00', $session->draft_payload['evaluation_result']['audit_dispositions'][0]['calculated_amount']);
+        $deliveryCatalog->update(['unit_price' => '41']);
+        $changed = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertNull($changed['confirmed_scenario']);
+        self::assertTrue($changed['result_stale']);
+        self::assertSame($confirmation['state_version'], $session->fresh()->state_version);
+        $deliveryCatalog->update(['unit_price' => '40']);
+        $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
+            (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+        $apply = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class);
+        $published = $apply->handle($command);
+        self::assertSame($published->estimateId, $apply->handle($command)->estimateId);
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame('2140.00', $estimate->total_amount_with_vat);
+        self::assertSame(3, $estimate->items()->whereNull('parent_work_id')->count());
+        app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate);
+        self::assertSame('2140.00', $estimate->fresh()->total_amount_with_vat);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_a_catalog_change_revokes_read_only_confirmation_and_the_apply_action_without_changing_the_revision(): void
     {
         [$actor, $session, $catalog, $input] = $this->fixture();
@@ -370,7 +405,7 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
             ['not_applicable', '0', '0.00', '0.53', '0.63', '7']];
     }
 
-    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB', ?array $reserve = null): array
+    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB', ?array $reserve = null, bool $linkedDelivery = false): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -383,7 +418,14 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $unit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Квадратный метр', 'short_name' => 'м²', 'type' => 'area']);
         $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $organization->id, 'name' => 'Работы по полу', 'code' => 'P-'.Str::random(6),
             'item_type' => 'work', 'measurement_unit_id' => $unit->id, 'unit_price' => $unitPrice, 'is_active' => true, 'created_by_user_id' => $actor->id,
-            'metadata' => ['currency' => $currency, 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => true]]);
+            'metadata' => ['currency' => $currency, 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => ! $linkedDelivery]]);
+        $deliveryCatalog = null;
+        if ($linkedDelivery) {
+            $deliveryUnit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Штука', 'short_name' => 'шт', 'type' => 'piece']);
+            $deliveryCatalog = EstimatePositionCatalog::query()->create(['organization_id' => $organization->id, 'name' => 'Доставка', 'code' => 'D-'.Str::random(6),
+                'item_type' => 'work', 'measurement_unit_id' => $deliveryUnit->id, 'unit_price' => '40', 'is_active' => true, 'created_by_user_id' => $actor->id,
+                'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
+        }
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
             'status' => 'estimate_review_required', 'state_version' => 0,
             'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'region' => 'Москва', 'selected_sections' => ['finishing']]]);
@@ -398,23 +440,29 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
             ...[...$scope, $entity->sourceVersion, 'fact', $roomName->id, $roomName->id, 'user', (string) $actor->id,
                 'Пользователь задаёт помещение сценария без утверждения его размеров.', 1, []]), $roomName);
         $items = [];
-        foreach (['preparation', 'finishing'] as $key) {
+        foreach (['preparation', 'finishing', ...($linkedDelivery ? ['delivery'] : [])] as $key) {
             $items[] = ['key' => $key, 'name' => $key, 'work_key' => $key, 'item_type' => 'priced_work', 'unit' => 'm2',
-                'quantity' => null, 'quantity_status' => 'unknown', 'metadata' => ['entity_id' => $entity->id]];
+                'quantity' => null, 'quantity_status' => 'unknown', 'metadata' => ['entity_id' => $entity->id],
+                ...($key === 'delivery' ? ['unit' => 'pcs'] : [])];
         }
         $draft = ['generation_contract' => UniversalDraftProjector::CONTRACT,
             'source_input_version' => 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($session),
             'evaluation_policy' => ['selected_sections' => ['finishing'], 'price_policy' => 'catalog'],
+            'audit_review_items' => $linkedDelivery ? [['finding_id' => 'audit:zero', 'item_key' => 'finishing',
+                'type' => 'suspicious_zero', 'severity' => 'material', 'reason' => 'Итог ранее отсутствовал.']] : [],
             'local_estimates' => [['key' => 'finishing', 'sections' => [['key' => 'floor', 'work_items' => $items]]]]];
         $draft['evaluation_result'] = (new UniversalEvaluationBuilder)->build($draft, $models->snapshot(...$scope));
         $session->update(['draft_payload' => (new BuildMostEstimateDraft)->seal((new UniversalReviewSummaryProjector)->project($draft))]);
         app(SaveEvaluationScopeSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => 0,
             'selected_sections' => ['finishing'], 'profile_id' => 'construction', 'construction_type' => 'new_construction', 'price_policy' => 'catalog']);
         $source = app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$catalog->id);
-        foreach (['preparation', 'finishing'] as $key) {
+        foreach (['preparation', 'finishing', ...($linkedDelivery ? ['delivery'] : [])] as $key) {
+            $selectedSource = $key === 'delivery' ? app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$deliveryCatalog->id) : $source;
             app(SaveEvaluationPriceSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
                 'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
-                'source_reference' => $source['source_reference'], 'source_hash' => $source['source_hash']]);
+                'source_reference' => $selectedSource['source_reference'], 'source_hash' => $selectedSource['source_hash'],
+                ...($linkedDelivery && $key !== 'delivery' ? ['conditions_confirmation' => ['delivery' => [
+                    'work_item_key' => 'delivery', 'basis' => 'Доставка учтена отдельной работой в выбранном составе.']]] : [])]);
         }
         if ($currency !== 'RUB') {
             app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection::class)->handle($actor, $scope[1], $scope[2],
@@ -424,7 +472,8 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $definitions = [];
         foreach (['minimum' => '12', 'base' => '20', 'maximum' => '30'] as $id => $value) {
             $definitions[] = ['id' => $id, 'basis' => 'Явно заданный пользователем сценарный объём без подтверждения размеров фотографии',
-                'quantities' => [['work_item_key' => 'preparation', 'value' => '1', 'unit' => 'm2'], ['work_item_key' => 'finishing', 'value' => $value, 'unit' => 'm2']]];
+                'quantities' => [['work_item_key' => 'preparation', 'value' => '1', 'unit' => 'm2'], ['work_item_key' => 'finishing', 'value' => $value, 'unit' => 'm2'],
+                    ...($linkedDelivery ? [['work_item_key' => 'delivery', 'value' => '1', 'unit' => 'pcs']] : [])]];
         }
         app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
             'state_version' => $session->fresh()->state_version, 'definitions' => $definitions]);
@@ -452,6 +501,6 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
             'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true];
 
-        return [$actor, $session->fresh(), $catalog, $input];
+        return [$actor, $session->fresh(), $catalog, $input, $deliveryCatalog];
     }
 }
