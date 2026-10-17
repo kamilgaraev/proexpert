@@ -496,6 +496,46 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_project_search_preserves_named_and_organization_queries_without_model_selected_id(): void
+    {
+        foreach ([['Найди проект Альфа', 'Альфа'], ['Покажи все проекты нашей организации', '']] as [$question, $query]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('search_projects');
+            $tool->method('getParametersSchema')->willReturn((new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool)->getParametersSchema());
+            $observedArguments = null;
+            $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $actualArguments) use (&$observedArguments): array {
+                $observedArguments = $actualArguments;
+
+                return ['source_refs' => []];
+            });
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $failures = [];
+            $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'search_projects',
+                'arguments' => json_encode(['query' => $query, 'project_id' => 100, 'limit' => 7], JSON_THROW_ON_ERROR)],
+                ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]], $failures);
+            self::assertSame(['query' => $query, 'limit' => 7], $observedArguments);
+            self::assertSame([], $failures);
+        }
+    }
+
+    public function test_project_search_cannot_replace_missing_trusted_current_context_with_model_id(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('search_projects');
+        $tool->method('getParametersSchema')->willReturn((new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool)->getParametersSchema());
+        $tool->expects($this->never())->method('execute');
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'search_projects',
+            'arguments' => '{"query":"текущий проект","project_id":100}'], ['request' => [
+                'message' => 'Сделай Excel по текущему проекту.', 'context' => ['project_id' => 52],
+            ]], $failures);
+        self::assertSame('current_project_required', $result['reason']);
+        self::assertSame([], $result['source_refs']);
+    }
+
     public function test_organization_and_explicit_entity_requests_preserve_model_scope(): void
     {
         foreach (['Выбери договор во всех проектах.', 'Покажи договор №315.', 'Покажи договоры проекта «СевГУ».'] as $question) {
