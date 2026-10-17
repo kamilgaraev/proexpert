@@ -49,6 +49,7 @@ final readonly class ProductionAcceptanceEventRecorder
         private ProductionAcceptanceOwnerVersionWriter $ownerVersions,
         private ProductionAcceptanceCoverageGapRecorder $coverageGaps,
         private ActingQuantityReservationService $quantityReservations,
+        private ProductionAcceptanceUnitResolver $units,
     ) {}
 
     public function recordTransition(
@@ -215,17 +216,8 @@ final readonly class ProductionAcceptanceEventRecorder
         ?int $actorId,
         array &$acceptedSourceQuantities,
     ): ProductionAcceptanceEvent {
-        $unit = $work->workType?->measurementUnit;
-        if ($unit === null || trim((string) $unit->short_name) === '') {
-            throw new InvalidArgumentException('production_acceptance_unit_unavailable');
-        }
-        $organizationId = (int) $act->contract->organization_id;
-        if ($organizationId < 1
-            || (int) $work->organization_id !== $organizationId
-            || (int) $work->project_id !== (int) $act->project_id
-        ) {
-            throw new InvalidArgumentException('production_acceptance_scope_mismatch');
-        }
+        $unit = $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id,
+            PerformanceActLine::capturedUnitFromCompletedWork($work));
         $pivot = $work->pivot;
         if (! $pivot instanceof PerformanceActCompletedWork) {
             throw new InvalidArgumentException('production_acceptance_pivot_unavailable');
@@ -261,13 +253,10 @@ final readonly class ProductionAcceptanceEventRecorder
         array &$acceptedSourceQuantities,
     ): ProductionAcceptanceEvent {
         $work = $line->completedWork;
-        $unit = $work?->workType?->measurementUnit;
-        if ($line->line_type !== PerformanceActLine::TYPE_COMPLETED_WORK || $work === null || $unit === null) {
+        if ($line->line_type !== PerformanceActLine::TYPE_COMPLETED_WORK || $work === null) {
             throw new InvalidArgumentException('production_acceptance_line_identity_unavailable');
         }
-        if (trim((string) $line->unit) !== '' && (string) $line->unit !== (string) $unit->short_name) {
-            throw new InvalidArgumentException('production_acceptance_unit_mismatch');
-        }
+        $unit = $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id, $line->unit);
         $workId = (int) $work->id;
         $acceptedSourceQuantities[$workId] ??= 0;
 
@@ -597,7 +586,7 @@ final readonly class ProductionAcceptanceEventRecorder
     }
 
     /**
-     * @param list<int> $workIds
+     * @param  list<int>  $workIds
      * @return array<int, int>
      */
     private function activeAcceptedQuantities(
