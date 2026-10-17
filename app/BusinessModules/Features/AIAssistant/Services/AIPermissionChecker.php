@@ -16,6 +16,8 @@ class AIPermissionChecker
 
     private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
 
+    private const PUBLISHED_REPORT_TOOLS = ['describe_published_reports', 'generate_published_report'];
+
     private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
 
     private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'];
@@ -192,6 +194,15 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
+        if (in_array($toolName, self::PUBLISHED_REPORT_TOOLS, true)) {
+            try {
+                app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAccess::class)->actor((int) $user->id, $organizationId, true);
+
+                return $policy->trustedSurface() === \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN;
+            } catch (\Throwable) {
+                return false;
+            }
+        }
         if (in_array($toolName, \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::TOOLS, true)) {
             try {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::class)->authorize($user, $organizationId, $toolName, $params);
@@ -300,6 +311,7 @@ class AIPermissionChecker
         $toolName = $this->normalizeToolName($toolName);
 
         return in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)
+            || in_array($toolName, self::PUBLISHED_REPORT_TOOLS, true)
             || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)
             || in_array($toolName, self::ESTIMATE_TOOLS, true)
             || $this->domainsForTool($toolName) !== [];

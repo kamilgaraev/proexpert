@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\Assistant
 final class AssistantToolEligibilityPolicy
 {
     private const READ_TOOLS = [
+        'describe_published_reports',
         'describe_custom_report_source',
         'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities',
         'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
@@ -31,6 +32,7 @@ final class AssistantToolEligibilityPolicy
     ];
 
     private const REPORT_TOOLS = [
+        'generate_published_report',
         'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report',
         'generate_contractor_settlements_report', 'generate_warehouse_stock_report', 'generate_time_tracking_report',
         'generate_contract_payments_report', 'generate_project_timelines_report',
@@ -112,10 +114,10 @@ final class AssistantToolEligibilityPolicy
         if ($category === 'report' && $understanding->primaryIntent !== 'generate_report') {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_explicit_only'));
         }
-        if ($category === 'report' && in_array($understanding->outputFormat, ['xlsx', 'csv'], true) && $toolName !== 'generate_custom_report') {
+        if ($category === 'report' && in_array($understanding->outputFormat, ['xlsx', 'csv'], true) && ! in_array($toolName, ['generate_custom_report', 'generate_published_report'], true)) {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_format_disabled'));
         }
-        if ($category === 'report' && $execute && $toolName === 'generate_custom_report'
+        if ($category === 'report' && $execute && in_array($toolName, ['generate_custom_report', 'generate_published_report'], true)
             && in_array($understanding->outputFormat, ['xlsx', 'csv', 'pdf'], true)
             && ($arguments['format'] ?? null) !== $understanding->outputFormat) {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_format_disabled'));

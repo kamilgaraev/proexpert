@@ -31,6 +31,7 @@ Schedule::command('assets:verify-cutover --format=json')
     ->appendOutputTo(storage_path('logs/asset-registry-cutover.log'));
 
 Schedule::job(new ScheduleDueReportSubscriptionsJob)->everyMinute()->withoutOverlapping(5)->onOneServer();
+Schedule::job(new \App\BusinessModules\Features\AIAssistant\Jobs\RecoverAssistantPublishedReports)->everyMinute()->withoutOverlapping(5)->onOneServer();
 Schedule::job(new ExpireReportSubscriptionExecutionsJob)->everyFiveMinutes()->withoutOverlapping(10)->onOneServer();
 Schedule::job(new PruneReportSubscriptionDeliveriesJob)->daily()->withoutOverlapping(30)->onOneServer();
 
