@@ -36,7 +36,6 @@ use DateTimeZone;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
-use JsonException;
 
 final readonly class AssistantReportSubscriptionManager
 {
@@ -192,7 +191,7 @@ final readonly class AssistantReportSubscriptionManager
         }
         $viewInput = null;
         if (in_array($operation, ['create', 'update'], true)) {
-            $filters = array_key_exists('filters_json', $arguments) ? $this->filters($arguments['filters_json']) : ($view?->filters->values ?? []);
+            $filters = AssistantReportSubscriptionFilters::resolve($arguments, $view?->filters->values ?? []);
             $filters = $this->periods->initialFilters($definition, $filters, ['mode' => $schedule['period_mode']], $this->clock->now(), $context->scope->timezone);
             $viewInput = ['report_code' => $definition->code, 'name' => $arguments['name'] ?? $view?->name ?? '',
                 'visibility' => 'private', 'is_default' => false, 'filters' => $filters, 'comparison' => $view?->comparison ?? [],
@@ -271,25 +270,6 @@ final readonly class AssistantReportSubscriptionManager
         }
 
         return $this->subscriptions->getForActor($organizationId, (int) $actor->id, $id);
-    }
-
-    private function filters(mixed $json): array
-    {
-        if (! is_string($json) || strlen($json) > 16000) {
-            $this->invalid();
-        }
-        try {
-            $object = json_decode($json, false, 12, JSON_THROW_ON_ERROR);
-            $filters = json_decode($json, true, 12, JSON_THROW_ON_ERROR);
-        } catch (JsonException) {
-            $this->invalid();
-        }
-        if (! $object instanceof \stdClass || ! is_array($filters)
-            || array_intersect(array_keys($filters), ['project_id', 'organization_id', 'holding_organization_ids', 'project_ids']) !== []) {
-            $this->invalid();
-        }
-
-        return $filters;
     }
 
     private function scheduleData(string $viewId, array $schedule): CreateReportSubscriptionData
