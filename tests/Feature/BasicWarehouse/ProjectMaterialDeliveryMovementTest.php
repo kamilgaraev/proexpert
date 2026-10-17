@@ -202,7 +202,7 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $this->allowAdminAccess();
-        foreach (['foreign_organization', 'other_project', 'inactive', 'deleted', 'physical_shortage', 'allocated_stock'] as $case) {
+        foreach (['foreign_organization', 'other_project', 'inactive', 'deleted', 'physical_shortage', 'transit', 'allocated_stock'] as $case) {
             $setup = $this->createPurchaseDeliveryContext($context);
             if ($case === 'foreign_organization') {
                 $setup['sourceWarehouse']->update(['organization_id' => Organization::factory()->create()->id]);
@@ -215,6 +215,12 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
                 $setup['sourceWarehouse']->delete();
             } elseif ($case === 'physical_shortage') {
                 WarehouseBalance::query()->where('warehouse_id', $setup['sourceWarehouse']->id)->update(['available_quantity' => 5]);
+            } elseif ($case === 'transit') {
+                $setup['sourceWarehouse']->update([
+                    'project_id' => $setup['project']->id,
+                    'warehouse_type' => OrganizationWarehouse::TYPE_EXTERNAL,
+                    'settings' => ['purpose' => 'project_delivery_transit'],
+                ]);
             } else {
                 $setup['allocation']->update(['allocated_quantity' => 95]);
             }

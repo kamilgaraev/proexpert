@@ -81,6 +81,8 @@ final class ProjectWarehouseService
             ->whereIn('id', [$delivery->warehouse_id, $transitWarehouse->id])->orderBy('id')->lockForUpdate()->get();
         $sourceWarehouse = $warehouses->firstWhere('id', $delivery->warehouse_id);
         if ($sourceWarehouse === null || ! $sourceWarehouse->is_active
+            || (int) $sourceWarehouse->id === (int) $transitWarehouse->id
+            || ($sourceWarehouse->settings['purpose'] ?? null) === 'project_delivery_transit'
             || ($sourceWarehouse->project_id !== null && (int) $sourceWarehouse->project_id !== (int) $delivery->project_id)) {
             throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.invalid_source_warehouse'));
         }
