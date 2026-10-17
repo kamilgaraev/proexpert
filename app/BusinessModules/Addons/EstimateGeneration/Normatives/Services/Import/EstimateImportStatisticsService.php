@@ -125,9 +125,37 @@ class EstimateImportStatisticsService
         $totals = [];
 
         foreach ($tables as $key => $table) {
-            $totals[$key] = Schema::hasTable($table) ? DB::table($table)->count() : 0;
+            $totals[$key] = !Schema::hasTable($table) ? 0 : ($key === 'prices' ? $this->priceCount() : DB::table($table)->count());
         }
 
         return $totals;
+    }
+
+    private function priceCount(): int
+    {
+        $connection = DB::connection();
+        if ($connection->getDriverName() !== 'pgsql' || $connection->getTablePrefix() !== ''
+            || $connection->getConfig('read') !== null || $connection->getConfig('write') !== null
+            || ($connection->transactionLevel() === 0 && $connection->getPdo()->inTransaction())) {
+            return $connection->table('estimate_resource_prices')->count();
+        }
+
+        return $connection->transaction(function () use ($connection): int {
+            $connection->statement('LOCK TABLE "estimate_resource_prices" IN ACCESS SHARE MODE');
+            $guard = $connection->selectOne("SELECT to_regclass('estimate_resource_prices')=to_regclass('public.estimate_resource_prices') AS source_matches,
+                to_regclass('public.estimate_resource_price_count_deltas') IS NOT NULL AS counter_exists,
+                has_table_privilege(to_regclass('public.estimate_resource_price_count_deltas'),'SELECT') AS counter_readable,
+                row_security_active('estimate_resource_prices'::regclass) AS row_security,pg_is_in_recovery() AS recovery");
+            if ($guard === null || $guard->source_matches !== true || $guard->counter_exists !== true || $guard->counter_readable !== true
+                || $guard->row_security !== false || $guard->recovery !== false) {
+                return $connection->table('estimate_resource_prices')->count();
+            }
+
+            $result = $connection->selectOne("SELECT CASE WHEN current_setting('transaction_isolation') IN ('read committed','read uncommitted')
+                THEN (SELECT COALESCE(sum(delta),0)::bigint FROM public.estimate_resource_price_count_deltas)
+                ELSE (SELECT count(*) FROM public.estimate_resource_prices) END AS aggregate");
+
+            return (int) $result->aggregate;
+        });
     }
 }
