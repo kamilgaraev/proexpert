@@ -205,6 +205,21 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $invalidItems[0]['materials'][0]['price_id'] = PHP_INT_MAX;
         self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
             ->verify($invalidItems, $session->fresh()->draft_payload['regional_context']));
+        $otherItems = $probeItems;
+        $otherResource = $otherItems[0]['labor'][0];
+        $otherResource['resource_type'] = 'other';
+        $otherResourceId = $otherResource['normative_ref']['norm_resource_id'];
+        $otherItems[0]['labor'] = [];
+        $otherItems[0]['other_resources'] = [$otherResource];
+        DB::table('estimate_norm_resources')->where('id', $otherResourceId)->update(['resource_type' => 'other']);
+        try {
+            $verifier = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices;
+            self::assertTrue($verifier->verify($otherItems, $session->fresh()->draft_payload['regional_context']));
+            DB::table('estimate_norm_resources')->where('id', $otherResourceId)->update(['resource_type' => 'summary']);
+            self::assertFalse($verifier->verify($otherItems, $session->fresh()->draft_payload['regional_context']));
+        } finally {
+            DB::table('estimate_norm_resources')->where('id', $otherResourceId)->update(['resource_type' => 'labor']);
+        }
         $readySnapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
             ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
         self::assertTrue($readySnapshot->canApply, json_encode($readySnapshot->blockingIssues, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
@@ -456,6 +471,9 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $version = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
         DB::table('estimate_resource_prices')->insert(['dataset_version_id' => $prices, 'regional_price_version_id' => $version, 'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'resource_code' => $key, 'resource_name' => 'Труд рабочих', 'unit' => 'h', 'base_price' => '30.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
         if ($abstract) {
+            DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $norm, 'resource_code' => 'summary-total',
+                'resource_name' => 'Итого', 'unit' => 'h', 'quantity' => '0.000000', 'resource_type' => 'summary',
+                'created_at' => $now, 'updated_at' => $now]);
             $finishNorm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'code' => '11-01-034-04',
                 'section_code' => '11', 'section_name' => 'Полы', 'section_id' => $section,
                 'name' => 'Устройство покрытий из досок ламинированных замковым способом', 'unit' => 'м2', 'created_at' => $now, 'updated_at' => $now]);

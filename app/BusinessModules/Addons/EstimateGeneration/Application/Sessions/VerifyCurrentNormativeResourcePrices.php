@@ -36,7 +36,7 @@ final class VerifyCurrentNormativeResourcePrices
         }
         $normResources = [];
         foreach (array_chunk(array_values($normIds), 1000) as $chunk) {
-            foreach (DB::table('estimate_norm_resources')->whereIn('estimate_norm_id', $chunk)
+            foreach (DB::table('estimate_norm_resources')->whereIn('estimate_norm_id', $chunk)->where('resource_type', '<>', 'summary')
                 ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'resource_type', 'unit', 'quantity']) as $row) {
                 $normResources[(int) $row->estimate_norm_id][(int) $row->id] = $row;
             }
