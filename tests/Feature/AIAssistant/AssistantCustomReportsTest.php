@@ -901,6 +901,56 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
     }
 
+    public function test_projectless_multi_contract_payments_resolve_only_currently_accessible_contracts_and_acts(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $contract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $contract->projects()->attach($project->id);
+        $act = $this->paymentReportAct($contract, $project);
+        $documents = [];
+        foreach ([['invoiceable_type' => $act::class, 'invoiceable_id' => $act->id],
+            ['source_type' => $act::class, 'source_id' => $act->id],
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id],
+            ['source_type' => Contract::class, 'source_id' => $contract->id],
+            ['metadata' => ['contract_id' => $contract->id]]] as $link) {
+            $documents[] = $this->paymentReportDocument($org, $actor, $project, array_replace($link, ['project_id' => null]));
+        }
+        $documents[] = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => $documents[0]::class, 'source_id' => $documents[0]->id]);
+        $unassigned = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $hiddenContract = $this->contract($org, $unassigned, '900.00');
+        $hiddenContract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $hiddenContract->projects()->attach($unassigned->id);
+        $hiddenAct = $this->paymentReportAct($hiddenContract, $unassigned);
+        $hiddenDocument = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'invoiceable_type' => $hiddenAct::class, 'invoiceable_id' => $hiddenAct->id]);
+        $unresolved = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => $hiddenAct::class, 'source_id' => $hiddenAct->id]);
+        $foreign = Organization::factory()->create();
+        $foreignContract = $this->contract($foreign, Project::factory()->create(['organization_id' => $foreign->id]), '999.00');
+        $foreignContract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $foreignSource = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => Contract::class, 'source_id' => $foreignContract->id]);
+        $report = $this->builder->build($this->plan($this->paymentReportSection()), $actor, $org->id);
+        $expected = [];
+        foreach ($documents as $document) {
+            $expected[] = [$document->document_number, $contract->number];
+        }
+        $expected[] = [$unresolved->document_number, null];
+        $expected[] = [$foreignSource->document_number, null];
+        self::assertSame($expected, $report['sections'][0]['rows']);
+        self::assertNotContains($hiddenDocument->document_number, array_column($report['sections'][0]['rows'], 0));
+        $summary = $this->builder->build($this->plan($this->paymentReportSection(['columns' => ['contract_number', 'currency'],
+            'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
+            'group_by' => ['contract_number', 'currency'], 'metrics' => [['field' => 'amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Документов']]])), $actor, $org->id);
+        self::assertSame([[$contract->number, 'RUB', '60.00', 6]], $summary['sections'][0]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
     public function test_payment_contract_projection_fences_cycles_depth_foreign_and_project_links(): void
     {
         [$org, $actor, $project] = $this->fixture();

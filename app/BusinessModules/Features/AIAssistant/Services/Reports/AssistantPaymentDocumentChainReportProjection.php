@@ -39,9 +39,9 @@ final class AssistantPaymentDocumentChainReportProjection
             .' ON report_payment_contract.id = ('.$identity.')'
             .' WHERE (NOT COALESCE(report_payment_contract.is_multi_project, FALSE)'
             .' AND report_payment_contract.project_id IS NOT DISTINCT FROM chain.project_id)'
-            .' OR (COALESCE(report_payment_contract.is_multi_project, FALSE) AND chain.project_id IS NOT NULL'
-            .' AND EXISTS (SELECT 1 FROM contract_project WHERE contract_project.contract_id = report_payment_contract.id'
-            .' AND contract_project.project_id = chain.project_id)) ORDER BY chain.depth ASC LIMIT 1';
+            .' OR (COALESCE(report_payment_contract.is_multi_project, FALSE) AND (chain.project_id IS NULL'
+            .' OR EXISTS (SELECT 1 FROM contract_project WHERE contract_project.contract_id = report_payment_contract.id'
+            .' AND contract_project.project_id = chain.project_id))) ORDER BY chain.depth ASC LIMIT 1';
         $bindings = [...$parents->getBindings(), ...$parents->getBindings(), PaymentDocument::class, Contract::class, ContractPerformanceAct::class,
             ...$contracts->getBindings(), Contract::class, ContractPerformanceAct::class, ...($actContract?->getBindings() ?? []),
             Contract::class, ContractPerformanceAct::class, ...($actContract?->getBindings() ?? [])];
