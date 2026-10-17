@@ -62,7 +62,7 @@ final class IsolatedPostgresTestDatabase
             || ($configuration['host'] ?? null) !== '127.0.0.1'
             || (string) ($configuration['port'] ?? '') !== (string) self::profilePort($profile)
             || preg_match('/^[a-zA-Z0-9_]+_testing$/D', (string) ($configuration['database'] ?? '')) !== 1
-            || !empty($configuration['url'])) {
+            || ! empty($configuration['url'])) {
             throw new RuntimeException('postgres_test_database_configuration_unsafe');
         }
     }
@@ -155,8 +155,9 @@ final class IsolatedPostgresTestDatabase
         }
 
         self::$cleanupRegistered = true;
-        register_shutdown_function(static function (): void {
-            if (self::$bootstrap === null) {
+        $ownerPid = getmypid();
+        register_shutdown_function(static function () use ($ownerPid): void {
+            if (getmypid() !== $ownerPid || self::$bootstrap === null) {
                 return;
             }
 

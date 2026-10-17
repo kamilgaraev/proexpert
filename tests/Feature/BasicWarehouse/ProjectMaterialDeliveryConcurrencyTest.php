@@ -121,7 +121,13 @@ final class ProjectMaterialDeliveryConcurrencyTest extends TestCase
             }
             $harness->release(0);
             $harness->release(1);
-            $harness->waitForChildren($children);
+            try {
+                $harness->waitForChildren($children);
+            } catch (\RuntimeException $exception) {
+                $harness->result(0);
+                $harness->result(1);
+                throw $exception;
+            }
             $states = [
                 (string) $harness->result(0)['state'],
                 (string) $harness->result(1)['state'],
