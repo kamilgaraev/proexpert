@@ -16,7 +16,8 @@ final class AssistantPublishedReportProjectScope
         if (! $organizationWide && AssistantReportEntityQuery::hasAmbiguousName($message, 'project')) {
             return false;
         }
-        $current = $scope->requested && AssistantReportEntityQuery::extract($message, 'project') === null;
+        $current = ! $organizationWide && ($scope->requested || $scope->projectId !== null)
+            && AssistantReportEntityQuery::extract($message, 'project') === null;
 
         return ! (($current && $scope->projectId === null)
             || ($current && $scope->projectId !== null && $projectId !== $scope->projectId)
