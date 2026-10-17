@@ -13,6 +13,9 @@ final class AssistantPublishedReportProjectScope
         $scope = AssistantRequestProjectScope::fromPlan(['request' => $requestPayload]);
         $message = (string) ($requestPayload['message'] ?? '');
         $organizationWide = AssistantRequestProjectScope::organizationWide($message);
+        if (! $organizationWide && AssistantReportEntityQuery::hasAmbiguousName($message, 'project')) {
+            return false;
+        }
         $current = $scope->requested && AssistantReportEntityQuery::extract($message, 'project') === null;
 
         return ! (($current && $scope->projectId === null)

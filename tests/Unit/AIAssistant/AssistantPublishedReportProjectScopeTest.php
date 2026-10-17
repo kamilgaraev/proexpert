@@ -16,6 +16,7 @@ final class AssistantPublishedReportProjectScopeTest extends TestCase
         return [
             'named_project_differs_from_ui' => ['Сформируй Excel по проекту «Учебный ПТО»', 52, 102, true],
             'our_named_project_differs_from_ui' => ['Сформируй Excel по нашему проекту «Учебный ПТО»', 52, 102, true],
+            'multiple_named_projects_are_ambiguous' => ['Сформируй Excel по проекту «Учебный ПТО» и проекту «СевГУ»', 52, 102, false],
             'named_object_differs_from_ui' => ['Сформируй Excel по объекту СевГУ', 52, 102, true],
             'named_project_without_ui' => ['Сформируй Excel по проекту «Учебный ПТО»', null, 102, true],
             'named_project_cannot_expand_to_organization' => ['Сформируй Excel о состоянии проекта «Учебный ПТО»', 52, null, false],
@@ -48,5 +49,12 @@ final class AssistantPublishedReportProjectScopeTest extends TestCase
         self::assertSame('Склад на улице Мира, этап 2', AssistantReportEntityQuery::extract(
             'Отчёт по объекту «Склад на улице Мира, этап 2» за октябрь', 'project'));
         self::assertSame('СевГУ', AssistantReportEntityQuery::extract('Отчёт по проекту СевГУ за октябрь', 'project'));
+        self::assertSame('Учебный ПТО', AssistantReportEntityQuery::extract('Сформируй отчёт о состоянии проекта по проекту «Учебный ПТО»', 'project'));
+        self::assertSame('Новый проект на улице Мира', AssistantReportEntityQuery::extract('Отчёт по проекту «Новый проект на улице Мира» за октябрь', 'project'));
+        self::assertSame('СевГУ', AssistantReportEntityQuery::extract("Сформируй отчёт о состоянии проекта\nпо проекту «СевГУ»", 'project'));
+        self::assertNull(AssistantReportEntityQuery::extract('Отчёт по проекту «Учебный ПТО» и проекту «СевГУ»', 'project'));
+        self::assertSame('СевГУ', AssistantReportEntityQuery::extract('Отчёт о состоянии проекта по проекту СевГУ', 'project'));
+        self::assertSame('СевГУ', AssistantReportEntityQuery::extract('Отчёт по проекту «СевГУ» и снова по проекту «СевГУ»', 'project'));
+        self::assertNull(AssistantReportEntityQuery::extract('Отчёт по проекту «  »', 'project'));
     }
 }

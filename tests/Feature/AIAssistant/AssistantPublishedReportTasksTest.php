@@ -219,12 +219,19 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
     }
 
-    public function test_named_project_cannot_be_replaced_by_another_accessible_project(): void
+    public static function namedProjectRequests(): array
+    {
+        return [['Сформируй Excel по проекту «%s»'], ['Сформируй Excel по нашему проекту «%s»'],
+            ['Сформируй отчёт о состоянии проекта по проекту «%s»']];
+    }
+
+    #[DataProvider('namedProjectRequests')]
+    public function test_named_project_cannot_be_replaced_by_another_accessible_project(string $message): void
     {
         $actor = $this->fixture->owner;
         $org = (int) $this->fixture->organization->id;
         $named = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $org, 'name' => 'Учебный ПТО — офис 100 м²']));
-        $root = $this->root($actor, message: 'Сформируй Excel по проекту «'.$named->name.'»');
+        $root = $this->root($actor, message: sprintf($message, $named->name));
         $tasks = app(AssistantPublishedReportTasks::class);
         $this->denied(fn () => $tasks->create($this->arguments(), $actor, $org));
         self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
