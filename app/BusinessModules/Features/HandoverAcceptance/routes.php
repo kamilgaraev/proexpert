@@ -28,6 +28,9 @@ Route::prefix('api/v1/admin/handover-acceptance')
         Route::post('/scopes/{scope}/checklists', [HandoverAcceptanceController::class, 'storeChecklist'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.edit');
+        Route::post('/checklist-items/{checklistItem}/review', [HandoverAcceptanceController::class, 'reviewChecklistItem'])
+            ->whereNumber('checklistItem')
+            ->middleware('authorize:handover-acceptance.inspect');
         Route::post('/scopes/{scope}/sessions', [HandoverAcceptanceController::class, 'storeSession'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.inspect');
@@ -53,6 +56,9 @@ Route::prefix('api/v1/admin/handover-acceptance')
             ->whereNumber('finding')
             ->middleware('authorize:handover-acceptance.punch-list.resolve');
         Route::post('/scopes/{scope}/package', [HandoverAcceptanceController::class, 'storePackage'])
+            ->whereNumber('scope')
+            ->middleware('authorize:handover-acceptance.edit');
+        Route::put('/scopes/{scope}/package/executive-set', [HandoverAcceptanceController::class, 'bindPackageExecutiveSet'])
             ->whereNumber('scope')
             ->middleware('authorize:handover-acceptance.edit');
         Route::put('/scopes/{scope}/work-quantities', [HandoverAcceptanceController::class, 'storeWorkQuantities'])
