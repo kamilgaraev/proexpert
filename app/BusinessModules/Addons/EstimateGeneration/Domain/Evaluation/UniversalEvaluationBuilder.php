@@ -23,7 +23,19 @@ final readonly class UniversalEvaluationBuilder
     public function build(array $draft, ProjectModelSnapshot $snapshot, array $decisions = [], array $technologies = []): array
     {
         $policy = $draft['evaluation_policy'] ?? [];
+        $regionalTerms = (new EvaluationRegionalPriceConditions)->accepted($draft, $snapshot, $decisions);
         $scope = $policy['selected_sections'] ?? [];
+        $workScope = new EvaluationWorkScope;
+        $workSelection = $policy['scope_selection']['work_scope'] ?? null;
+        $expectedSelection = ['selected_sections' => $scope, 'profile_id' => $policy['profile_id'] ?? 'construction',
+            'construction_type' => $policy['construction_type'] ?? 'new_construction',
+            'price_policy' => $policy['price_policy'] ?? 'normative', 'profile_version' => ScopeCompletenessEvaluator::VERSION,
+            ...($workSelection === null ? [] : ['work_scope' => $workSelection])];
+        $workScopeCurrent = $workSelection !== null && $workScope->current($draft, $workSelection)
+            && (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedSelection);
+        $selectedKeys = $workScopeCurrent ? array_fill_keys(array_column($workSelection['selected_items'], 'key'), true) : null;
+        $excludedItems = [];
+        $auditDispositions = [];
         $positions = [];
         $assumptions = [];
         $scopeExclusions = [];
@@ -51,6 +63,12 @@ final readonly class UniversalEvaluationBuilder
                     if (in_array($item['item_type'] ?? 'priced_work', ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
                         continue;
                     }
+                    if ($selectedKeys !== null && ! isset($selectedKeys[$item['key']])) {
+                        $excludedItems[] = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'],
+                            'section' => $sectionKey, 'reason' => $workSelection['reason']];
+
+                        continue;
+                    }
                     $quantity = is_array($item['quantity_basis_details'] ?? null) ? $item['quantity_basis_details'] : [];
                     $entityId = $item['metadata']['scope_entity_id'] ?? $quantity['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
                     if (! is_string($entityId) || ! isset($entityIds[$entityId])) {
@@ -67,7 +85,7 @@ final readonly class UniversalEvaluationBuilder
                         'quantity_formula' => $quantity['formula_key'] ?? null, 'quantity_basis' => $quantity,
                         'quantity_evidence_details' => $this->quantityEvidenceDetails($quantity, $factsById, $proofsById),
                         'source_refs' => $item['source_refs'] ?? [],
-                        'price_snapshot' => $this->price($item, $draft), 'technology' => $item['specialization_scenario'] ?? null,
+                        'price_snapshot' => $this->price($item, $draft, $regionalTerms), 'technology' => $item['specialization_scenario'] ?? null,
                         'dependencies' => $item['metadata']['dependencies'] ?? [], 'warnings' => $item['validation_flags'] ?? []];
                     if ($entityId === null && ! isset($item['metadata']['scope_entity_id']) && ! isset($item['metadata']['entity_id'])
                         && ! isset($quantity['formula_inputs']['entity_id'])) {
@@ -79,6 +97,9 @@ final readonly class UniversalEvaluationBuilder
                     $positions[] = $position;
                     foreach ($quantity['assumptions'] ?? [] as $assumption) {
                         $assumptions[] = ['position_key' => $item['key'], 'basis' => $assumption];
+                    }
+                    if (is_array($item['metadata']['material_assumption'] ?? null)) {
+                        $assumptions[] = ['position_key' => $item['key'], 'basis' => $item['metadata']['material_assumption']];
                     }
                     if ($position['quantity'] === null) {
                         $questionCandidates[] = ['key' => 'quantity:'.$item['key'], 'question' => 'Уточните объём работы «'.$position['name'].'» и единицу измерения.',
@@ -110,6 +131,9 @@ final readonly class UniversalEvaluationBuilder
             $policy['construction_type'] ?? 'new_construction', $entityScope, $positions, $decisions, $technologies);
         $coverage = (new EvaluationCoverageEvidenceProjector)->project($coverage, $snapshot);
         $requirements = $coverage['missing_requirements'];
+        if ($workSelection !== null && ! $workScopeCurrent) {
+            $requirements[] = ['requirement' => 'work_scope_confirmation', 'reason' => 'work_scope_selection_changed'];
+        }
         if (($policy['required_technology_revision'] ?? 0) > ($policy['technology_revision'] ?? 0)) {
             $requirements[] = ['section' => 'roofing', 'entity_id' => null, 'requirement' => 'technology_composition_refresh',
                 'reason' => 'technology_selection_changed'];
@@ -120,7 +144,7 @@ final readonly class UniversalEvaluationBuilder
                 'next_action' => 'quote_composition_refresh', 'effect' => 'Новый состав будет подготовлен отдельно; текущие позиции и созданная смета сохранятся.'];
         }
         foreach ($requirements as $requirement) {
-            if ($requirement['requirement'] === 'technology_composition_refresh') {
+            if (in_array($requirement['requirement'], ['technology_composition_refresh', 'work_scope_confirmation'], true)) {
                 continue;
             }
             $affected = array_values(array_column(array_filter($positions, static fn (array $position): bool => $position['section'] === $requirement['section'] && ($requirement['entity_id'] === null || $position['entity_id'] === $requirement['entity_id'])), 'key'));
@@ -134,7 +158,40 @@ final readonly class UniversalEvaluationBuilder
         $positions = $conflicts['positions'];
         array_push($requirements, ...$conflicts['requirements']);
         array_push($questionCandidates, ...$conflicts['questions']);
+        $excluded = $workScopeCurrent ? array_column($workSelection['excluded_audit_findings'] ?? [], null, 'finding_id') : [];
+        $acceptedMaterials = $workScopeCurrent ? array_column($workSelection['accepted_material_findings'] ?? [], null, 'finding_id') : [];
+        $currentItems = $workScope->items($draft);
         foreach ($draft['audit_review_items'] ?? [] as $finding) {
+            $findingKey = $finding['item_key'] ?? null;
+            $findingId = $finding['finding_id'] ?? null;
+            $hash = $workScope->findingHash($finding);
+            if (isset($excluded[$findingId]) && is_string($findingKey) && ! isset($selectedKeys[$findingKey])
+                && hash_equals($excluded[$findingId]['fingerprint'], $hash)) {
+                $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'outside_confirmed_work_scope',
+                    'reason' => $workSelection['reason'], 'decision_id' => $policy['scope_selection']['decision_id']];
+
+                continue;
+            }
+            $currentItem = $currentItems[$findingKey]['item'] ?? null;
+            if (is_array($currentItem) && ($finding['type'] ?? null) === 'suspicious_zero'
+                && is_string($currentItem['price_snapshot']['final_amount'] ?? null)
+                && $this->price($currentItem, $draft, $regionalTerms) !== null && is_numeric($currentItem['total_cost'] ?? null)
+                && BigDecimal::of((string) $currentItem['total_cost'])->isEqualTo((string) $currentItem['price_snapshot']['final_amount'])) {
+                $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'corrected_by_native_pricing',
+                    'price_snapshot_hash' => hash('sha256', CanonicalPipelineJson::encode($currentItem['price_snapshot']))];
+
+                continue;
+            }
+            if (isset($acceptedMaterials[$findingId]) && is_array($currentItem)
+                && hash_equals($acceptedMaterials[$findingId]['fingerprint'], $hash)
+                && $workScope->materialBinding($currentItem) !== null
+                && CanonicalPipelineJson::encode($workScope->materialBinding($currentItem))
+                    === CanonicalPipelineJson::encode($acceptedMaterials[$findingId]['material_binding'])) {
+                $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'material_assumption_accepted',
+                    'decision_id' => $policy['scope_selection']['decision_id']];
+
+                continue;
+            }
             $requirements[] = ['requirement' => 'audit_finding', 'reason' => $finding['reason'] ?? 'audit_review_required',
                 'position_keys' => isset($finding['item_key']) ? [$finding['item_key']] : []];
         }
@@ -174,8 +231,9 @@ final readonly class UniversalEvaluationBuilder
         }
         $expectedScope = ['selected_sections' => $scope, 'profile_id' => $coverage['profile_id'],
             'construction_type' => $coverage['construction_type'], 'price_policy' => $policy['price_policy'] ?? 'normative',
-            'profile_version' => $coverage['profile_version']];
-        $scopeConfirmed = (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedScope);
+            'profile_version' => $coverage['profile_version'], ...($workSelection === null ? [] : ['work_scope' => $workSelection])];
+        $scopeConfirmed = ($workSelection === null || $workScopeCurrent)
+            && (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedScope);
         $scenarios = (new EvaluationScenarioSet)->project($positions, $assumptions, $snapshot, $decisions, $policy['scenario_selections'] ?? null);
         $scenarios = (new EvaluationScenarioCurrencyProjector)->project($scenarios, $policy['currency_selections'] ?? [], $snapshot, $decisions);
         if ($contingency !== null) {
@@ -199,11 +257,14 @@ final readonly class UniversalEvaluationBuilder
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],
             ...($scopeExclusions === [] ? [] : ['scope_exclusions' => $scopeExclusions]),
+            ...($workSelection === null ? [] : ['selected_work_item_keys' => $selectedKeys === null ? null : array_keys($selectedKeys),
+                'excluded_work_items' => $excludedItems, 'work_scope_reason' => $workSelection['reason'] ?? null]),
+            'audit_dispositions' => $auditDispositions,
             'coverage' => $coverage, 'priority_questions' => $this->questions->prioritize($questionCandidates),
             'scope_boundaries' => ['sections' => $scope, 'uncovered_sections' => array_values(array_diff($scope, $coveredSections))]];
     }
 
-    private function price(array $item, array $draft): ?array
+    private function price(array $item, array $draft, ?array $regionalTerms = null): ?array
     {
         if (is_array($item['commercial_price_snapshot'] ?? null)) {
             return $item['commercial_price_snapshot'];
@@ -224,21 +285,46 @@ final readonly class UniversalEvaluationBuilder
         if ($resources === null) {
             return null;
         }
+        $resources = $this->priceIdentity($resources);
         $basis = ['kind' => 'normative_resource_sum', 'quantity' => $quantity,
             'work_cost' => $price['coefficients']['work_cost'] ?? '0.00', 'resources' => $resources,
-            'source_hash' => hash('sha256', CanonicalPipelineJson::encode($price))];
+            'source_hash' => hash('sha256', CanonicalPipelineJson::encode($this->priceIdentity($price)))];
         $regionalOnly = array_filter($basis['resources'], static fn ($resource): bool => ! is_array($resource)
-            || ($resource['source_type'] ?? null) !== 'regional_catalog'
-            || str_starts_with((string) ($resource['coefficients']['price_kind'] ?? ''), 'base_catalog')) === [];
+            || in_array($resource['source_type'] ?? null, ['fsnb_base', 'fsbc_base', 'fsnb_2022', 'fsbc', 'normative_rate_base'], true)
+            || str_starts_with((string) ($resource['coefficients']['price_kind'] ?? ''), 'base_catalog')
+            || (($resource['source_type'] ?? null) !== 'regional_catalog'
+                && ((int) ($resource['version_id'] ?? 0) !== (int) ($price['version_id'] ?? -1)
+                    || (int) ($resource['region_id'] ?? 0) !== (int) ($price['region_id'] ?? -1)
+                    || (int) ($resource['zone_id'] ?? 0) !== (int) ($price['zone_id'] ?? -1)
+                    || (int) ($resource['period_id'] ?? 0) !== (int) ($price['period_id'] ?? -1)))) === [];
+        $terms = $regionalOnly && ($regionalTerms['estimate_regional_price_version_id'] ?? null) === ($price['version_id'] ?? null)
+            ? $regionalTerms : null;
 
         return ['source_type' => 'normative', 'source_reference' => $price['source_reference'], 'verified' => true,
+            'source_hash' => $basis['source_hash'],
             'unit' => $item['unit'], 'currency' => $price['currency'],
             'unit_price' => (string) BigDecimal::of($price['final_amount'])->dividedBy($quantity, 18, RoundingMode::HalfUp),
-            'as_of_date' => $draft['regional_context']['price_as_of_date'] ?? null,
+            'as_of_date' => $terms['as_of_date'] ?? $draft['regional_context']['price_as_of_date'] ?? null,
             'level' => $regionalOnly ? 'current' : null, 'region_id' => $price['region_id'],
             'price_period_id' => $regionalOnly ? $price['period_id'] : null, 'price_version_id' => $regionalOnly ? $price['version_id'] : null,
             'resource_sources' => $basis['resources'],
-            'calculation_basis' => $basis, 'conditions_missing' => ['price_level', 'vat_mode', 'delivery_included']];
+            'calculation_basis' => $basis,
+            ...($terms === null ? [] : ['vat_mode' => $terms['vat_mode'], 'vat_rate' => $terms['vat_rate'],
+                'delivery_included' => $terms['delivery'] === 'included', 'delivery_outside_scope' => $terms['delivery'] === 'outside_scope',
+                'conditions_basis' => $terms['basis'], 'conditions_decision_id' => $terms['decision_id']]),
+            'conditions_missing' => [...($regionalOnly ? [] : ['price_level']), ...($terms === null ? ['vat_mode', 'delivery_included'] : [])]];
+    }
+
+    private function priceIdentity(array $snapshot): array
+    {
+        unset($snapshot['captured_at']);
+        foreach ($snapshot as $key => $value) {
+            if (is_array($value)) {
+                $snapshot[$key] = $this->priceIdentity($value);
+            }
+        }
+
+        return $snapshot;
     }
 
     private function requirementName(string $requirement): string

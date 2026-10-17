@@ -19,7 +19,12 @@ final class LockEvaluationPriceSources
         if (DB::connection()->transactionLevel() === 0) {
             throw new \LogicException('Evaluation price locks require the publication transaction.');
         }
-        $references = array_values(array_unique(array_column(array_column($positions, 'price_snapshot'), 'source_reference')));
+        $normative = array_values(array_filter($positions, static fn (array $position): bool => ($position['price_snapshot']['source_type'] ?? null) === 'normative'));
+        if ($normative !== []) {
+            $this->lockNormative($session, $normative);
+        }
+        $commercial = array_values(array_filter($positions, static fn (array $position): bool => ($position['price_snapshot']['source_type'] ?? null) !== 'normative'));
+        $references = array_values(array_unique(array_column(array_column($commercial, 'price_snapshot'), 'source_reference')));
         sort($references, SORT_STRING);
         foreach ($references as $reference) {
             if (is_string($reference) && preg_match('/\Asupplier:([1-9][0-9]*):([1-9][0-9]*)\z/', $reference, $supplier) === 1) {
@@ -39,6 +44,48 @@ final class LockEvaluationPriceSources
                 throw ValidationException::withMessages(['price' => 'Источник цены или его единица больше не доступны. Пересчитайте оценку.']);
             }
         }
+    }
+
+    private function lockNormative(EstimateGenerationSession $session, array $positions): void
+    {
+        $priceIds = $versionIds = $normIds = [];
+        $items = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)->items($session->draft_payload ?? []);
+        foreach ($positions as $position) {
+            $price = $position['price_snapshot'];
+            $normId = $items[$position['key']]['item']['normative_match']['norm_id'] ?? null;
+            if (! is_int($normId) || $normId < 1 || ! is_int($price['price_version_id'] ?? null)
+                || ! is_array($price['resource_sources'] ?? null) || $price['resource_sources'] === []) {
+                $this->rejectNormative();
+            }
+            $normIds[$normId] = $normId;
+            $versionIds[$price['price_version_id']] = $price['price_version_id'];
+            foreach ($price['resource_sources'] as $resource) {
+                if (! is_string($resource['source_reference'] ?? null)
+                    || preg_match('/\Aestimate_resource_prices:([1-9][0-9]*)\z/', $resource['source_reference'], $match) !== 1) {
+                    $this->rejectNormative();
+                }
+                $priceIds[(int) $match[1]] = (int) $match[1];
+            }
+        }
+        $norms = DB::table('estimate_norms')->whereIn('id', $normIds)->orderBy('id')->sharedLock()->get(['id', 'collection_id']);
+        $collections = DB::table('estimate_norm_collections')->whereIn('id', $norms->pluck('collection_id'))
+            ->orderBy('id')->sharedLock()->get(['id', 'dataset_version_id']);
+        DB::table('estimate_norm_resources')->whereIn('estimate_norm_id', $normIds)->orderBy('id')->sharedLock()->get(['id']);
+        $versions = DB::table('estimate_regional_price_versions')->whereIn('id', $versionIds)->whereIn('status', ['active', 'checked'])
+            ->orderBy('id')->sharedLock()->get(['id']);
+        $prices = DB::table('estimate_resource_prices')->whereIn('id', $priceIds)->orderBy('id')->sharedLock()->get(['id', 'dataset_version_id']);
+        $datasets = $collections->pluck('dataset_version_id')->merge($prices->pluck('dataset_version_id'))->unique()->values();
+        $parsed = DB::table('estimate_dataset_versions')->whereIn('id', $datasets)->where('status', 'parsed')
+            ->orderBy('id')->sharedLock()->get(['id']);
+        if ($norms->count() !== count($normIds) || $versions->count() !== count($versionIds)
+            || $prices->count() !== count($priceIds) || $parsed->count() !== $datasets->count()) {
+            $this->rejectNormative();
+        }
+    }
+
+    private function rejectNormative(): never
+    {
+        throw ValidationException::withMessages(['price' => trans_message('estimate_evaluation.normative_publication_source_changed')]);
     }
 
     private function lockSupplier(EstimateGenerationSession $session, int $versionId): void

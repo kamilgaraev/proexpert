@@ -92,11 +92,15 @@ final readonly class RecalculateUniversalEvaluation
                 'selected_sections' => $payload['selected_sections'] ?? [], 'profile_id' => $payload['profile_id'] ?? 'construction',
                 'construction_type' => $payload['construction_type'] ?? 'new_construction', 'price_policy' => $payload['price_policy'] ?? 'normative',
                 'scope_selection' => $payload['scope_selection'] ?? null,
+                'regional_price_selection' => $payload['regional_price_selection'] ?? null,
                 'scenario_selections' => $payload['scenario_selections'] ?? null,
                 'currency_selections' => $payload['currency_selections'] ?? [],
                 'contingency_selection' => $payload['contingency_selection'] ?? null,
                 'technology_selections' => $payload['technology_selections'] ?? [],
                 'required_technology_revision' => $payload['technology_selection_revision'] ?? 0];
+            if (is_array($payload['regional_context'] ?? null)) {
+                $draft['regional_context'] = $payload['regional_context'];
+            }
             $draft = $this->arithmetic->recalculate($draft, $context, $snapshot, $decisions, $actor, $session);
             $draft['source_input_version'] = $version;
             $draft['evaluation_result'] = $this->builder->build($draft, $snapshot, $decisions, $payload['technology_selections'] ?? []);

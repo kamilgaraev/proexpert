@@ -410,8 +410,9 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             ->dividedBy(BigDecimal::of((string) $workItem['quantity']), 12, RoundingMode::HalfUp));
         $metadata = $this->itemMetadata->make($workItem);
         if (($session->input_payload['evaluation_mode'] ?? null) === 'universal'
-            && ConfirmedEvaluationDraftProjector::isPersistableCommercialItem($workItem)) {
-            $source = $workItem['commercial_price_snapshot'];
+            && (ConfirmedEvaluationDraftProjector::isPersistableCommercialItem($workItem)
+                || ConfirmedEvaluationDraftProjector::isPersistableNormativeItem($workItem))) {
+            $source = $workItem['accepted_evaluation_price_snapshot'] ?? $workItem['commercial_price_snapshot'];
             $metadata['source_work_item_key'] = $workItem['key'];
             $metadata['generated_source_money'] = (new \App\BusinessModules\Features\BudgetEstimates\Services\SourceMoneyVatBasis)->seal([
                 'organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScopeCompletenessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -65,6 +66,15 @@ final readonly class SaveEvaluationScopeSelection
             sort($sections, SORT_STRING);
             $selection = ['selected_sections' => $sections, 'profile_id' => $profile, 'construction_type' => $construction,
                 'price_policy' => $input['price_policy'], 'profile_version' => ScopeCompletenessEvaluator::VERSION];
+            if (array_key_exists('selected_work_item_keys', $input)) {
+                try {
+                    $selection['work_scope'] = (new EvaluationWorkScope)->select($session->draft_payload ?? [], $sections, $input);
+                } catch (\InvalidArgumentException) {
+                    throw ValidationException::withMessages(['scope' => trans_message('estimate_evaluation.work_scope_invalid')]);
+                }
+            } elseif (isset($input['excluded_audit_finding_ids']) || isset($input['accepted_material_finding_ids'])) {
+                throw ValidationException::withMessages(['scope' => trans_message('estimate_evaluation.work_scope_invalid')]);
+            }
             $proof = $this->choices->write($actor, $session, 'scope', 'evaluation_scope', $selection,
                 trans_message('estimate_evaluation.scope_selected'), $input['request_id']);
             $added = array_values(array_diff($sections, $payload['selected_sections'] ?? []));

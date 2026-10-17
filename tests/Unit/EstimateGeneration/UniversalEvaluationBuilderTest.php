@@ -12,6 +12,58 @@ use PHPUnit\Framework\TestCase;
 
 final class UniversalEvaluationBuilderTest extends TestCase
 {
+    public function test_native_price_identity_ignores_capture_time_but_preserves_source_and_amount_changes(): void
+    {
+        $item = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '2', 'evaluation_price_basis_quantity' => '2',
+            'pricing_status' => 'calculated', 'price_snapshot' => ['source_type' => 'regional_resource_aggregate',
+                'source_reference' => 'price:1', 'currency' => 'RUB', 'region_id' => 1, 'period_id' => 1, 'version_id' => 1,
+                'final_amount' => '20.00', 'captured_at' => '2026-10-17T01:00:00+00:00',
+                'coefficients' => ['resource_evidence' => [['source_type' => 'regional_catalog', 'source_reference' => 'resource:1',
+                    'final_amount' => '20.00', 'captured_at' => '2026-10-17T01:00:00+00:00']]]]];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']],
+            'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => [$item]]]]]];
+        $builder = new UniversalEvaluationBuilder;
+        $snapshot = new ProjectModelSnapshot([], [], [], []);
+        $original = $builder->build($draft, $snapshot)['scenarios'][0]['positions'][0]['price_snapshot'];
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['price_snapshot']['captured_at'] = '2026-10-17T02:00:00+00:00';
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['price_snapshot']['coefficients']['resource_evidence'][0]['captured_at'] = '2026-10-17T02:00:00+00:00';
+        self::assertSame($original, $builder->build($draft, $snapshot)['scenarios'][0]['positions'][0]['price_snapshot']);
+        self::assertSame('2026-10-17T02:00:00+00:00', $draft['local_estimates'][0]['sections'][0]['work_items'][0]['price_snapshot']['captured_at']);
+        foreach ([['source_reference' => 'price:2'], ['version_id' => 2], ['final_amount' => '21.00']] as $change) {
+            $changed = $draft;
+            $changed['local_estimates'][0]['sections'][0]['work_items'][0]['price_snapshot'] = [...$item['price_snapshot'], ...$change];
+            $result = $builder->build($changed, $snapshot)['scenarios'][0]['positions'][0]['price_snapshot'];
+            self::assertNotSame($original['calculation_basis']['source_hash'], $result['calculation_basis']['source_hash']);
+        }
+    }
+
+    public function test_zero_price_audit_finding_is_resolved_only_by_matching_calculated_native_money(): void
+    {
+        $item = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '20', 'evaluation_price_basis_quantity' => '20',
+            'pricing_status' => 'calculated', 'total_cost' => '20.00',
+            'price_snapshot' => ['source_type' => 'regional_resource_aggregate', 'final_amount' => '20.00',
+                'source_reference' => 'price:1', 'currency' => 'RUB', 'region_id' => 1, 'period_id' => 1, 'version_id' => 1,
+                'coefficients' => ['resource_evidence' => [['source_type' => 'normative_rate_base', 'final_amount' => '20.00',
+                    'source_reference' => 'normative_rates:1', 'version_id' => 1, 'coefficients' => ['base_year' => 2001]]]]]];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'audit_review_items' => [
+            ['finding_id' => 'audit:zero', 'item_key' => 'floor', 'type' => 'suspicious_zero', 'reason' => 'Итог ранее отсутствовал.'],
+            ['finding_id' => 'audit:quantity', 'item_key' => 'floor', 'type' => 'quantity_mismatch', 'reason' => 'Проверить исходный объём.'],
+        ], 'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => [$item]]]]]];
+        $builder = new UniversalEvaluationBuilder;
+        $snapshot = new ProjectModelSnapshot([], [], [], []);
+        $result = $builder->build($draft, $snapshot);
+        self::assertSame(['corrected_by_native_pricing'], array_column($result['audit_dispositions'], 'status'));
+        self::assertCount(1, array_filter($result['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding'));
+        self::assertCount(2, $draft['audit_review_items']);
+        foreach ([['pricing_status' => 'not_calculated'], ['total_cost' => '0.00'], ['total_cost' => '21.00'],
+            ['evaluation_price_basis_quantity' => '19']] as $change) {
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [...$item, ...$change];
+            $blocked = $builder->build($draft, $snapshot);
+            self::assertSame([], $blocked['audit_dispositions']);
+            self::assertCount(2, array_filter($blocked['missing_requirements'], static fn (array $row): bool => $row['requirement'] === 'audit_finding'));
+        }
+    }
+
     public function test_unresolved_source_rows_are_visible_without_becoming_positions_or_changing_selected_scope(): void
     {
         $draft = ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],
