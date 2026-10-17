@@ -11,33 +11,16 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class UserOptionResource extends JsonResource
 {
-    private const ROLE_PRIORITY = [
-        'organization_owner',
-        'organization_admin',
-        'finance_admin',
-        'web_admin',
-        'accountant',
-        'project_manager',
-        'site_engineer',
-        'foreman',
-        'worker',
-        'observer',
-        'viewer',
-        'supplier',
-        'contractor',
-    ];
-
     public function toArray(Request $request): array
     {
         if (! $this->resource instanceof User) {
             return [];
         }
 
-        $roles = $this->resolveRoles();
         $rolePolicy = app(AdminUserRolePolicy::class);
-        $primaryRole = $this->resolvePrimaryRole($roles);
         $organizationId = (int) ($request->attributes->get('current_organization_id')
             ?? $request->user()?->current_organization_id ?? 0);
+        $roles = $rolePolicy->presentOrganizationRoles($this->resource, $organizationId);
         $membership = $organizationId > 0 ? ($this->resource->relationLoaded('organizations')
             ? $this->resource->organizations->firstWhere('id', $organizationId)
             : $this->resource->organizations()->where('organizations.id', $organizationId)->first()) : null;
@@ -49,36 +32,10 @@ class UserOptionResource extends JsonResource
             'phone' => $this->resource->phone,
             'position' => $this->resource->position,
             'is_active' => (bool) $this->resource->is_active && (bool) ($membership?->pivot?->is_active ?? false),
-            'roles' => $roles,
-            'role_labels' => $rolePolicy->labelsFor($roles),
-            'primary_role' => $primaryRole,
-            'primary_role_label' => $rolePolicy->labelFor($primaryRole),
+            'roles' => $roles['roles'],
+            'role_labels' => $roles['role_labels'],
+            'primary_role' => $roles['primary_role'],
+            'primary_role_label' => $roles['primary_role_label'],
         ];
-    }
-
-    private function resolveRoles(): array
-    {
-        if (! $this->resource->relationLoaded('roleAssignments')) {
-            return [];
-        }
-
-        return $this->resource->roleAssignments
-            ->filter(fn ($assignment) => (bool) $assignment->is_active)
-            ->pluck('role_slug')
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-    }
-
-    private function resolvePrimaryRole(array $roles): ?string
-    {
-        foreach (self::ROLE_PRIORITY as $roleSlug) {
-            if (in_array($roleSlug, $roles, true)) {
-                return $roleSlug;
-            }
-        }
-
-        return $roles[0] ?? null;
     }
 }

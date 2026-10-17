@@ -1499,7 +1499,9 @@ final class AssistantDataAccessPolicy
         }
         if ($type === 'payment_document') {
             $query->where(function (Builder $invoice) use ($user, $organizationId, $table): void {
-                $invoice->where(function (Builder $unlinked) use ($table): void { $unlinked->whereNull($table.'.invoiceable_type')->whereNull($table.'.invoiceable_id'); });
+                $invoice->where(function (Builder $unlinked) use ($table): void {
+                    $unlinked->whereNull($table.'.invoiceable_type')->orWhereNull($table.'.invoiceable_id');
+                });
                 foreach (['contract', 'estimate', 'performance_act', 'completed_work'] as $parentType) {
                     $parent = $this->entityQuery($user, $organizationId, $parentType);
                     if ($parent !== null) {

@@ -1,6 +1,7 @@
 {
   "name": "Customer manager",
   "slug": "customer_manager",
+  "primary_priority": 72,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

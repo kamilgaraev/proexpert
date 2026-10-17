@@ -54,6 +54,13 @@ final readonly class AssistantCustomReportSource
         $table = $model->getTable();
         $columnTypes = array_column(Schema::getColumns($table), 'type_name', 'name');
         $safe = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$entityType] ?? array_keys($columnTypes);
+        $aliases = $entityType === 'performance_act'
+            ? ['number' => 'act_document_number', 'date' => 'act_date', 'total_amount' => 'amount'] : [];
+        $aliases = array_filter($aliases, static fn (string $column): bool => isset($columnTypes[$column]));
+        foreach ($aliases as $alias => $column) {
+            $columnTypes[$alias] = $columnTypes[$column];
+        }
+        $safe = array_merge($safe, array_keys($aliases));
         $fields = [];
         $labels = AssistantExtendedDomainRegistry::values('fieldLabels');
         foreach (array_intersect($definition->fields, $safe, array_keys($columnTypes)) as $field) {
@@ -81,7 +88,7 @@ final readonly class AssistantCustomReportSource
                 $label = trans_message('ai_custom_reports.current_project');
             }
             $fields[$field] = ['type' => $type, 'label' => str_starts_with($label, 'ai_assistant_facts.') ? ($labels[$field] ?? $field) : $label];
-            $cast = $model->getCasts()[$field] ?? null;
+            $cast = $model->getCasts()[$aliases[$field] ?? $field] ?? null;
             $values = $entityType === 'project' && $field === 'status' ? ['draft', 'active', 'completed', 'paused', 'cancelled'] : [];
             if ($entityType === 'machinery_asset' && $field === 'status') {
                 $values = ['available', 'assigned', 'in_operation', 'maintenance', 'unavailable', 'archived', 'under_maintenance', 'out_of_service'];
@@ -96,6 +103,15 @@ final readonly class AssistantCustomReportSource
         }
         if ($members !== null) {
             $fields = array_replace($fields, $members->fields());
+        }
+        $permittedAliases = array_intersect_key($aliases, $fields);
+        if ($permittedAliases !== []) {
+            $grammar = $query->getQuery()->getGrammar();
+            $query->select($table.'.*');
+            foreach ($permittedAliases as $alias => $column) {
+                $query->selectRaw($grammar->wrap($table.'.'.$column).' AS '.$grammar->wrap($alias));
+            }
+            $query = $model->newModelQuery()->fromSub($query, $table);
         }
         if ($entityType === 'schedule_task') {
             $schedules = $this->policy->entityQuery($actor, $organizationId, 'schedule');
@@ -121,6 +137,15 @@ final readonly class AssistantCustomReportSource
                 $this->policy->entityQuery($actor, $organizationId, 'contractor'),
                 $this->policy->entityQuery($actor, $organizationId, 'supplier'), $customerProjects, $organizationId);
         }
+        if ($entityType === 'payment_document') {
+            $paymentContracts = $this->paymentContracts($actor, $organizationId);
+            if ($paymentContracts !== null) {
+                $query = (new AssistantPaymentDocumentChainReportProjection)->apply($query, $paymentContracts['parents'],
+                    $paymentContracts['contracts'], $paymentContracts['acts'], $organizationId);
+                $fields['contract_id'] = ['type' => 'number', 'label' => trans_message('ai_assistant_facts.fields.contract_id')];
+                $fields['contract_number'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.contract_number')];
+            }
+        }
         foreach ($fields as $field => $metadata) {
             $fields[$field]['aggregations'] = AssistantCustomReportMeasure::aggregations($field, $metadata['type'], $fields);
             $fields[$field]['dimensions'] = $metadata['type'] === 'number' ? AssistantCustomReportMeasure::dimensions($field, $fields) : [];
@@ -134,6 +159,26 @@ final readonly class AssistantCustomReportSource
         if ($fields === [] || array_diff($fields, array_keys($available)) !== []) {
             throw ValidationException::withMessages(['fields' => trans_message('ai_custom_reports.unsupported_fields')]);
         }
+    }
+
+    private function paymentContracts(User $actor, int $organizationId): ?array
+    {
+        try {
+            $contracts = $this->resolve($actor, $organizationId, 'contracts', 'contract', null);
+        } catch (AccessDeniedHttpException|ValidationException) {
+            return null;
+        }
+        $parents = $this->policy->entityQuery($actor, $organizationId, 'payment_document');
+        if ($parents === null || ! isset($contracts['fields']['id'], $contracts['fields']['number'])) {
+            return null;
+        }
+        try {
+            $acts = $this->resolve($actor, $organizationId, 'acts', 'performance_act', null)['query'];
+        } catch (AccessDeniedHttpException|ValidationException) {
+            $acts = null;
+        }
+
+        return ['parents' => $parents, 'contracts' => $contracts['query'], 'acts' => $acts];
     }
 
     public function related(User $actor, int $organizationId, string $entityType, string $labelField, array $ids): ?array

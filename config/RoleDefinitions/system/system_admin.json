@@ -1,6 +1,7 @@
 {
   "name": "Системный администратор",
   "slug": "system_admin",
+  "primary_priority": 10,
   "version": "1.0.0",
   "context": "system",
   "interface": "admin",

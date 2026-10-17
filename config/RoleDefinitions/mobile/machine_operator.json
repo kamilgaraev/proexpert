@@ -1,6 +1,7 @@
 {
   "name": "Машинист",
   "slug": "machine_operator",
+  "primary_priority": 96,
   "version": "1.0.0",
   "context": "project",
   "interface": "mobile",

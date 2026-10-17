@@ -16,12 +16,6 @@ use App\Models\User;
 
 final class AdminUserRolePolicy
 {
-    public const ROLE_PRIORITY = [
-        'super_admin', 'system_admin', 'organization_owner', 'organization_admin', 'finance_admin',
-        'web_admin', 'accountant', 'project_manager', 'site_engineer', 'foreman', 'worker', 'observer',
-        'viewer', 'supplier', 'contractor',
-    ];
-
     public function __construct(
         private readonly RoleScanner $roleScanner,
         private readonly RolePayloadFormatter $rolePayloadFormatter,
@@ -164,6 +158,65 @@ final class AdminUserRolePolicy
     public function labelsFor(array $roleSlugs): array
     {
         return array_map(fn (string $roleSlug): string => $this->labelFor($roleSlug), $roleSlugs);
+    }
+
+    public function primaryRolePriorities(): array
+    {
+        return $this->roleScanner->getAllRoles()->map(static function (array $role): int {
+            $priority = $role['primary_priority'] ?? null;
+
+            return is_int($priority) && $priority >= 0 && $priority < 100000 ? $priority : 100000;
+        })->all();
+    }
+
+    public function presentOrganizationRoles(User $target, int $organizationId): array
+    {
+        $empty = ['roles' => [], 'role_labels' => [], 'primary_role' => null, 'primary_role_label' => $this->labelFor(null)];
+        if ($organizationId < 1) {
+            return $empty;
+        }
+        $assignments = $target->relationLoaded('roleAssignments') ? $target->roleAssignments
+            : $target->roleAssignments()->availableInOrganization($organizationId)->with(['context', 'customRole'])->get();
+        $assignments->loadMissing(['context', 'customRole']);
+        $priorities = $this->primaryRolePriorities();
+        $resolved = [];
+        foreach ($assignments as $assignment) {
+            if (! $assignment instanceof UserRoleAssignment || ! $assignment->is_active
+                || ($assignment->expires_at !== null && $assignment->expires_at->lessThanOrEqualTo(now()))) {
+                continue;
+            }
+            $context = $assignment->context;
+            if (! $context instanceof AuthorizationContext || $context->type !== AuthorizationContext::TYPE_ORGANIZATION
+                || (int) $context->resource_id !== $organizationId) {
+                continue;
+            }
+            if ($assignment->role_type === UserRoleAssignment::TYPE_CUSTOM) {
+                $role = $assignment->customRole;
+                if (! $role instanceof OrganizationCustomRole || ! $role->is_active || (int) $role->id !== (int) $assignment->custom_role_id
+                    || (int) $role->organization_id !== $organizationId || $role->slug !== $assignment->role_slug) {
+                    continue;
+                }
+                $label = $role->name;
+                $priority = 100000;
+            } elseif ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
+                $label = $this->labelFor($assignment->role_slug);
+                $priority = $priorities[$assignment->role_slug] ?? 100000;
+            } else {
+                continue;
+            }
+            $identity = $assignment->role_type.':'.$assignment->custom_role_id.':'.$assignment->role_slug;
+            $candidate = ['slug' => $assignment->role_slug, 'label' => $label, 'priority' => $priority, 'id' => (int) $assignment->id];
+            if (! isset($resolved[$identity]) || $candidate['id'] < $resolved[$identity]['id']) {
+                $resolved[$identity] = $candidate;
+            }
+        }
+        if ($resolved === []) {
+            return $empty;
+        }
+        $primary = collect($resolved)->sort(static fn (array $left, array $right): int => [$left['priority'], $left['id']] <=> [$right['priority'], $right['id']])->first();
+
+        return ['roles' => array_values(array_unique(array_column($resolved, 'slug'))),
+            'role_labels' => array_values(array_column($resolved, 'label')), 'primary_role' => $primary['slug'], 'primary_role_label' => $primary['label']];
     }
 
     public function labelFor(?string $roleSlug): string

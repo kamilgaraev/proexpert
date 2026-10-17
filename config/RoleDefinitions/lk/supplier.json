@@ -1,6 +1,7 @@
 {
   "name": "Снабженец",
   "slug": "supplier",
+  "primary_priority": 130,
   "version": "1.0.0",
   "context": "organization",
   "interface": "lk",

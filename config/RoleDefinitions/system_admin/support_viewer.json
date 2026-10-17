@@ -1,6 +1,7 @@
 {
   "name": "Специалист поддержки",
   "slug": "support_viewer",
+  "primary_priority": 116,
   "version": "1.0.0",
   "context": "system_admin",
   "interface": "admin",

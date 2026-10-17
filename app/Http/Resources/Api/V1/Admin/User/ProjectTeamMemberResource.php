@@ -21,10 +21,8 @@ class ProjectTeamMemberResource extends JsonResource
         $organizationId = (int) ($request->attributes->get('current_organization_id')
             ?? $request->user()?->current_organization_id
             ?? 0);
-        $roles = $this->resolveRoles($organizationId);
         $rolePolicy = app(AdminUserRolePolicy::class);
-        $roleLabels = $rolePolicy->labelsFor($roles);
-        $primaryRole = $this->resolvePrimaryRole($roles);
+        $roles = $rolePolicy->presentOrganizationRoles($this->resource, $organizationId);
         $assignedProjects = $this->resolveAssignedProjects();
         $membership = $organizationId > 0 ? ($this->resource->relationLoaded('organizations')
             ? $this->resource->organizations->firstWhere('id', $organizationId)
@@ -39,10 +37,10 @@ class ProjectTeamMemberResource extends JsonResource
             'avatar_path' => $this->resource->avatar_path,
             'avatar_url' => $this->resource->avatar_url,
             'is_active' => (bool) $this->resource->is_active && (bool) ($membership?->pivot?->is_active ?? false),
-            'roles' => $roles,
-            'role_labels' => $roleLabels,
-            'primary_role' => $primaryRole,
-            'primary_role_label' => $rolePolicy->labelFor($primaryRole),
+            'roles' => $roles['roles'],
+            'role_labels' => $roles['role_labels'],
+            'primary_role' => $roles['primary_role'],
+            'primary_role_label' => $roles['primary_role_label'],
             'project_role' => $this->resource->pivot?->role,
             'project_assigned_at' => $this->resource->pivot?->assigned_at,
             'project_access_mode' => $this->resolveProjectAccessMode($organizationId),
@@ -61,36 +59,6 @@ class ProjectTeamMemberResource extends JsonResource
             'createdAt' => $this->resource->created_at,
             'updatedAt' => $this->resource->updated_at,
         ];
-    }
-
-    private function resolveRoles(int $organizationId): array
-    {
-        if ($this->resource->relationLoaded('roleAssignments')) {
-            return $this->resource->roleAssignments
-                ->filter(fn ($assignment) => (bool) $assignment->is_active)
-                ->pluck('role_slug')
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-        }
-
-        if ($organizationId > 0) {
-            return array_values(array_unique($this->resource->getRoleSlugs($organizationId)));
-        }
-
-        return [];
-    }
-
-    private function resolvePrimaryRole(array $roles): ?string
-    {
-        foreach (AdminUserRolePolicy::ROLE_PRIORITY as $roleSlug) {
-            if (in_array($roleSlug, $roles, true)) {
-                return $roleSlug;
-            }
-        }
-
-        return $roles[0] ?? null;
     }
 
     private function resolveProjectAccessMode(int $organizationId): ?string

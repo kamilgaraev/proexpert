@@ -1,6 +1,7 @@
 {
   "name": "Рабочий",
   "slug": "worker",
+  "primary_priority": 100,
   "version": "1.0.0",
   "context": "project",
   "interface": "mobile",

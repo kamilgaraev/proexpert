@@ -1,6 +1,7 @@
 {
   "name": "Customer curator",
   "slug": "customer_curator",
+  "primary_priority": 74,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

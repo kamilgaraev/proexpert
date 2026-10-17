@@ -1,6 +1,7 @@
 {
   "name": "Наблюдатель проекта",
   "slug": "project_viewer",
+  "primary_priority": 117,
   "version": "1.0.0",
   "context": "project",
   "interface": "admin",

@@ -1,6 +1,7 @@
 {
   "name": "Администратор организации",
   "slug": "organization_admin",
+  "primary_priority": 30,
   "version": "1.0.0",
   "context": "organization",
   "interface": "admin",

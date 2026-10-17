@@ -1,6 +1,7 @@
 {
   "name": "Customer financier",
   "slug": "customer_financier",
+  "primary_priority": 55,
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",

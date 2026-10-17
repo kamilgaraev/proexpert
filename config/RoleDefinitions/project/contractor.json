@@ -1,6 +1,7 @@
 {
   "name": "Подрядчик",
   "slug": "contractor",
+  "primary_priority": 140,
   "version": "1.0.0",
   "context": "project",
   "interface": "lk",

@@ -1,6 +1,7 @@
 {
   "name": "Механик",
   "slug": "mechanic",
+  "primary_priority": 94,
   "version": "1.0.0",
   "context": "organization",
   "interface": "mobile",

@@ -11,12 +11,15 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomRep
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSource;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Resources\Api\V1\Admin\User\ProjectTeamMemberResource;
+use App\Http\Resources\Api\V1\Admin\User\UserOptionResource;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Repositories\UserRepository;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\User\AdminUserRolePolicy;
@@ -159,6 +162,79 @@ final class AssistantPeopleReportsTest extends TestCase
         self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
         $actor->organizations()->updateExistingPivot($org->id, ['is_active' => false]);
         self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
+    public function test_custom_role_names_identity_and_catalog_priorities_match_both_native_resources(): void
+    {
+        $org = Organization::factory()->create();
+        $actor = $this->member($org, 'Руководитель', true, true);
+        $context = AuthorizationContext::getOrganizationContext($org->id);
+        $makeRole = static fn (Organization $owner, string $slug, string $name): OrganizationCustomRole => OrganizationCustomRole::query()->create([
+            'organization_id' => $owner->id, 'name' => $name, 'slug' => $slug, 'system_permissions' => [],
+            'module_permissions' => [], 'interface_access' => ['admin'], 'is_active' => true, 'created_by' => $actor->id,
+        ]);
+        $legal = $makeRole($org, 'qa_legal', 'Юридический отдел');
+        $coordinator = $makeRole($org, 'qa_coordinator', 'Координатор закупок');
+        $collision = $makeRole($org, 'foreman', 'Особый куратор');
+        $inactiveRole = $makeRole($org, 'qa_inactive', 'Выключенная роль');
+        $legalUser = $this->member($org, 'Юрист', true, true);
+        $this->role($legalUser, $context, $legal->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $legal->id]);
+        $this->role($legalUser, $context, $coordinator->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $coordinator->id]);
+        $coordinatorUser = $this->member($org, 'Координатор', true, true);
+        $this->role($coordinatorUser, $context, $coordinator->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $coordinator->id]);
+        $collisionUser = $this->member($org, 'Куратор', true, true);
+        $this->role($collisionUser, $context, $collision->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $collision->id]);
+        $invalid = $this->member($org, 'Неверная связь', true, true);
+        $this->role($invalid, $context, $legal->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $legal->id]);
+        $foreignRole = $makeRole(Organization::factory()->create(), $legal->slug, 'Чужой юридический отдел');
+        $invalid->roleAssignments()->first()->updateQuietly(['custom_role_id' => $foreignRole->id]);
+        $this->role($invalid, $context, $coordinator->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'custom_role_id' => $coordinator->id, 'expires_at' => now()->subDay()]);
+        $inactive = $this->member($org, 'Выключенная роль', true, true);
+        $this->role($inactive, $context, $inactiveRole->slug, ['role_type' => UserRoleAssignment::TYPE_CUSTOM, 'custom_role_id' => $inactiveRole->id]);
+        $inactiveRole->updateQuietly(['is_active' => false]);
+        $functional = $this->member($org, 'Работник склада', true, true);
+        $this->role($functional, $context, 'viewer');
+        $this->role($functional, $context, 'storekeeper');
+        $report = $this->builder->build(['title' => 'Роли сотрудников', 'format' => 'xlsx', 'sections' => [
+            $this->section(['columns' => ['id', 'roles', 'primary_role', 'primary_role_label']]),
+            $this->section(['columns' => ['primary_role_label'], 'group_by' => ['primary_role_label'],
+                'metrics' => [['field' => 'id', 'operation' => 'count', 'label' => 'Сотрудников']]]),
+        ]], $actor, $org->id);
+        $rows = array_column($report['sections'][0]['rows'], null, 0);
+        self::assertStringContainsString($legal->name, $rows[$legalUser->id][1]);
+        self::assertStringContainsString($coordinator->name, $rows[$legalUser->id][1]);
+        self::assertSame($legal->name, $rows[$legalUser->id][3]);
+        self::assertSame($coordinator->name, $rows[$coordinatorUser->id][3]);
+        self::assertSame($collision->name, $rows[$collisionUser->id][3]);
+        self::assertNull($rows[$invalid->id][1]);
+        self::assertNull($rows[$inactive->id][1]);
+        self::assertSame('storekeeper', $rows[$functional->id][2]);
+        self::assertStringNotContainsString('Чужой юридический', json_encode($report, JSON_THROW_ON_ERROR));
+        $counts = array_column($report['sections'][1]['rows'], 1, 0);
+        self::assertSame(1, $counts[$legal->name]);
+        self::assertSame(1, $counts[$coordinator->name]);
+        self::assertSame(3, $counts[trans_message('user.role_missing')]);
+        $request = Request::create('/api/v1/admin/users');
+        $request->attributes->set('current_organization_id', $org->id);
+        foreach ([$legalUser, $collisionUser, $invalid, $functional] as $user) {
+            $user->setRelation('roleAssignments', $user->roleAssignments()->with('customRole')->get());
+            foreach ([new ProjectTeamMemberResource($user), new UserOptionResource($user)] as $resource) {
+                $native = $resource->toArray($request);
+                self::assertSame($rows[$user->id][2], $native['primary_role']);
+                self::assertSame($rows[$user->id][3], $native['primary_role_label']);
+            }
+        }
+        $repository = app(UserRepository::class);
+        self::assertSame([$legalUser->id], $repository->paginateInOrganization($org->id, 100, ['role' => $legal->slug])->getCollection()->pluck('id')->all());
+        self::assertEqualsCanonicalizing([$legalUser->id, $coordinatorUser->id], $repository
+            ->paginateInOrganization($org->id, 100, ['role' => $coordinator->slug])->getCollection()->pluck('id')->all());
+        self::assertSame(0, $repository->paginateInOrganization($org->id, 100, ['role' => $inactiveRole->slug])->total());
+        foreach ($repository->paginateInOrganization($org->id, 100)->getCollection() as $user) {
+            $native = (new ProjectTeamMemberResource($user))->toArray($request);
+            self::assertSame($rows[$user->id][2], $native['primary_role']);
+            self::assertSame($rows[$user->id][3], $native['primary_role_label']);
+        }
     }
 
     private function section(array $overrides = []): array

@@ -1,6 +1,7 @@
 {
   "name": "Прораб",
   "slug": "foreman",
+  "primary_priority": 90,
   "version": "1.1.0",
   "context": "project",
   "interface": "mobile",

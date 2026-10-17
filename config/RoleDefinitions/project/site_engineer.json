@@ -1,6 +1,7 @@
 {
   "name": "Инженер объекта",
   "slug": "site_engineer",
+  "primary_priority": 80,
   "version": "1.0.0",
   "context": "project",
   "interface": "admin",

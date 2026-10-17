@@ -742,6 +742,365 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
     }
 
+    public function test_payment_report_resolves_direct_act_and_parent_contracts_before_grouping_and_limit(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $act = $this->paymentReportAct($contract, $project);
+        $this->paymentReportDocument($org, $actor, $project, ['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id]);
+        $invoice = $this->paymentReportDocument($org, $actor, $project, ['invoiceable_type' => \App\Models\ContractPerformanceAct::class, 'invoiceable_id' => $act->id]);
+        $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $contract->id]);
+        $child = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $invoice::class, 'source_id' => $invoice->id]);
+        $this->paymentReportDocument($org, $actor, $project, ['source_type' => $child::class, 'source_id' => $child->id]);
+        $sourceAct = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $act::class, 'source_id' => $act->id]);
+        $this->paymentReportDocument($org, $actor, $project, ['source_type' => $sourceAct::class, 'source_id' => $sourceAct->id]);
+        $section = $this->paymentReportSection(['columns' => ['document_number', 'contract_number', 'document_date', 'due_date'],
+            'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
+            'order_by' => [['field' => 'contract_number', 'direction' => 'asc']], 'row_limit' => 2]);
+        $summary = $this->paymentReportSection(['title' => 'Итоги', 'columns' => ['contract_number', 'currency'],
+            'group_by' => ['contract_number', 'currency'], 'metrics' => [['field' => 'amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Документов']]]);
+        $plan = $this->plan($section);
+        $plan['sections'][] = array_replace($plan['sections'][0], $summary);
+        $report = $this->builder->build($plan, $actor, $org->id);
+        self::assertSame(7, $report['sections'][0]['source_row_count']);
+        self::assertCount(2, $report['sections'][0]['rows']);
+        self::assertTrue($report['sections'][0]['output_limited']);
+        self::assertSame(['Номер документа', 'Номер договора', 'Дата документа', 'Срок'], $report['sections'][0]['headers']);
+        self::assertSame([[$contract->number, 'RUB', '70.00', 7]], $report['sections'][1]['rows']);
+        self::assertCount(7, $report['source_refs'][0]['_report_scope']['contract_links']);
+        foreach ($report['source_refs'] as $reference) {
+            self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        }
+        $stream = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer)->render($report);
+        try {
+            $book = \PhpOffice\PhpSpreadsheet\IOFactory::load(stream_get_meta_data($stream)['uri']);
+            self::assertSame(2, $book->getSheetCount());
+            self::assertSame('Номер договора', $book->getSheet(0)->getCell('B5')->getValue());
+            self::assertSame($contract->number, $book->getSheet(0)->getCell('B6')->getValue());
+            self::assertSame($contract->number, $book->getSheet(1)->getCell('A6')->getValue());
+            self::assertSame(70.0, (float) $book->getSheet(1)->getCell('C6')->getValue());
+            $book->disconnectWorksheets();
+        } finally {
+            fclose($stream);
+        }
+        self::assertNotContains('contract_number', (new AssistantDomainCatalog(AssistantDomainCatalog::defaults()))->definition('finance')->fields);
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith(['invoiceable'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['source'])]
+    public function test_payment_contract_snapshot_rechecks_intermediate_act_access_and_blocks_download(string $actLink): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $act = $this->paymentReportAct($contract, $project);
+        $parent = $this->paymentReportDocument($org, $actor, $project, [$actLink.'_type' => $act::class, $actLink.'_id' => $act->id]);
+        $child = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $parent::class, 'source_id' => $parent->id]);
+        $plan = $this->plan($this->paymentReportSection(['filters' => [['field' => 'id', 'operator' => 'eq', 'value' => $child->id]]]));
+        $report = $this->builder->build($plan, $actor, $org->id);
+        self::assertSame([[$child->document_number, $contract->number]], $report['sections'][0]['rows']);
+        $reference = $report['source_refs'][0];
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $tampered = $reference;
+        $tampered['_report_scope']['contract_links'][0]['contract_id'] = null;
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $tampered));
+        $files = $this->createMock(\App\Services\Storage\FileService::class);
+        $files->method('putPrivate')->willReturnCallback(static function (string $path, $stream, string $mime, string $hash) {
+            return new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', strlen(stream_get_contents($stream)), $hash, $mime);
+        });
+        $access = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService($this->policy);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class, $access);
+        $permissions = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class);
+        $permissions->method('canExecuteTool')->willReturn(true);
+        $tool = new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateCustomReportTool($this->builder,
+            new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer,
+            new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files)), $permissions);
+        $result = $tool->execute($plan, $actor, $org);
+        self::assertSame('success', $result['status']);
+        preg_match('#/reports/([^/]+)/download$#', $result['download_url'], $matches);
+        self::assertNotEmpty($access->resolve($matches[1], $actor));
+        $this->denied = ['contracts.performance_acts.view'];
+        self::assertTrue($this->sources->resolve($actor, $org->id, 'finance', 'payment_document', null)['query']->whereKey($child->id)->exists());
+        self::assertTrue($this->sources->resolve($actor, $org->id, 'contracts', 'contract', null)['query']->whereKey($contract->id)->exists());
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
+        $this->expectException(AccessDeniedHttpException::class);
+        $access->resolve($matches[1], $actor);
+    }
+
+    public function test_payment_contract_projection_handles_incomplete_links_and_bounded_metadata_with_current_access(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $contract->updateQuietly(['number' => 'META-PRIMARY']);
+        $alternate = $this->contract($org, $project, '200.00');
+        $alternate->updateQuietly(['number' => 'META-ALTERNATE']);
+        $act = $this->paymentReportAct($contract, $project);
+        $otherProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($otherProject->id, ['is_active' => true, 'role' => 'member']);
+        $wrongProject = $this->contract($org, $otherProject, '300.00');
+        $foreign = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
+        $foreignContract = $this->contract($foreign, $foreignProject, '999.00');
+        $parent = $this->paymentReportDocument($org, $actor, $project, ['invoiceable_type' => Contract::class, 'invoiceable_id' => $alternate->id]);
+        $metadataParent = $this->paymentReportDocument($org, $actor, $project, ['metadata' => ['contract_id' => $contract->id]]);
+        $partialDocument = $this->paymentReportDocument($org, $actor, $project,
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => null, 'source_type' => Contract::class, 'source_id' => $contract->id]);
+        $hiddenDocument = $this->paymentReportDocument($org, $actor, $project,
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $foreignContract->id, 'metadata' => ['contract_id' => $contract->id]]);
+        $expected = [$parent->document_number => $alternate->number, $metadataParent->document_number => $contract->number,
+            $partialDocument->document_number => $contract->number];
+        foreach ([
+            [['invoiceable_type' => null, 'invoiceable_id' => $foreignContract->id, 'source_type' => Contract::class, 'source_id' => $contract->id], $contract],
+            [['invoiceable_type' => $act::class, 'invoiceable_id' => null, 'source_type' => $act::class, 'source_id' => $act->id], $contract],
+            [['invoiceable_type' => $act::class, 'invoiceable_id' => null, 'source_type' => $parent::class, 'source_id' => $parent->id], $alternate],
+            [['source_type' => Contract::class, 'source_id' => null, 'metadata' => ['contract_id' => $contract->id]], $contract],
+            [['metadata' => ['contract_id' => $contract->id]], $contract],
+            [['metadata' => ['contract_id' => (string) $contract->id]], $contract],
+            [['source_type' => $metadataParent::class, 'source_id' => $metadataParent->id], $contract],
+            [['source_type' => $parent::class, 'source_id' => $parent->id, 'metadata' => ['contract_id' => $contract->id]], $contract],
+            [['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id, 'metadata' => ['contract_id' => $alternate->id]], $contract],
+            [['metadata' => ['contract_id' => $foreignContract->id]], null],
+            [['metadata' => ['contract_id' => $wrongProject->id]], null],
+            [['metadata' => ['contract_id' => '9223372036854775807']], null],
+            [['metadata' => ['contract_id' => '9223372036854775808']], null],
+            [['metadata' => ['contract_id' => '99999999999999999999999999999999999']], null],
+            [['metadata' => ['contract_id' => '1 OR 1=1']], null],
+            [['metadata' => ['contract_id' => '1.5']], null],
+            [['metadata' => ['contract_id' => '-1']], null],
+            [['metadata' => ['contract_id' => 0]], null],
+            [['metadata' => ['contract_id' => [$contract->id]]], null],
+        ] as [$override, $related]) {
+            $document = $this->paymentReportDocument($org, $actor, $project, $override);
+            $expected[$document->document_number] = $related?->number;
+        }
+        $plan = $this->plan($this->paymentReportSection());
+        $report = $this->builder->build($plan, $actor, $org->id);
+        $actual = array_column($report['sections'][0]['rows'], 1, 0);
+        ksort($expected);
+        ksort($actual);
+        self::assertSame($expected, $actual);
+        self::assertSame(count($expected), $report['sections'][0]['source_row_count']);
+        self::assertArrayNotHasKey($hiddenDocument->document_number, $actual);
+        $reference = $report['source_refs'][0];
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $count = count(array_filter($expected, static fn (?string $number): bool => $number === $contract->number));
+        $summary = $this->builder->build($this->plan($this->paymentReportSection(['columns' => ['contract_number', 'currency'],
+            'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
+            'group_by' => ['contract_number', 'currency'], 'metrics' => [['field' => 'amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Документов']]])), $actor, $org->id);
+        self::assertSame([[$contract->number, 'RUB', sprintf('%d.00', $count * 10), $count]], $summary['sections'][0]['rows']);
+        $metadataParent->updateQuietly(['metadata' => ['contract_id' => $alternate->id]]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
+        $metadataParent->updateQuietly(['metadata' => ['contract_id' => $contract->id]]);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+        $actor->organizations()->updateExistingPivot($org->id, ['is_active' => false]);
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+    }
+
+    public function test_projectless_multi_contract_payments_resolve_only_currently_accessible_contracts_and_acts(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $contract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $contract->projects()->attach($project->id);
+        $act = $this->paymentReportAct($contract, $project);
+        $documents = [];
+        foreach ([['invoiceable_type' => $act::class, 'invoiceable_id' => $act->id],
+            ['source_type' => $act::class, 'source_id' => $act->id],
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id],
+            ['source_type' => Contract::class, 'source_id' => $contract->id],
+            ['metadata' => ['contract_id' => $contract->id]]] as $link) {
+            $documents[] = $this->paymentReportDocument($org, $actor, $project, array_replace($link, ['project_id' => null]));
+        }
+        $documents[] = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => $documents[0]::class, 'source_id' => $documents[0]->id]);
+        $unassigned = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $hiddenContract = $this->contract($org, $unassigned, '900.00');
+        $hiddenContract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $hiddenContract->projects()->attach($unassigned->id);
+        $hiddenAct = $this->paymentReportAct($hiddenContract, $unassigned);
+        $hiddenDocument = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'invoiceable_type' => $hiddenAct::class, 'invoiceable_id' => $hiddenAct->id]);
+        $unresolved = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => $hiddenAct::class, 'source_id' => $hiddenAct->id]);
+        $foreign = Organization::factory()->create();
+        $foreignContract = $this->contract($foreign, Project::factory()->create(['organization_id' => $foreign->id]), '999.00');
+        $foreignContract->updateQuietly(['project_id' => null, 'is_multi_project' => true]);
+        $foreignSource = $this->paymentReportDocument($org, $actor, $project, ['project_id' => null,
+            'source_type' => Contract::class, 'source_id' => $foreignContract->id]);
+        $report = $this->builder->build($this->plan($this->paymentReportSection()), $actor, $org->id);
+        $expected = [];
+        foreach ($documents as $document) {
+            $expected[] = [$document->document_number, $contract->number];
+        }
+        $expected[] = [$unresolved->document_number, null];
+        $expected[] = [$foreignSource->document_number, null];
+        self::assertSame($expected, $report['sections'][0]['rows']);
+        self::assertNotContains($hiddenDocument->document_number, array_column($report['sections'][0]['rows'], 0));
+        $summary = $this->builder->build($this->plan($this->paymentReportSection(['columns' => ['contract_number', 'currency'],
+            'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
+            'group_by' => ['contract_number', 'currency'], 'metrics' => [['field' => 'amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Документов']]])), $actor, $org->id);
+        self::assertSame([[$contract->number, 'RUB', '60.00', 6]], $summary['sections'][0]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
+    public function test_payment_contract_projection_fences_cycles_depth_foreign_and_project_links(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $chain = $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $contract->id]);
+        $atLimit = $chain;
+        for ($depth = 1; $depth <= 33; $depth++) {
+            $chain = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $chain::class, 'source_id' => $chain->id]);
+            if ($depth === 32) {
+                $atLimit = $chain;
+            }
+        }
+        $cycle = $this->paymentReportDocument($org, $actor, $project);
+        $cycle->update(['source_type' => $cycle::class, 'source_id' => $cycle->id]);
+        $foreign = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
+        $foreignContract = $this->contract($foreign, $foreignProject, '100.00');
+        $foreignSource = $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $foreignContract->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $org->id]);
+        $actor->assignedProjects()->attach($otherProject->id, ['is_active' => true, 'role' => 'member']);
+        $otherContract = $this->contract($org, $otherProject, '100.00');
+        $wrongProject = $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $otherContract->id]);
+        $multi = $this->contract($org, $project, '100.00');
+        $multi->update(['project_id' => null, 'is_multi_project' => true]);
+        $multi->projects()->attach($project->id);
+        $multiSource = $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $multi->id]);
+        $ids = [$atLimit->id, $chain->id, $cycle->id, $foreignSource->id, $wrongProject->id, $multiSource->id];
+        $section = $this->paymentReportSection(['filters' => [['field' => 'id', 'operator' => 'in', 'value' => $ids]]]);
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([[$atLimit->document_number, $contract->number], [$chain->document_number, null], [$cycle->document_number, null],
+            [$foreignSource->document_number, null], [$wrongProject->document_number, null], [$multiSource->document_number, $multi->number]], $report['sections'][0]['rows']);
+        $reference = $report['source_refs'][0];
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $multi->projects()->detach($project->id);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
+    }
+
+    public function test_payment_report_without_contract_permission_keeps_plain_fields_and_rejects_virtual_fields(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $document = $this->paymentReportDocument($org, $actor, $project);
+        $this->denied = ['contracts.view'];
+        $source = $this->sources->resolve($actor, $org->id, 'finance', 'payment_document', null);
+        self::assertArrayNotHasKey('contract_number', $source['fields']);
+        self::assertArrayNotHasKey('contract_id', $source['fields']);
+        $report = $this->builder->build($this->plan($this->paymentReportSection(['columns' => ['document_number', 'document_date']])), $actor, $org->id);
+        self::assertSame([[$document->document_number, '2026-10-15']], $report['sections'][0]['rows']);
+        foreach ([['columns' => ['contract_number']], ['filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => 'secret']]],
+            ['order_by' => [['field' => 'contract_number', 'direction' => 'asc']]]] as $override) {
+            try {
+                $this->builder->build($this->plan($this->paymentReportSection($override)), $actor, $org->id);
+                self::fail('Restricted virtual field accepted');
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('fields', $exception->errors());
+            }
+        }
+    }
+
+    public function test_performance_act_report_aliases_preserve_filters_sort_totals_and_financial_access(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $first = $this->paymentReportAct($contract, $project);
+        $first->updateQuietly(['act_document_number' => 'ACT-A', 'act_date' => '2026-10-13', 'amount' => '10.00']);
+        $second = $this->paymentReportAct($contract, $project);
+        $second->updateQuietly(['act_document_number' => 'ACT-B', 'act_date' => '2026-10-14', 'amount' => '20.00']);
+        $unapproved = $this->paymentReportAct($contract, $project);
+        $unapproved->updateQuietly(['act_document_number' => 'ACT-Y', 'act_date' => '2026-10-14', 'amount' => '500.00', 'is_approved' => false]);
+        $foreign = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
+        $foreignAct = $this->paymentReportAct($this->contract($foreign, $foreignProject, '999.00'), $foreignProject);
+        $foreignAct->updateQuietly(['act_document_number' => 'ACT-Z', 'act_date' => '2026-10-14', 'amount' => '999.00']);
+        $source = $this->sources->resolve($actor, $org->id, 'acts', 'performance_act', null);
+        self::assertSame('date', $source['fields']['date']['type']);
+        self::assertSame('number', $source['fields']['total_amount']['type']);
+        self::assertSame('boolean', $source['fields']['is_approved']['type'] ?? null);
+        self::assertArrayNotHasKey('amount', $source['fields']);
+        $section = ['title' => 'Утверждённые акты', 'domain' => 'acts', 'entity_type' => 'performance_act',
+            'columns' => ['number', 'date', 'total_amount', 'currency'],
+            'filters' => [['field' => 'date', 'operator' => 'gte', 'value' => '2026-10-13'],
+                ['field' => 'number', 'operator' => 'in', 'value' => ['ACT-A', 'ACT-B', 'ACT-Y', 'ACT-Z']],
+                ['field' => 'is_approved', 'operator' => 'eq', 'value' => true]],
+            'order_by' => [['field' => 'number', 'direction' => 'desc']], 'row_limit' => 1];
+        $summary = array_replace($section, ['title' => 'Итоги', 'columns' => ['currency'], 'group_by' => ['currency'],
+            'metrics' => [['field' => 'total_amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Актов']], 'order_by' => [], 'row_limit' => 100]);
+        $plan = $this->plan($section);
+        $plan['sections'][] = array_replace($plan['sections'][0], $summary);
+        $report = $this->builder->build($plan, $actor, $org->id);
+        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        self::assertSame([['ACT-B', '2026-10-14', '20.00', 'RUB']], $report['sections'][0]['rows']);
+        self::assertSame([['RUB', '30.00', 2]], $report['sections'][1]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $stream = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer)->render($report);
+        try {
+            $book = \PhpOffice\PhpSpreadsheet\IOFactory::load(stream_get_meta_data($stream)['uri']);
+            self::assertSame(2, $book->getSheetCount());
+            self::assertSame('ACT-B', $book->getSheet(0)->getCell('A6')->getValue());
+            self::assertSame(20.0, (float) $book->getSheet(0)->getCell('C6')->getValue());
+            self::assertSame(30.0, (float) $book->getSheet(1)->getCell('B6')->getValue());
+            $book->disconnectWorksheets();
+        } finally {
+            fclose($stream);
+        }
+        $this->denied = ['finance.view'];
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $fields = $this->sources->resolve($actor, $org->id, 'acts', 'performance_act', null)['fields'];
+        self::assertArrayNotHasKey('total_amount', $fields);
+        self::assertArrayNotHasKey('amount', $fields);
+        $plain = $this->builder->build($this->plan(array_replace($section, ['columns' => ['number', 'date']])), $actor, $org->id);
+        self::assertSame([['ACT-B', '2026-10-14']], $plain['sections'][0]['rows']);
+        foreach ([['columns' => ['total_amount']], ['filters' => [['field' => 'total_amount', 'operator' => 'gt', 'value' => 0]]],
+            ['order_by' => [['field' => 'total_amount', 'direction' => 'desc']]]] as $override) {
+            try {
+                $this->builder->build($this->plan(array_replace($section, ['columns' => ['number', 'date']], $override)), $actor, $org->id);
+                self::fail('Restricted act amount accepted');
+            } catch (ValidationException $exception) {
+                self::assertArrayHasKey('fields', $exception->errors());
+            }
+        }
+    }
+
+    private function paymentReportSection(array $override = []): array
+    {
+        return array_replace(['title' => 'Платежи', 'domain' => 'finance', 'entity_type' => 'payment_document',
+            'columns' => ['document_number', 'contract_number']], $override);
+    }
+
+    private function paymentReportAct(Contract $contract, Project $project): \App\Models\ContractPerformanceAct
+    {
+        return \App\Models\ContractPerformanceAct::withoutEvents(static fn () => \App\Models\ContractPerformanceAct::query()->create([
+            'contract_id' => $contract->id, 'project_id' => $project->id, 'act_document_number' => 'ACT-'.bin2hex(random_bytes(4)),
+            'act_date' => '2026-10-13', 'period_start' => '2026-10-01', 'period_end' => '2026-10-13',
+            'amount' => '100.00', 'currency' => 'RUB', 'status' => \App\Models\ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true,
+        ]));
+    }
+
+    private function paymentReportDocument(Organization $org, User $actor, Project $project, array $override = []): \App\BusinessModules\Core\Payments\Models\PaymentDocument
+    {
+        return \App\BusinessModules\Core\Payments\Models\PaymentDocument::withoutEvents(static fn () => \App\BusinessModules\Core\Payments\Models\PaymentDocument::query()->create(array_replace([
+            'organization_id' => $org->id, 'project_id' => $project->id, 'payer_organization_id' => $org->id,
+            'payee_organization_id' => $org->id, 'document_type' => \App\BusinessModules\Core\Payments\Enums\PaymentDocumentType::INVOICE,
+            'invoice_type' => \App\BusinessModules\Core\Payments\Enums\InvoiceType::ACT, 'invoiceable_type' => null, 'invoiceable_id' => null,
+            'document_number' => 'PAY-'.bin2hex(random_bytes(4)), 'document_date' => '2026-10-15', 'due_date' => '2026-10-20',
+            'direction' => \App\BusinessModules\Core\Payments\Enums\InvoiceDirection::OUTGOING,
+            'status' => \App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus::APPROVED,
+            'amount' => '10.00', 'paid_amount' => '0.00', 'remaining_amount' => '10.00', 'currency' => 'RUB', 'created_by_user_id' => $actor->id,
+        ], $override)));
+    }
+
     private function fixture(): array
     {
         $org = Organization::factory()->create();

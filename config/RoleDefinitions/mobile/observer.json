@@ -1,6 +1,7 @@
 {
   "name": "Наблюдатель",
   "slug": "observer",
+  "primary_priority": 110,
   "version": "1.0.0",
   "context": "project",
   "interface": "mobile",

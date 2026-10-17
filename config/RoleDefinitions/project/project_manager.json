@@ -1,6 +1,7 @@
 {
   "name": "Руководитель проекта",
   "slug": "project_manager",
+  "primary_priority": 70,
   "version": "1.0.0",
   "context": "project",
   "interface": "admin",
