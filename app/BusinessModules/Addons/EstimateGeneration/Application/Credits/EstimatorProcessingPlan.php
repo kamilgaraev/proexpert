@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached;
@@ -15,6 +16,8 @@ use DomainException;
 /** Finite server-owned ceilings. Unplanned expansion requires a separate approved operation. */
 final class EstimatorProcessingPlan
 {
+    private const MAX_CALLS = 10000;
+
     public function build(string $kind, int $rasterUnits, int $workItems, bool $complex, AiPriceSnapshot $tariff, bool $rerank = false, array $knownPartLimits = []): array
     {
         if (! in_array($kind, ['generation', 'analysis', 'dialogue', 'documents', 'rebuild'], true)
@@ -34,7 +37,7 @@ final class EstimatorProcessingPlan
             }
         }
         $baselineParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
-        $composerParts = max($baselineParts, $knownPartLimits['composer'] ?? 0);
+        $composerParts = min(EstimateComposerBatchPlanner::MAX_PARTS, max(1, $workItems) + ($knownPartLimits['composer'] ?? 0));
         // Runtime can split rich proofs down to a single work, even before a draft exists.
         $auditParts = max(1, $workItems, $knownPartLimits['audit'] ?? 0);
         $synthesisParts = 0;
@@ -67,11 +70,14 @@ final class EstimatorProcessingPlan
             }
         }
         $calls = array_sum(array_column($roles, 'max_calls'));
+        if ($calls > self::MAX_CALLS) {
+            throw new DomainException('estimator_processing_plan_requires_section_split');
+        }
         $maximum = BigDecimal::zero();
         foreach ($roles as $role) {
             $maximum = $maximum->plus(BigDecimal::of((string) $role['maximum_cost_micro_rub'])->multipliedBy($role['max_calls']));
         }
-        if ($calls < 1 || $calls > 10000 || ! $maximum->isGreaterThan(0)) {
+        if ($calls < 1 || ! $maximum->isGreaterThan(0)) {
             throw new DomainException('estimator_processing_plan_empty_or_oversized');
         }
 

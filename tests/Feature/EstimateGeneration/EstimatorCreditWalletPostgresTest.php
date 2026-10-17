@@ -381,8 +381,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
         $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
         self::assertSame(2, $plan['known_context']['part_limits']['composer']);
-        self::assertSame(2, $plan['composer_part_limit']);
-        self::assertSame(6, $plan['roles']['estimate_composition']['max_calls']);
+        self::assertSame(34, $plan['composer_part_limit']);
+        self::assertSame(102, $plan['roles']['estimate_composition']['max_calls']);
         self::assertSame('known_context_lower_bound', $plan['known_context']['basis']);
         self::assertStringNotContainsString('word word', json_encode($plan, JSON_THROW_ON_ERROR));
         self::assertSame($quote['quote_id'], $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation')['quote_id']);
@@ -492,11 +492,13 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(8192, $frozenOutput);
         config(['ai-assistant-credits.profiles.normal' => ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6]]);
         $facts = $candidates = [];
-        foreach ([1, 2] as $id) {
+        foreach (range(1, $approved ? 2 : 33) as $id) {
             $facts[] = ['id' => 'fact:'.$id, 'entity_id' => 'room:'.$id, 'value' => str_repeat('word ', 500), 'status' => 'confirmed'];
-            $candidates[] = ['candidate_id' => 'candidate:'.$id, 'work_key' => 'work:'.$id, 'name' => 'Работа '.$id,
-                'unit' => null, 'quantity' => null, 'quantity_formula' => null,
-                'source_fact_ids' => ['fact:'.$id], 'technology_package_candidate' => null];
+            if ($id <= 2) {
+                $candidates[] = ['candidate_id' => 'candidate:'.$id, 'work_key' => 'work:'.$id, 'name' => 'Работа '.$id,
+                    'unit' => null, 'quantity' => null, 'quantity_formula' => null,
+                    'source_fact_ids' => ['fact:'.$id], 'technology_package_candidate' => null];
+            }
         }
         $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
             (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), $facts, [], [], $candidates, [],
