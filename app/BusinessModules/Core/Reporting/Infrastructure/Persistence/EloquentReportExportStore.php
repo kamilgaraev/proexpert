@@ -26,6 +26,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 use App\Services\Storage\DTO\StoredFile;
 use Closure;
 use DateTimeImmutable;
@@ -79,7 +80,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
             }
             $fence->assertOperations(
-                $this->requiredOperations($parentRun, $columns, ReportOperation::EXPORT),
+                $this->requiredOperations($parentRun, $columns, $data->sort->field, ReportOperation::EXPORT),
             );
             $this->assertRunFence($context, $source, $parentRun, $fence);
             $currentContext = $fence->assertCurrent($context);
@@ -275,6 +276,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 $this->requiredOperations(
                     $record,
                     $this->selectedColumns($record),
+                    (string) $record->sort_field,
                     ReportOperation::EXPORT,
                 ),
             );
@@ -308,6 +310,7 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
                 $this->requiredOperations(
                     $record,
                     $this->selectedColumns($record),
+                    (string) $record->sort_field,
                     ReportOperation::DOWNLOAD,
                 ),
             );
@@ -336,9 +339,19 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
             }
             $this->assertParentIdentity($record, $parent);
 
+            $now = (int) $this->clock->now()->format('Uu');
+            $exportLifetime = intdiv((int) $record->expires_at->format('Uu') - $now, 1000000);
+            $runLifetime = intdiv((int) $parent->expires_at->format('Uu') - $now, 1000000);
+            if ($exportLifetime < 1) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
+            }
+            if ($runLifetime < 1) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
+            }
+
             return $presign(
                 $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs),
-                $requestedTtlSeconds,
+                min($requestedTtlSeconds, $exportLifetime, $runLifetime),
             );
         });
     }
@@ -541,16 +554,18 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
     private function requiredOperations(
         ReportExportRecord|ReportRunRecord $record,
         array $selectedColumns,
+        string $sortField,
         ReportOperation $primary,
     ): array {
         $sensitiveColumns = $this->classificationColumnIds($record->sensitive_column_ids);
         $auditColumns = $this->classificationColumnIds($record->audit_column_ids);
+        $references = ReportExportColumnReferences::all($selectedColumns, $sortField);
         $operations = [$primary];
         if ($record->data_classification === ReportDataClassification::SENSITIVE->value
-            || array_intersect($selectedColumns, $sensitiveColumns) !== []) {
+            || array_intersect($references, $sensitiveColumns) !== []) {
             $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
-        if (array_intersect($selectedColumns, $auditColumns) !== []) {
+        if (array_intersect($references, $auditColumns) !== []) {
             $operations[] = ReportOperation::VIEW_AUDIT;
         }
 

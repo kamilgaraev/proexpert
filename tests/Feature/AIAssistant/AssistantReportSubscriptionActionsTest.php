@@ -61,6 +61,8 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
         $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes);
         self::assertSame($this->project->id, $input->effectiveProjectId());
         self::assertArrayNotHasKey('project_id', $input->filters->values);
+        self::assertSame('recognized_on', $input->sort->field);
+        self::assertSame('desc', $input->sort->direction->value);
         $view = app(ReportSavedViewStore::class)->getVisible($this->fixture->organization->id, $this->fixture->owner->id, $subscription->savedViewId);
         self::assertSame('private', $view->visibility);
         self::assertFalse($view->isDefault);
@@ -219,6 +221,33 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
         self::assertSame('active', $this->manager->update(['subscription_id' => $id, 'operation' => 'resume'], $this->fixture->owner, $this->fixture->organization)['status']);
         self::assertSame($bytes, $this->own($id)->executionInputBytes);
         self::assertSame($before, DB::table('report_saved_views')->count());
+    }
+
+    public function test_public_columns_cannot_be_sorted_by_private_financial_values_without_permission(): void
+    {
+        $actor = $this->fixture->addMember(['ai-assistant' => ['ai_assistant.chat', 'ai_assistant.reports.generate']],
+            ['reports.view', 'reports.manage', 'reports.production_progress.view', 'reports.production_progress.export']);
+        $actor->assignedProjects()->attach($this->project->id, ['is_active' => true, 'role' => 'member']);
+        $id = $this->manager->create($this->arguments(), $actor, $this->fixture->organization)['subscription_id'];
+        $store = app(ReportSubscriptionStore::class);
+        $before = $store->getForActor($this->fixture->organization->id, $actor->id, $id);
+        $viewCount = DB::table('report_saved_views')->count();
+        foreach (['create', 'update'] as $operation) {
+            $arguments = ['sort' => ['field' => 'accepted_amount_minor', 'direction' => 'desc']];
+            try {
+                if ($operation === 'create') {
+                    $this->manager->create(array_replace($this->arguments(), $arguments), $actor, $this->fixture->organization);
+                } else {
+                    $this->manager->update($arguments + ['subscription_id' => $id, 'operation' => 'update'], $actor, $this->fixture->organization);
+                }
+                self::fail('Private financial sort accepted');
+            } catch (AuthorizationException) {
+                self::assertSame($viewCount, DB::table('report_saved_views')->count());
+                $after = $store->getForActor($this->fixture->organization->id, $actor->id, $id);
+                self::assertSame($before->executionInputBytes, $after->executionInputBytes);
+                self::assertSame($before->transitionVersion, $after->transitionVersion);
+            }
+        }
     }
 
     private function arguments(): array

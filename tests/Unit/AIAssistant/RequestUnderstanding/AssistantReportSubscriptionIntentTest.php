@@ -24,6 +24,10 @@ final class AssistantReportSubscriptionIntentTest extends TestCase
             'Создай подписку на отчёт по материалам',
             'Настрой подписку на еженедельный отчёт',
             'Прошу подпиши меня на отчёт по проекту',
+            'Подпиши меня на отчёт о выполненных работах',
+            'Прошу подпиши нас на еженедельный отчёт',
+            'Пожалуйста, присылай мне отчёт каждую пятницу',
+            'Присылай мне отчёт ежедневно',
             'Можешь настроить мне подписку на отчёт каждую пятницу?',
             'Можешь ли создать мне подписку на Excel?',
         ] as $query) {
@@ -76,7 +80,9 @@ final class AssistantReportSubscriptionIntentTest extends TestCase
         foreach (['Как настроить подписку на отчёт?', 'Можно ли получать Excel каждую пятницу?',
             'Хочу узнать, как получать отчёт каждую неделю', 'Покажи мои подписки на отчёты',
             'Покажи настройки уведомлений', 'Создай еженедельный отчёт в Excel',
-            'Не создавай подписку на отчёт', 'Хочу каждую пятницу не получать отчёт'] as $query) {
+            'Не создавай подписку на отчёт', 'Хочу каждую пятницу не получать отчёт',
+            'Подпиши отчёт о выполненных работах', 'Подписать отчёт о выполненных работах',
+            'Пожалуйста, подпиши отчёт об активных подписках'] as $query) {
             self::assertNull(AssistantReportSubscriptionIntent::type($query), $query);
             self::assertFalse((new AssistantActionProposalService)->supportsGoal('create_report_subscription', $query), $query);
             self::assertFalse((new AssistantActionProposalService)->supportsGoal('update_report_subscription', $query), $query);

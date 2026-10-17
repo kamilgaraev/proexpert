@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSub
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportAttemptLifecycleStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportExecutionContextRehydrator;
@@ -21,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactVersionInventory;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportExecutionService;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
@@ -52,6 +54,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRenderer;
@@ -63,9 +66,14 @@ use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
+use App\Services\Storage\OrganizationStoragePath;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 use ReflectionClass;
 use RuntimeException;
 use Tests\Support\Reporting\FakeReportExecutionClock;
@@ -81,6 +89,74 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     private const TOKEN = '0195e44b-a9e7-7f12-a8af-51f2d284d3ef';
+
+    private mixed $previousFacadeApplication;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container;
+        $container->instance('log', new NullLogger);
+        Facade::clearResolvedInstance('log');
+        Facade::setFacadeApplication($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstance('log');
+        Facade::setFacadeApplication($this->previousFacadeApplication);
+        parent::tearDown();
+    }
+
+    #[DataProvider('privateSortCases')]
+    public function test_private_sort_is_denied_before_create_or_worker_artifact(string $stage, string $field, string $operation): void
+    {
+        $fixture = $this->fixture(privateSort: $field);
+        $context = $fixture['context'];
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->expects(self::once())->method('authorizeExactMany')->willReturnCallback(
+            static function (int $actorId, ReportScope $scope, array $targets) use ($operation): array {
+                self::assertSame(['export', $operation], array_map(static fn ($target) => $target->operation->value, $targets));
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+            });
+        if ($stage === 'create') {
+            $runs = $this->createStub(ReportRunStore::class);
+            $runs->method('exportSource')->willReturn($fixture['source']);
+            $exports = $this->createMock(ReportExportStore::class);
+            $exports->expects(self::never())->method('createOrReuse');
+            $definitions = $this->createStub(ReportDefinitionRegistry::class);
+            $definitions->method('published')->willReturn($fixture['published']);
+            $subjects = $this->createStub(ReportAuthorizationSubjectReader::class);
+            $subjects->method('run')->willReturn(new ReportAuthorizationSubject(ReportDispatchAggregate::RUN, self::RUN_ID,
+                $fixture['published']->definition, $fixture['scope'], $fixture['source']->snapshot, null, null));
+            $coordinator = new ReportExportCoordinator($runs, $exports, $definitions,
+                new ReportDefinitionBindingMap(['report' => $fixture['binding']]), $authorizer, new ReportExecutionContextFactory,
+                new ReportExportRendererRegistry(new CsvReportExportRenderer,
+                    (new ReflectionClass(XlsxReportExportRenderer::class))->newInstanceWithoutConstructor(),
+                    (new ReflectionClass(PdfReportExportRenderer::class))->newInstanceWithoutConstructor()), $subjects);
+            $this->expectException(ReportContractException::class);
+            $coordinator->create($context, $fixture['source'], new CreateReportExportData('csv', ['name'],
+                new ReportWindowSort($field, ReportSortDirection::DESC), 'ru', new DateTimeZone('UTC')), new IdempotencyKey('private-sort-denied'));
+
+            return;
+        }
+        $files = new RecordingExportFileService;
+        $store = new RecordingExecutionExportStore($fixture['export'], ReportExportStatus::RUNNING);
+        $attempts = new RecordingExportAttemptStore($store);
+        $this->fullService($fixture, $attempts, $store, $files, new LinkedExportInventory($files), $authorizer,
+            new RecordingExportTelemetry)->execute(self::EXPORT_ID, self::TOKEN);
+        self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $attempts->failedCode);
+        self::assertSame(0, $store->startRenderingCount);
+        self::assertSame(0, $store->sealCount);
+        self::assertSame(0, $files->startCount);
+    }
+
+    public static function privateSortCases(): array
+    {
+        return [['create', 'secret', 'view_sensitive'], ['create', 'audit', 'view_audit'],
+            ['worker', 'secret', 'view_sensitive'], ['worker', 'audit', 'view_audit']];
+    }
 
     public function test_duplicate_delivery_stops_at_authority_free_claim(): void
     {
@@ -187,7 +263,8 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
         self::assertSame(ReportExportStatus::READY, $store->status);
         self::assertSame(0, $files->startCount);
         self::assertSame(1, $store->sealCount);
-        self::assertSame('version-1', $store->sealedArtifact?->versionId);
+        self::assertSame($this->version($fixture)['path'], $store->sealedArtifact?->organizationPath);
+        self::assertSame(str_repeat('e', 64), $store->sealedArtifact?->sha256);
         self::assertSame(2, $authorizer->calls);
     }
 
@@ -382,14 +459,22 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
 
     private function fixture(
         ReportExportStatus $status = ReportExportStatus::RUNNING,
+        ?string $privateSort = null,
     ): array {
         $scope = new ReportScope(1, [1], [], [], new DateTimeZone('UTC'));
         $context = (new ReportExecutionContextBuilder)->build();
-        $published = (new ReportDefinitionBuilder)->published();
+        $builder = new ReportDefinitionBuilder;
+        if ($privateSort !== null) {
+            $builder->columns([['id' => 'name'], ['id' => $privateSort]])->sorts([['id' => $privateSort]])
+                ->outputClassification(new ReportOutputClassification(ReportDataClassification::STANDARD,
+                    $privateSort === 'secret' ? ['secret'] : [], $privateSort === 'audit' ? ['audit'] : [], false, false, false));
+        }
+        $published = $builder->published();
         $source = $this->source($scope, $published);
         $export = (new ReportExportBuilder)
             ->id(self::EXPORT_ID)
             ->runId(self::RUN_ID)
+            ->sort(new ReportWindowSort($privateSort ?? 'name', ReportSortDirection::ASC))
             ->status($status)
             ->exportHash(new Sha256Hash(str_repeat('d', 64)))
             ->createdAt(new DateTimeImmutable('2026-01-01T00:00:00Z'))
@@ -414,6 +499,8 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
             $source->snapshot,
             self::RUN_ID,
             null,
+            null,
+            $export->format,
         );
 
         return compact(
@@ -510,14 +597,7 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
             new Sha256Hash(hash('sha256', CanonicalJson::encode($projection))),
             $snapshot,
             ReportDataClassification::STANDARD,
-            new ReportOutputClassification(
-                ReportDataClassification::STANDARD,
-                [],
-                [],
-                false,
-                false,
-                false,
-            ),
+            $definition->outputClassification,
             $definition->contractVersion,
             $definition->formulaVersion,
             $definition->sourceSchemaVersion,
@@ -531,8 +611,7 @@ final class GenerateReportExportJobIntegrationTest extends TestCase
         $export = $fixture['export'];
 
         return [
-            'path' => 'org-1/reports/exports/'.self::EXPORT_ID.'/artifact.csv',
-            'version_id' => 'version-1',
+            'path' => OrganizationStoragePath::forActor(1, 'reports', 'exports/'.self::EXPORT_ID, $fixture['context']->actor->id, 'artifact', 'csv'),
             'etag' => 'etag-1',
             'size' => 12,
             'sha256' => str_repeat('e', 64),
@@ -650,10 +729,9 @@ final class RecordingExecutionExportStore implements ReportExportStore
             ->updatedAt($occurredAt)
             ->readyAt($occurredAt)
             ->expiresAt($this->template->expiresAt)
-            ->artifactPath($artifact->path)
-            ->versionId($artifact->versionId)
+            ->artifactPath($artifact->organizationPath)
             ->etag($artifact->etag)
-            ->checksum($artifact->checksum)
+            ->checksum(new Sha256Hash($artifact->sha256))
             ->sizeBytes($artifact->sizeBytes)
             ->rowCount($rowCount)
             ->ready();
@@ -693,10 +771,9 @@ final class RecordingExecutionExportStore implements ReportExportStore
                 ->updatedAt(new DateTimeImmutable('2026-01-01T00:02:00Z'))
                 ->readyAt(new DateTimeImmutable('2026-01-01T00:02:00Z'))
                 ->expiresAt($this->template->expiresAt)
-                ->artifactPath($this->sealedArtifact->path)
-                ->versionId($this->sealedArtifact->versionId)
+                ->artifactPath($this->sealedArtifact->organizationPath)
                 ->etag($this->sealedArtifact->etag)
-                ->checksum($this->sealedArtifact->checksum)
+                ->checksum(new Sha256Hash($this->sealedArtifact->sha256))
                 ->sizeBytes($this->sealedArtifact->sizeBytes)
                 ->rowCount(1)
                 ->ready();
@@ -705,6 +782,8 @@ final class RecordingExecutionExportStore implements ReportExportStore
         return (new ReportExportBuilder)
             ->id($this->template->id)
             ->runId($this->template->runId)
+            ->columns($this->template->columns)
+            ->sort($this->template->sort)
             ->status($this->status)
             ->exportHash($this->template->exportHash)
             ->createdAt($this->template->createdAt)
@@ -810,18 +889,16 @@ final class RecordingExportFileService extends FileService
         $checksum = hash('sha256', $bytes);
         $stored = new StoredFile(
             $upload->organizationPath,
-            'version-'.$this->completeCount,
             'etag-'.$this->completeCount,
             strlen($bytes),
-            new Sha256Hash($checksum),
+            $checksum,
             $upload->mime,
         );
         $this->versions[] = [
-            'path' => $stored->path,
-            'version_id' => $stored->versionId,
+            'path' => $stored->organizationPath,
             'etag' => $stored->etag,
             'size' => $stored->sizeBytes,
-            'sha256' => $stored->checksum->value,
+            'sha256' => $stored->sha256,
             'mime' => $stored->mime,
             'metadata' => $upload->metadata,
             'created_at' => new DateTimeImmutable('2026-01-01T00:02:00Z'),
@@ -830,27 +907,25 @@ final class RecordingExportFileService extends FileService
         return $stored;
     }
 
-    public function describeVersion(
+    public function describeCurrent(
         string $path,
-        ?string $versionId,
         int $maxBytes = 10485760,
     ): array {
         foreach ($this->versions as $version) {
-            if ($version['path'] === $path && $version['version_id'] === $versionId) {
+            if ($version['path'] === $path) {
                 return [
                     'path' => $version['path'],
                     'body' => '',
                     'size' => $version['size'],
                     'sha256' => $version['sha256'],
                     'etag' => $version['etag'],
-                    'version_id' => $version['version_id'],
                     'content_type' => $version['mime'],
                     'metadata' => $version['metadata'],
                 ];
             }
         }
 
-        throw new RuntimeException('version missing');
+        throw new RuntimeException('artifact missing');
     }
 
     public function abortMultipart(MultipartUpload $upload): void

@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
@@ -69,6 +70,8 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected $connectionsToTransact = [];
+
     private DateTimeImmutable $now;
 
     private ReportExecutionContext $context;
@@ -76,6 +79,13 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
     private ReportRunExportSource $source;
 
     private FakeReportExecutionClock $clock;
+
+    protected function tearDown(): void
+    {
+        DB::table('report_exports')->where('run_id', '01J00000000000000000000000')->delete();
+        DB::table('report_runs')->where('id', '01J00000000000000000000000')->delete();
+        parent::tearDown();
+    }
 
     protected function beforeRefreshingDatabase(): void
     {
@@ -117,7 +127,8 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
 
     public function test_project_export_history_filters_scope_and_rechecks_each_export_without_returning_artifacts(): void
     {
-        $visible = '01J00000000000000000000021'; $hidden = '01J00000000000000000000022';
+        $visible = '01J00000000000000000000021';
+        $hidden = '01J00000000000000000000022';
         $this->insertExport($visible, 'queued', $this->now->modify('+1 hour'));
         $this->insertExport($hidden, 'ready', $this->now->modify('+1 hour'));
         DB::table('report_exports')->update(['scope_project_ids' => '[52]']);
@@ -143,6 +154,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             if ($id === $hidden) {
                 throw \App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
+
             return (new \Tests\Support\Reporting\ReportExportBuilder)->id($id)->expiresAt($this->now->modify('+1 hour'))->queued();
         });
         $metadata = $this->createMock(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry::class);
@@ -177,6 +189,66 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         self::assertSame(102, DB::table('report_exports')->count());
         $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
         $history->read($this->context->actor->id, 1, 99, $page['next_cursor']);
+    }
+
+    #[DataProvider('privateExportSortCases')]
+    public function test_private_sort_requires_complete_locked_fence_even_for_public_columns(string $stage, string $field, ReportOperation $extra): void
+    {
+        $primary = $stage === 'download' ? ReportOperation::DOWNLOAD : ReportOperation::EXPORT;
+        if ($stage === 'create') {
+            $subject = new ReportAuthorizationSubject(ReportDispatchAggregate::RUN, $this->source->run->id,
+                $this->source->query->definition, $this->context->scope, $this->source->snapshot, null, null,
+                ReportRunAuthorizationIdentity::fromRecord(ReportRunRecord::query()->findOrFail($this->source->run->id)));
+            $data = new CreateReportExportData('csv', ['name'], new ReportWindowSort($field, ReportSortDirection::DESC), 'ru-RU', new DateTimeZone('UTC'));
+            try {
+                $this->store()->createOrReuse($this->context, $this->source, $data, new IdempotencyKey('private-sort-incomplete'), $this->fence($subject, [$primary]));
+                self::fail('Incomplete private sort fence accepted');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
+                self::assertSame(0, DB::table('report_exports')->count());
+            }
+            $created = $this->store()->createOrReuse($this->context, $this->source, $data, new IdempotencyKey('private-sort-complete'), $this->fence($subject, [$primary, $extra]));
+            self::assertSame(['name'], $created->columns);
+            self::assertSame($field, $created->sort->field);
+
+            return;
+        }
+        $id = '01J00000000000000000000091';
+        $this->insertExport($id, $stage === 'download' ? 'ready' : 'queued', $this->now->modify('+1 hour'));
+        DB::table('report_exports')->where('id', $id)->update(['selected_columns' => '["name"]', 'sort_field' => $field]);
+        $subject = $this->subject(ReportExportRecord::query()->findOrFail($id));
+        $presign = false;
+        $callback = function ($export, int $ttl) use (&$presign): ReportDownloadLink {
+            $presign = true;
+
+            return new ReportDownloadLink('https://storage.example.test/report.csv', (string) $export->artifactPath, $this->now, $this->now->modify("+{$ttl} seconds"));
+        };
+        try {
+            $incomplete = $this->fence($subject, [$primary]);
+            if ($stage === 'download') {
+                $this->store()->withReadyDownload($this->context, $id, 300, $incomplete, $callback);
+            } else {
+                $this->store()->cancel($this->context, $id, $this->now, $incomplete);
+            }
+            self::fail('Persisted private sort was not authorized');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
+            self::assertFalse($presign);
+        }
+        $complete = $this->fence($subject, [$primary, $extra]);
+        if ($stage === 'download') {
+            $this->store()->withReadyDownload($this->context, $id, 300, $complete, $callback);
+            self::assertTrue($presign);
+        } else {
+            self::assertSame('cancelled', $this->store()->cancel($this->context, $id, $this->now, $complete)->status->value);
+        }
+    }
+
+    public static function privateExportSortCases(): array
+    {
+        return [['create', 'secret', ReportOperation::VIEW_SENSITIVE], ['create', 'audit', ReportOperation::VIEW_AUDIT],
+            ['cancel', 'secret', ReportOperation::VIEW_SENSITIVE], ['cancel', 'audit', ReportOperation::VIEW_AUDIT],
+            ['download', 'secret', ReportOperation::VIEW_SENSITIVE], ['download', 'audit', ReportOperation::VIEW_AUDIT]];
     }
 
     public function test_create_locks_ready_parent_and_persists_only_after_complete_fence(): void
@@ -321,6 +393,38 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         self::assertSame('cancelled', DB::table('report_exports')->where('id', $exportId)->value('status'));
     }
 
+    #[DataProvider('expiredDownloadCases')]
+    public function test_download_refuses_expired_or_subsecond_file_or_parent_before_presigning(string $table, string $offset, ReportErrorCode $code): void
+    {
+        $id = '01J00000000000000000000092';
+        $this->insertExport($id, 'ready', $this->now->modify('+1 hour'));
+        DB::table($table)->where('id', $table === 'report_exports' ? $id : $this->source->run->id)
+            ->update(['expires_at' => $this->now->modify($offset)]);
+        $subject = $this->subject(ReportExportRecord::query()->findOrFail($id));
+        $fence = $this->fence($subject, [ReportOperation::DOWNLOAD, ReportOperation::VIEW_SENSITIVE, ReportOperation::VIEW_AUDIT]);
+        $presign = false;
+        try {
+            $this->store()->withReadyDownload($this->context, $id, 300, $fence,
+                function () use (&$presign): never {
+                    $presign = true;
+                    throw new RuntimeException('Expired download reached storage');
+                });
+            self::fail('Expired download accepted');
+        } catch (ReportContractException $exception) {
+            self::assertSame($code, $exception->errorCode);
+            self::assertFalse($presign);
+            self::assertSame('ready', DB::table('report_exports')->where('id', $id)->value('status'));
+        }
+    }
+
+    public static function expiredDownloadCases(): array
+    {
+        return [['report_exports', '-1 second', ReportErrorCode::REPORT_EXPORT_EXPIRED],
+            ['report_runs', '-1 second', ReportErrorCode::REPORT_SNAPSHOT_EXPIRED],
+            ['report_exports', '+500000 microseconds', ReportErrorCode::REPORT_EXPORT_EXPIRED],
+            ['report_runs', '+500000 microseconds', ReportErrorCode::REPORT_SNAPSHOT_EXPIRED]];
+    }
+
     public function test_download_uses_post_lock_clock_bounded_ttl_and_rolls_back_callback_writes(): void
     {
         $exportId = '01J00000000000000000000002';
@@ -353,7 +457,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         );
 
         self::assertSame(59, $ttl);
-        self::assertSame($this->now->modify('+90 seconds'), $link->expiresAt);
+        self::assertEquals($this->now->modify('+90 seconds'), $link->expiresAt);
 
         try {
             $this->store()->withReadyDownload(
@@ -556,7 +660,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
     {
         $definitionHash = new Sha256Hash(str_repeat('a', 64));
         $classification = new ReportOutputClassification(
-            ReportDataClassification::SENSITIVE,
+            ReportDataClassification::STANDARD,
             ['secret'],
             ['audit'],
             false,
@@ -565,8 +669,8 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         );
         $definition = (new ReportDefinitionBuilder)
             ->definitionHash($definitionHash)
-            ->columns([['id' => 'audit'], ['id' => 'secret']])
-            ->sorts([['id' => 'audit']])
+            ->columns([['id' => 'name'], ['id' => 'audit'], ['id' => 'secret']])
+            ->sorts([['id' => 'audit'], ['id' => 'secret']])
             ->outputClassification($classification)
             ->payload();
         $scope = new ReportScope(1, [1], [], [], new DateTimeZone('UTC'));
@@ -615,7 +719,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             ReportFreshnessStatus::FRESH,
             $quality,
             $provenance,
-            [['id' => 'audit'], ['id' => 'secret']],
+            [['id' => 'name'], ['id' => 'audit'], ['id' => 'secret']],
             [],
         );
         $run = (new ReportRunBuilder)
@@ -643,7 +747,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             $result,
             $resultHash,
             $snapshot,
-            ReportDataClassification::SENSITIVE,
+            ReportDataClassification::STANDARD,
             $classification,
             '1',
             '1',
@@ -684,7 +788,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'snapshot_watermarks' => '[]',
             'snapshot_materialized_source_hash' => $this->source->snapshot->sourceHash->value,
             'snapshot_classification' => 'operational',
-            'data_classification' => 'sensitive',
+            'data_classification' => 'standard',
             'sensitive_column_ids' => '["secret"]',
             'audit_column_ids' => '["audit"]',
             'totals_sensitive' => false,
@@ -742,6 +846,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
                 ? null
                 : new Sha256Hash((string) $record->artifact_checksum),
             ReportExportAuthorizationIdentity::fromRecord($record),
+            (string) $record->format,
         );
     }
 
@@ -756,6 +861,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         return new ReportAuthorizationFence(
             $subject,
             $operations,
+            $subject->exportFormat ?? 'csv',
             new class($this->context, $onFirstAuthorization) implements CurrentReportScopeAuthorizer
             {
                 private bool $authorized = false;

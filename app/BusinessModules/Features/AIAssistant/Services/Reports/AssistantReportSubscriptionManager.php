@@ -28,6 +28,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSubscriptionExecutionInp
 use App\BusinessModules\Core\Reporting\Domain\DTO\UpdateReportSubscriptionData;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSubscriptionFrequency;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Models\Organization;
 use App\Models\User;
@@ -201,14 +202,15 @@ final readonly class AssistantReportSubscriptionManager
             $viewInput = ['report_code' => $definition->code, 'name' => $arguments['name'] ?? $view?->name ?? '',
                 'visibility' => 'private', 'is_default' => false, 'filters' => $filters, 'comparison' => $view?->comparison ?? [],
                 'columns' => $arguments['columns'] ?? $view?->columns ?? [],
-                'sort' => $arguments['sort'] ?? ($view === null ? ['field' => $definition->sorts[0]['id'], 'direction' => 'asc']
+                'sort' => $arguments['sort'] ?? ($view === null ? ['field' => $definition->sorts[0]['id'], 'direction' => $definition->sorts[0]['direction'] ?? 'asc']
                     : ['field' => $view->sort->field, 'direction' => $view->sort->direction->value])];
             $validated = $this->viewService->prepareCreate($context, $viewInput);
             if (array_diff($validated->columns, array_column(AssistantPublishedReportColumns::exportable($definition->code, $definition->columns), 'id')) !== []) {
                 $this->invalid();
             }
-            if ((! $context->visibility->canViewSensitive && array_intersect($validated->columns, $definition->outputClassification->sensitiveColumnIds) !== [])
-                || (! $context->visibility->canViewAudit && array_intersect($validated->columns, $definition->outputClassification->auditColumnIds) !== [])) {
+            $references = ReportExportColumnReferences::all($validated->columns, $validated->sort->field);
+            if ((! $context->visibility->canViewSensitive && $definition->outputClassification->requiresSensitiveForColumns($references))
+                || (! $context->visibility->canViewAudit && $definition->outputClassification->requiresAuditForColumns($references))) {
                 throw new AuthorizationException;
             }
         }

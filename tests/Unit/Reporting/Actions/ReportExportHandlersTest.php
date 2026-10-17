@@ -54,6 +54,62 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportExportHandlersTest extends TestCase
 {
+    #[DataProvider('privateSortCases')]
+    public function test_export_read_and_download_check_private_sort_even_when_selected_columns_are_public(string $field, string $operation, bool $denied, string $stage = 'read'): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $classification = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(
+            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, ['secret'], ['audit'], false, false, false);
+        $published = (new ReportDefinitionBuilder)->columns([['id' => 'name'], ['id' => 'secret'], ['id' => 'audit']])
+            ->outputClassification($classification)->published();
+        $snapshot = new ReportSnapshotRef('materialized', 'snapshot', $context->scope, $published->definitionHash,
+            $published->definition->formulaVersion, new Sha256Hash(str_repeat('c', 64)), new DateTimeImmutable('2026-01-01T00:00:00Z'),
+            null, [], ReportSnapshotClassification::OPERATIONAL, null);
+        $export = (new \Tests\Support\Reporting\ReportExportBuilder)->columns(['name'])
+            ->sort(new ReportWindowSort($field, ReportSortDirection::DESC))->queued();
+        $subjects = $this->createStub(ReportAuthorizationSubjectReader::class);
+        $subjects->method('export')->willReturn(new ReportAuthorizationSubject(ReportDispatchAggregate::EXPORT, $export->id,
+            $published->definition, $context->scope, $snapshot, $export->runId, null, null, $export->format));
+        $store = $this->createStub(ReportExportStore::class);
+        $store->method('get')->willReturn($export);
+        $definitions = $this->createStub(ReportDefinitionRegistry::class);
+        $definitions->method('published')->willReturn($published);
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->expects(self::once())->method('authorizeExactMany')->willReturnCallback(
+            static function (int $actorId, ReportScope $scope, array $targets) use ($context, $operation, $denied, $stage): array {
+                self::assertSame([$stage === 'read' ? 'view' : 'download', $operation], array_map(static fn ($target) => $target->operation->value, $targets));
+                if ($denied) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+                }
+
+                return array_map(static fn ($target) => new CurrentReportAuthorization($context->actor,
+                    $context->authorization, $context->visibility, $target), $targets);
+            });
+        if ($denied) {
+            $this->expectException(ReportContractException::class);
+        }
+        if ($stage === 'download') {
+            $downloads = $this->createMock(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportReadyDownloadStore::class);
+            $downloads->expects(self::never())->method('withReadyDownload');
+            $files = $this->createMock(\App\Services\Storage\FileService::class);
+            $files->expects(self::never())->method('temporaryDownloadUrl');
+            (new CreateReportDownloadLinkHandler($store, $downloads, $definitions, $authorizer, $files,
+                new \Tests\Support\Reporting\FakeReportExecutionClock(new DateTimeImmutable('2026-01-01T00:02:00Z')),
+                new ReportExecutionContextFactory, $subjects))->handle($context, new CreateReportDownloadLinkData($export->id, 300));
+
+            return;
+        }
+        $handler = new GetReportExportHandler($store, $definitions, $authorizer, new ReportExecutionContextFactory, $subjects);
+        self::assertSame($export, $handler->handle($context, $export->id));
+    }
+
+    public static function privateSortCases(): array
+    {
+        return [['secret', 'view_sensitive', false], ['secret', 'view_sensitive', true],
+            ['audit', 'view_audit', false], ['audit', 'view_audit', true],
+            ['secret', 'view_sensitive', true, 'download'], ['audit', 'view_audit', true, 'download']];
+    }
+
     #[DataProvider('exportReadCases')]
     public function test_export_read_rechecks_full_scope_definition_and_sensitive_audit_access(string $case): void
     {
