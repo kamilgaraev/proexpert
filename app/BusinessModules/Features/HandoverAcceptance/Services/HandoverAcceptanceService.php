@@ -257,10 +257,14 @@ final class HandoverAcceptanceService
             $scope = $checklist->scope()->lockForUpdate()->firstOrFail();
             $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.inspect');
             $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened']);
+            $item = $checklist->items()->whereKey($item->id)->lockForUpdate()->firstOrFail();
             if ($item->status !== 'pending') {
                 throw new DomainException(trans_message('handover_acceptance.errors.invalid_status'));
             }
-            $item->update(['status' => $data['status'], 'comment' => $data['comment'] ?? null]);
+            $item->update([
+                'status' => $data['status'], 'comment' => $data['comment'] ?? null,
+                'reviewed_at' => now(), 'reviewed_by_user_id' => $userId,
+            ]);
             $this->storePhotoEvidence($item, $data['photos'] ?? [], $userId, (int) $checklist->organization_id);
             $this->refreshChecklistStatus($checklist);
 
@@ -359,6 +363,28 @@ final class HandoverAcceptanceService
                     'is_required' => (bool) $document['is_required'],
                 ], $binding));
             }
+
+            return $package->fresh(['documents']);
+        });
+    }
+
+    public function bindPackageExecutiveSet(AcceptanceScope $scope, int $userId, int $setId): HandoverPackage
+    {
+        return DB::transaction(function () use ($scope, $userId, $setId): HandoverPackage {
+            $scope = AcceptanceScope::query()->whereKey($scope->id)->lockForUpdate()->firstOrFail();
+            $this->mutationGuard->assertActor($scope, $userId, 'handover-acceptance.edit');
+            $this->assertStatus($scope, ['planned', 'in_progress', 'findings_open', 'ready_for_reinspection', 'rejected', 'reopened', 'accepted']);
+            $package = $scope->handoverPackage()->lockForUpdate()->firstOrFail();
+            $set = $this->executiveEvidence->resolveSet($scope, $setId);
+            if ((int) $package->executive_document_set_id === $setId) {
+                return $package->load('documents');
+            }
+            if ($package->status !== 'draft' || $package->documents()->where(function ($query): void {
+                $query->where('status', 'approved')->orWhereNotNull('approved_at')->orWhereNotNull('executive_document_version_id');
+            })->exists()) {
+                throw new DomainException(trans_message('handover_acceptance.errors.package_set_locked'));
+            }
+            $package->update(['executive_document_set_id' => $set?->id]);
 
             return $package->fresh(['documents']);
         });

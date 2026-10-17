@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\HandoverAcceptance;
 
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
-use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceGate;
+use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Models\Project;
 use DomainException;
 use Tests\Support\AdminApiTestContext;
@@ -117,7 +117,24 @@ final class PartialAcceptanceGateTest extends TestCase
         ], $context->user, $authorization);
         $requirements->markNotApplicable($requirement, $context->user, 'Работы этого раздела исключены договором', $authorization);
         $service->createPackage($scope, $context->user->id, ['title' => 'Передача', 'executive_document_set_id' => $set->id, 'documents' => []]);
-        self::assertTrue(app(HandoverAcceptanceGate::class)->evaluate($scope)['ready']);
+        self::assertFalse(app(HandoverAcceptanceGate::class)->evaluate($scope->fresh())['ready']);
+        \Illuminate\Support\Facades\Storage::fake('s3');
+        $contents = 'Approved list with an excluded test section';
+        $path = 'org-'.$scope->organization_id.'/executive-documentation/test-not-applicable-list.pdf';
+        \Illuminate\Support\Facades\Storage::disk('s3')->put($path, $contents);
+        $list = \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList::query()->create([
+            'organization_id' => $scope->organization_id, 'project_id' => $scope->project_id,
+            'revision' => 1, 'approved_by_party' => 'Технический заказчик', 'approved_at' => now()->toDateString(),
+            'file_url' => $path, 'file_hash' => hash('sha256', $contents), 'original_name' => 'approved-list.pdf',
+            'uploaded_by' => $context->user->id, 'items' => [[
+                'key' => $requirement->requirement_key, 'profile_type' => $requirement->profile_type,
+                'title' => $requirement->title, 'stage' => $requirement->stage,
+            ]],
+        ]);
+        $set->update(['approved_list_id' => $list->id]);
+        $requirement->update(['source_revision' => 'approved-list-'.$list->id]);
+        $readiness = app(HandoverAcceptanceGate::class)->evaluate($scope->fresh());
+        self::assertTrue($readiness['ready'], json_encode($readiness, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
         $accepted = $service->acceptScope($scope, $context->user->id, null);
         self::assertSame('accepted', $accepted->status);
         self::assertSame('not_applicable', $accepted->signoffs->first()->evidence_snapshot['requirements'][0]['applicability']);

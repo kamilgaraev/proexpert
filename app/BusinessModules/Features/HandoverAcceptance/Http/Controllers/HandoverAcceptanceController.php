@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\HandoverAcceptance\Http\Controllers;
 
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\BindHandoverPackageExecutiveSetRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\ReviewChecklistItemRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChecklistResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
@@ -109,6 +111,26 @@ final class HandoverAcceptanceController extends Controller
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
             return $this->failed($request, $e, 'store_checklist');
+        }
+    }
+
+    public function reviewChecklistItem(ReviewChecklistItemRequest $request, int $checklistItem): JsonResponse
+    {
+        try {
+            $reviewed = $this->service->reviewChecklistItem(
+                $this->service->findChecklistItem($this->organizationId($request), $checklistItem),
+                (int) $request->user()?->id,
+                $request->validated(),
+            );
+
+            return AdminResponse::success(
+                new AcceptanceChecklistResource($reviewed->checklist),
+                trans_message('handover_acceptance.messages.checklist_item_reviewed'),
+            );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed($request, $e, 'review_checklist_item');
         }
     }
 
@@ -249,6 +271,23 @@ final class HandoverAcceptanceController extends Controller
         }
     }
 
+    public function bindPackageExecutiveSet(BindHandoverPackageExecutiveSetRequest $request, int $scope): JsonResponse
+    {
+        try {
+            return AdminResponse::success(new HandoverPackageResource($this->service->bindPackageExecutiveSet(
+                $this->service->findScope($this->organizationId($request), $scope),
+                (int) $request->user()?->id,
+                (int) $request->validated('executive_document_set_id'),
+            )));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed($request, $e, 'bind_package_executive_set');
+        }
+    }
+
     public function approvePackageDocument(\App\BusinessModules\Features\HandoverAcceptance\Http\Requests\ApproveHandoverPackageDocumentRequest $request, int $document): JsonResponse
     {
         try {
@@ -290,7 +329,9 @@ final class HandoverAcceptanceController extends Controller
             return AdminResponse::error(trans_message('handover_acceptance.errors.scope_not_found'), 404);
         }
         if ($e instanceof \App\Exceptions\BusinessLogicException && in_array($e->getCode(), [403, 404, 409, 422], true)) {
-            $key = match ($e->getCode()) { 403 => 'forbidden', 404 => 'scope_not_found', 422 => 'validation_failed', default => 'invalid_status' };
+            $key = match ($e->getCode()) {
+                403 => 'forbidden', 404 => 'scope_not_found', 422 => 'validation_failed', default => 'invalid_status'
+            };
 
             return AdminResponse::error(trans_message('handover_acceptance.errors.'.$key), $e->getCode());
         }

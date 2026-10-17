@@ -64,7 +64,7 @@ final readonly class HandoverExecutiveEvidenceService
 
     public function requiresCanonicalVersion(string $type): bool
     {
-        return $type === 'executive_document' || $this->profiles->find($type) !== null;
+        return in_array($type, ['executive_document', 'executive_documentation'], true) || $this->profiles->find($type) !== null;
     }
 
     private function matches(ExecutiveDocumentVersion $version, AcceptanceScope $scope, int $setId, string $type, ?int $latestVersionId = null): bool
@@ -74,7 +74,7 @@ final readonly class HandoverExecutiveEvidenceService
             || (int) $document->organization_id !== (int) $scope->organization_id
             || (int) $document->project_id !== (int) $scope->project_id
             || (int) $document->document_set_id !== $setId
-            || ($type !== 'executive_document' && $type !== $document->document_type->value)
+            || (! in_array($type, ['executive_document', 'executive_documentation'], true) && $type !== $document->document_type->value)
             || ! in_array($version->status, ['approved', 'transmitted'], true)
             || empty($version->content_hash) || empty($version->file_url)) {
             return false;

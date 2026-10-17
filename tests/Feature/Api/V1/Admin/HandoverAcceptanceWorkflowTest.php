@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
-use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
-use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
-use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
-use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklistItem;
-use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
+use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
+use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
+use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
+use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -156,13 +155,13 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $resolveResponse->assertOk();
         $resolveResponse->assertJsonPath('data.status', 'resolved');
 
-        $checklistService = app(HandoverAcceptanceService::class);
         foreach ($checklistResponse->json('data.items') as $item) {
-            $checklistService->reviewChecklistItem(
-                AcceptanceChecklistItem::query()->findOrFail((int) $item['id']),
-                $context->user->id,
-                ['status' => 'accepted'],
-            );
+            $reviewResponse = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/handover-acceptance/checklist-items/{$item['id']}/review", [
+                    'status' => 'accepted',
+                    'comment' => 'Checked internally',
+                ]);
+            $this->assertSame(200, $reviewResponse->status(), $reviewResponse->getContent());
         }
 
         $readyResponse = $this->withHeaders($context->authHeaders())
@@ -218,11 +217,10 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $packageResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/package", [
                 'title' => 'Customer handover package',
-                'executive_document_set_id' => $executiveSet->id,
                 'documents' => [
                     [
                         'title' => 'Executive package',
-                        'document_type' => 'working_drawing_set',
+                        'document_type' => 'executive_documentation',
                         'is_required' => true,
                         'status' => 'draft',
                     ],
@@ -237,9 +235,17 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $blockedHandoverResponse->assertStatus(422);
 
         $documentId = (int) $packageResponse->json('data.documents.0.id');
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/handover-acceptance/scopes/{$scopeId}/package/executive-set", [
+                'executive_document_set_id' => $executiveSet->id,
+            ])->assertOk()
+            ->assertJsonPath('data.id', $packageResponse->json('data.id'))
+            ->assertJsonPath('data.documents.0.id', $documentId)
+            ->assertJsonPath('data.executive_document_set_id', $executiveSet->id);
+
         $urlOnlyResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/handover-acceptance/package-documents/{$documentId}/approve", [
-                'external_url' => 's3://org-' . $context->organization->id . '/handover/executive.pdf',
+                'external_url' => 's3://org-'.$context->organization->id.'/handover/executive.pdf',
             ]);
 
         $urlOnlyResponse->assertStatus(422);
@@ -442,11 +448,120 @@ final class HandoverAcceptanceWorkflowTest extends TestCase
         $foreignResponse->assertForbidden();
     }
 
-    private function allowAccess(): void
+    public function test_admin_checklist_review_validates_rejection_and_does_not_overwrite_a_reviewed_item(): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $service = app(HandoverAcceptanceService::class);
+        $scope = $service->createScope($context->organization->id, $context->user->id, [
+            'project_id' => $project->id, 'title' => 'Internal inspection',
+        ]);
+        $checklist = $service->addChecklist($scope, [
+            'title' => 'Walls', 'items' => [['code' => 'walls', 'title' => 'Walls checked', 'is_required' => true]],
+        ]);
+        $item = $checklist->items->firstOrFail();
+        $url = "/api/v1/admin/handover-acceptance/checklist-items/{$item->id}/review";
+        $this->withHeaders($context->authHeaders())->postJson($url, ['status' => 'pending'])->assertStatus(422);
+        $this->withHeaders($context->authHeaders())->postJson($url, ['status' => 'rejected'])->assertStatus(422);
+        $this->assertSame('pending', $item->fresh()->status);
+        $this->withHeaders($context->authHeaders())->postJson($url, [
+            'status' => 'rejected', 'comment' => 'Surface requires repair',
+        ])->assertOk()->assertJsonPath('data.items.0.status', 'rejected');
+        $this->assertSame($context->user->id, $item->fresh()->reviewed_by_user_id);
+        $this->assertNotNull($item->fresh()->reviewed_at);
+        $this->withHeaders($context->authHeaders())->postJson($url, ['status' => 'accepted'])->assertStatus(422);
+        try {
+            $service->reviewChecklistItem($item, $context->user->id, ['status' => 'accepted']);
+            $this->fail('A stale pending item must not replace a completed decision');
+        } catch (\DomainException) {
+            $this->assertSame('rejected', $item->fresh()->status);
+            $this->assertSame('Surface requires repair', $item->fresh()->comment);
+        }
+    }
+
+    public function test_admin_package_binding_preserves_documents_and_rejects_foreign_sets_and_confirmed_evidence(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreign = AdminApiTestContext::create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        $this->allowAccess();
+        $service = app(HandoverAcceptanceService::class);
+        $scope = $service->createScope($context->organization->id, $context->user->id, [
+            'project_id' => $project->id, 'title' => 'Package binding',
+        ]);
+        $package = $service->createPackage($scope, $context->user->id, [
+            'title' => 'Existing package', 'documents' => [
+                ['title' => 'Existing item', 'document_type' => 'executive_documentation', 'is_required' => true, 'status' => 'draft'],
+            ],
+        ]);
+        $document = $package->documents->firstOrFail();
+        $originalAttributes = $document->getAttributes();
+        $sets = [];
+        foreach ([[$context, $project], [$context, $otherProject], [$foreign, $foreignProject], [$context, $project]] as [$owner, $setProject]) {
+            $sets[] = ExecutiveDocumentSet::query()->create([
+                'organization_id' => $owner->organization->id, 'project_id' => $setProject->id,
+                'created_by' => $owner->user->id, 'set_number' => 'SET-'.uniqid(), 'title' => 'Existing executive set', 'status' => 'draft',
+            ]);
+        }
+        $url = "/api/v1/admin/handover-acceptance/scopes/{$scope->id}/package/executive-set";
+        $this->withHeaders($context->authHeaders())->putJson($url, [])->assertStatus(422);
+        foreach ([$sets[1], $sets[2]] as $invalidSet) {
+            $this->withHeaders($context->authHeaders())->putJson($url, [
+                'executive_document_set_id' => $invalidSet->id,
+            ])->assertStatus(422);
+        }
+        $this->assertNull($package->fresh()->executive_document_set_id);
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $this->withHeaders($context->authHeaders())->putJson($url, [
+                'executive_document_set_id' => $sets[0]->id,
+            ])->assertOk()->assertJsonPath('data.id', $package->id)
+                ->assertJsonPath('data.executive_document_set_id', $sets[0]->id)
+                ->assertJsonPath('data.documents.0.id', $document->id);
+        }
+        $this->assertSame($originalAttributes, $document->fresh()->getAttributes());
+        $this->assertSame(1, $package->documents()->count());
+        $document->update(['status' => 'approved', 'approved_at' => now(), 'approved_by_user_id' => $context->user->id]);
+        $this->withHeaders($context->authHeaders())->putJson($url, [
+            'executive_document_set_id' => $sets[3]->id,
+        ])->assertStatus(422);
+        $this->assertSame($sets[0]->id, $package->fresh()->executive_document_set_id);
+        $this->assertSame('approved', $document->fresh()->status);
+        $this->assertSame(1, $package->documents()->count());
+    }
+
+    public function test_admin_review_and_package_binding_require_permissions_and_current_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $service = app(HandoverAcceptanceService::class);
+        $scope = $service->createScope($context->organization->id, $context->user->id, [
+            'project_id' => $project->id, 'title' => 'Protected inspection',
+        ]);
+        $checklist = $service->addChecklist($scope, [
+            'title' => 'Inspection', 'items' => [['code' => 'walls', 'title' => 'Walls checked']],
+        ]);
+        $item = $checklist->items->firstOrFail();
+        $itemUrl = "/api/v1/admin/handover-acceptance/checklist-items/{$item->id}/review";
+        $bindingUrl = "/api/v1/admin/handover-acceptance/scopes/{$scope->id}/package/executive-set";
+        $foreign = AdminApiTestContext::create();
+        $this->withHeaders($foreign->authHeaders())->postJson($itemUrl, ['status' => 'accepted'])->assertStatus(422);
+        $this->withHeaders($foreign->authHeaders())->putJson($bindingUrl, ['executive_document_set_id' => 1])->assertStatus(422);
+        $this->allowAccess(false);
+        $this->withHeaders($context->authHeaders())->postJson($itemUrl, ['status' => 'accepted'])->assertForbidden();
+        $this->withHeaders($context->authHeaders())->putJson($bindingUrl, ['executive_document_set_id' => 1])->assertForbidden();
+        $this->assertSame('pending', $item->fresh()->status);
+        $this->assertNull($scope->handoverPackage()->first());
+    }
+
+    private function allowAccess(bool $allowed = true): void
+    {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($allowed): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturn($allowed);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
