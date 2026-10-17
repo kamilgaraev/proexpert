@@ -24,8 +24,8 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    // Ten aggregate reads, three quota reads and two current clarification reads.
-    public const QUERY_BUDGET = 15;
+    // Ten aggregate reads, four quota reads and two current clarification reads.
+    public const QUERY_BUDGET = 16;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -70,7 +70,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             $units = $this->units($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
             $evidence = $this->evidence($connection, $organizationId, $projectId, $sessionId);
             $usage = $this->usage($connection, $organizationId, $projectId, $sessionId);
-            $failures = $this->failures($connection, $organizationId, $projectId, $sessionId);
+            $failures = $this->failures($connection, $organizationId, $projectId, $sessionId, $generationAttemptId);
             $estimate = $this->estimate($connection, $organizationId, $projectId, $sessionId);
             $sources = $this->sourceWatermarks($connection, $organizationId, $projectId, $sessionId);
 
@@ -252,10 +252,21 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     }
 
     /** @return array<string, mixed> */
-    private function failures(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
+    private function failures(Connection $connection, int $organizationId, int $projectId, int $sessionId, ?string $generationAttemptId): array
     {
+        $latest = $connection->table('estimate_generation_failures AS failures')
+            ->join('estimate_generation_pipeline_checkpoints AS checkpoints', 'checkpoints.id', '=', 'failures.checkpoint_id')
+            ->whereColumn('checkpoints.organization_id', 'failures.organization_id')
+            ->whereColumn('checkpoints.project_id', 'failures.project_id')
+            ->whereColumn('checkpoints.session_id', 'failures.session_id')
+            ->where('failures.organization_id', $organizationId)->where('failures.project_id', $projectId)->where('failures.session_id', $sessionId)
+            ->where('checkpoints.generation_attempt_id', $generationAttemptId)->whereNull('failures.resolved_at')
+            ->selectRaw("jsonb_build_object('stage', failures.stage, 'category', failures.category, 'code', failures.code, 'diagnostics', failures.safe_context)")
+            ->orderByDesc('failures.latest_occurrence_sequence')->limit(1);
+
         return $this->aggregate($connection->table('estimate_generation_failures')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+            ->selectSub($latest, 'latest')
             ->selectRaw('COUNT(*) AS total, MAX(latest_occurrence_sequence) AS max_sequence, MAX(last_seen_at) AS max_last_seen_at, COALESCE(SUM(occurrence_count), 0) AS occurrences')
             ->selectRaw('SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) AS active')
             ->selectRaw("SUM(CASE WHEN resolved_at IS NULL AND category = 'recoverable' THEN 1 ELSE 0 END) AS recoverable")
@@ -430,6 +441,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             usageSummary: OperationalUsageSummary::fromAggregate($usage),
             failureSummary: [
                 'active' => $this->number($failures, 'active'),
+                'latest' => $this->latestFailure($failures),
                 'categories' => [
                     'recoverable' => $this->number($failures, 'recoverable'),
                     'user_action_required' => $this->number($failures, 'user_action_required'),
@@ -443,6 +455,22 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             creditPolicy: $base->creditPolicy,
             evaluationConfirmation: $readiness->confirmedEvaluation,
         );
+    }
+
+    /** @param array<string, mixed> $failures @return array<string, mixed>|null */
+    private function latestFailure(array $failures): ?array
+    {
+        $latest = $this->json($failures['latest'] ?? null);
+        if ($latest === []) {
+            return null;
+        }
+        $latest['diagnostics'] = array_intersect_key(
+            (new \App\BusinessModules\Addons\EstimateGeneration\Observability\SensitiveDiagnosticSanitizer)->sanitize($this->json($latest['diagnostics'] ?? null)),
+            array_flip(['invariant_code', 'exception_class', 'root_exception_class', 'execution_boundary',
+                'sql_state', 'database_invariant', 'constraint_identifier', 'diagnostic_fingerprint']),
+        );
+
+        return $latest;
     }
 
     /** @return array<string, mixed> */

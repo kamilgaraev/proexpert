@@ -20,7 +20,7 @@ use Illuminate\Database\Query\Builder;
 
 final readonly class AiEstimateQuotaService implements StoppedSessionQuotaReleaser
 {
-    public const SNAPSHOT_QUERY_BUDGET = 3;
+    public const SNAPSHOT_QUERY_BUDGET = 4;
 
     private const TABLE = 'estimate_generation_ai_estimate_quota_reservations';
 

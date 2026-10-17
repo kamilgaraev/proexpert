@@ -96,7 +96,7 @@ final readonly class FailureDiagnosticIdentity
             $error instanceof DocumentUnitProcessingException => $error->safeCode,
             $error instanceof TypedFailureException => $error->safeCode,
             $error instanceof InvalidArgumentException
-                && preg_match('/\A(?:arbitration|observer|observation|project_model|vision|geometry|document_unit|estimate_generation)_[a-z0-9_]{1,64}\z/', $error->getMessage()) === 1 => $error->getMessage(),
+                && preg_match('/\A(?:arbitration|observer|observation|project_model|vision|geometry|document_unit|estimate_generation|estimate_composer|estimate_work)_[a-z0-9_]{1,64}\z/', $error->getMessage()) === 1 => $error->getMessage(),
             default => null,
         };
 
