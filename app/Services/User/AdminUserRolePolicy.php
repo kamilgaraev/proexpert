@@ -16,6 +16,12 @@ use App\Models\User;
 
 final class AdminUserRolePolicy
 {
+    public const ROLE_PRIORITY = [
+        'super_admin', 'system_admin', 'organization_owner', 'organization_admin', 'finance_admin',
+        'web_admin', 'accountant', 'project_manager', 'site_engineer', 'foreman', 'worker', 'observer',
+        'viewer', 'supplier', 'contractor',
+    ];
+
     public function __construct(
         private readonly RoleScanner $roleScanner,
         private readonly RolePayloadFormatter $rolePayloadFormatter,

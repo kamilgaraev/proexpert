@@ -35,7 +35,9 @@ final readonly class AssistantCustomReportSource
                 throw new AccessDeniedHttpException;
             }
         }
-        $query = $this->policy->entityQuery($actor, $organizationId, $entityType);
+        $members = $domain === 'people' && $entityType === 'user' ? app(AssistantOrganizationMemberReportProjection::class) : null;
+        $query = $members?->query($actor, $organizationId, $this->policy)
+            ?? $this->policy->entityQuery($actor, $organizationId, $entityType);
         if (! $query instanceof Builder) {
             throw new AccessDeniedHttpException;
         }
@@ -91,6 +93,9 @@ final readonly class AssistantCustomReportSource
                 $fields[$field]['choices'] = array_map(static fn (string|int $value): array => ['value' => $value,
                     'label' => \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactLabels::display($entityType, $field, (string) $value)], $values);
             }
+        }
+        if ($members !== null) {
+            $fields = array_replace($fields, $members->fields());
         }
         if ($entityType === 'schedule_task') {
             $schedules = $this->policy->entityQuery($actor, $organizationId, 'schedule');

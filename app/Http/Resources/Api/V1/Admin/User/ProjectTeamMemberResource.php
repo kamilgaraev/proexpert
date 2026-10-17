@@ -12,24 +12,6 @@ use Illuminate\Support\Collection;
 
 class ProjectTeamMemberResource extends JsonResource
 {
-    private const ROLE_PRIORITY = [
-        'super_admin',
-        'system_admin',
-        'organization_owner',
-        'organization_admin',
-        'finance_admin',
-        'web_admin',
-        'accountant',
-        'project_manager',
-        'site_engineer',
-        'foreman',
-        'worker',
-        'observer',
-        'viewer',
-        'supplier',
-        'contractor',
-    ];
-
     public function toArray(Request $request): array
     {
         if (! $this->resource instanceof User) {
@@ -102,7 +84,7 @@ class ProjectTeamMemberResource extends JsonResource
 
     private function resolvePrimaryRole(array $roles): ?string
     {
-        foreach (self::ROLE_PRIORITY as $roleSlug) {
+        foreach (AdminUserRolePolicy::ROLE_PRIORITY as $roleSlug) {
             if (in_array($roleSlug, $roles, true)) {
                 return $roleSlug;
             }
