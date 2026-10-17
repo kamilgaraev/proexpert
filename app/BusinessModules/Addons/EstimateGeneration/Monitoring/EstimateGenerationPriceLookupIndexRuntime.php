@@ -10,6 +10,13 @@ use stdClass;
 
 final class EstimateGenerationPriceLookupIndexRuntime
 {
+    private const RESOURCE_PREFIX_INDEX = [
+        'name' => 'eg_prices_resource_code_pattern_idx',
+        'create' => 'CREATE INDEX CONCURRENTLY eg_prices_resource_code_pattern_idx ON public.estimate_resource_prices (resource_code varchar_pattern_ops) WHERE base_price > 0',
+        'drop' => 'DROP INDEX CONCURRENTLY IF EXISTS public."eg_prices_resource_code_pattern_idx"',
+        'expected' => 'CREATE INDEX eg_prices_resource_code_pattern_idx ON public.estimate_resource_prices USING btree (resource_code varchar_pattern_ops) WHERE (base_price > (0)::numeric)',
+    ];
+
     /** @var list<array{name: string, create: string, drop: string, expected: string}> */
     private const INDEXES = [
         [
@@ -30,6 +37,25 @@ final class EstimateGenerationPriceLookupIndexRuntime
     {
         foreach (self::INDEXES as $index) {
             $this->ensure($index);
+        }
+        $this->ensureResourcePrefixLookup();
+    }
+
+    public function ensureResourcePrefixLookup(): void
+    {
+        $this->ensure(self::RESOURCE_PREFIX_INDEX, false);
+    }
+
+    public function dropResourcePrefixLookup(): void
+    {
+        $this->assertResourcePrefixDefinition($this->find(self::RESOURCE_PREFIX_INDEX['name'], false));
+        DB::statement(self::RESOURCE_PREFIX_INDEX['drop']);
+    }
+
+    private function assertResourcePrefixDefinition(?stdClass $existing): void
+    {
+        if ($existing !== null && $this->normalized($existing->definition) !== $this->normalized(self::RESOURCE_PREFIX_INDEX['expected'])) {
+            throw new RuntimeException('estimate_generation_price_prefix_index_definition_mismatch');
         }
     }
 
@@ -113,15 +139,19 @@ final class EstimateGenerationPriceLookupIndexRuntime
 
     public function dropAll(): void
     {
+        $this->dropResourcePrefixLookup();
         foreach (array_reverse(self::INDEXES) as $index) {
             DB::statement($index['drop']);
         }
     }
 
     /** @param array{name: string, create: string, drop: string, expected: string} $index */
-    private function ensure(array $index): void
+    private function ensure(array $index, bool $useReadPdo = true): void
     {
-        $existing = $this->find($index['name']);
+        $existing = $this->find($index['name'], $useReadPdo);
+        if ($index['name'] === self::RESOURCE_PREFIX_INDEX['name']) {
+            $this->assertResourcePrefixDefinition($existing);
+        }
         if ($existing !== null && $this->usable($existing)) {
             if ($this->normalized($existing->definition) !== $this->normalized($index['expected'])) {
                 throw new RuntimeException('estimate_generation_price_lookup_index_definition_mismatch');
@@ -133,18 +163,19 @@ final class EstimateGenerationPriceLookupIndexRuntime
             DB::statement($index['drop']);
         }
         DB::statement($index['create']);
-        $created = $this->find($index['name']);
+        $created = $this->find($index['name'], $useReadPdo);
         if ($created === null || ! $this->usable($created)
             || $this->normalized($created->definition) !== $this->normalized($index['expected'])) {
             throw new RuntimeException('estimate_generation_price_lookup_index_postcondition_failed');
         }
     }
 
-    private function find(string $name): ?stdClass
+    private function find(string $name, bool $useReadPdo = true): ?stdClass
     {
         return DB::selectOne(
             'SELECT i.indisvalid, i.indisready, pg_get_indexdef(c.oid) AS definition FROM pg_class AS c INNER JOIN pg_namespace AS n ON n.oid = c.relnamespace INNER JOIN pg_index AS i ON i.indexrelid = c.oid WHERE n.nspname = ? AND c.relname = ?',
             ['public', $name],
+            $useReadPdo,
         );
     }
 
