@@ -161,7 +161,7 @@ final readonly class UniversalEvaluationBuilder
         $excluded = $workScopeCurrent ? array_column($workSelection['excluded_audit_findings'] ?? [], null, 'finding_id') : [];
         $acceptedMaterials = $workScopeCurrent ? array_column($workSelection['accepted_material_findings'] ?? [], null, 'finding_id') : [];
         $currentItems = $workScope->items($draft);
-        $commercialMoneyByKey = null;
+        $commercialFindings = [];
         foreach ($draft['audit_review_items'] ?? [] as $finding) {
             $findingKey = $finding['item_key'] ?? null;
             $findingId = $finding['finding_id'] ?? null;
@@ -186,15 +186,7 @@ final readonly class UniversalEvaluationBuilder
             }
             if (is_array($currentItem) && ($finding['type'] ?? null) === 'suspicious_zero'
                 && is_array($currentItem['commercial_price_snapshot'] ?? null)) {
-                $commercialMoneyByKey ??= $this->correctedCommercialMoneyByKey($positions, $scope);
-                $commercialMoney = $commercialMoneyByKey[$findingKey] ?? null;
-            } else {
-                $commercialMoney = null;
-            }
-            if ($commercialMoney !== null) {
-                $auditDispositions[] = ['finding_id' => $findingId, 'item_key' => $findingKey, 'status' => 'corrected_by_commercial_pricing',
-                    'source_hash' => $commercialMoney['price_snapshot']['source_hash'], 'calculated_amount' => $commercialMoney['amount'],
-                    'price_snapshot_hash' => hash('sha256', CanonicalPipelineJson::encode($commercialMoney['price_snapshot']))];
+                $commercialFindings[] = [...$finding, 'finding_id' => $findingId, 'item_key' => $findingKey];
 
                 continue;
             }
@@ -257,6 +249,22 @@ final readonly class UniversalEvaluationBuilder
                 $scenario['contingency'] = $contingency;
             }
             unset($scenario);
+        }
+        if ($commercialFindings !== []) {
+            $commercialMoneyByKey = $this->correctedCommercialMoneyByKey($scenarios, $scope);
+            foreach ($commercialFindings as $finding) {
+                $money = $commercialMoneyByKey[$finding['item_key']] ?? null;
+                if ($money === null) {
+                    $requirements[] = ['requirement' => 'audit_finding', 'reason' => $finding['reason'] ?? 'audit_review_required',
+                        'position_keys' => [$finding['item_key']]];
+
+                    continue;
+                }
+                $auditDispositions[] = ['finding_id' => $finding['finding_id'], 'item_key' => $finding['item_key'],
+                    'status' => 'corrected_by_commercial_pricing', 'source_hash' => $money['price_snapshot']['source_hash'],
+                    'calculated_amount' => $money['amount'],
+                    'price_snapshot_hash' => hash('sha256', CanonicalPipelineJson::encode($money['price_snapshot']))];
+            }
         }
         $result = $this->calculator->calculate($scenarios, $scope, $requirements, $scopeConfirmed);
         foreach ($result['missing_requirements'] as &$requirement) {
@@ -331,23 +339,30 @@ final readonly class UniversalEvaluationBuilder
             'conditions_missing' => [...($regionalOnly ? [] : ['price_level']), ...($terms === null ? ['vat_mode', 'delivery_included'] : [])]];
     }
 
-    private function correctedCommercialMoneyByKey(array $positions, array $scope): array
+    private function correctedCommercialMoneyByKey(array $scenarios, array $scope): array
     {
-        $result = $this->calculator->calculate([['id' => 'base', 'assumptions' => [], 'positions' => $positions]], $scope, [], true);
+        $result = $this->calculator->calculate($scenarios, $scope, [], true);
         $money = [];
-        foreach ($result['scenarios'][0]['positions'] as $position) {
-            $price = $position['price_snapshot'];
-            if (! is_array($price) || ! in_array($price['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog'], true)
-                || $position['pricing_status'] !== 'calculated'
-                || ($price['conditions_missing'] ?? []) !== [] || $position['money_breakdown'] === null
-                || ! is_string($price['source_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $price['source_hash']) !== 1
-                || ! BigDecimal::of($position['total_cost'])->isGreaterThan(0)) {
-                continue;
+        $invalid = [];
+        foreach ($result['scenarios'] as $scenario) {
+            foreach ($scenario['positions'] as $position) {
+                $price = $position['price_snapshot'];
+                if (! is_array($price) || ! in_array($price['source_type'] ?? null, ['catalog', 'supplier', 'verified_analog'], true)
+                    || $position['pricing_status'] !== 'calculated'
+                    || ($price['conditions_missing'] ?? []) !== [] || $position['money_breakdown'] === null
+                    || ! is_string($price['source_hash'] ?? null) || preg_match('/\A[a-f0-9]{64}\z/', $price['source_hash']) !== 1
+                    || ! BigDecimal::of($position['total_cost'])->isGreaterThan(0)) {
+                    $invalid[$position['key']] = true;
+
+                    continue;
+                }
+                if (! isset($money[$position['key']]) || $scenario['id'] === 'base') {
+                    $money[$position['key']] = ['price_snapshot' => $price, 'amount' => $position['total_cost']];
+                }
             }
-            $money[$position['key']] = ['price_snapshot' => $price, 'amount' => $position['total_cost']];
         }
 
-        return $money;
+        return array_diff_key($money, $invalid);
     }
 
     private function priceIdentity(array $snapshot): array

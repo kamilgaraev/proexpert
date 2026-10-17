@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ConfirmedEvaluationSelection;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ScenarioEstimateCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveCommercialWorkPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCatalogIdentity;
 use App\Models\SystemAdmin;
@@ -105,8 +107,11 @@ final readonly class ReadConfirmedUniversalEvaluation
                 return null;
             }
         }
+        $currentPositions = [];
         foreach ($selected['scenario']['positions'] as $position) {
             if (isset($nativeKeys[$position['key']])) {
+                $currentPositions[] = $position;
+
                 continue;
             }
             $item = ['key' => $position['key'], 'unit' => $position['unit'], 'quantity' => $position['quantity'],
@@ -114,11 +119,34 @@ final readonly class ReadConfirmedUniversalEvaluation
             $current = isset($session->input_payload['price_selections'][$position['key']])
                 ? $this->prices->resolve($actor, $session, $item, $snapshot, $decisions)
                 : $this->prices->resolveFrozen($actor, $session, $item);
-            if ($current === null || ($current['applicable'] ?? true) !== true || ($current['conditions_missing'] ?? []) !== []
+            if ($current === null || ($current['applicable'] ?? true) !== true
                 || (($current['stale'] ?? false) === true && ($current['stale_accepted'] ?? false) !== true)
                 || ! hash_equals($position['price_snapshot']['source_hash'] ?? '', $current['source_hash'] ?? '')
                 || ! BigDecimal::of($current['unit_price'])->isEqualTo($position['unit_price'])) {
                 return null;
+            }
+            $currentPositions[] = [...$position, 'price_snapshot' => $current];
+        }
+        if (count($currentPositions) !== count($nativeKeys)) {
+            try {
+                $rechecked = (new ScenarioEstimateCalculator)->calculate(
+                    [[...$selected['scenario'], 'positions' => $currentPositions]], $selected['selected_scope'], [], true);
+            } catch (\InvalidArgumentException) {
+                return null;
+            }
+            if (! $rechecked['can_confirm_for_apply']) {
+                return null;
+            }
+            $acceptedPositions = array_column($selected['scenario']['positions'], null, 'key');
+            $moneyKeys = array_flip(['quantity', 'unit_price', 'total_cost', 'money_breakdown']);
+            foreach ($rechecked['scenarios'][0]['positions'] as $position) {
+                $acceptedPosition = $acceptedPositions[$position['key']];
+                if (CanonicalPipelineJson::encode(array_intersect_key($position, $moneyKeys))
+                    !== CanonicalPipelineJson::encode(array_intersect_key($acceptedPosition, $moneyKeys))
+                    || CanonicalPipelineJson::encode(['delivery' => $position['price_snapshot']['delivery_cost_basis'] ?? null])
+                        !== CanonicalPipelineJson::encode(['delivery' => $acceptedPosition['price_snapshot']['delivery_cost_basis'] ?? null])) {
+                    return null;
+                }
             }
         }
 
