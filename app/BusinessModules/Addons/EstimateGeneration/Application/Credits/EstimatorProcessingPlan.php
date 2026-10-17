@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCostCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached;
@@ -34,7 +35,7 @@ final class EstimatorProcessingPlan
             }
         }
         $baselineParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
-        $composerParts = max($baselineParts, $knownPartLimits['composer'] ?? 0);
+        $composerParts = min(EstimateComposerBatchPlanner::MAX_PARTS, max(1, $workItems) + ($knownPartLimits['composer'] ?? 0));
         // Runtime can split rich proofs down to a single work, even before a draft exists.
         $auditParts = max(1, $workItems, $knownPartLimits['audit'] ?? 0);
         $synthesisParts = 0;

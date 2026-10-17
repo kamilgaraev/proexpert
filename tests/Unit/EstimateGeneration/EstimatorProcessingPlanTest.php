@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextParts;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorProcessingPlan;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use PHPUnit\Framework\TestCase;
@@ -36,9 +41,39 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(8192, $plan['roles']['vision']['output_ceiling']);
         self::assertArrayNotHasKey('project_synthesis', $plan['roles']);
         self::assertSame(0, $plan['synthesis_part_limit']);
-        self::assertSame(1, $plan['composer_part_limit']);
+        self::assertSame(32, $plan['composer_part_limit']);
         self::assertArrayNotHasKey('rerank', $plan['roles']);
         self::assertSame(array_sum(array_column($plan['roles'], 'max_calls')), $plan['maximum_calls']);
+    }
+
+    public function test_future_composer_candidates_fit_the_approved_plan_with_rich_existing_context(): void
+    {
+        config()->set('estimate-generation.estimate_composer.max_input_bytes', 16384);
+        $facts = $candidates = [];
+        for ($index = 0; $index < 12; $index++) {
+            $facts[] = ['id' => 'fact:'.$index, 'entity_id' => 'entity:'.($index % 4),
+                'value' => str_repeat('context ', 250), 'status' => 'confirmed'];
+        }
+        for ($index = 0; $index < 32; $index++) {
+            $candidates[] = ['candidate_id' => 'candidate:'.$index, 'work_key' => 'work:'.$index,
+                'name' => 'Работа '.$index, 'unit' => null, 'quantity' => null, 'quantity_formula' => null,
+                'source_fact_ids' => ['fact:'.($index % 12)], 'technology_package_candidate' => null];
+        }
+        $knownInput = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], [], [], RunEstimateComposer::PROMPT_CONTRACT);
+        $known = (new EstimatorKnownContextParts)->measure($knownInput, null, null, [], [], EstimatorTextWirePolicy::capture());
+        $runtimeInput = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, [], [], $candidates, [], RunEstimateComposer::PROMPT_CONTRACT);
+        $actual = (new EstimateComposerBatchPlanner($known['role_limits']['maximum_part_bytes']['composer'], 32,
+            $known['role_limits']['policies']['composer']))->plan($runtimeInput);
+        self::assertGreaterThan($known['part_limits']['composer'], count($actual));
+
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff(), false, $known['part_limits']);
+
+        self::assertLessThanOrEqual($plan['composer_part_limit'], count($actual));
+        self::assertGreaterThanOrEqual(count($actual) * 3, $plan['roles']['estimate_composition']['max_calls']);
+        $capped = (new EstimatorProcessingPlan)->capForQaBudget($plan, ['maximum_provider_cost_micro_rub' => 900000]);
+        self::assertSame(900000, $capped['maximum_provider_cost_micro_rub']);
+        self::assertSame($plan['composer_part_limit'], $capped['composer_part_limit']);
+        self::assertSame($plan['roles'], $capped['roles']);
     }
 
     public function test_document_processing_has_no_paid_composition_or_audit_roles(): void
@@ -49,6 +84,16 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertArrayNotHasKey('estimate_audit', $plan['roles']);
         self::assertArrayNotHasKey('estimate_composer_correction', $plan['roles']);
         self::assertSame(0, $plan['composer_part_limit']);
+    }
+
+    public function test_composer_allowance_preserves_the_execution_part_ceiling(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 320, false, $this->tariff(), false,
+            ['composer' => EstimateComposerBatchPlanner::MAX_PARTS]);
+
+        self::assertSame(EstimateComposerBatchPlanner::MAX_PARTS, $plan['composer_part_limit']);
+        self::assertSame(EstimateComposerBatchPlanner::MAX_PARTS * 3, $plan['roles']['estimate_composition']['max_calls']);
+        self::assertLessThanOrEqual(10000, $plan['maximum_calls']);
     }
 
     public function test_vision_quotes_freeze_the_configured_completion_ceiling_and_its_cost(): void
@@ -129,10 +174,10 @@ final class EstimatorProcessingPlanTest extends TestCase
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff());
         self::assertSame(65, $plan['audit_part_limit']);
-        self::assertSame(3, $plan['composer_part_limit']);
+        self::assertSame(65, $plan['composer_part_limit']);
         self::assertSame(585, $plan['roles']['estimate_audit']['max_calls']);
         self::assertSame(390, $plan['roles']['estimate_composer_correction']['max_calls']);
-        self::assertSame(984, $plan['maximum_calls']);
+        self::assertSame(1170, $plan['maximum_calls']);
     }
 
     public function test_complex_operation_reserves_every_engineer_part_before_execution(): void
@@ -147,14 +192,14 @@ final class EstimatorProcessingPlanTest extends TestCase
         $baseline = (new EstimatorProcessingPlan)->build('generation', 0, 32, true, $this->tariff());
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, true, $this->tariff(), false,
             ['composer' => 4, 'audit' => 3, 'synthesis' => 2]);
-        self::assertSame(4, $plan['composer_part_limit']);
+        self::assertSame(36, $plan['composer_part_limit']);
         self::assertSame(32, $plan['audit_part_limit']);
         self::assertSame(2, $plan['synthesis_part_limit']);
-        self::assertSame(12, $plan['roles']['estimate_composition']['max_calls']);
+        self::assertSame(108, $plan['roles']['estimate_composition']['max_calls']);
         self::assertSame(288, $plan['roles']['estimate_audit']['max_calls']);
         self::assertSame(192, $plan['roles']['estimate_composer_correction']['max_calls']);
         self::assertSame(6, $plan['roles']['project_synthesis']['max_calls']);
-        self::assertSame(498, $plan['maximum_calls']);
+        self::assertSame(594, $plan['maximum_calls']);
         self::assertGreaterThan($baseline['maximum_provider_cost_micro_rub'], $plan['maximum_provider_cost_micro_rub']);
     }
 
@@ -162,7 +207,7 @@ final class EstimatorProcessingPlanTest extends TestCase
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff(), false,
             ['composer' => 1, 'audit' => 0, 'synthesis' => 1]);
-        self::assertSame(3, $plan['composer_part_limit']);
+        self::assertSame(66, $plan['composer_part_limit']);
         self::assertSame(65, $plan['audit_part_limit']);
         self::assertSame(0, $plan['synthesis_part_limit']);
     }

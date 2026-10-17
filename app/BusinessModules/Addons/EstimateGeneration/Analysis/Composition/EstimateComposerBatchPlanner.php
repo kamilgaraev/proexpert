@@ -11,6 +11,8 @@ use InvalidArgumentException;
 /** Plans every request before sending; never cuts records to fit a model context. */
 final readonly class EstimateComposerBatchPlanner
 {
+    public const MAX_PARTS = 512;
+
     public function __construct(private int $maxInputBytes = 524288, private int $candidatesPerBatch = 32, private ?array $wirePolicy = null) {}
 
     public function withWirePolicy(?array $policy): self
@@ -136,7 +138,7 @@ final readonly class EstimateComposerBatchPlanner
     private function append(array &$batches, array &$coveredFacts, array &$coveredQuantities, EstimateComposerInput $batch): void
     {
         $batches[] = $batch;
-        if (count($batches) > 512) {
+        if (count($batches) > self::MAX_PARTS) {
             throw new InvalidArgumentException('estimate_composer_operation_plan_limit_exceeded');
         }
         foreach ($batch->facts as $fact) {
