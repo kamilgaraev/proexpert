@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\Project;
 
-use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Project;
 use App\Models\User;
@@ -27,7 +26,6 @@ class ProjectTeamService
     ): LengthAwarePaginator {
         $this->assertProjectAccessible($project, $organizationId);
 
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
         $perPage = max(1, min($perPage, self::MAX_MEMBERS_PER_PAGE));
         $search = trim((string) ($filters['search'] ?? ''));
         $name = trim((string) ($filters['name'] ?? ''));
@@ -47,10 +45,8 @@ class ProjectTeamService
                 'assignedProjects' => static function ($projectQuery): void {
                     $projectQuery->wherePivot('is_active', true);
                 },
-                'roleAssignments' => static function ($roleQuery) use ($context): void {
-                    $roleQuery
-                        ->where('context_id', $context->id)
-                        ->where('is_active', true);
+                'roleAssignments' => static function ($roleQuery) use ($organizationId): void {
+                    $roleQuery->availableInOrganization($organizationId)->with(['context', 'customRole']);
                 },
             ]);
 

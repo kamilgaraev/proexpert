@@ -21,9 +21,11 @@ use App\Models\Project;
 use App\Models\User;
 use App\Repositories\UserRepository;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Project\ProjectTeamService;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\User\AdminUserRolePolicy;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -235,6 +237,42 @@ final class AssistantPeopleReportsTest extends TestCase
             self::assertSame($rows[$user->id][2], $native['primary_role']);
             self::assertSame($rows[$user->id][3], $native['primary_role_label']);
         }
+        $legalOptionIds = $repository->paginateOptionsInOrganization($org->id, 100, ['role' => $legal->slug])->getCollection()->pluck('id')->sort()->values()->all();
+        $coordinatorOptionIds = $repository->paginateOptionsInOrganization($org->id, 100, ['role' => $coordinator->slug])->getCollection()->pluck('id')->sort()->values()->all();
+        $inactiveRoleOptions = $repository->paginateOptionsInOrganization($org->id, 100, ['role' => $inactiveRole->slug])->total();
+        $project = Project::factory()->create(['organization_id' => $org->id]);
+        $pages = [$repository->paginateOptionsInOrganization($org->id, 100)->getCollection(),
+            (new ProjectTeamService)->paginateAvailableMembers($project, $org->id, [], 100)->getCollection()];
+        $missingRelations = 0;
+        foreach ($pages as $page) {
+            foreach ($page as $user) {
+                foreach ($user->roleAssignments as $assignment) {
+                    $missingRelations += (int) (! $assignment->relationLoaded('context') || ! $assignment->relationLoaded('customRole'));
+                }
+            }
+        }
+        $policy = app(AdminUserRolePolicy::class);
+        $connection = DB::connection();
+        $wasLogging = $connection->logging();
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+        try {
+            foreach ($pages as $page) {
+                foreach ($page as $user) {
+                    $policy->presentOrganizationRoles($user, $org->id);
+                }
+            }
+            $roleQueries = count($connection->getQueryLog());
+        } finally {
+            if (! $wasLogging) {
+                $connection->disableQueryLog();
+            }
+            $connection->flushQueryLog();
+        }
+        self::assertSame(['legalIds' => [$legalUser->id], 'coordinatorIds' => collect([$legalUser->id, $coordinatorUser->id])->sort()->values()->all(),
+            'inactiveRoleOptions' => 0, 'missingRelations' => 0, 'roleQueries' => 0],
+            ['legalIds' => $legalOptionIds, 'coordinatorIds' => $coordinatorOptionIds,
+                'inactiveRoleOptions' => $inactiveRoleOptions, 'missingRelations' => $missingRelations, 'roleQueries' => $roleQueries]);
     }
 
     private function section(array $overrides = []): array

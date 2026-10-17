@@ -4,15 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Admin;
 
-use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
-use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
-use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Auth\Middleware\Authenticate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
+use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class ProjectTeamMemberTest extends TestCase
@@ -24,7 +21,7 @@ class ProjectTeamMemberTest extends TestCase
         [$organization, $admin, $project] = $this->createProjectContext();
 
         $employee = User::factory()->create([
-            'email' => 'employee-' . Str::uuid() . '@example.test',
+            'email' => 'employee-'.Str::uuid().'@example.test',
             'name' => 'Иван Сотрудник',
             'current_organization_id' => $organization->id,
             'is_active' => true,
@@ -35,18 +32,14 @@ class ProjectTeamMemberTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
-            ->getJson("/api/v1/admin/projects/{$project->id}/team-members?search=Иван")
+        $this->getJson("/api/v1/admin/projects/{$project->id}/team-members?search=Иван")
             ->assertOk()
             ->assertJsonFragment([
                 'id' => $employee->id,
                 'email' => $employee->email,
             ]);
 
-        $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
-            ->postJson("/api/v1/admin/projects/{$project->id}/team-members/{$employee->id}")
+        $this->postJson("/api/v1/admin/projects/{$project->id}/team-members/{$employee->id}")
             ->assertOk();
 
         $this->assertDatabaseHas('project_user', [
@@ -60,11 +53,11 @@ class ProjectTeamMemberTest extends TestCase
 
     public function test_project_team_assignment_rejects_user_from_another_organization(): void
     {
-        [, $admin, $project] = $this->createProjectContext();
+        [, , $project] = $this->createProjectContext();
 
         $foreignOrganization = Organization::factory()->create();
         $foreignUser = User::factory()->create([
-            'email' => 'foreign-' . Str::uuid() . '@example.test',
+            'email' => 'foreign-'.Str::uuid().'@example.test',
             'current_organization_id' => $foreignOrganization->id,
             'is_active' => true,
         ]);
@@ -74,26 +67,16 @@ class ProjectTeamMemberTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->withoutMiddleware($this->adminAccessMiddleware())
-            ->actingAs($admin, 'api_admin')
-            ->postJson("/api/v1/admin/projects/{$project->id}/team-members/{$foreignUser->id}")
+        $this->postJson("/api/v1/admin/projects/{$project->id}/team-members/{$foreignUser->id}")
             ->assertNotFound();
     }
 
     private function createProjectContext(): array
     {
-        $organization = Organization::factory()->create();
-
-        $admin = User::factory()->create([
-            'email' => 'admin-' . Str::uuid() . '@example.test',
-            'current_organization_id' => $organization->id,
-            'is_active' => true,
-        ]);
-
-        $admin->organizations()->attach($organization->id, [
-            'is_owner' => true,
-            'is_active' => true,
-        ]);
+        $context = AdminApiTestContext::create(userAttributes: ['is_active' => true]);
+        $organization = $context->organization;
+        $admin = $context->user;
+        $this->withHeaders($context->authHeaders());
 
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
@@ -101,15 +84,5 @@ class ProjectTeamMemberTest extends TestCase
         ]);
 
         return [$organization, $admin, $project];
-    }
-
-    private function adminAccessMiddleware(): array
-    {
-        return [
-            Authenticate::class,
-            JwtMiddleware::class,
-            AuthorizeMiddleware::class,
-            InterfaceMiddleware::class,
-        ];
     }
 }
