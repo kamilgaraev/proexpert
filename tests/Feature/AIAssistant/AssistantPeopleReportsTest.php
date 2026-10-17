@@ -134,7 +134,7 @@ final class AssistantPeopleReportsTest extends TestCase
         }
         $reference = $report['source_refs'][0];
         self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
-        $this->denied = ['users.view'];
+        $this->denied = ['users.view', 'admin.users.view'];
         self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
         $this->denied = [];
         $inactive->organizations()->detach($org->id);

@@ -717,7 +717,7 @@ final class AssistantCustomReportsTest extends TestCase
     public function test_task_assignee_name_is_bounded_to_active_organization_members_without_users_directory_permission(): void
     {
         $this->extraModules = ['schedule-management'];
-        $this->denied = ['users.view'];
+        $this->denied = ['users.view', 'admin.users.view'];
         [$org, $actor, $project] = $this->fixture();
         $colleague = User::factory()->create(['name' => 'Ответственный коллега', 'is_active' => true]);
         $colleague->organizations()->attach($org->id, ['is_active' => true]);
