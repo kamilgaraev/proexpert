@@ -96,29 +96,39 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertLessThanOrEqual(10000, $plan['maximum_calls']);
     }
 
-    public function test_future_composer_allowance_fits_the_remaining_operation_calls_without_displacing_other_roles(): void
+    public function test_a_generation_that_cannot_reserve_every_future_composer_part_requires_sections_before_approval(): void
     {
-        $plan = (new EstimatorProcessingPlan)->build('generation', 500, 64, true, $this->tariff());
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('estimator_processing_plan_requires_section_split');
 
-        self::assertSame(9999, $plan['maximum_calls']);
-        self::assertSame(11, $plan['composer_part_limit']);
-        self::assertSame(33, $plan['roles']['estimate_composition']['max_calls']);
+        (new EstimatorProcessingPlan)->build('generation', 500, 64, true, $this->tariff());
+    }
+
+    public function test_a_generation_at_the_call_boundary_preserves_every_future_composer_part_and_other_roles(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 500, 55, true, $this->tariff());
+
+        self::assertSame(9996, $plan['maximum_calls']);
+        self::assertSame(55, $plan['work_item_limit']);
+        self::assertSame(55, $plan['composer_part_limit']);
+        self::assertSame(165, $plan['roles']['estimate_composition']['max_calls']);
         self::assertSame(7500, $plan['roles']['vision']['max_calls']);
         self::assertSame(1500, $plan['roles']['ocr']['max_calls']);
-        self::assertSame(576, $plan['roles']['estimate_audit']['max_calls']);
-        self::assertSame(384, $plan['roles']['estimate_composer_correction']['max_calls']);
+        self::assertSame(495, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(330, $plan['roles']['estimate_composer_correction']['max_calls']);
         self::assertSame(6, $plan['roles']['project_synthesis']['max_calls']);
     }
 
     public function test_known_composer_parts_are_never_reduced_to_fit_the_operation_call_ceiling(): void
     {
         $builder = new EstimatorProcessingPlan;
-        $plan = $builder->build('generation', 500, 64, true, $this->tariff(), false, ['composer' => 11]);
-        self::assertSame(11, $plan['composer_part_limit']);
+        $plan = $builder->build('generation', 500, 55, true, $this->tariff(), false, ['composer' => 1]);
+        self::assertSame(56, $plan['composer_part_limit']);
+        self::assertSame(9999, $plan['maximum_calls']);
         $this->expectException(\DomainException::class);
-        $this->expectExceptionMessage('estimator_processing_plan_empty_or_oversized');
+        $this->expectExceptionMessage('estimator_processing_plan_requires_section_split');
 
-        $builder->build('generation', 500, 64, true, $this->tariff(), false, ['composer' => 12]);
+        $builder->build('generation', 500, 55, true, $this->tariff(), false, ['composer' => 2]);
     }
 
     public function test_vision_quotes_freeze_the_configured_completion_ceiling_and_its_cost(): void

@@ -70,20 +70,14 @@ final class EstimatorProcessingPlan
             }
         }
         $calls = array_sum(array_column($roles, 'max_calls'));
-        if ($calls > self::MAX_CALLS && isset($roles['estimate_composition'])) {
-            $availableParts = intdiv(max(0, self::MAX_CALLS - ($calls - $roles['estimate_composition']['max_calls'])), 3);
-            if ($availableParts < max($baselineParts, $knownPartLimits['composer'] ?? 0)) {
-                throw new DomainException('estimator_processing_plan_empty_or_oversized');
-            }
-            $composerParts = min($composerParts, $availableParts);
-            $roles['estimate_composition']['max_calls'] = $composerParts * 3;
-            $calls = array_sum(array_column($roles, 'max_calls'));
+        if ($calls > self::MAX_CALLS) {
+            throw new DomainException('estimator_processing_plan_requires_section_split');
         }
         $maximum = BigDecimal::zero();
         foreach ($roles as $role) {
             $maximum = $maximum->plus(BigDecimal::of((string) $role['maximum_cost_micro_rub'])->multipliedBy($role['max_calls']));
         }
-        if ($calls < 1 || $calls > self::MAX_CALLS || ! $maximum->isGreaterThan(0)) {
+        if ($calls < 1 || ! $maximum->isGreaterThan(0)) {
             throw new DomainException('estimator_processing_plan_empty_or_oversized');
         }
 
