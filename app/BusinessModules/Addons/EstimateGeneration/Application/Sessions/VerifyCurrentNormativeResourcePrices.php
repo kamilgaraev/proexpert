@@ -24,6 +24,9 @@ final class VerifyCurrentNormativeResourcePrices
             }
             $normIds[$normId] = $normId;
             foreach ($this->resources($item) as $resource) {
+                if (! in_array($resource['quantity_basis'] ?? null, ['normative_resource', 'project_material_scenario'], true)) {
+                    return false;
+                }
                 $id = (int) ($resource['price_id'] ?? $resource['normative_ref']['price_id'] ?? 0);
                 if ($id > 0) {
                     $ids[$id] = $id;
@@ -102,6 +105,7 @@ final class VerifyCurrentNormativeResourcePrices
 
     private function compositionMatches(array $item, array $resources, array $normResources): bool
     {
+        $resources = array_values(array_filter($resources, static fn (array $resource): bool => ($resource['quantity_basis'] ?? null) === 'normative_resource'));
         $normId = (int) $item['normative_match']['norm_id'];
         $current = $normResources[$normId] ?? [];
         if ($resources === [] || count($resources) !== count($current)) {
@@ -119,14 +123,13 @@ final class VerifyCurrentNormativeResourcePrices
                 default => 'other',
             };
             if ($row === null || isset($seen[$id]) || (int) ($reference['norm_id'] ?? 0) !== $normId
-                || ($resource['quantity_basis'] ?? null) !== 'normative_resource'
                 || ($reference['resource_code'] ?? null) !== trim((string) $row->resource_code)
-                || ($resource['name'] ?? null) !== $row->resource_name
+                || ($resource['name'] ?? null) !== (string) $row->resource_name
                 || ! array_key_exists('norm_source_resource_id', $reference)
                 || $reference['norm_source_resource_id'] !== ($row->construction_resource_id === null ? null : (int) $row->construction_resource_id)
                 || ($resource['resource_type'] ?? null) !== $type
-                || ($resource['unit'] ?? null) !== $row->unit
-                || ! BigDecimal::of((string) ($resource['quantity_per_unit'] ?? '-1'))->isEqualTo((string) $row->quantity)) {
+                || ($resource['unit'] ?? null) !== (string) $row->unit
+                || ! BigDecimal::of((string) ($resource['quantity_per_unit'] ?? '-1'))->isEqualTo((string) ($row->quantity ?? '0'))) {
                 return false;
             }
             $seen[$id] = true;

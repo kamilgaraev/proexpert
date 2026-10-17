@@ -206,6 +206,28 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
             ->verify($invalidItems, $session->fresh()->draft_payload['regional_context']));
         $otherItems = $probeItems;
+        $supplementItems = $probeItems;
+        $supplement = $supplementItems[0]['materials'][0];
+        $supplement['key'] .= '-supplement';
+        $supplement['quantity_basis'] = 'project_material_scenario';
+        unset($supplement['normative_ref']['norm_id'], $supplement['normative_ref']['norm_resource_id']);
+        $supplementItems[0]['materials'][] = $supplement;
+        array_splice($supplementItems[0]['price_snapshot']['coefficients']['resource_evidence'], 1, 0,
+            [$supplementItems[0]['price_snapshot']['coefficients']['resource_evidence'][0]]);
+        $verifier = new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices;
+        self::assertTrue($verifier->verify($supplementItems, $session->fresh()->draft_payload['regional_context']));
+        $supplementItems[0]['materials'][1]['normative_ref']['price_id'] = PHP_INT_MAX;
+        self::assertFalse($verifier->verify($supplementItems, $session->fresh()->draft_payload['regional_context']));
+        $nullableItems = $probeItems;
+        $nullableResourceId = $nullableItems[0]['labor'][0]['normative_ref']['norm_resource_id'];
+        $originalResourceName = DB::table('estimate_norm_resources')->where('id', $nullableResourceId)->value('resource_name');
+        $nullableItems[0]['labor'][0]['name'] = '';
+        DB::table('estimate_norm_resources')->where('id', $nullableResourceId)->update(['resource_name' => null]);
+        try {
+            self::assertTrue($verifier->verify($nullableItems, $session->fresh()->draft_payload['regional_context']));
+        } finally {
+            DB::table('estimate_norm_resources')->where('id', $nullableResourceId)->update(['resource_name' => $originalResourceName]);
+        }
         $otherResource = $otherItems[0]['labor'][0];
         $otherResource['resource_type'] = 'other';
         $otherResourceId = $otherResource['normative_ref']['norm_resource_id'];
