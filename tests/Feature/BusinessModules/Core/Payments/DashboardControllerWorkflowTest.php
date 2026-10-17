@@ -36,6 +36,8 @@ use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use App\Services\Project\ProjectParticipantService;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class DashboardControllerWorkflowTest extends TestCase
 {
@@ -102,6 +104,164 @@ class DashboardControllerWorkflowTest extends TestCase
         $response->assertJsonPath('data.cash_flow.incoming', 200);
         $response->assertJsonPath('data.cash_flow.outgoing', 150);
         $response->assertJsonPath('data.cash_flow.net_cash_flow', 50);
+    }
+
+    public function test_project_dashboard_counts_linked_orders_once_and_preserves_direct_payments_and_refunds(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = $this->createContractor($context->organization->id, 'Project dashboard payee');
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $payee->id,
+            'number' => 'PROJECT-DASHBOARD',
+            'date' => now()->toDateString(),
+            'total_amount' => 100000,
+        ]);
+        $identity = [
+            'project_id' => $project->id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $payee->id,
+            'contractor_id' => $payee->id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+        ];
+        $invoice = $this->createDocument($context, [...$identity, 'amount' => 100000, 'remaining_amount' => 100000]);
+        $request = $this->createDocument($context, [...$identity, 'document_type' => PaymentDocumentType::PAYMENT_REQUEST]);
+        $order = $this->createDocument($context, [
+            ...$identity,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ]);
+        $endpoint = "/api/v1/admin/projects/{$project->id}/dashboard";
+
+        $response = $this->withHeaders($context->authHeaders())->getJson($endpoint)
+            ->assertOk()
+            ->assertJsonPath('data.payments.outgoing_remaining_amount', 101000)
+            ->assertJsonPath('data.payments.remaining_amount', 101000)
+            ->assertJsonPath('data.payments.due_soon_amount', 101000)
+            ->assertJsonPath('data.payments.due_soon_count', 2)
+            ->assertJsonPath('data.finance.cost_breakdown.outgoing_due', 101000);
+        self::assertEqualsCanonicalizing([$invoice->id, $order->id], array_column($response->json('data.payments.upcoming'), 'id'));
+
+        $this->createTransaction($request, 125);
+        $this->createTransaction($order, 250);
+        $this->createTransaction($order, -25, PaymentTransactionStatus::REFUNDED);
+        $request->update(['status' => PaymentDocumentStatus::PARTIALLY_PAID, 'paid_amount' => 125, 'remaining_amount' => 875]);
+        $order->update(['status' => PaymentDocumentStatus::PARTIALLY_PAID, 'paid_amount' => 225, 'remaining_amount' => 775]);
+
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)
+            ->assertOk()
+            ->assertJsonPath('data.payments.outgoing_remaining_amount', 100650)
+            ->assertJsonPath('data.payments.paid_amount', 350)
+            ->assertJsonPath('data.payments.due_soon_count', 2);
+    }
+
+    public function test_project_dashboard_applies_direct_request_payments_to_the_earliest_linked_orders(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createDocument($context, [
+            'project_id' => $project->id,
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'status' => PaymentDocumentStatus::PARTIALLY_PAID,
+            'paid_amount' => 700,
+            'remaining_amount' => 300,
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+        $this->createTransaction($request, 700);
+        $identity = [
+            'project_id' => $project->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ];
+        $this->createDocument($context, [...$identity, 'amount' => 600, 'remaining_amount' => 600]);
+        $laterOrder = $this->createDocument($context, [
+            ...$identity, 'amount' => 400, 'remaining_amount' => 400, 'due_date' => now()->addDays(6)->toDateString(),
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/projects/{$project->id}/dashboard")
+            ->assertOk()
+            ->assertJsonPath('data.payments.outgoing_remaining_amount', 300)
+            ->assertJsonPath('data.payments.paid_amount', 700)
+            ->assertJsonPath('data.payments.overdue_count', 0)
+            ->assertJsonPath('data.payments.due_soon_count', 1);
+        self::assertSame([$laterOrder->id], array_column($response->json('data.payments.upcoming'), 'id'));
+    }
+
+    #[DataProvider('projectDashboardOrderStates')]
+    public function test_project_dashboard_projects_linked_order_states(
+        PaymentDocumentStatus $status,
+        int $orderAmount,
+        int $orderRemaining,
+        int $requestRemaining,
+        int $expectedRemaining,
+        int $expectedCount,
+        bool $deleted = false,
+    ): void {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createDocument($context, [
+            'project_id' => $project->id,
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'paid_amount' => 1000 - $requestRemaining,
+            'remaining_amount' => $requestRemaining,
+        ]);
+        $order = $this->createDocument($context, [
+            'project_id' => $project->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+            'status' => $status,
+            'amount' => $orderAmount,
+            'paid_amount' => $orderAmount - $orderRemaining,
+            'remaining_amount' => $orderRemaining,
+        ]);
+        if ($deleted) {
+            $order->delete();
+        }
+
+        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/projects/{$project->id}/dashboard")
+            ->assertOk()
+            ->assertJsonPath('data.payments.outgoing_remaining_amount', $expectedRemaining)
+            ->assertJsonPath('data.payments.due_soon_count', $expectedCount);
+    }
+
+    public static function projectDashboardOrderStates(): array
+    {
+        return [
+            'partial coverage with direct request payment' => [PaymentDocumentStatus::APPROVED, 600, 400, 900, 700, 2],
+            'over coverage' => [PaymentDocumentStatus::APPROVED, 1200, 1200, 1000, 1200, 1],
+            'paid order' => [PaymentDocumentStatus::PAID, 1000, 0, 1000, 0, 0],
+            'cancelled order' => [PaymentDocumentStatus::CANCELLED, 1000, 1000, 1000, 1000, 1],
+            'draft order' => [PaymentDocumentStatus::DRAFT, 1000, 1000, 1000, 1000, 1],
+            'deleted order' => [PaymentDocumentStatus::APPROVED, 1000, 1000, 1000, 1000, 1, true],
+        ];
+    }
+
+    public function test_project_dashboard_limits_shared_project_payments_to_the_current_organization(): void
+    {
+        $owner = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $participant = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($participant->organization->id);
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        app(ProjectParticipantService::class)->attach($project, $participant->organization->id, ProjectOrganizationRole::CONTRACTOR, $owner->user);
+        $this->createDocument($owner, ['project_id' => $project->id, 'amount' => 9000, 'remaining_amount' => 9000]);
+        $this->createDocument($participant, ['project_id' => $project->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $participant->organization->id]);
+        $this->createDocument($participant, ['project_id' => $otherProject->id, 'amount' => 5000, 'remaining_amount' => 5000]);
+
+        $this->withHeaders($participant->authHeaders())->getJson("/api/v1/admin/projects/{$project->id}/dashboard")
+            ->assertOk()
+            ->assertJsonPath('data.payments.outgoing_remaining_amount', 1000)
+            ->assertJsonPath('data.payments.documents_count', 1)
+            ->assertJsonPath('data.payments.due_soon_count', 1);
     }
 
     public function test_dashboard_counts_linked_request_order_once_without_losing_registered_payments(): void
