@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Jobs;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureVatProjection;
 use App\Models\Estimate;
@@ -205,9 +206,11 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             // 3. Сохранение в Storage
             // Распределяем файлы по папкам организаций, как это делает FileService
             $orgId = (int) $estimate->organization_id;
+            $snapshotPrefix = ($estimate->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD
+                ? EstimateStructureSnapshotStorage::SOURCE_VAT_SNAPSHOT_PREFIX : 'structure_snapshot_';
             $fileName = OrganizationStoragePath::forOrganization(
                 $orgId,
-                "estimates/{$this->estimateId}/structure_snapshot_".Str::uuid().'.json',
+                "estimates/{$this->estimateId}/".$snapshotPrefix.Str::uuid().'.json',
             );
 
             $structureSnapshotStorage->putJson($fileName, $payload);

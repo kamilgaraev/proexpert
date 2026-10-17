@@ -4,15 +4,28 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
+use App\Models\Estimate;
 use App\Services\Storage\FileService;
 use League\Flysystem\FilesystemException;
 use RuntimeException;
 
 class EstimateStructureSnapshotStorage
 {
+    public const SOURCE_VAT_SNAPSHOT_PREFIX = 'structure_snapshot_source_vat_v1_';
+
     public function __construct(
         private readonly FileService $files,
     ) {}
+
+    public function existsForEstimate(Estimate $estimate): bool
+    {
+        if (($estimate->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD
+            && ! str_starts_with(basename((string) $estimate->structure_cache_path), self::SOURCE_VAT_SNAPSHOT_PREFIX)) {
+            return false;
+        }
+
+        return $this->exists($estimate->structure_cache_path);
+    }
 
     public function exists(?string $path): bool
     {
