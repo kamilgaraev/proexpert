@@ -11,13 +11,16 @@ use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\FinancialBalanceQuery;
 use App\BusinessModules\Core\Payments\Services\PaymentDashboardQueryService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Contractor;
 use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use App\Models\ContractProjectAllocation;
+use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Enums\ProjectOrganizationRole;
@@ -99,6 +102,197 @@ class DashboardControllerWorkflowTest extends TestCase
         $response->assertJsonPath('data.cash_flow.incoming', 200);
         $response->assertJsonPath('data.cash_flow.outgoing', 150);
         $response->assertJsonPath('data.cash_flow.net_cash_flow', 50);
+    }
+
+    public function test_dashboard_counts_linked_request_order_once_without_losing_registered_payments(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = $this->createContractor($context->organization->id, 'Linked order payee');
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $payee->id,
+            'number' => 'LINKED-LEDGER',
+            'date' => now()->toDateString(),
+            'total_amount' => 100000,
+        ]);
+        $identity = [
+            'project_id' => $project->id,
+            'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $payee->id,
+            'contractor_id' => $payee->id,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+        ];
+        $this->createDocument($context, [...$identity, 'amount' => 100000, 'remaining_amount' => 100000]);
+        $request = $this->createDocument($context, [
+            ...$identity,
+            'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'source_type' => Contract::class,
+            'source_id' => $contract->id,
+        ]);
+        $order = $this->createDocument($context, [
+            ...$identity,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class,
+            'source_id' => $request->id,
+        ]);
+        $endpoint = "/api/v1/admin/payments/dashboard?project_id={$project->id}";
+
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)
+            ->assertOk()
+            ->assertJsonPath('data.summary.total_payable', 101000);
+
+        $this->createTransaction($request, 125);
+        $this->createTransaction($order, 250);
+        $this->createTransaction($order, -25, PaymentTransactionStatus::REFUNDED);
+        $request->update([
+            'status' => PaymentDocumentStatus::PARTIALLY_PAID,
+            'paid_amount' => 125,
+            'remaining_amount' => 875,
+        ]);
+        $order->update([
+            'status' => PaymentDocumentStatus::PARTIALLY_PAID,
+            'paid_amount' => 225,
+            'remaining_amount' => 775,
+        ]);
+
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)
+            ->assertOk()
+            ->assertJsonPath('data.summary.total_payable', 100650);
+
+        $balance = app(FinancialBalanceQuery::class)->forContract($contract);
+        $this->assertSame('101000.00', $balance->invoicedAmount);
+        $this->assertSame('375.00', $balance->paidAmount);
+        $this->assertSame('25.00', $balance->refundedAmount);
+        $this->assertSame('100650.00', $balance->debtAmount);
+    }
+
+    public function test_balance_keeps_uncovered_request_amount_for_legacy_order_fragments_in_each_committed_status(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $query = app(FinancialBalanceQuery::class);
+        foreach ([PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL,
+            PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::SCHEDULED,
+            PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::PAID] as $status) {
+            $order = $this->createLinkedRequestOrder($context);
+            $paid = match ($status) {
+                PaymentDocumentStatus::PARTIALLY_PAID => 100,
+                PaymentDocumentStatus::PAID => 400,
+                default => 0,
+            };
+            $order->update(['status' => $status, 'amount' => 400, 'paid_amount' => $paid, 'remaining_amount' => 400 - $paid]);
+            if ($paid > 0) {
+                $this->createTransaction($order, $paid);
+            }
+            $balance = $query->forOrganization($context->organization->id, 'outgoing', $order->project_id);
+            $this->assertSame('1000.00', $balance->invoicedAmount, $status->value);
+            $this->assertSame(number_format(1000 - $paid, 2, '.', ''), $balance->debtAmount, $status->value);
+
+            $second = $order->replicate()->fill([
+                'document_number' => 'FRAGMENT-'.uniqid(), 'status' => PaymentDocumentStatus::APPROVED,
+                'amount' => 300, 'paid_amount' => 0, 'remaining_amount' => 300,
+            ]);
+            $second->save();
+            $balance = $query->forContracts($context->organization->id, [$order->invoiceable_id])[$order->invoiceable_id];
+            $this->assertSame('1000.00', $balance->invoicedAmount, $status->value);
+            $this->assertSame(number_format(1000 - $paid, 2, '.', ''), $balance->debtAmount, $status->value);
+
+            $second->update(['amount' => 1000, 'remaining_amount' => 1000]);
+            $balance = $query->forOrganization($context->organization->id, 'outgoing', $order->project_id);
+            $this->assertSame('1400.00', $balance->invoicedAmount, $status->value);
+            $this->assertSame(number_format(1400 - $paid, 2, '.', ''), $balance->debtAmount, $status->value);
+        }
+    }
+
+    public function test_balance_does_not_cover_requests_with_inactive_or_conflicting_orders(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $foreignOrganization = Organization::factory()->create();
+        $query = app(FinancialBalanceQuery::class);
+        foreach (['draft', 'cancelled', 'rejected', 'deleted', 'foreign_org', 'other_project', 'incoming',
+            'currency', 'payer_org', 'payer_contractor', 'payee_org', 'payee_contractor', 'contractor',
+            'counterparty_org', 'other_contract', 'unresolved_invoiceable', 'wrong_source_type', 'invoice_source'] as $case) {
+            $order = $this->createLinkedRequestOrder($context);
+            $projectId = $order->project_id;
+            $contractId = $order->invoiceable_id;
+            $expected = '2000.00';
+            if (in_array($case, ['draft', 'cancelled', 'rejected'], true)) {
+                $order->update(['status' => PaymentDocumentStatus::from($case)]);
+                $expected = '1000.00';
+            } elseif ($case === 'deleted') {
+                $order->delete();
+                $expected = '1000.00';
+            } elseif ($case === 'foreign_org') {
+                $order->update(['organization_id' => $foreignOrganization->id]);
+                $expected = '1000.00';
+            } elseif ($case === 'other_project') {
+                $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+                $order->update(['project_id' => $otherProject->id]);
+                $expected = '1000.00';
+            } elseif ($case === 'incoming') {
+                $order->update(['direction' => InvoiceDirection::INCOMING]);
+                $expected = '1000.00';
+            } elseif ($case === 'currency') {
+                $order->update(['currency' => 'USD']);
+            } elseif (in_array($case, ['payer_org', 'payee_org', 'counterparty_org'], true)) {
+                $field = match ($case) {
+                    'payer_org' => 'payer_organization_id',
+                    'payee_org' => 'payee_organization_id',
+                    default => 'counterparty_organization_id',
+                };
+                $order->update([$field => $foreignOrganization->id]);
+            } elseif (in_array($case, ['payer_contractor', 'payee_contractor', 'contractor'], true)) {
+                $otherContractor = $this->createContractor($context->organization->id, 'Other '.$case);
+                $order->update([$case === 'contractor' ? 'contractor_id' : $case.'_id' => $otherContractor->id]);
+            } elseif ($case === 'other_contract') {
+                $otherContract = Contract::query()->findOrFail($contractId)->replicate()->fill(['number' => 'OTHER-'.uniqid()]);
+                $otherContract->save();
+                $order->update(['invoiceable_id' => $otherContract->id]);
+            } elseif ($case === 'unresolved_invoiceable') {
+                $order->update(['invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => null]);
+            } elseif ($case === 'wrong_source_type') {
+                $order->update(['source_type' => Contract::class]);
+            } else {
+                PaymentDocument::query()->findOrFail($order->source_id)->update(['document_type' => PaymentDocumentType::INVOICE]);
+            }
+
+            $balance = $query->forOrganization($context->organization->id, 'outgoing', $projectId);
+            $this->assertSame($expected, $balance->invoicedAmount, $case);
+            $this->assertSame($expected, $balance->debtAmount, $case);
+            if ($case === 'other_contract') {
+                $this->assertSame('1000.00', $query->forContracts($context->organization->id, [$contractId])[$contractId]->debtAmount);
+            }
+        }
+    }
+
+    public function test_balance_resolves_the_same_contract_from_request_act_and_order(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $order = $this->createLinkedRequestOrder($context);
+        $act = ContractPerformanceAct::query()->create([
+            'contract_id' => $order->invoiceable_id, 'project_id' => $order->project_id,
+            'act_document_number' => 'REQUEST-ACT', 'act_date' => now()->toDateString(),
+            'period_start' => now()->startOfMonth()->toDateString(), 'period_end' => now()->endOfMonth()->toDateString(),
+            'amount' => 1000, 'status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true,
+        ]);
+        PaymentDocument::query()->findOrFail($order->source_id)->update([
+            'invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id,
+        ]);
+
+        $query = app(FinancialBalanceQuery::class);
+        $this->assertSame('1000.00', $query->forOrganization($context->organization->id, 'outgoing', $order->project_id)->debtAmount);
+        $this->assertSame('1000.00', $query->forContracts($context->organization->id, [$order->invoiceable_id])[$order->invoiceable_id]->debtAmount);
+        $this->assertSame('1000.00', $query->forAct($act)->debtAmount);
+
+        PaymentDocument::query()->findOrFail($order->source_id)->update([
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $act->contract_id,
+        ]);
+        $order->update(['invoiceable_type' => ContractPerformanceAct::class, 'invoiceable_id' => $act->id]);
+        $this->assertSame('1000.00', $query->forOrganization($context->organization->id, 'outgoing', $order->project_id)->debtAmount);
+        $this->assertSame('1000.00', $query->forContracts($context->organization->id, [$act->contract_id])[$act->contract_id]->debtAmount);
     }
 
     public function test_dashboard_scopes_every_aggregate_to_the_requested_project(): void
@@ -460,6 +654,31 @@ class DashboardControllerWorkflowTest extends TestCase
         return $project;
     }
 
+    private function createLinkedRequestOrder(AdminApiTestContext $context): PaymentDocument
+    {
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $payee = $this->createContractor($context->organization->id, 'Ledger payee');
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'contractor_id' => $payee->id, 'number' => 'LEDGER-'.uniqid(),
+            'date' => now()->toDateString(), 'total_amount' => 1000,
+        ]);
+        $identity = [
+            'project_id' => $project->id, 'payer_organization_id' => $context->organization->id,
+            'payee_contractor_id' => $payee->id, 'contractor_id' => $payee->id,
+            'invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id,
+        ];
+        $request = $this->createDocument($context, [
+            ...$identity, 'document_type' => PaymentDocumentType::PAYMENT_REQUEST,
+            'source_type' => Contract::class, 'source_id' => $contract->id,
+        ]);
+
+        return $this->createDocument($context, [
+            ...$identity, 'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'source_type' => PaymentDocument::class, 'source_id' => $request->id,
+        ]);
+    }
+
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
         return PaymentDocument::query()->create(array_merge([
@@ -477,7 +696,11 @@ class DashboardControllerWorkflowTest extends TestCase
         ], $overrides));
     }
 
-    private function createTransaction(PaymentDocument $document, float $amount): PaymentTransaction
+    private function createTransaction(
+        PaymentDocument $document,
+        float $amount,
+        PaymentTransactionStatus $status = PaymentTransactionStatus::COMPLETED,
+    ): PaymentTransaction
     {
         return PaymentTransaction::query()->create([
             'payment_document_id' => $document->id,
@@ -487,7 +710,7 @@ class DashboardControllerWorkflowTest extends TestCase
             'currency' => 'RUB',
             'payment_method' => PaymentMethod::BANK_TRANSFER,
             'transaction_date' => now()->toDateString(),
-            'status' => PaymentTransactionStatus::COMPLETED,
+            'status' => $status,
         ]);
     }
 
