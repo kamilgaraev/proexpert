@@ -19,10 +19,12 @@ final class AssistantPaymentDocumentChainReportProjection
         $contracts = (clone $contracts)->select(['contracts.id', 'contracts.number', 'contracts.project_id', 'contracts.is_multi_project']);
         $actContract = $acts === null ? null : (clone $acts)->select(['contract_performance_acts.id', 'contract_performance_acts.contract_id']);
         $parentSql = $parents->toSql();
-        $actSql = $actContract === null ? 'NULL' : '(SELECT report_payment_act.contract_id FROM ('.$actContract->toSql().') report_payment_act WHERE report_payment_act.id = chain.invoiceable_id LIMIT 1)';
+        $actSql = static fn (string $reference): string => $actContract === null ? 'NULL'
+            : '(SELECT report_payment_act.contract_id FROM ('.$actContract->toSql().') report_payment_act WHERE report_payment_act.id = chain.'.$reference.' LIMIT 1)';
         $identity = 'CASE WHEN chain.invoiceable_type = ? THEN chain.invoiceable_id'
-            .' WHEN chain.invoiceable_type = ? THEN '.$actSql
-            .' WHEN chain.source_type = ? THEN chain.source_id ELSE NULL END';
+            .' WHEN chain.invoiceable_type = ? THEN '.$actSql('invoiceable_id')
+            .' WHEN chain.source_type = ? THEN chain.source_id'
+            .' WHEN chain.source_type = ? THEN '.$actSql('source_id').' ELSE NULL END';
         $chain = 'WITH RECURSIVE assistant_report_payment_chain AS ('
             .' SELECT root.*, 0 AS depth, ARRAY[root.id] AS visited FROM ('.$parentSql.') root WHERE root.id = payment_documents.id'
             .' UNION ALL SELECT parent.*, chain.depth + 1, chain.visited || parent.id FROM ('.$parentSql.') parent'
@@ -38,7 +40,8 @@ final class AssistantPaymentDocumentChainReportProjection
             .' AND EXISTS (SELECT 1 FROM contract_project WHERE contract_project.contract_id = report_payment_contract.id'
             .' AND contract_project.project_id = chain.project_id)) ORDER BY chain.depth ASC LIMIT 1';
         $bindings = [...$parents->getBindings(), ...$parents->getBindings(), PaymentDocument::class, Contract::class, ContractPerformanceAct::class,
-            ...$contracts->getBindings(), Contract::class, ContractPerformanceAct::class, ...($actContract?->getBindings() ?? []), Contract::class];
+            ...$contracts->getBindings(), Contract::class, ContractPerformanceAct::class, ...($actContract?->getBindings() ?? []),
+            Contract::class, ContractPerformanceAct::class, ...($actContract?->getBindings() ?? [])];
         $documents->select('payment_documents.*');
         foreach (['id' => 'contract_id', 'number' => 'contract_number'] as $field => $alias) {
             $documents->selectRaw('('.sprintf($chain, 'report_payment_contract.'.$field).') AS '.$alias, $bindings);

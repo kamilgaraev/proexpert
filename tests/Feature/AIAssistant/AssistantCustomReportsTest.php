@@ -752,6 +752,8 @@ final class AssistantCustomReportsTest extends TestCase
         $this->paymentReportDocument($org, $actor, $project, ['source_type' => Contract::class, 'source_id' => $contract->id]);
         $child = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $invoice::class, 'source_id' => $invoice->id]);
         $this->paymentReportDocument($org, $actor, $project, ['source_type' => $child::class, 'source_id' => $child->id]);
+        $sourceAct = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $act::class, 'source_id' => $act->id]);
+        $this->paymentReportDocument($org, $actor, $project, ['source_type' => $sourceAct::class, 'source_id' => $sourceAct->id]);
         $section = $this->paymentReportSection(['columns' => ['document_number', 'contract_number', 'document_date', 'due_date'],
             'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
             'order_by' => [['field' => 'contract_number', 'direction' => 'asc']], 'row_limit' => 2]);
@@ -761,12 +763,12 @@ final class AssistantCustomReportsTest extends TestCase
         $plan = $this->plan($section);
         $plan['sections'][] = array_replace($plan['sections'][0], $summary);
         $report = $this->builder->build($plan, $actor, $org->id);
-        self::assertSame(5, $report['sections'][0]['source_row_count']);
+        self::assertSame(7, $report['sections'][0]['source_row_count']);
         self::assertCount(2, $report['sections'][0]['rows']);
         self::assertTrue($report['sections'][0]['output_limited']);
         self::assertSame(['Номер документа', 'Номер договора', 'Дата документа', 'Срок'], $report['sections'][0]['headers']);
-        self::assertSame([[$contract->number, 'RUB', '50.00', 5]], $report['sections'][1]['rows']);
-        self::assertCount(5, $report['source_refs'][0]['_report_scope']['contract_links']);
+        self::assertSame([[$contract->number, 'RUB', '70.00', 7]], $report['sections'][1]['rows']);
+        self::assertCount(7, $report['source_refs'][0]['_report_scope']['contract_links']);
         foreach ($report['source_refs'] as $reference) {
             self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
         }
@@ -777,7 +779,7 @@ final class AssistantCustomReportsTest extends TestCase
             self::assertSame('Номер договора', $book->getSheet(0)->getCell('B5')->getValue());
             self::assertSame($contract->number, $book->getSheet(0)->getCell('B6')->getValue());
             self::assertSame($contract->number, $book->getSheet(1)->getCell('A6')->getValue());
-            self::assertSame(50.0, (float) $book->getSheet(1)->getCell('C6')->getValue());
+            self::assertSame(70.0, (float) $book->getSheet(1)->getCell('C6')->getValue());
             $book->disconnectWorksheets();
         } finally {
             fclose($stream);
@@ -785,12 +787,14 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertNotContains('contract_number', (new AssistantDomainCatalog(AssistantDomainCatalog::defaults()))->definition('finance')->fields);
     }
 
-    public function test_payment_contract_snapshot_rechecks_intermediate_act_access_and_blocks_download(): void
+    #[\PHPUnit\Framework\Attributes\TestWith(['invoiceable'])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['source'])]
+    public function test_payment_contract_snapshot_rechecks_intermediate_act_access_and_blocks_download(string $actLink): void
     {
         [$org, $actor, $project] = $this->fixture();
         $contract = $this->contract($org, $project, '100.00');
         $act = $this->paymentReportAct($contract, $project);
-        $parent = $this->paymentReportDocument($org, $actor, $project, ['invoiceable_type' => $act::class, 'invoiceable_id' => $act->id]);
+        $parent = $this->paymentReportDocument($org, $actor, $project, [$actLink.'_type' => $act::class, $actLink.'_id' => $act->id]);
         $child = $this->paymentReportDocument($org, $actor, $project, ['source_type' => $parent::class, 'source_id' => $parent->id]);
         $plan = $this->plan($this->paymentReportSection(['filters' => [['field' => 'id', 'operator' => 'eq', 'value' => $child->id]]]));
         $report = $this->builder->build($plan, $actor, $org->id);
