@@ -270,6 +270,16 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 DB::table($table)->where('id', $id)->update([$column => $originalValue]);
             }
         }
+        $priceDatasetId = DB::table('estimate_resource_prices')->where('id', $probeItems[0]['materials'][0]['normative_ref']['price_id'])->value('dataset_version_id');
+        DB::table('estimate_dataset_versions')->where('id', $priceDatasetId)->update(['status' => 'failed']);
+        try {
+            $stale = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+                ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
+            self::assertFalse($stale->canApply);
+            self::assertNotContains('apply', array_column($stale->availableActions, 'action'));
+        } finally {
+            DB::table('estimate_dataset_versions')->where('id', $priceDatasetId)->update(['status' => 'parsed']);
+        }
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
             (int) $session->id, (int) $organization->id, (int) $project->id, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->fresh()->draft_payload['artifact_hash'], actor: $actor);

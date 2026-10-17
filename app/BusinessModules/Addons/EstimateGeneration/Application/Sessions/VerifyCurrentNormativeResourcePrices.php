@@ -43,7 +43,8 @@ final class VerifyCurrentNormativeResourcePrices
         }
         $prices = [];
         foreach (array_chunk(array_values($ids), 1000) as $chunk) {
-            foreach (EstimateResourcePrice::query()->with(['datasetVersion', 'regionalPriceVersion'])->whereIn('id', $chunk)->get() as $price) {
+            foreach (EstimateResourcePrice::query()->with(['datasetVersion', 'regionalPriceVersion'])
+                ->whereHas('datasetVersion', static fn ($query) => $query->where('status', 'parsed'))->whereIn('id', $chunk)->get() as $price) {
                 $prices[(int) $price->id] = $price;
             }
         }
