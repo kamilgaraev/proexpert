@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ShipProjectMaterialDeliveryRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
@@ -12,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockSer
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -110,14 +112,10 @@ class ProjectMaterialDeliveryController extends Controller
         }
     }
 
-    public function ship(Request $request, int $deliveryId): JsonResponse
+    public function ship(ShipProjectMaterialDeliveryRequest $request, int $deliveryId): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'quantity' => ['nullable', 'numeric', 'min:0.001'],
-                'responsible_user_id' => ['nullable', 'integer'],
-                'notes' => ['nullable', 'string'],
-            ]);
+            $validated = $request->validated();
 
             $delivery = $this->findDelivery($request, $deliveryId);
             $updated = $this->deliveryService->ship($delivery, $request->user(), $validated)
@@ -127,6 +125,8 @@ class ProjectMaterialDeliveryController extends Controller
                 new ProjectMaterialDeliveryResource($updated),
                 trans_message('basic_warehouse.project_material_deliveries.shipped')
             );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.project_material_deliveries.errors.not_found'), 404);
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {

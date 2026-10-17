@@ -13,6 +13,8 @@
 
 PHPUnit получает выбранный порт через `MOST_POSTGRES_TEST_PORT` и имя проекта через `MOST_POSTGRES_TEST_PROJECT`. Bootstrap проверяет профиль, имя проекта, loopback-адрес и тестовое имя базы. Дочерним PHP-процессам с явно заданным окружением передавайте оба значения вместе с `MOST_POSTGRES_TEST_PROFILE`; порт в `DB_PORT` должен совпадать с выбранным launcher.
 
+Конкурентная отгрузка проверяется отдельно в `ProjectMaterialDeliveryConcurrencyTest`: ей нужны Linux PHP с `pcntl` и `posix` и зафиксированные до запуска дочерних процессов данные. Windows пропускает только этот тест. В Linux он запускается через тот же launcher и канонический `phpunit.xml`.
+
 Проверка выбора проекта, передачи порта и очистки при сбоях без реальной БД:
 
 ```powershell
