@@ -140,7 +140,7 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
     {
         $before = DB::table('report_saved_views')->count();
         foreach ([['filters_json' => '{"organization_id":1}'], ['scope' => 'organization'], ['columns' => ['not_a_column']],
-            ['weekday' => 8], ['local_time' => '25:00'], ['filters_json' => '[]'], ['filters_json' => '{"unknown":1}']] as $changes) {
+            ['weekday' => 8], ['local_time' => '25:00'], ['period_mode' => 'whenever'], ['filters_json' => '[]'], ['filters_json' => '{"unknown":1}']] as $changes) {
             try {
                 $arguments = array_replace($this->arguments(), $changes);
                 if (($changes['scope'] ?? null) === 'organization') {
@@ -161,6 +161,39 @@ final class AssistantReportSubscriptionActionsTest extends TestCase
         $id = $this->manager->create($this->arguments(), $this->fixture->owner, $this->fixture->organization)['subscription_id'];
         $this->expectException(InvalidArgumentException::class);
         $this->manager->update(['subscription_id' => $id, 'operation' => 'pause', 'local_time' => '10:00'], $this->fixture->owner, $this->fixture->organization);
+    }
+
+    public function test_legacy_period_can_be_paused_after_confirmation_and_resumed_without_reconfiguration(): void
+    {
+        $id = $this->manager->create($this->arguments(), $this->fixture->owner, $this->fixture->organization)['subscription_id'];
+        $subscription = $this->own($id);
+        $legacy = json_decode($subscription->executionInputBytes, true, flags: JSON_THROW_ON_ERROR);
+        unset($legacy['period_policy_version']);
+        $legacy['period_policy'] = ['mode' => 'whenever'];
+        $bytes = \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($legacy);
+        DB::table('report_subscriptions')->where('id', $id)->update([
+            'period_policy_json' => json_encode($legacy['period_policy'], JSON_THROW_ON_ERROR),
+            'execution_input_bytes' => $bytes, 'execution_input_sha256' => hash('sha256', $bytes),
+        ]);
+        $subscription = $this->own($id);
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes);
+        self::assertNull($input->periodPolicyVersion);
+        app(\App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver::class)->runData($input, new \DateTimeImmutable);
+        $context = app(\App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionExecutionContextFactory::class)
+            ->forSubscription($subscription, \App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation::MANAGE);
+        self::assertSame('paused', app(\App\BusinessModules\Core\Reporting\Application\Subscriptions\PauseReportSubscriptionHandler::class)->handle($context, $id)->status->value);
+        app(\App\BusinessModules\Core\Reporting\Application\Subscriptions\ResumeReportSubscriptionHandler::class)->handle($context, $id);
+        $before = DB::table('report_saved_views')->count();
+
+        [$service, $conversation, $preview] = $this->preview('update_report_subscription',
+            ['subscription_id' => $id, 'operation' => 'pause'], 'Приостанови мою подписку на отчёт');
+        self::assertContains(trans_message('ai_report_subscriptions.legacy_period'), array_column($preview['summary_items'], 'value'));
+        $service->execute(['id' => $preview['action']['id'], 'preview_token' => $preview['preview_token'], 'confirmed' => true],
+            $this->fixture->organization->id, $this->fixture->owner, $conversation);
+        self::assertSame('paused', $this->own($id)->status->value);
+        self::assertSame('active', $this->manager->update(['subscription_id' => $id, 'operation' => 'resume'], $this->fixture->owner, $this->fixture->organization)['status']);
+        self::assertSame($bytes, $this->own($id)->executionInputBytes);
+        self::assertSame($before, DB::table('report_saved_views')->count());
     }
 
     private function arguments(): array

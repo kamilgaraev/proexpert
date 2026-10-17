@@ -182,12 +182,17 @@ final readonly class AssistantReportSubscriptionManager
         if ($view !== null && ($view->status !== 'active' || $view->contractVersion !== $definition->contractVersion || $view->reportCode !== $definition->code)) {
             $this->invalid();
         }
-        $schedule = $this->schedule($arguments, $subscription, $input);
-        $context = $this->context($actor, $organizationId, $definition, $schedule['project_id'], new DateTimeZone($schedule['timezone']));
-        $capability = $this->scheduling->published($definition->code);
-        if (! $capability->supportsSubscriptions || ! $capability->reproducibleScheduledSnapshot
-            || ! in_array($schedule['format'], $definition->formats, true)) {
-            $this->invalid();
+        if ($subscription !== null && in_array($operation, ['pause', 'resume'], true)) {
+            $schedule = $this->storedSchedule($subscription);
+            $context = $this->subscriptionContexts->forSubscription($subscription, ReportOperation::MANAGE, $input);
+        } else {
+            $schedule = $this->schedule($arguments, $subscription, $input);
+            $context = $this->context($actor, $organizationId, $definition, $schedule['project_id'], new DateTimeZone($schedule['timezone']));
+            $capability = $this->scheduling->published($definition->code);
+            if (! $capability->supportsSubscriptions || ! $capability->reproducibleScheduledSnapshot
+                || ! in_array($schedule['format'], $definition->formats, true)) {
+                $this->invalid();
+            }
         }
         $viewInput = null;
         if (in_array($operation, ['create', 'update'], true)) {
@@ -238,6 +243,16 @@ final readonly class AssistantReportSubscriptionManager
         return $schedule;
     }
 
+    private function storedSchedule(ReportSubscription $subscription): array
+    {
+        $input = ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes);
+
+        return ['frequency' => $subscription->frequency->value, 'weekday' => $subscription->weekday,
+            'day_of_month' => $subscription->dayOfMonth, 'local_time' => $subscription->localTime,
+            'timezone' => $subscription->timezone->getName(), 'period_mode' => $subscription->periodPolicy['mode'] ?? null,
+            'format' => $subscription->format, 'project_id' => $input->effectiveProjectId()];
+    }
+
     private function context(User $actor, int $organizationId, ReportDefinition $definition, ?int $projectId, DateTimeZone $timezone): ReportExecutionContext
     {
         if ($projectId !== null) {
@@ -284,7 +299,7 @@ final readonly class AssistantReportSubscriptionManager
         $subscription = $prepared['subscription'];
         $schedule = $prepared['schedule'];
         if ($operation === 'current' && $subscription !== null) {
-            $schedule = $this->schedule([], $subscription, ReportSubscriptionExecutionInput::fromCanonicalBytes($subscription->executionInputBytes));
+            $schedule = $this->storedSchedule($subscription);
         }
         $values = ['report' => trans_message($this->metadata->published($prepared['definition']->code)->titleKey),
             'name' => $operation === 'current' ? $prepared['view']?->name : ($prepared['view_input']['name'] ?? $prepared['view']?->name),
@@ -292,7 +307,8 @@ final readonly class AssistantReportSubscriptionManager
                 : trans_message('ai_report_subscriptions.project', ['id' => $schedule['project_id']]).' — '.(string) \App\Models\Project::query()->whereKey($schedule['project_id'])->value('name'),
             'frequency' => trans_message('ai_report_subscriptions.frequency.'.$schedule['frequency']),
             'local_time' => $schedule['local_time'], 'timezone' => $schedule['timezone'],
-            'period' => trans_message('ai_report_subscriptions.period.'.$schedule['period_mode']),
+            'period' => in_array($schedule['period_mode'], ReportSubscriptionPeriodResolver::MODES, true)
+                ? trans_message('ai_report_subscriptions.period.'.$schedule['period_mode']) : trans_message('ai_report_subscriptions.legacy_period'),
             'format' => strtoupper($schedule['format']), 'channel' => trans_message('ai_report_subscriptions.channel')];
         if ($schedule['weekday'] !== null) {
             $values['weekday'] = trans_message('ai_report_subscriptions.weekday.'.$schedule['weekday']);
