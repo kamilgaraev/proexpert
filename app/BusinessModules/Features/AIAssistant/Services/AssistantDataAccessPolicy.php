@@ -93,7 +93,16 @@ final class AssistantDataAccessPolicy
     public function canCurrentPermission(User $actor, int $organizationId, string $permission): bool
     {
         return $this->belongsToOrganization($actor, $organizationId)
-            && $this->currentAuthorization()->canCurrent($actor, $permission, ['organization_id' => $organizationId]);
+            && $this->canCurrentGrant($actor, $organizationId, $permission);
+    }
+
+    private function canCurrentGrant(User $actor, int $organizationId, string $permission): bool
+    {
+        $authorization = $this->currentAuthorization();
+        $context = ['organization_id' => $organizationId];
+
+        return $authorization->canCurrent($actor, $permission, $context)
+            || ($permission === 'users.view' && $authorization->canCurrent($actor, 'admin.users.view', $context));
     }
 
     private function rememberCurrent(User $actor, int $organizationId, string $key, callable $resolve): mixed
@@ -293,7 +302,7 @@ final class AssistantDataAccessPolicy
             $domains = $reference['required_domains'] ?? null;
             if (! is_array($fields) || $fields === [] || ! is_array($permissions) || ! is_array($domains) || $domains === []) { return false; }
             foreach ($permissions as $permission) {
-                if (! is_string($permission) || ! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return false; }
+                if (! is_string($permission) || ! $this->canCurrentGrant($user, $organizationId, $permission)) { return false; }
             }
             foreach ($domains as $domain) {
                 if (! is_string($domain) || ! $this->canReadDomain($user, $organizationId, $domain)) { return false; }
@@ -506,7 +515,7 @@ final class AssistantDataAccessPolicy
         if (! in_array('', $moduleAlternatives, true) && array_intersect($modules, $moduleAlternatives) === []) { return false; }
         if ($definition[1] === [] && (AssistantExtendedDomainRegistry::values('domainEntityPermissionGates')[$domain] ?? false) === true) { return true; }
         foreach ($definition[1] as $permission) {
-            if ($this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) {
+            if ($this->canCurrentGrant($user, $organizationId, $permission)) {
                 return true;
             }
         }

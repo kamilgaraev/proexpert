@@ -770,6 +770,9 @@ final class AssistantRequestLifecycleTest extends TestCase
                 $peopleChecks++;
                 return $peopleChecks === 1;
             }
+            if ($permission === 'admin.users.view') {
+                return $peopleChecks === 1;
+            }
 
             return true;
         });

@@ -28,7 +28,8 @@ final readonly class AssistantCustomReportSourceHints
                 $domains[] = $domain;
             }
         }
-        foreach (['people' => '/сотрудник|пользоват|персонал/iu', 'machinery' => '/техник|оборудован/iu',
+        foreach (['acts' => '/(?<![\p{L}\p{N}_])акт(?:а|у|ом|е|ы|ов|ам|ами|ах)?(?![\p{L}\p{N}_])/iu',
+            'people' => '/сотрудник|пользоват|персонал/iu', 'machinery' => '/техник|оборудован/iu',
             'time_tracking' => '/табел|уч[её]т.*врем|отработан/iu', 'procurement' => '/закупк|поставщик/iu',
             'quality' => '/дефект|качеств/iu', 'safety' => '/охран.*труд|безопасност|инцидент/iu',
             'site_requests' => '/заявк.*(?:объект|стройплощад)/iu', 'design' => '/комплект|проектн.*документ|пир/iu'] as $domain => $pattern) {
@@ -53,7 +54,8 @@ final readonly class AssistantCustomReportSourceHints
                             'project' => isset($fields['project_id']) ? 'project_id' : null,
                             'responsible' => isset($fields['assigned_user_id']) ? 'assigned_user_id' : null,
                             'overdue' => isset($fields['is_overdue']) ? 'is_overdue' : null,
-                            'role' => isset($fields['primary_role_label']) ? 'primary_role_label' : null]),
+                            'role' => isset($fields['primary_role_label']) ? 'primary_role_label' : null,
+                            'approval' => isset($fields['is_approved']) ? 'is_approved' : null]),
                         'choices' => array_map(static fn (array $field): array => $field['choices'],
                             array_filter($fields, static fn (array $field): bool => isset($field['choices']))),
                         'metrics' => array_map(static fn (array $field): array => $field['aggregations'],
