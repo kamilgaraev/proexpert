@@ -293,6 +293,94 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertNull($task->fresh()->export_id);
     }
 
+    public static function stoppedWork(): array
+    {
+        return [['run', 'cancel'], ['run', 'failed'], ['run', 'expiry'], ['export', 'cancel'],
+            ['export', 'expiry'], ['run_race', 'cancel'], ['export_race', 'cancel'], ['run_retry', 'cancel']];
+    }
+
+    #[DataProvider('stoppedWork')]
+    public function test_stopped_task_cancels_its_native_work(string $stage, string $reason): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')->where('organization_id', $org)->sole();
+        $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
+        $this->seedAcceptedSource($org, (int) $this->project->id, $acceptedAt);
+        $root = $this->root($actor, $acceptedAt->modify('+1 day'));
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR)]);
+        $result = $tasks->create($arguments, $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $cancelCalls = 0;
+        foreach ([\App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction::class,
+            \App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction::class] as $interface) {
+            $original = app($interface);
+            $wrapper = $this->createMock($interface);
+            $wrapper->method('handle')->willReturnCallback(function (...$arguments) use ($original, $stage, &$cancelCalls) {
+                self::assertSame(0, DB::connection()->transactionLevel());
+                $cancelCalls++;
+                if ($stage === 'run_retry' && $cancelCalls === 1) {
+                    throw new \RuntimeException('temporary_cancel_failure');
+                }
+
+                return $original->handle(...$arguments);
+            });
+            app()->instance($interface, $wrapper);
+        }
+        if (str_ends_with($stage, '_race')) {
+            $interface = $stage === 'run_race' ? CreateReportRunAction::class : CreateReportExportAction::class;
+            $original = app($interface);
+            $wrapper = $this->createMock($interface);
+            $wrapper->method('handle')->willReturnCallback(function (...$arguments) use ($original, $root) {
+                $result = $original->handle(...$arguments);
+                $root->update(['cancel_requested_at' => now()]);
+
+                return $result;
+            });
+            app()->instance($interface, $wrapper);
+        }
+        $processor = app(AssistantPublishedReportProcessor::class);
+        $this->process($processor, $task);
+        self::assertNotNull($task->fresh()->run_id);
+        $hasExport = str_starts_with($stage, 'export');
+        if ($hasExport) {
+            $queue = new SyncQueue;
+            $queue->setContainer($this->app);
+            $queue->push(new MaterializeReportRunJob($task->fresh()->run_id));
+            $this->process($processor, $task);
+            self::assertNotNull($task->fresh()->export_id);
+        }
+        if ($reason === 'expiry') {
+            $task->fresh()->update(['execution_expires_at' => now()->subSecond()]);
+        } elseif ($reason === 'failed') {
+            $root->update(['status' => 'failed']);
+        } else {
+            $root->update(['cancel_requested_at' => now()]);
+        }
+        $this->process($processor, $task);
+        self::assertSame($reason === 'expiry' ? 'expired' : 'cancelled', $task->fresh()->status);
+        if ($stage === 'run_retry') {
+            self::assertSame('queued', DB::table('report_runs')->where('id', $task->fresh()->run_id)->value('status'));
+            self::assertNull($task->fresh()->core_cleanup_completed_at);
+            $task->fresh()->update(['retry_at' => now()->subSecond()]);
+            Queue::fake();
+            $processor->recover();
+            Queue::assertPushed(\App\BusinessModules\Features\AIAssistant\Jobs\GenerateAssistantPublishedReport::class,
+                fn ($job): bool => $job->taskId === $task->id);
+            $this->process($processor, $task);
+        }
+        self::assertSame($hasExport ? 'ready' : 'cancelled', DB::table('report_runs')->where('id', $task->fresh()->run_id)->value('status'));
+        if ($hasExport) {
+            self::assertSame('cancelled', DB::table('report_exports')->where('id', $task->fresh()->export_id)->value('status'));
+        }
+        self::assertNotNull($task->fresh()->core_cleanup_completed_at);
+        self::assertSame($stage === 'run_retry' ? 2 : 1, $cancelCalls);
+        $before = $task->fresh()->getAttributes();
+        $processor->process($task->id);
+        self::assertSame($before, $task->fresh()->getAttributes());
+    }
+
     private function root(User $actor, ?DateTimeImmutable $asOf = null): AssistantRequest
     {
         $root = AssistantRequest::query()->create(['request_id' => (string) Str::uuid(), 'organization_id' => $this->fixture->organization->id,

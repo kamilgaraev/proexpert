@@ -11,6 +11,8 @@ final class AssistantCoreReportTask extends Model
 {
     public const PENDING = ['queued', 'building_run', 'building_export'];
 
+    public const STOPPED = ['cancelled', 'expired', 'failed'];
+
     protected $table = 'ai_assistant_core_report_tasks';
 
     public $incrementing = false;
@@ -25,6 +27,8 @@ final class AssistantCoreReportTask extends Model
         'user_id' => 'integer',
         'parameters' => 'array',
         'failure_count' => 'integer',
+        'core_cleanup_attempts' => 'integer',
+        'core_cleanup_completed_at' => 'immutable_datetime',
         'retry_at' => 'immutable_datetime',
         'lease_expires_at' => 'immutable_datetime',
         'execution_expires_at' => 'immutable_datetime',

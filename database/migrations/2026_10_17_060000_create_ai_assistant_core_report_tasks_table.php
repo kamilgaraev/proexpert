@@ -23,6 +23,8 @@ return new class extends Migration
             $table->ulid('export_id')->nullable();
             $table->unsignedSmallInteger('failure_count')->default(0);
             $table->string('error_code', 48)->nullable();
+            $table->unsignedSmallInteger('core_cleanup_attempts')->default(0);
+            $table->timestampTz('core_cleanup_completed_at')->nullable();
             $table->uuid('lease_token')->nullable();
             $table->timestampTz('lease_expires_at')->nullable();
             $table->timestampTz('retry_at');

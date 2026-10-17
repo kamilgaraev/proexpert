@@ -39,9 +39,9 @@ final readonly class AssistantPublishedReportAuthorization
         return $this->contexts->fromCurrentAuthorization($authorization);
     }
 
-    public function run(int $actorId, int $organizationId, string $runId): ReportExecutionContext
+    public function run(int $actorId, int $organizationId, string $runId, ReportOperation $operation = ReportOperation::VIEW): ReportExecutionContext
     {
-        return $this->context($this->aggregates->runForActor($actorId, $organizationId, $runId));
+        return $this->context($this->aggregates->runForActor($actorId, $organizationId, $runId, $operation));
     }
 
     public function createExport(int $actorId, int $organizationId, string $runId, string $format): ReportExecutionContext

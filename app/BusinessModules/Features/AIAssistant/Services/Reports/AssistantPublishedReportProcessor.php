@@ -33,12 +33,18 @@ final readonly class AssistantPublishedReportProcessor
         private CreateReportRunAction $createRuns,
         private GetReportRunAction $runs,
         private CreateReportExportAction $createExports,
+        private AssistantPublishedReportCancellation $cancellation,
     ) {}
 
     public function process(string $id): void
     {
         $task = $this->claim($id);
         if ($task === null) {
+            return;
+        }
+        if (in_array($task->status, AssistantCoreReportTask::STOPPED, true)) {
+            $this->cleanup($task);
+
             return;
         }
         try {
@@ -99,7 +105,9 @@ final readonly class AssistantPublishedReportProcessor
 
     public function recover(): void
     {
-        AssistantCoreReportTask::query()->whereIn('status', AssistantCoreReportTask::PENDING)
+        AssistantCoreReportTask::query()->where(static fn ($query) => $query->whereIn('status', AssistantCoreReportTask::PENDING)
+            ->orWhere(static fn ($stopped) => $stopped->whereIn('status', AssistantCoreReportTask::STOPPED)
+                ->whereNull('core_cleanup_completed_at')->where('core_cleanup_attempts', '<', 5)))
             ->where('retry_at', '<=', now())->where(static fn ($query) => $query->whereNull('lease_expires_at')->orWhere('lease_expires_at', '<=', now()))
             ->orderBy('id')->chunkById(100, function ($tasks): void {
                 foreach ($tasks as $task) {
@@ -112,19 +120,27 @@ final readonly class AssistantPublishedReportProcessor
     {
         return DB::transaction(function () use ($id): ?AssistantCoreReportTask {
             $task = AssistantCoreReportTask::query()->lockForUpdate()->find($id);
-            if ($task === null || ! in_array($task->status, AssistantCoreReportTask::PENDING, true)
+            if ($task === null || (! in_array($task->status, AssistantCoreReportTask::PENDING, true)
+                && (! in_array($task->status, AssistantCoreReportTask::STOPPED, true)
+                    || $task->core_cleanup_completed_at !== null || $task->core_cleanup_attempts >= 5))
                 || $task->retry_at->isFuture() || ($task->lease_expires_at !== null && $task->lease_expires_at->isFuture())) {
                 return null;
             }
-            if ($this->stop($task)) {
-                return null;
+            if (in_array($task->status, AssistantCoreReportTask::PENDING, true)) {
+                $this->stop($task);
             }
-            if ($task->lease_token !== null) {
-                $task->failure_count++;
-                if ($task->failure_count >= 5) {
-                    $task->fill(['status' => 'failed', 'error_code' => 'EXECUTION_INTERRUPTED', 'lease_token' => null, 'lease_expires_at' => null])->save();
+            if (in_array($task->status, AssistantCoreReportTask::STOPPED, true) && $task->lease_token !== null) {
+                $task->core_cleanup_attempts++;
+                if ($task->core_cleanup_attempts >= 5) {
+                    $task->fill(['error_code' => 'CORE_CLEANUP_UNAVAILABLE', 'lease_token' => null, 'lease_expires_at' => null])->save();
 
                     return null;
+                }
+            }
+            if (in_array($task->status, AssistantCoreReportTask::PENDING, true) && $task->lease_token !== null) {
+                $task->failure_count++;
+                if ($task->failure_count >= 5) {
+                    $task->fill(['status' => 'failed', 'error_code' => 'EXECUTION_INTERRUPTED']);
                 }
             }
             $task->fill(['lease_token' => (string) Str::uuid(), 'lease_expires_at' => now()->addSeconds(120)])->save();
@@ -137,22 +153,62 @@ final readonly class AssistantPublishedReportProcessor
     {
         $delay ??= array_intersect_key($changes, ['run_id' => true, 'export_id' => true]) !== []
             ? 1 : AssistantPublishedReportPolling::seconds(now()->getTimestamp() - $claimed->created_at->getTimestamp());
-        $dispatch = DB::transaction(function () use ($claimed, $changes, $delay): bool {
+        $cleanup = null;
+        $dispatch = DB::transaction(function () use ($claimed, $changes, $delay, &$cleanup): bool {
             $task = AssistantCoreReportTask::query()->lockForUpdate()->find($claimed->id);
-            if ($task === null || $task->lease_token !== $claimed->lease_token
+            if ($task === null) {
+                $cleanup = $claimed;
+
+                return false;
+            }
+            if ($task->lease_token !== $claimed->lease_token
                 || ! hash_equals((string) $task->input_sha256, (string) $claimed->input_sha256)
                 || ! in_array($task->status, AssistantCoreReportTask::PENDING, true)) {
                 return false;
             }
+            $task->fill(array_intersect_key($changes, ['run_id' => true, 'export_id' => true]));
             if ($this->stop($task)) {
+                $cleanup = $task;
+
                 return false;
             }
-            $task->fill($changes + ['retry_at' => now()->addSeconds($delay), 'lease_token' => null, 'lease_expires_at' => null])->save();
+            $task->fill($changes + ['retry_at' => now()->addSeconds($delay)]);
+            if (in_array($task->status, AssistantCoreReportTask::STOPPED, true)) {
+                $cleanup = $task;
+            } else {
+                $task->fill(['lease_token' => null, 'lease_expires_at' => null]);
+            }
+            $task->save();
 
             return in_array($task->status, AssistantCoreReportTask::PENDING, true);
         }, 3);
+        if ($cleanup !== null) {
+            $this->cleanup($cleanup);
+        }
         if ($dispatch) {
             $this->tasks->dispatch((string) $claimed->id, $delay);
+        }
+    }
+
+    private function cleanup(AssistantCoreReportTask $task): void
+    {
+        $failed = false;
+        try {
+            $this->cancellation->cancel($task);
+        } catch (Throwable $exception) {
+            $failed = true;
+            Log::warning('assistant_published_report_cleanup_failed', ['task_id' => $task->id, 'exception_type' => $exception::class]);
+        }
+        $attempts = (int) $task->core_cleanup_attempts + 1;
+        $changes = ['core_cleanup_attempts' => $attempts, 'core_cleanup_completed_at' => $failed ? null : now(),
+            'retry_at' => now()->addMinute(), 'lease_token' => null, 'lease_expires_at' => null];
+        if ($failed) {
+            $changes['error_code'] = 'CORE_CLEANUP_UNAVAILABLE';
+        }
+        $updated = AssistantCoreReportTask::query()->whereKey($task->id)->where('lease_token', $task->lease_token)
+            ->where('input_sha256', $task->input_sha256)->whereIn('status', AssistantCoreReportTask::STOPPED)->update($changes);
+        if ($updated > 0 && $failed && $attempts < 5) {
+            $this->tasks->dispatch((string) $task->id, 60);
         }
     }
 
@@ -167,7 +223,7 @@ final readonly class AssistantPublishedReportProcessor
             $status = 'expired';
         }
         if ($status !== null) {
-            $task->fill(['status' => $status, 'lease_token' => null, 'lease_expires_at' => null])->save();
+            $task->fill(['status' => $status])->save();
         }
 
         return $status !== null;
