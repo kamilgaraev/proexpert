@@ -267,6 +267,10 @@ final class AssistantDesignAdditionalTest extends TestCase
         self::assertSame([], $collect());
         $version->updateQuietly(['project_id' => $project->id]);
         self::assertSame($withoutDerivative, $collect());
+        $version->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
+        self::assertSame([], $collect());
+        $version->updateQuietly(['organization_id' => $fixture->organization->id]);
+        self::assertSame($withoutDerivative, $collect());
         $project->updateQuietly(['organization_id' => $fixture->foreignOrganization->id]);
         self::assertSame([], $collect());
         DB::table('project_organization')->insert([

@@ -25,7 +25,7 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         foreach ($this->entities() as $type => $record) {
-            foreach ($this->query($type, $organizationId, $projectId)->lazyById(50) as $model) {
+            foreach ($this->query($type, $organizationId, $projectId, orderedScan: true)->lazyById(50) as $model) {
                 yield $this->chunk($model, $type, $organizationId);
             }
         }
@@ -37,7 +37,7 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
         return $model === null ? [] : [$this->chunk($model, $entityType, $organizationId)];
     }
 
-    private function query(string $type, int $organizationId, ?int $projectId): Builder
+    private function query(string $type, int $organizationId, ?int $projectId, bool $orderedScan = false): Builder
     {
         $definitions = Metadata::entityDefinitions() + [
             'design_package' => ['', \App\BusinessModules\Features\DesignManagement\Models\DesignPackage::class],
@@ -78,6 +78,12 @@ final class DesignAdditionalRagSource implements RagSourceCollectorInterface
             if ($type !== 'design_ifc_model_element' || $column !== 'derivative_id' || ! $parent['nullable']) {
                 if ($parent['match_project'] ?? false) { $parentQuery->whereColumn($parentTable.'.project_id', $table.'.project_id'); }
                 foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
+                if ($orderedScan && $type === 'design_ifc_model_element' && $column === 'version_id' && ! $parent['nullable']) {
+                    $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'));
+                    $left = $query->getQuery()->getGrammar()->wrap($table.'.'.$column);
+                    $query->whereRaw('('.$left.' in ('.$parentQuery->toSql().')) is true', $parentQuery->getBindings());
+                    continue;
+                }
                 $query->where(static function (Builder $scope) use ($column, $parent, $parentQuery, $parentTable, $table): void {
                     if ($parent['nullable']) {
                         $parentKey = $parentTable.'.'.($parent['key'] ?? 'id');
