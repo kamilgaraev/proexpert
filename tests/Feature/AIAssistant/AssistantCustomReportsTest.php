@@ -827,6 +827,80 @@ final class AssistantCustomReportsTest extends TestCase
         $access->resolve($matches[1], $actor);
     }
 
+    public function test_payment_contract_projection_handles_incomplete_links_and_bounded_metadata_with_current_access(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $contract = $this->contract($org, $project, '100.00');
+        $contract->updateQuietly(['number' => 'META-PRIMARY']);
+        $alternate = $this->contract($org, $project, '200.00');
+        $alternate->updateQuietly(['number' => 'META-ALTERNATE']);
+        $act = $this->paymentReportAct($contract, $project);
+        $otherProject = Project::factory()->create(['organization_id' => $org->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($otherProject->id, ['is_active' => true, 'role' => 'member']);
+        $wrongProject = $this->contract($org, $otherProject, '300.00');
+        $foreign = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->id]);
+        $foreignContract = $this->contract($foreign, $foreignProject, '999.00');
+        $parent = $this->paymentReportDocument($org, $actor, $project, ['invoiceable_type' => Contract::class, 'invoiceable_id' => $alternate->id]);
+        $metadataParent = $this->paymentReportDocument($org, $actor, $project, ['metadata' => ['contract_id' => $contract->id]]);
+        $partialDocument = $this->paymentReportDocument($org, $actor, $project,
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => null, 'source_type' => Contract::class, 'source_id' => $contract->id]);
+        $hiddenDocument = $this->paymentReportDocument($org, $actor, $project,
+            ['invoiceable_type' => Contract::class, 'invoiceable_id' => $foreignContract->id, 'metadata' => ['contract_id' => $contract->id]]);
+        $expected = [$parent->document_number => $alternate->number, $metadataParent->document_number => $contract->number,
+            $partialDocument->document_number => $contract->number];
+        foreach ([
+            [['invoiceable_type' => null, 'invoiceable_id' => $foreignContract->id, 'source_type' => Contract::class, 'source_id' => $contract->id], $contract],
+            [['invoiceable_type' => $act::class, 'invoiceable_id' => null, 'source_type' => $act::class, 'source_id' => $act->id], $contract],
+            [['invoiceable_type' => $act::class, 'invoiceable_id' => null, 'source_type' => $parent::class, 'source_id' => $parent->id], $alternate],
+            [['source_type' => Contract::class, 'source_id' => null, 'metadata' => ['contract_id' => $contract->id]], $contract],
+            [['metadata' => ['contract_id' => $contract->id]], $contract],
+            [['metadata' => ['contract_id' => (string) $contract->id]], $contract],
+            [['source_type' => $metadataParent::class, 'source_id' => $metadataParent->id], $contract],
+            [['source_type' => $parent::class, 'source_id' => $parent->id, 'metadata' => ['contract_id' => $contract->id]], $contract],
+            [['invoiceable_type' => Contract::class, 'invoiceable_id' => $contract->id, 'metadata' => ['contract_id' => $alternate->id]], $contract],
+            [['metadata' => ['contract_id' => $foreignContract->id]], null],
+            [['metadata' => ['contract_id' => $wrongProject->id]], null],
+            [['metadata' => ['contract_id' => '9223372036854775807']], null],
+            [['metadata' => ['contract_id' => '9223372036854775808']], null],
+            [['metadata' => ['contract_id' => '99999999999999999999999999999999999']], null],
+            [['metadata' => ['contract_id' => '1 OR 1=1']], null],
+            [['metadata' => ['contract_id' => '1.5']], null],
+            [['metadata' => ['contract_id' => '-1']], null],
+            [['metadata' => ['contract_id' => 0]], null],
+            [['metadata' => ['contract_id' => [$contract->id]]], null],
+        ] as [$override, $related]) {
+            $document = $this->paymentReportDocument($org, $actor, $project, $override);
+            $expected[$document->document_number] = $related?->number;
+        }
+        $plan = $this->plan($this->paymentReportSection());
+        $report = $this->builder->build($plan, $actor, $org->id);
+        $actual = array_column($report['sections'][0]['rows'], 1, 0);
+        ksort($expected);
+        ksort($actual);
+        self::assertSame($expected, $actual);
+        self::assertSame(count($expected), $report['sections'][0]['source_row_count']);
+        self::assertArrayNotHasKey($hiddenDocument->document_number, $actual);
+        $reference = $report['source_refs'][0];
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $count = count(array_filter($expected, static fn (?string $number): bool => $number === $contract->number));
+        $summary = $this->builder->build($this->plan($this->paymentReportSection(['columns' => ['contract_number', 'currency'],
+            'filters' => [['field' => 'contract_number', 'operator' => 'eq', 'value' => $contract->number]],
+            'group_by' => ['contract_number', 'currency'], 'metrics' => [['field' => 'amount', 'operation' => 'sum', 'label' => 'Сумма'],
+                ['field' => 'id', 'operation' => 'count', 'label' => 'Документов']]])), $actor, $org->id);
+        self::assertSame([[$contract->number, 'RUB', sprintf('%d.00', $count * 10), $count]], $summary['sections'][0]['rows']);
+        $metadataParent->updateQuietly(['metadata' => ['contract_id' => $alternate->id]]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $reference));
+        $metadataParent->updateQuietly(['metadata' => ['contract_id' => $contract->id]]);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $reference));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
+        self::assertTrue($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+        $actor->organizations()->updateExistingPivot($org->id, ['is_active' => false]);
+        self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'payment_document', $partialDocument->id));
+    }
+
     public function test_payment_contract_projection_fences_cycles_depth_foreign_and_project_links(): void
     {
         [$org, $actor, $project] = $this->fixture();
