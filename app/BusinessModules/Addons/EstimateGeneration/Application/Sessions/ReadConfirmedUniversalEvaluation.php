@@ -79,18 +79,9 @@ final readonly class ReadConfirmedUniversalEvaluation
                 ->join('estimate_dataset_versions as datasets', 'datasets.id', '=', 'collections.dataset_version_id')
                 ->whereIn('norms.id', $normIds)->where('datasets.version_key', $regional['normative_dataset_version'] ?? '')
                 ->where('datasets.source_type', 'fsnb_2022')->where('datasets.status', 'parsed')->count();
-            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms !== count($normIds)) {
+            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms !== count($normIds)
+                || ! (new VerifyCurrentNormativeResourcePrices)->verify(array_column($nativeItems, 'item'), $regional)) {
                 return null;
-            }
-            foreach ($draft['local_estimates'] ?? [] as $localIndex => $local) {
-                foreach ($local['sections'] ?? [] as $sectionIndex => $section) {
-                    foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
-                        if (isset($nativeKeys[$item['key']])) {
-                            $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] =
-                                app(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService::class)->price([$item], $regional)[0];
-                        }
-                    }
-                }
             }
             try {
                 $current = (new SelectedEvaluationScenario)->select(

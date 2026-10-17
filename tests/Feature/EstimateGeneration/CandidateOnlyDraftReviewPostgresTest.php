@@ -152,6 +152,38 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 'scenario_id' => 'base', 'assumptions_accepted' => true]);
         $this->actingAs($actor);
         $factsBeforeRead = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token'];
+        $probeItems = array_column(array_intersect_key((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)
+            ->items($session->fresh()->draft_payload), array_fill_keys([$item['key'], $finish['key']], true)), 'item');
+        $conversionVersion = random_int(1000000, 1999999);
+        $conversionFactor = '10.000000000000';
+        $conversionFingerprint = hash('sha256', implode('|', ['10 h', 'h', $conversionFactor, (string) $conversionVersion]));
+        $conversionId = DB::table('estimate_generation_unit_conversions')->insertGetId(['from_unit' => '10 h', 'to_unit' => 'h',
+            'factor' => $conversionFactor, 'version' => $conversionVersion, 'fingerprint' => $conversionFingerprint,
+            'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $conversionItems = $probeItems;
+        $conversionItems[0]['labor'][0] = [...$conversionItems[0]['labor'][0], 'unit' => '10 h', 'price_unit' => 'h',
+            'unit_conversion_version' => $conversionVersion];
+        $conversionItems[0]['labor'][0]['normative_ref'] = [...$conversionItems[0]['labor'][0]['normative_ref'],
+            'unit_conversion_id' => $conversionId, 'unit_conversion_fingerprint' => $conversionFingerprint,
+            'unit_conversion_factor' => $conversionFactor];
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
+                ->verify(array_merge(...array_fill(0, 25, $conversionItems)), $session->fresh()->draft_payload['regional_context']));
+            self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_resource_prices"')));
+            self::assertCount(1, array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "estimate_generation_unit_conversions"')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $conversionItems[0]['labor'][0]['normative_ref']['unit_conversion_fingerprint'] = str_repeat('d', 64);
+        self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
+            ->verify($conversionItems, $session->fresh()->draft_payload['regional_context']));
+        $invalidItems = $probeItems;
+        $invalidItems[0]['materials'][0]['price_id'] = PHP_INT_MAX;
+        self::assertFalse((new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\VerifyCurrentNormativeResourcePrices)
+            ->verify($invalidItems, $session->fresh()->draft_payload['regional_context']));
         $readySnapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
             ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
         self::assertTrue($readySnapshot->canApply, json_encode($readySnapshot->blockingIssues, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
