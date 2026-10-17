@@ -8,6 +8,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSess
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\Models\Credits\AICreditLot;
 use App\Models\Credits\AICreditWallet;
@@ -27,6 +34,57 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 #[Group('postgres')]
 final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[Test]
+    public function snapshot_exposes_only_the_latest_active_current_attempt_failure_and_safe_diagnostics(): void
+    {
+        [$user, $project, $session] = $this->fixture();
+        [, , $foreignSession] = $this->fixture();
+        $attemptId = (string) Str::uuid();
+        $session->update(['input_payload' => ['generation_attempt_id' => $attemptId]]);
+        $store = new EloquentFailureStore(DB::connection());
+        $record = static function (EstimateGenerationSession $target, string $attempt, string $code) use ($store): FailureData {
+            $checkpointId = DB::table('estimate_generation_pipeline_checkpoints')->insertGetId([
+                'organization_id' => $target->organization_id, 'project_id' => $target->project_id, 'session_id' => $target->id,
+                'generation_attempt_id' => $attempt, 'stage' => 'plan_work_items', 'status' => 'failed',
+                'base_input_version' => 'sha256:'.str_repeat('a', 64), 'input_version' => 'sha256:'.hash('sha256', (string) Str::uuid()),
+                'started_at' => now(), 'failed_at' => now(), 'last_error_code' => 'pipeline_stage_failed',
+                'last_error_fingerprint' => str_repeat('b', 64),
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $failure = (new FailureNormalizer)->normalize(new TypedFailureException(FailureCategory::Terminal, $code, [
+                'invariant_code' => $code, 'provider_error_code' => 'private_provider_code', 'authorization' => 'Bearer private',
+            ]), new FailureContext(
+                organizationId: (int) $target->organization_id, projectId: (int) $target->project_id, sessionId: (int) $target->id,
+                stage: ProcessingStage::PlanWorkItems, operation: 'run_stage', attempt: 1,
+                correlationId: (string) Str::uuid(), eventId: (string) Str::uuid(), checkpointId: $checkpointId,
+            ));
+            $store->record($failure, new \DateTimeImmutable);
+
+            return $failure;
+        };
+        $active = $record($session, $attemptId, 'estimate_composer_fact_limit_exceeded');
+        $resolved = $record($session, $attemptId, 'estimate_composer_snapshot_changed');
+        self::assertTrue($store->resolve($resolved->context, $resolved->fingerprint, 'retry_succeeded', new \DateTimeImmutable));
+        $record($session, (string) Str::uuid(), 'estimate_composer_candidate_source_invalid');
+        $record($foreignSession, $attemptId, 'estimate_composer_approved_plan_invalid');
+        $this->route($project, $session);
+        $this->withToken(auth('api_admin')->login($user));
+
+        $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+        $first->assertOk()->assertJsonPath('data.failure_summary.latest.stage', 'plan_work_items')
+            ->assertJsonPath('data.failure_summary.latest.category', 'terminal')
+            ->assertJsonPath('data.failure_summary.latest.code', 'estimate_composer_fact_limit_exceeded')
+            ->assertJsonPath('data.failure_summary.latest.diagnostics.invariant_code', 'estimate_composer_fact_limit_exceeded');
+        self::assertArrayNotHasKey('provider_error_code', $first->json('data.failure_summary.latest.diagnostics'));
+        self::assertStringNotContainsString('private', $first->getContent());
+
+        self::assertTrue($store->resolve($active->context, $active->fingerprint, 'retry_succeeded', new \DateTimeImmutable));
+        $second = $this->withHeader('If-None-Match', (string) $first->headers->get('ETag'))
+            ->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
+        $second->assertOk()->assertJsonPath('data.failure_summary.latest', null);
+        self::assertNotSame($first->headers->get('ETag'), $second->headers->get('ETag'));
+    }
+
     #[Test]
     public function shared_credit_snapshot_reads_expiry_reserves_and_holds_without_mutating_the_wallet(): void
     {
@@ -180,7 +238,7 @@ final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonica
     }
 
     #[Test]
-    public function quota_snapshot_batches_limits_usage_and_reservation_status_in_three_queries(): void
+    public function quota_snapshot_batches_limits_usage_and_reservation_status_in_four_queries(): void
     {
         [$user, $project, $session] = $this->fixture();
         $otherSession = $this->anotherSession($user, $project);

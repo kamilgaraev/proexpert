@@ -56,6 +56,24 @@ final class FailureDiagnosticIdentityTest extends TestCase
     }
 
     #[Test]
+    public function composer_and_work_preflight_codes_remain_distinct_without_accepting_arbitrary_messages(): void
+    {
+        $identity = new FailureDiagnosticIdentity;
+        $fingerprints = [];
+        foreach (['estimate_composer_derived_quantity_invalid', 'estimate_work_items_exceed_approved_plan'] as $code) {
+            $diagnostics = (new SensitiveDiagnosticSanitizer)->sanitize(
+                $identity->forThrowable(new InvalidArgumentException($code), 'plan_work_items'),
+            );
+            self::assertSame($code, $diagnostics['invariant_code'] ?? null);
+            $fingerprints[] = $diagnostics['diagnostic_fingerprint'];
+        }
+        self::assertNotSame($fingerprints[0], $fingerprints[1]);
+        foreach (['estimate_composer_', 'estimate_customer_name', 'estimate_composer_private material', "estimate_work_invalid\nprivate", 'estimate_composer_private/secret'] as $message) {
+            self::assertArrayNotHasKey('invariant_code', $identity->forThrowable(new InvalidArgumentException($message), 'plan_work_items'));
+        }
+    }
+
+    #[Test]
     public function physical_identity_collision_keeps_a_typed_safe_exception_class(): void
     {
         $diagnostics = (new FailureDiagnosticIdentity)->forThrowable(
