@@ -544,14 +544,15 @@ class AuthorizationService
             }
         }
         
-        $authContext = $this->rememberRead(
+        $authContext = ApiQueryMetrics::measureProcessingPhase('access_context_read', fn () => $this->rememberRead(
             $this->authContextReadKey($context),
             fn () => $this->resolveAuthContext($context),
-        );
+        ));
         if ($this->currentChecks && $context !== null && $authContext === null) { return false; }
-        $roles = $this->getUserRoles($user, $authContext);
+        $roles = ApiQueryMetrics::measureProcessingPhase('access_role_read', fn () => $this->getUserRoles($user, $authContext));
         if ($authContext?->type === AuthorizationContext::TYPE_PROJECT) {
-            $contextIds = $this->getContextHierarchy($authContext)->pluck('id')->all();
+            $contextIds = ApiQueryMetrics::measureProcessingPhase('access_context_hierarchy',
+                fn () => $this->getContextHierarchy($authContext)->pluck('id')->all());
             $roles = $roles->filter(static fn (UserRoleAssignment $assignment): bool => in_array($assignment->context_id, $contextIds, true));
         }
         
@@ -579,7 +580,7 @@ class AuthorizationService
 
         foreach ($roles as $assignment) {
             if ($this->permissionResolver->hasPermission($assignment, $permission, $context)) {
-                if ($this->evaluateConditions($assignment, $context ?? [])) {
+                if (ApiQueryMetrics::measureProcessingPhase('access_conditions', fn () => $this->evaluateConditions($assignment, $context ?? []))) {
                     if (!str_contains($userAgent, 'Prometheus')) {
                         $this->logging->security('auth.permission.resolved', [
                             'user_id' => $user->id,
@@ -644,11 +645,11 @@ class AuthorizationService
 
     protected function checkPermissionInContext(User $user, string $permission, AuthorizationContext $context): bool
     {
-        $roles = $this->getUserRoles($user, $context);
+        $roles = ApiQueryMetrics::measureProcessingPhase('access_role_read', fn () => $this->getUserRoles($user, $context));
 
         foreach ($roles as $assignment) {
             if ($this->permissionResolver->hasPermission($assignment, $permission, null)) {
-                if ($this->evaluateConditions($assignment, [])) {
+                if (ApiQueryMetrics::measureProcessingPhase('access_conditions', fn () => $this->evaluateConditions($assignment, []))) {
                     return true;
                 }
             }

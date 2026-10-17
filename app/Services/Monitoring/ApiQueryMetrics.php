@@ -148,6 +148,8 @@ final class ApiQueryMetrics
             'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
             'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
             'access_system_match', 'access_module_match', 'security_emit', 'security_prepare', 'security_write',
+            'access_context_read', 'access_role_read', 'access_context_hierarchy', 'access_conditions',
+            'access_module_roles', 'access_module_entitlement', 'access_module_permission',
         ], true)) {
             return;
         }

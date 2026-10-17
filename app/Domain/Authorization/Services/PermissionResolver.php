@@ -268,7 +268,7 @@ class PermissionResolver
             'modules_to_check' => $modulesToCheck,
         ]);
 
-        $modulePermissions = $this->getModulePermissions($assignment);
+        $modulePermissions = ApiQueryMetrics::measureProcessingPhase('access_module_roles', fn () => $this->getModulePermissions($assignment));
 
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
@@ -276,7 +276,7 @@ class PermissionResolver
             if (! $this->currentChecks) {
                 $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
             }
-            $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+            $isActive = ApiQueryMetrics::measureProcessingPhase('access_module_entitlement', fn () => $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
                         function () use ($organizationId, $moduleToCheck): array {
@@ -299,7 +299,7 @@ class PermissionResolver
                 }
 
                 return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
-            }));
+            })));
 
             Log::debug('permission.module.active_check', [
                 'module' => $moduleToCheck,
@@ -310,7 +310,8 @@ class PermissionResolver
                 continue;
             }
 
-            if ($this->checkModulePermission($modulePermissions, $moduleToCheck, $module, $action, $permission)) {
+            if (ApiQueryMetrics::measureProcessingPhase('access_module_permission',
+                fn () => $this->checkModulePermission($modulePermissions, $moduleToCheck, $module, $action, $permission))) {
                 return true;
             }
         }

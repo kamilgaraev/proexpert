@@ -349,6 +349,72 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame($value, ApiQueryMetrics::measureProcessingPhase('rag_acl_register', static fn (): object => $value));
     }
 
+    public function test_access_subphases_preserve_fresh_roles_conditions_and_original_exception(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $resolver = $this->createMock(PermissionResolver::class);
+        $resolver->method('forCurrentChecks')->willReturn($resolver);
+        $resolver->method('hasPermission')->willReturn(true);
+        $state = (object) ['roles' => true, 'condition' => true, 'failure' => null, 'reads' => 0];
+        $service = new class($resolver, $state, $this->createMock(\App\Services\Logging\LoggingService::class)) extends AuthorizationService {
+            public function __construct(PermissionResolver $resolver, private object $state, \App\Services\Logging\LoggingService $logging)
+            {
+                $this->permissionResolver = $resolver;
+                $this->logging = $logging;
+            }
+
+            protected function resolveAuthContext(?array $context): ?\App\Domain\Authorization\Models\AuthorizationContext
+            {
+                return (new \App\Domain\Authorization\Models\AuthorizationContext)->forceFill([
+                    'id' => 4, 'type' => 'project', 'resource_id' => 9, 'parent_context_id' => null,
+                ]);
+            }
+
+            public function getUserRoles(User $user, ?\App\Domain\Authorization\Models\AuthorizationContext $context = null): \Illuminate\Support\Collection
+            {
+                $this->state->reads++;
+                if ($this->state->failure !== null) { throw $this->state->failure; }
+
+                return collect($this->state->roles ? [(new \App\Domain\Authorization\Models\UserRoleAssignment)->forceFill([
+                    'context_id' => 4, 'role_slug' => 'private-role', 'role_type' => 'system',
+                ])] : []);
+            }
+
+            protected function getContextHierarchy(\App\Domain\Authorization\Models\AuthorizationContext $context): \Illuminate\Support\Collection
+            {
+                return collect([$context]);
+            }
+
+            protected function evaluateConditions(\App\Domain\Authorization\Models\UserRoleAssignment $assignment, array $context): bool
+            {
+                return $this->state->condition;
+            }
+        };
+        $user = (new User)->forceFill(['id' => 7, 'current_organization_id' => 38]);
+        $context = ['project_id' => 9, 'organization_id' => 38];
+        self::assertTrue($service->canCurrent($user, 'private.view', $context));
+        $state->condition = false;
+        self::assertFalse($service->canCurrent($user, 'private.view', $context));
+        $state->roles = false;
+        self::assertFalse($service->canCurrent($user, 'private.view', $context));
+        $failure = new \RuntimeException('private-reader-failure');
+        $state->failure = $failure;
+        try {
+            $service->canCurrent($user, 'private.view', $context);
+            self::fail('Original role reader exception must propagate.');
+        } catch (\RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        self::assertSame(4, $state->reads);
+        $phases = $metrics->summary()['processing_phases'];
+        self::assertSame(4, $phases['access_context_read']['count']);
+        self::assertSame(4, $phases['access_role_read']['count']);
+        self::assertSame(3, $phases['access_context_hierarchy']['count']);
+        self::assertSame(2, $phases['access_conditions']['count']);
+        self::assertStringNotContainsString('private', json_encode($phases, JSON_THROW_ON_ERROR));
+    }
+
     public function test_access_evaluation_counts_actual_cache_misses_and_preserves_false_decisions_and_fresh_scope(): void
     {
         [$request, $metrics] = $this->metrics();
@@ -390,7 +456,9 @@ final class ApiQuerySourceMetricsTest extends TestCase
         [$request, $metrics] = $this->metrics();
         foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
             'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
-            'access_system_match', 'access_module_match', 'security_emit'] as $phase) {
+            'access_system_match', 'access_module_match', 'security_emit',
+            'access_context_read', 'access_role_read', 'access_context_hierarchy', 'access_conditions',
+            'access_module_roles', 'access_module_entitlement', 'access_module_permission'] as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
             self::assertNotNull($checkpoint);
             ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
