@@ -58,13 +58,16 @@ final class AssistantIndexStatusService
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
-        $sourceRecoveryKey = $checkCurrentAccess && $section === 'sources'
-            ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':sources:background-recovery'
+        $sectionRecoveryKey = $checkCurrentAccess && in_array($section, ['sources', 'documents'], true)
+            ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':'.$section.':background-recovery'
             : null;
-        if ($sourceRecoveryKey !== null && Cache::has($sourceRecoveryKey)) {
-            Cache::put($sourceRecoveryKey, true, 180);
+        if ($sectionRecoveryKey !== null && Cache::has($sectionRecoveryKey)) {
+            $snapshot = $this->snapshotStatus($organizationId, $actor, $section);
+            if ($snapshot['status_available'] ?? false) {
+                Cache::put($sectionRecoveryKey, true, 180);
+            }
 
-            return $this->snapshotStatus($organizationId, $actor, $section);
+            return $snapshot;
         }
 
         $phase = (object) ['value' => 'schema', 'missing_release' => false];
@@ -156,8 +159,8 @@ final class AssistantIndexStatusService
             $setProcessingPhase(null);
         }
 
-        if ($budgetExceeded && $sourceRecoveryKey !== null && ! $phase->missing_release) {
-            Cache::put($sourceRecoveryKey, true, 180);
+        if ($budgetExceeded && $sectionRecoveryKey !== null && ! $phase->missing_release) {
+            Cache::put($sectionRecoveryKey, true, 180);
 
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
