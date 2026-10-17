@@ -22,7 +22,7 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
         $before = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'estimate_regional_price_version_id' => $version,
             'conditions' => ['as_of_date' => '2099-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '22.00',
-                'delivery' => 'outside_scope', 'basis' => 'Подтверждены условия прямых затрат; доставка за пределами состава.']];
+                'delivery' => 'outside_scope', 'basis' => str_repeat('А', 1000)]];
         $service = app(SaveSessionPricingSource::class);
         $result = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
         self::assertEquals($result, $service->handle($actor, (int) $session->project_id, (int) $session->id, $input));
@@ -40,6 +40,7 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
         self::assertSame('22', $accepted['vat_rate']);
         self::assertSame('2099-10-01', $accepted['as_of_date']);
         self::assertSame('outside_scope', $accepted['delivery']);
+        self::assertSame($input['conditions']['basis'], $accepted['basis']);
         $changed = $draft;
         $changed['evaluation_policy']['regional_price_selection']['conditions']['vat_rate'] = '20';
         self::assertNull($terms->accepted($changed, $snapshot, $decisions));
@@ -55,7 +56,7 @@ final class SessionPricingSourcePostgresTest extends EstimateGenerationCanonical
         $conditions = ['as_of_date' => '2099-10-01', 'vat_mode' => 'excluded', 'vat_rate' => '22',
             'delivery' => 'outside_scope', 'basis' => 'Контрольная оценка выбранных работ без отдельной доставки.'];
         foreach ([['as_of_date' => '2099-02-30'], ['as_of_date' => '2099-12-31'], ['vat_mode' => 'unknown'], ['vat_mode' => 'included'], ['vat_rate' => '101'],
-            ['delivery' => 'unknown'], ['unit_price' => '999.99']] as $change) {
+            ['delivery' => 'unknown'], ['basis' => str_repeat('А', 1001)], ['basis' => str_repeat('А', 9)], ['unit_price' => '999.99']] as $change) {
             try {
                 app(SaveSessionPricingSource::class)->handle($actor, (int) $session->project_id, (int) $session->id,
                     ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'estimate_regional_price_version_id' => $version,

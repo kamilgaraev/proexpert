@@ -98,6 +98,22 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         $pin = app(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class)
             ->resolve($catalog['context'], [['work_item_key' => $item['key'], 'search_text' => $item['normative_search_text'], 'unit' => 'm2', 'code' => '11-01-011-01']]);
         self::assertSame('pinned', $pin['status'], json_encode($pin, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['object_type' => 'office']);
+        try {
+            self::assertNull(app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\ResolveSelectedNormativeResources::class)
+                ->resolve($item, $catalog['norm_id'], ['regional_context' => $catalog['context'], 'object_type' => 'residential',
+                    'organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id]));
+            try {
+                app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $organization->id, (int) $project->id,
+                    $actor, 2, $item['key'], $catalog['norm_id'], false);
+                self::fail('An incompatible object type was accepted.');
+            } catch (\Illuminate\Validation\ValidationException) {
+                self::assertSame(2, $session->fresh()->state_version);
+                self::assertTrue($artifacts->verifyArtifact($session->fresh()->draft_payload));
+            }
+        } finally {
+            DB::table('estimate_norms')->where('id', $catalog['norm_id'])->update(['object_type' => null]);
+        }
         app(SelectNormativeCandidate::class)->handle((int) $session->id, (int) $organization->id, (int) $project->id,
             $actor, 2, $item['key'], $catalog['norm_id'], false);
         self::assertTrue($artifacts->verifyArtifact($session->fresh()->draft_payload));
@@ -116,7 +132,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         self::assertSame('0', $receipt['cost_units']);
         $current = $session->fresh()->draft_payload;
         $finish = [...$item, 'key' => 'floor:finish', 'name' => 'Чистовое покрытие пола',
-            'normative_search_text' => 'Устройство покрытий из ламината', 'normative_rate_code' => '11-01-034-04',
+            'normative_search_text' => 'Устройство покрытий из досок ламинированных замковым способом', 'normative_rate_code' => '11-01-034-04',
             'specialization_scenario' => (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)->issue('finish.floor', 'residential'),
             'normative_match' => ['norm_id' => $catalog['finish_norm_id']],
             'metadata' => ['composition_work_key' => 'finish.floor', 'quantity_key' => 'finish.floor',
@@ -230,6 +246,28 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 } else {
                     DB::table('estimate_norm_resources')->where('id', $normResourceId)->update($originalResource);
                 }
+            }
+        }
+        $originalNorm = (array) DB::table('estimate_norms')->where('id', $catalog['norm_id'])->first();
+        $originalCollection = (array) DB::table('estimate_norm_collections')->where('id', $originalNorm['collection_id'])->first();
+        $replacementCollection = $originalCollection;
+        unset($replacementCollection['id']);
+        $replacementCollection['code'] = 'replacement-'.Str::uuid();
+        $replacementCollectionId = DB::table('estimate_norm_collections')->insertGetId($replacementCollection);
+        foreach ([['estimate_norms', $catalog['norm_id'], 'code', 'changed-norm-code', $originalNorm['code']],
+            ['estimate_norms', $catalog['norm_id'], 'name', 'Изменённая норма', $originalNorm['name']],
+            ['estimate_norms', $catalog['norm_id'], 'unit', 'м3', $originalNorm['unit']],
+            ['estimate_norms', $catalog['norm_id'], 'canonical_unit', 'm3', $originalNorm['canonical_unit']],
+            ['estimate_norms', $catalog['norm_id'], 'collection_id', $replacementCollectionId, $originalNorm['collection_id']],
+            ['estimate_norm_collections', $originalCollection['id'], 'name', 'Изменённая коллекция', $originalCollection['name']]] as [$table, $id, $column, $changedValue, $originalValue]) {
+            DB::table($table)->where('id', $id)->update([$column => $changedValue]);
+            try {
+                $stale = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+                    ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
+                self::assertFalse($stale->canApply, $table.'.'.$column);
+                self::assertNotContains('apply', array_column($stale->availableActions, 'action'), $table.'.'.$column);
+            } finally {
+                DB::table($table)->where('id', $id)->update([$column => $originalValue]);
             }
         }
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
@@ -410,7 +448,7 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         if ($abstract) {
             $finishNorm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'code' => '11-01-034-04',
                 'section_code' => '11', 'section_name' => 'Полы', 'section_id' => $section,
-                'name' => 'Устройство покрытий из ламината', 'unit' => 'м2', 'created_at' => $now, 'updated_at' => $now]);
+                'name' => 'Устройство покрытий из досок ламинированных замковым способом', 'unit' => 'м2', 'created_at' => $now, 'updated_at' => $now]);
             DB::table('estimate_norm_resources')->insert([
                 ['estimate_norm_id' => $finishNorm, 'resource_code' => $key, 'resource_name' => 'Труд рабочих', 'unit' => 'h',
                     'quantity' => '1.000000', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now],

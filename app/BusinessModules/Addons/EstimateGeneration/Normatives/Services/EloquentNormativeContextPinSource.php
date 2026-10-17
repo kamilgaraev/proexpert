@@ -150,7 +150,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                     'norms.unit_dimension', 'norms.material', 'norms.technology', 'norms.structure',
                     'norms.object_type', 'norms.region_code', 'norms.valid_from', 'norms.valid_to',
                     'norms.section_code', 'norms.section_name', 'norms.work_composition',
-                    'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
+                    'collections.id as collection_id', 'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
                 ])
                 ->selectRaw("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", [$lexicalQuery])
                 ->selectRaw($semanticPrioritySql, $semanticPriorityBindings)
@@ -776,13 +776,14 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'dataset_status' => 'parsed', 'code' => (string) $norm->code, 'name' => (string) $norm->name,
                 'unit' => (string) ($norm->canonical_unit ?: $norm->unit),
                 'retrieval_metadata' => [
+                    'raw_unit' => (string) $norm->unit,
                     'unit_dimension' => $norm->unit_dimension, 'material' => $norm->material,
                     'technology' => $norm->technology, 'structure' => $norm->structure,
                     'object_type' => $norm->object_type, 'region_code' => $norm->region_code,
                     'valid_from' => $norm->valid_from, 'valid_to' => $norm->valid_to,
                     'unpriced_abstract_resources' => $unpricedAbstractResources[(int) $norm->id] ?? [],
                 ],
-                'collection' => ['code' => (string) $norm->collection_code, 'name' => (string) $norm->collection_name, 'norm_type' => (string) $norm->norm_type],
+                'collection' => ['id' => (int) $norm->collection_id, 'code' => (string) $norm->collection_code, 'name' => (string) $norm->collection_name, 'norm_type' => (string) $norm->norm_type],
                 'section' => ['code' => (string) $norm->section_code, 'name' => (string) $norm->section_name],
                 'work_composition' => is_array($composition) ? array_values($composition) : [],
                 'resources' => $groups,

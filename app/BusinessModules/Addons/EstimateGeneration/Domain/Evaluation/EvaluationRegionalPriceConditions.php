@@ -13,7 +13,7 @@ final readonly class EvaluationRegionalPriceConditions
     {
         if (array_diff(array_keys($conditions), ['as_of_date', 'vat_mode', 'vat_rate', 'delivery', 'basis']) !== []
             || ! is_string($conditions['as_of_date'] ?? null) || ! is_string($conditions['basis'] ?? null)
-            || strlen(trim($conditions['basis'])) < 10 || strlen($conditions['basis']) > 1000
+            || mb_strlen(trim($conditions['basis'])) < 10 || mb_strlen($conditions['basis']) > 1000
             || ! in_array($conditions['vat_mode'] ?? null, ['excluded', 'not_applicable'], true)
             || ! in_array($conditions['delivery'] ?? null, ['included', 'outside_scope'], true)) {
             throw new InvalidArgumentException('regional_price_conditions_invalid');

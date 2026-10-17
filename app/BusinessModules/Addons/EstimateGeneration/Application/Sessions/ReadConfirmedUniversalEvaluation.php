@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEval
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveCommercialWorkPrice;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCatalogIdentity;
 use App\Models\SystemAdmin;
 use App\Models\User;
 use Brick\Math\BigDecimal;
@@ -78,10 +79,21 @@ final readonly class ReadConfirmedUniversalEvaluation
             $norms = DB::table('estimate_norms as norms')->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
                 ->join('estimate_dataset_versions as datasets', 'datasets.id', '=', 'collections.dataset_version_id')
                 ->whereIn('norms.id', $normIds)->where('datasets.version_key', $regional['normative_dataset_version'] ?? '')
-                ->where('datasets.source_type', 'fsnb_2022')->where('datasets.status', 'parsed')->count();
-            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms !== count($normIds)
+                ->where('datasets.source_type', 'fsnb_2022')->where('datasets.status', 'parsed')
+                ->get(['norms.id', 'norms.code', 'norms.name', 'norms.unit', 'norms.canonical_unit',
+                    'norms.section_code', 'norms.section_name', 'norms.work_composition', 'norms.unit_dimension',
+                    'norms.material', 'norms.technology', 'norms.structure', 'norms.object_type', 'norms.region_code',
+                    'norms.valid_from', 'norms.valid_to', 'collections.id as collection_id', 'collections.code as collection_code',
+                    'collections.name as collection_name', 'collections.norm_type'])->keyBy('id');
+            if (! $version || count($nativeItems) !== count($nativeKeys) || $norms->count() !== count($normIds)
                 || ! (new VerifyCurrentNormativeResourcePrices)->verify(array_column($nativeItems, 'item'), $regional)) {
                 return null;
+            }
+            foreach ($nativeItems as $entry) {
+                $match = $entry['item']['normative_match'];
+                if (! (new NormativeCatalogIdentity)->matches($match, $norms[$match['norm_id']])) {
+                    return null;
+                }
             }
             try {
                 $current = (new SelectedEvaluationScenario)->select(

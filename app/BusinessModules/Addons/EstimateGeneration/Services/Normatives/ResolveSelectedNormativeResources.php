@@ -22,6 +22,7 @@ class ResolveSelectedNormativeResources
         private readonly NormativeWorkIntentFactory $intents,
         private readonly NormativeRetrievalService $retrieval,
         private readonly ResourceAssemblyService $resources,
+        private readonly NormativeCandidateSelectionHardGate $selectionHardGate,
         private readonly PinnedNormativeCandidateFactory $candidates = new PinnedNormativeCandidateFactory,
         private readonly AssembleMatchedResources $materials = new AssembleMatchedResources,
     ) {}
@@ -59,6 +60,10 @@ class ResolveSelectedNormativeResources
             if ($candidate['candidate_id'] !== $result->selectedCandidateId()) {
                 continue;
             }
+            $gateCandidate = [...$candidate, 'object_type' => $candidate['retrieval_metadata']['object_type'] ?? null];
+            if ($this->selectionHardGate->rejectionReasons($item, $context, ['selected' => $gateCandidate]) !== []) {
+                return null;
+            }
             $item = $this->resources->assembleFromDecision($item,
                 AcceptedNormativeDecisionData::fromWorkflowResult($result, $candidate), $pin['regional_context']);
             $assembled = $this->materials->handle([
@@ -67,6 +72,7 @@ class ResolveSelectedNormativeResources
             ]);
             $item = $assembled['data']['local_estimates'][0]['sections'][0]['work_items'][0];
             $item['normative_match']['hard_gate_passed'] = true;
+            $item['normative_match']['catalog_identity'] = (new NormativeCatalogIdentity)->fromCandidate($candidate);
 
             return $item;
         }
