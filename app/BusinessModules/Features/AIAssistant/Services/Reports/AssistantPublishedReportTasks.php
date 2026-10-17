@@ -10,12 +10,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
 use App\BusinessModules\Features\AIAssistant\Jobs\GenerateAssistantPublishedReport;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantCoreReportTask;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
+use App\Models\Organization;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -35,6 +38,7 @@ final readonly class AssistantPublishedReportTasks
         private AssistantDataAccessPolicy $policy,
         private GetReportRunAction $runs,
         private GetReportExportAction $exports,
+        private SearchProjectsTool $projects,
     ) {}
 
     public function create(array $arguments, User $actor, int $organizationId): array
@@ -48,7 +52,7 @@ final readonly class AssistantPublishedReportTasks
             throw new AuthorizationException;
         }
         $parameters = $this->input->prepare($arguments, $actor, $organizationId, DateTimeImmutable::createFromInterface($request->created_at));
-        $this->assertProject($request, $parameters);
+        $this->assertProject($request, $parameters, $actor);
         $hash = hash('sha256', CanonicalJson::encode($parameters));
         $task = DB::transaction(function () use ($request, $parameters, $hash, $actor, $organizationId): AssistantCoreReportTask {
             $root = AssistantRequest::query()->lockForUpdate()->findOrFail($request->id);
@@ -89,7 +93,7 @@ final readonly class AssistantPublishedReportTasks
         if ((int) $task->assistant_request_id !== (int) $request->id) {
             throw new AuthorizationException;
         }
-        $this->assertProject($request, $task->parameters);
+        $this->assertProject($request, $task->parameters, $actor);
         $state = $this->state($task);
         if (! in_array($state['status'], [...AssistantCoreReportTask::PENDING, 'ready'], true)) {
             throw new InvalidArgumentException('assistant_report_task_not_available');
@@ -203,9 +207,29 @@ final readonly class AssistantPublishedReportTasks
             ->where('surface', 'admin')->where('request_id', $id)->firstOrFail();
     }
 
-    private function assertProject(AssistantRequest $request, array $parameters): void
+    private function assertProject(AssistantRequest $request, array $parameters, User $actor): void
     {
         if (! AssistantPublishedReportProjectScope::allows($request->payload, $parameters['project_id'])) {
+            throw new AuthorizationException;
+        }
+        $message = (string) ($request->payload['message'] ?? '');
+        if (AssistantRequestProjectScope::fromPlan(['request' => $request->payload])->requested
+            || AssistantRequestProjectScope::organizationWide($message)) {
+            return;
+        }
+        $query = AssistantReportEntityQuery::extract($message, 'project');
+        if ($query === null) {
+            return;
+        }
+        $arguments = ['query' => $query, 'limit' => 2];
+        if (preg_match('/^(?:id\s*|№\s*)?([1-9]\d*)$/iu', $query, $matches) === 1) {
+            $arguments['project_id'] = (int) $matches[1];
+        }
+        $result = $this->projects->execute($arguments, $actor, Organization::query()->findOrFail($request->organization_id));
+        $rows = is_array($result) ? ($result['results'] ?? null) : null;
+        if (! is_array($result) || ($result['status'] ?? null) !== 'success' || ! is_array($rows) || count($rows) !== 1
+            || ($result['result_window']['has_more'] ?? null) !== false
+            || (int) ($rows[0]['id'] ?? 0) !== $parameters['project_id']) {
             throw new AuthorizationException;
         }
     }

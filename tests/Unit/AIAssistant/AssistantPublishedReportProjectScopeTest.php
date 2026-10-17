@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportProjectScope;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -37,5 +38,14 @@ final class AssistantPublishedReportProjectScopeTest extends TestCase
             : [['entity_type' => 'project', 'entity_id' => $selectedProjectId]]]];
 
         self::assertSame($allowed, AssistantPublishedReportProjectScope::allows($payload, $reportProjectId));
+    }
+
+    public function test_quoted_project_preserves_its_full_name_and_excludes_following_report_requirements(): void
+    {
+        self::assertSame('Учебный ПТО — ремонт офиса 100 м² — 13.10.2026', AssistantReportEntityQuery::extract(
+            'Подготовь Excel по проекту «Учебный ПТО — ремонт офиса 100 м² — 13.10.2026». На одном листе работы, на втором задачи.', 'project'));
+        self::assertSame('Склад на улице Мира, этап 2', AssistantReportEntityQuery::extract(
+            'Отчёт по объекту «Склад на улице Мира, этап 2» за октябрь', 'project'));
+        self::assertSame('СевГУ', AssistantReportEntityQuery::extract('Отчёт по проекту СевГУ за октябрь', 'project'));
     }
 }
