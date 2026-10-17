@@ -1009,6 +1009,42 @@ final class AssistantCustomReportsTest extends TestCase
         }
     }
 
+    public function test_report_source_hints_recognize_act_word_forms_and_preserve_financial_access(): void
+    {
+        [$org, $actor] = $this->fixture();
+        $hints = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints(
+            new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $this->sources, $this->policy);
+        $resolver = new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
+        $query = 'Сделай Excel по утверждённым актам проекта «Учебный ПТО — ремонт офиса 100 м² — 13.10.2026» за 13–17 октября 2026 года: номер, дата, сумма и валюта. На втором листе — количество актов и общая сумма.';
+        foreach ([$query, 'Выгрузи CSV по актам проекта', 'Сделай Excel по акту проекта',
+            'Сделай Excel: акты проекта', 'Сделай Excel: список актов выполненных работ', 'Сделай Excel с актом.'] as $question) {
+            $sources = array_column($hints->forRequest($actor, $org->id, $question, $resolver->resolve($question)), null, 'domain');
+            self::assertArrayHasKey('acts', $sources, $question);
+            $act = $sources['acts'];
+            self::assertSame('performance_act', $act['entity_type']);
+            self::assertSame('string', $act['fields']['number']);
+            self::assertSame('date', $act['fields']['date']);
+            self::assertSame('boolean', $act['fields']['is_approved']);
+            self::assertSame('is_approved', $act['preferred_fields']['approval']);
+            self::assertSame('number', $act['fields']['total_amount']);
+            self::assertContains('sum', $act['metrics']['total_amount']);
+            self::assertContains('currency', $act['dimensions']['total_amount']);
+        }
+        foreach (['Сделай Excel по активным проектам', 'Сделай Excel по фактическим срокам проекта',
+            'Сделай Excel по контрактам проекта', 'Сделай Excel по редакторам организации'] as $question) {
+            self::assertNotContains('acts', array_column($hints->forRequest($actor, $org->id, $question, $resolver->resolve($question)), 'domain'));
+        }
+        self::assertSame([], $hints->forRequest($actor, $org->id, 'Покажи акты проекта без файлов', $resolver->resolve('Покажи акты проекта без файлов')));
+        $this->denied = ['finance.view'];
+        $sources = array_column($hints->forRequest($actor, $org->id, $query, $resolver->resolve($query)), null, 'domain');
+        self::assertArrayHasKey('acts', $sources);
+        self::assertArrayNotHasKey('total_amount', $sources['acts']['fields']);
+        self::assertArrayNotHasKey('total_amount', $sources['acts']['metrics']);
+        self::assertSame('date', $sources['acts']['fields']['date']);
+        $this->denied = ['contracts.performance_acts.view'];
+        self::assertNotContains('acts', array_column($hints->forRequest($actor, $org->id, $query, $resolver->resolve($query)), 'domain'));
+    }
+
     public function test_performance_act_report_aliases_preserve_filters_sort_totals_and_financial_access(): void
     {
         [$org, $actor, $project] = $this->fixture();
