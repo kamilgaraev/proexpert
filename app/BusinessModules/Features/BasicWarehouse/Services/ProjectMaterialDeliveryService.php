@@ -12,7 +12,10 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocatio
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Models\Material;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -286,10 +289,35 @@ class ProjectMaterialDeliveryService
     public function ship(ProjectMaterialDelivery $delivery, User $user, array $data): ProjectMaterialDelivery
     {
         return DB::transaction(function () use ($delivery, $user, $data): ProjectMaterialDelivery {
+            $organizationId = (int) $delivery->organization_id;
+            if ((int) $user->current_organization_id !== $organizationId) {
+                throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.organization_mismatch'));
+            }
+            Organization::query()->lockForUpdate()->findOrFail($organizationId);
+            $snapshot = ProjectMaterialDelivery::query()->where('organization_id', $organizationId)->findOrFail($delivery->id);
+            $allocation = $snapshot->warehouse_project_allocation_id === null ? null : WarehouseProjectAllocation::query()
+                ->where('organization_id', $organizationId)->lockForUpdate()->findOrFail($snapshot->warehouse_project_allocation_id);
             $delivery = ProjectMaterialDelivery::query()
-                ->where('organization_id', $delivery->organization_id)
+                ->where('organization_id', $organizationId)
                 ->lockForUpdate()
                 ->findOrFail($delivery->id);
+            if ($delivery->warehouse_project_allocation_id !== $snapshot->warehouse_project_allocation_id) {
+                throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.shipment_source_changed'));
+            }
+            if ($delivery->status?->isFinal()) {
+                throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.final_status'));
+            }
+            app(UserProjectAccessService::class)->queryAccessibleProjects($user, $organizationId)->findOrFail($delivery->project_id);
+            Material::query()->where('organization_id', $organizationId)->findOrFail($delivery->material_id);
+            if (isset($data['responsible_user_id'])) {
+                $responsible = User::query()->where('is_active', true)->find($data['responsible_user_id']);
+                if ($responsible === null || ! $responsible->organizations()->where('organizations.id', $organizationId)
+                    ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()) {
+                    throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.invalid_responsible_user'));
+                }
+            }
+            $this->prepareShipmentSource($delivery, $allocation, $data);
+            $delivery->setRelation('allocation', $allocation);
             $quantity = (float) ($data['quantity'] ?? $delivery->remainingQuantityToShip());
             $newShippedQuantity = (float) $delivery->shipped_quantity + $quantity;
             $expectedQuantity = max((float) $delivery->reserved_quantity, (float) $delivery->requested_quantity);
@@ -325,6 +353,28 @@ class ProjectMaterialDeliveryService
 
             return $delivery->refresh();
         });
+    }
+
+    private function prepareShipmentSource(ProjectMaterialDelivery $delivery, ?WarehouseProjectAllocation $allocation, array $data): void
+    {
+        $selectedWarehouseId = isset($data['warehouse_id']) ? (int) $data['warehouse_id'] : null;
+        if ($delivery->warehouse_id === null && ((float) $delivery->shipped_quantity > 0 || $delivery->outbound_movement_id !== null)) {
+            throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.shipment_source_changed'));
+        }
+        if ($delivery->warehouse_id !== null && $selectedWarehouseId !== null
+            && (int) $delivery->warehouse_id !== $selectedWarehouseId) {
+            throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.shipment_source_changed'));
+        }
+        $warehouseId = (int) ($selectedWarehouseId ?? $delivery->warehouse_id);
+        if ($warehouseId <= 0) {
+            throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.invalid_source_warehouse'));
+        }
+        if ($allocation !== null && ((int) $allocation->warehouse_id !== $warehouseId
+            || (int) $allocation->project_id !== (int) $delivery->project_id
+            || (int) $allocation->material_id !== (int) $delivery->material_id)) {
+            throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.invalid_source_warehouse'));
+        }
+        $delivery->warehouse_id = $warehouseId;
     }
 
     public function receive(

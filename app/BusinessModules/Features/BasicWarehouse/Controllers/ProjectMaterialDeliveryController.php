@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
 use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIdempotencyConflictException;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ShipProjectMaterialDeliveryRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\ProjectMaterialDeliveryResource;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
@@ -110,14 +111,10 @@ class ProjectMaterialDeliveryController extends Controller
         }
     }
 
-    public function ship(Request $request, int $deliveryId): JsonResponse
+    public function ship(ShipProjectMaterialDeliveryRequest $request, int $deliveryId): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'quantity' => ['nullable', 'numeric', 'min:0.001'],
-                'responsible_user_id' => ['nullable', 'integer'],
-                'notes' => ['nullable', 'string'],
-            ]);
+            $validated = $request->validated();
 
             $delivery = $this->findDelivery($request, $deliveryId);
             $updated = $this->deliveryService->ship($delivery, $request->user(), $validated)

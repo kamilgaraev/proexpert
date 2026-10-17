@@ -12,6 +12,9 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -141,6 +144,203 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertSame(0.0, (float) $stock[0]['allocated_total']);
         $this->assertSame(70.0, (float) $stock[0]['unallocated_quantity']);
         $this->assertSame([], $stock[0]['project_allocations']);
+    }
+
+    public function test_purchase_delivery_binds_the_selected_warehouse_on_first_shipment(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createPurchaseDeliveryContext($context);
+        $endpoint = "/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship";
+
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, [
+            'quantity' => 10,
+            'warehouse_id' => $setup['sourceWarehouse']->id,
+        ])->assertOk();
+
+        $delivery = $setup['delivery']->fresh();
+        $this->assertSame($setup['sourceWarehouse']->id, $delivery->warehouse_id);
+        $this->assertSame('purchase', $delivery->source_type);
+        $this->assertSame($setup['siteRequest']->id, $delivery->site_request_id);
+        $this->assertNull($delivery->warehouse_project_allocation_id);
+        $this->assertSame(10.0, (float) $delivery->shipped_quantity);
+        $this->assertDatabaseHas('warehouse_movements', [
+            'id' => $delivery->outbound_movement_id,
+            'warehouse_id' => $setup['sourceWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'quantity' => 10,
+            'project_material_delivery_id' => $delivery->id,
+        ]);
+
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, [
+            'quantity' => 5,
+            'warehouse_id' => $setup['sourceWarehouse']->id,
+        ])->assertOk();
+        $this->assertSame(15.0, (float) $delivery->fresh()->shipped_quantity);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $setup['sourceWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 85,
+        ]);
+    }
+
+    public function test_purchase_delivery_can_ship_from_its_project_warehouse(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createPurchaseDeliveryContext($context);
+        $setup['sourceWarehouse']->update(['project_id' => $setup['project']->id, 'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 10, 'warehouse_id' => $setup['sourceWarehouse']->id,
+            ])->assertOk();
+        $this->assertSame($setup['sourceWarehouse']->id, $setup['delivery']->fresh()->warehouse_id);
+    }
+
+    public function test_purchase_delivery_rejects_invalid_warehouse_context_and_rolls_back_binding(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        foreach (['foreign_organization', 'other_project', 'inactive', 'deleted', 'physical_shortage', 'allocated_stock'] as $case) {
+            $setup = $this->createPurchaseDeliveryContext($context);
+            if ($case === 'foreign_organization') {
+                $setup['sourceWarehouse']->update(['organization_id' => Organization::factory()->create()->id]);
+            } elseif ($case === 'other_project') {
+                $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+                $setup['sourceWarehouse']->update(['project_id' => $otherProject->id, 'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT]);
+            } elseif ($case === 'inactive') {
+                $setup['sourceWarehouse']->update(['is_active' => false]);
+            } elseif ($case === 'deleted') {
+                $setup['sourceWarehouse']->delete();
+            } elseif ($case === 'physical_shortage') {
+                WarehouseBalance::query()->where('warehouse_id', $setup['sourceWarehouse']->id)->update(['available_quantity' => 5]);
+            } else {
+                $setup['allocation']->update(['allocated_quantity' => 95]);
+            }
+            $movementCount = WarehouseMovement::query()->count();
+            $warehouseCount = OrganizationWarehouse::withTrashed()->count();
+
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                    'quantity' => 10, 'warehouse_id' => $setup['sourceWarehouse']->id,
+                ])->assertUnprocessable();
+
+            $delivery = $setup['delivery']->fresh();
+            $this->assertNull($delivery->warehouse_id, $case);
+            $this->assertNull($delivery->outbound_movement_id, $case);
+            $this->assertNull($delivery->project_warehouse_id, $case);
+            $this->assertSame(0.0, (float) $delivery->shipped_quantity, $case);
+            $this->assertSame($movementCount, WarehouseMovement::query()->count(), $case);
+            $this->assertSame($warehouseCount, OrganizationWarehouse::withTrashed()->count(), $case);
+        }
+    }
+
+    public function test_purchase_delivery_uses_outstanding_allocations_and_does_not_subtract_physical_reserves_twice(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createPurchaseDeliveryContext($context);
+        $setup['allocation']->update(['allocated_quantity' => 95]);
+        ProjectMaterialDelivery::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $setup['project']->id,
+            'material_id' => $setup['material']->id, 'warehouse_id' => $setup['sourceWarehouse']->id,
+            'warehouse_project_allocation_id' => $setup['allocation']->id, 'source_type' => 'warehouse',
+            'status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
+            'requested_quantity' => 95, 'reserved_quantity' => 95, 'shipped_quantity' => 90,
+        ]);
+        WarehouseBalance::query()->where('warehouse_id', $setup['sourceWarehouse']->id)
+            ->update(['available_quantity' => 40, 'reserved_quantity' => 60]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 30, 'warehouse_id' => $setup['sourceWarehouse']->id,
+            ])->assertOk();
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $setup['sourceWarehouse']->id, 'material_id' => $setup['material']->id,
+            'available_quantity' => 10, 'reserved_quantity' => 60,
+        ]);
+    }
+
+    public function test_shipping_cannot_switch_an_existing_warehouse_or_rebind_a_legacy_shipment(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        foreach (['bound', 'already_shipped', 'legacy_missing_source'] as $case) {
+            $setup = $this->createDeliveryContext($context);
+            $otherWarehouse = $setup['sourceWarehouse']->replicate()->fill(['code' => 'OTHER-'.$setup['project']->id]);
+            $otherWarehouse->save();
+            if ($case !== 'bound') {
+                $setup['delivery']->update(['shipped_quantity' => 10, 'status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT]);
+            }
+            if ($case === 'legacy_missing_source') {
+                $setup['delivery']->update(['warehouse_id' => null]);
+            }
+            $originalWarehouseId = $setup['delivery']->warehouse_id;
+            $shipped = (float) $setup['delivery']->shipped_quantity;
+
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                    'quantity' => 5, 'warehouse_id' => $otherWarehouse->id,
+                ])->assertUnprocessable();
+            $this->assertSame($originalWarehouseId, $setup['delivery']->fresh()->warehouse_id, $case);
+            $this->assertSame($shipped, (float) $setup['delivery']->fresh()->shipped_quantity, $case);
+            $this->assertSame(0, WarehouseMovement::query()->where('project_material_delivery_id', $setup['delivery']->id)->count(), $case);
+        }
+    }
+
+    public function test_shipping_service_rejects_foreign_actor_and_responsible_user(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $foreignContext = AdminApiTestContext::create();
+        foreach (['actor', 'responsible'] as $case) {
+            $setup = $this->createPurchaseDeliveryContext($context);
+            try {
+                app(ProjectMaterialDeliveryService::class)->ship(
+                    $setup['delivery'], $case === 'actor' ? $foreignContext->user : $context->user,
+                    ['quantity' => 10, 'warehouse_id' => $setup['sourceWarehouse']->id,
+                        'responsible_user_id' => $case === 'responsible' ? $foreignContext->user->id : $context->user->id],
+                );
+                $this->fail('Foreign '.$case.' was accepted');
+            } catch (\DomainException) {
+                $this->assertNull($setup['delivery']->fresh()->warehouse_id, $case);
+                $this->assertSame(0.0, (float) $setup['delivery']->fresh()->shipped_quantity, $case);
+            }
+        }
+    }
+
+    public function test_shipping_accepts_an_active_responsible_member_with_a_different_current_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createPurchaseDeliveryContext($context);
+        $responsibleContext = AdminApiTestContext::create();
+        $responsibleContext->user->organizations()->attach($context->organization->id, ['is_active' => true]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 10, 'warehouse_id' => $setup['sourceWarehouse']->id,
+                'responsible_user_id' => $responsibleContext->user->id,
+            ])->assertOk();
+        $this->assertSame($responsibleContext->user->id, $setup['delivery']->fresh()->responsible_user_id);
+    }
+
+    public function test_shipping_rejects_final_delivery_statuses_without_stock_movements(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        foreach ([ProjectMaterialDeliveryStatusEnum::CANCELLED, ProjectMaterialDeliveryStatusEnum::ACCEPTED] as $status) {
+            $setup = $this->createPurchaseDeliveryContext($context);
+            $setup['delivery']->update(['status' => $status]);
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                    'quantity' => 5, 'warehouse_id' => $setup['sourceWarehouse']->id,
+                ])->assertUnprocessable();
+            $this->assertSame($status, $setup['delivery']->fresh()->status);
+            $this->assertNull($setup['delivery']->fresh()->warehouse_id);
+            $this->assertSame(0, WarehouseMovement::query()->where('project_material_delivery_id', $setup['delivery']->id)->count());
+        }
     }
 
     public function test_additional_allocation_preserves_active_delivery_progress(): void
@@ -411,6 +611,34 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         $this->assertSame(4.0, (float) $setup['allocation']->fresh()->allocated_quantity);
         $this->assertSame(4.0, (float) $delivery->fresh()->requested_quantity);
         $this->assertSame(4.0, (float) $delivery->fresh()->reserved_quantity);
+    }
+
+    private function createPurchaseDeliveryContext(AdminApiTestContext $context): array
+    {
+        $setup = $this->createDeliveryContext($context);
+        $siteRequest = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $setup['project']->id,
+            'user_id' => $context->user->id,
+            'title' => 'Материалы из закупки',
+            'status' => SiteRequestStatusEnum::APPROVED,
+            'priority' => 'medium',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST,
+            'material_id' => $setup['material']->id,
+            'material_name' => $setup['material']->name,
+            'material_quantity' => 30,
+            'material_unit' => 'шт',
+        ]);
+        $setup['delivery']->update([
+            'warehouse_id' => null,
+            'warehouse_project_allocation_id' => null,
+            'site_request_id' => $siteRequest->id,
+            'source_type' => 'purchase',
+            'status' => ProjectMaterialDeliveryStatusEnum::PROCESSING,
+            'reserved_quantity' => 0,
+        ]);
+
+        return [...$setup, 'siteRequest' => $siteRequest];
     }
 
     private function createDeliveryContext(AdminApiTestContext $context): array
