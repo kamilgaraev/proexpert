@@ -28,11 +28,20 @@ use Tests\TestCase;
 
 final class RegionalPriceCatalogRetentionTest extends TestCase
 {
+    private bool $exactCounterInstalled = false;
+
     public function refreshDatabase(): void {}
 
     protected function tearDown(): void
     {
         try {
+            if ($this->exactCounterInstalled) {
+                try {
+                    self::assertSame(DB::table('estimate_resource_prices')->count(), (int) DB::table('estimate_resource_price_count_deltas')->sum('delta'));
+                } finally {
+                    (require base_path('database/migrations/2026_10_17_030000_add_exact_estimate_resource_price_count.php'))->down();
+                }
+            }
             (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->down();
             (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->down();
             (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php'))->down();
@@ -100,6 +109,44 @@ SQL);
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php'))->up();
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->up();
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->up();
+        (require base_path('database/migrations/2026_10_17_030000_add_exact_estimate_resource_price_count.php'))->up();
+        $this->exactCounterInstalled = true;
+    }
+
+    public function test_exact_count_tracks_dataset_cascade_and_finalized_parent_guard(): void
+    {
+        DB::statement('CREATE TABLE public.estimate_dataset_versions(id bigint PRIMARY KEY)');
+        DB::statement('ALTER TABLE public.estimate_generation_package_items ADD COLUMN estimate_norm_id bigint');
+        DB::statement('INSERT INTO public.estimate_dataset_versions SELECT DISTINCT dataset_version_id FROM public.estimate_resource_prices WHERE dataset_version_id IS NOT NULL');
+        DB::statement('ALTER TABLE public.estimate_resource_prices ADD CONSTRAINT counter_dataset_fixture_fk FOREIGN KEY(dataset_version_id) REFERENCES public.estimate_dataset_versions(id) ON DELETE CASCADE');
+        $source = file_get_contents(base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001400_finalize_estimate_generation_pricing_boundary.php'));
+        self::assertIsString($source);
+        self::assertSame(1, preg_match('/CREATE OR REPLACE FUNCTION public\.eg_pricing_reference_immutable_guard\(\)[\s\S]*?\nEND; \$\$;/', $source, $parts));
+        DB::unprepared($parts[0]);
+        DB::statement('CREATE TRIGGER counter_dataset_fixture_guard BEFORE UPDATE OR DELETE ON public.estimate_dataset_versions FOR EACH ROW EXECUTE FUNCTION public.eg_pricing_reference_immutable_guard()');
+        try {
+            $baseline = DB::table('estimate_resource_prices')->count();
+            DB::table('estimate_dataset_versions')->insert([['id'=>999001], ['id'=>999002]]);
+            DB::table('estimate_resource_prices')->insert(['id'=>999001,'dataset_version_id'=>999001]);
+            self::assertSame($baseline + 1, (int) DB::table('estimate_resource_price_count_deltas')->sum('delta'));
+            DB::table('estimate_dataset_versions')->where('id',999001)->delete();
+            self::assertFalse(DB::table('estimate_resource_prices')->where('id',999001)->exists());
+            self::assertSame($baseline, (int) DB::table('estimate_resource_price_count_deltas')->sum('delta'));
+            DB::table('estimate_resource_prices')->insert(['id'=>999002,'dataset_version_id'=>999002]);
+            DB::table('estimate_generation_package_items')->insert(['id'=>999002,'pricing_finalized_at'=>now()]);
+            DB::table('estimate_generation_package_item_price_inputs')->insert(['id'=>999002,'resource_price_id'=>999002,'package_item_id'=>999002]);
+            try {
+                DB::transaction(static fn()=>DB::table('estimate_dataset_versions')->where('id',999002)->delete());
+                self::fail('Finalized dataset parent was deleted');
+            } catch (QueryException $exception) {
+                self::assertSame('P0001', $exception->errorInfo[0]);
+                self::assertStringContainsString('finalized_dataset_version_is_immutable', $exception->getMessage());
+            }
+            self::assertSame($baseline + 1, (int) DB::table('estimate_resource_price_count_deltas')->sum('delta'));
+        } finally {
+            DB::statement('DROP TABLE public.estimate_dataset_versions CASCADE');
+            DB::statement('DROP FUNCTION public.eg_pricing_reference_immutable_guard()');
+        }
     }
 
     public function test_dry_run_then_bounded_batches_delete_old_quarters_and_are_idempotent(): void
