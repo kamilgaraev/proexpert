@@ -148,6 +148,14 @@ final readonly class ReportHttpAuthorizationOrchestrator
     ): array {
         return $this->transaction(function () use ($request, $runId, $operation, $createExportFormat): array {
             $facts = $this->contexts->httpFacts($request);
+
+            return $this->runForActor($facts['actor_id'], $facts['organization_id'], $runId, $operation, $createExportFormat);
+        });
+    }
+
+    public function runForActor(int $actorId, int $organizationId, string $runId, ReportOperation $operation = ReportOperation::VIEW, ?string $createExportFormat = null): array
+    {
+        return $this->transaction(function () use ($actorId, $organizationId, $runId, $operation, $createExportFormat): array {
             $subject = $this->subjects->run($runId);
             if ($subject->aggregateKind !== ReportDispatchAggregate::RUN || $subject->aggregateId !== $runId) {
                 throw new InvalidArgumentException('report_http_authorization_mismatch');
@@ -159,8 +167,8 @@ final readonly class ReportHttpAuthorizationOrchestrator
             $this->assertTargetMatchesSubject($target, $subject, $operation, $createExportFormat);
 
             return $this->exactAuthorization(
-                $facts['actor_id'],
-                $facts['organization_id'],
+                $actorId,
+                $organizationId,
                 $subject,
                 $target,
             );
@@ -172,6 +180,7 @@ final readonly class ReportHttpAuthorizationOrchestrator
     {
         return $this->transaction(function () use ($request, $exportId, $operation): array {
             $facts = $this->contexts->httpFacts($request);
+
             return $this->exportForActor($facts['actor_id'], $facts['organization_id'], $exportId, $operation);
         });
     }

@@ -19,9 +19,11 @@ use Illuminate\Http\Request;
 
 trait UsesAssistantReportUnitAccess
 {
-    use UsesAssistantUnitTranslations { setUp as private translationsSetUp; tearDown as private translationsTearDown; }
+    use UsesAssistantUnitTranslations { setUp as private translationsSetUp;
+        tearDown as private translationsTearDown; }
 
     private ?ConnectionResolverInterface $previousReportResolver = null;
+
     private \WeakMap $reportUnitPermissions;
 
     protected function setUp(): void
@@ -30,7 +32,7 @@ trait UsesAssistantReportUnitAccess
         $this->reportUnitPermissions = new \WeakMap;
         $this->previousReportResolver = Model::getConnectionResolver();
         app()->instance('request', Request::create('/unit-report'));
-        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure report fixture must not connect to PostgreSQL')])->onlyMethods(['select'])->getMock();
+        $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure report fixture must not connect to PostgreSQL')])->onlyMethods(['select', 'getSchemaBuilder'])->getMock();
         $connection->method('select')->willReturnCallback(static fn (string $sql): array => preg_match('/^\s*select\s+exists\s*\(/i', $sql) === 1 ? [(object) ['exists' => true]] : [(object) ['id' => 1]]);
         $resolver = $this->createMock(ConnectionResolverInterface::class);
         $resolver->method('connection')->willReturn($connection);
@@ -38,6 +40,10 @@ trait UsesAssistantReportUnitAccess
         $schema = $this->createMock(\Illuminate\Database\Schema\Builder::class);
         $schema->method('hasColumn')->willReturn(true);
         $schema->method('getColumnListing')->willReturn(['id', 'organization_id', 'project_id', 'contract_id', 'warehouse_id', 'status', 'deleted_at']);
+        $connection->method('getSchemaBuilder')->willReturn($schema);
+        $database = $this->getMockBuilder(\Illuminate\Database\DatabaseManager::class)->disableOriginalConstructor()->onlyMethods(['connection'])->getMock();
+        $database->method('connection')->willReturn($connection);
+        app()->instance('db', $database);
         app()->instance('db.schema', $schema);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(fn (User $user, string $permission): bool => in_array($permission, $this->reportUnitPermissions[$user] ?? [], true));

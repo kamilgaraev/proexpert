@@ -224,6 +224,8 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerFactory('generate_custom_report', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateCustomReportTool::class));
             $registry->registerFactory('describe_custom_report_source', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\DescribeCustomReportSourceTool::class));
             $registry->registerFactory('create_report_subscription', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\CreateReportSubscriptionTool::class));
+            $registry->registerFactory('describe_published_reports', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\DescribePublishedReportsTool::class));
+            $registry->registerFactory('generate_published_report', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GeneratePublishedReportTool::class));
             $registry->registerFactory('update_report_subscription', fn () => $app->make(\App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\UpdateReportSubscriptionTool::class));
             $registry->registerFactory('generate_rag_pdf_report', fn () => $app->make(GenerateRagPdfReportTool::class));
             $registry->registerFactory('get_project_snapshot', fn () => $app->make(GetProjectSnapshotTool::class));

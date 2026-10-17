@@ -3,13 +3,13 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
-use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantAttachmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantAttachmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantMemoryController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantSharingController;
-use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\PublicCoreTestController;
 use App\Support\Routing\AdminRouteStack;
@@ -61,6 +61,8 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-assistant')->name('admin.ai-assistant.')->group(static function (): void {
+        Route::get('report-tasks/{taskId}', [\App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantPublishedReportController::class, 'show'])
+            ->whereUlid('taskId')->middleware('authorize:ai_assistant.reports.generate')->name('report-tasks.show');
         Route::post('rag/reindex', [AIAssistantRagController::class, 'reindex'])->middleware('authorize:admin.ai_assistant.rag.manage')->name('rag.reindex');
     });
 

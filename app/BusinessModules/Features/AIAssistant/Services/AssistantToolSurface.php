@@ -95,6 +95,13 @@ final class AssistantToolSurface
             $custom = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($query,
                 \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding::fromArray($plan['request_understanding'] ?? []));
             $reports = $custom ? ['generate_custom_report', 'describe_custom_report_source'] : ['generate_operational_pdf_report'];
+            $published = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportIntent::matches($query,
+                \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding::fromArray($plan['request_understanding'] ?? []));
+            if ($published) {
+                $reports = ['describe_published_reports', 'generate_published_report'];
+            } elseif ($custom) {
+                array_push($reports, 'describe_published_reports', 'generate_published_report');
+            }
             foreach ([
                 '/прибыл|profit|рентабел|бюджет/iu' => ['generate_profitability_report'],
                 '/выполнен|completion|completed_work/iu' => ['generate_work_completion_report'],
@@ -106,7 +113,7 @@ final class AssistantToolSurface
                 '/график|срок|timeline|schedule/iu' => ['generate_project_timelines_report'],
                 '/документ|document|rag|норматив/iu' => ['generate_rag_pdf_report'],
             ] as $pattern => $tools) {
-                if (! $custom && preg_match($pattern, $signals)) {
+                if (! $custom && ! $published && preg_match($pattern, $signals)) {
                     array_push($reports, ...$tools);
                 }
             }

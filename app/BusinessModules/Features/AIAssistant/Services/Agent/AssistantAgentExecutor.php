@@ -7,10 +7,10 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
-use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -138,6 +138,7 @@ final class AssistantAgentExecutor
             if (! is_array($row) || ! is_numeric($row['id'] ?? null) || (int) $row['id'] < 1) {
                 return null;
             }
+
             return ['id' => (int) $row['id'], 'label' => is_string($row['name'] ?? null) ? $row['name'] : null];
         }
         if ($id === null || $id < 1 || $this->toolRegistry->getTool($toolName) === null
@@ -154,6 +155,7 @@ final class AssistantAgentExecutor
             if ($entity === null) {
                 return null;
             }
+
             return ['id' => (int) $entity->getKey(), 'label' => is_string($entity->getAttribute('name')) ? $entity->getAttribute('name') : null];
         } catch (Throwable) {
             return null;
@@ -188,6 +190,17 @@ final class AssistantAgentExecutor
         Organization $organization,
         ?User $user
     ): array {
+        if ($toolName === 'generate_published_report') {
+            if (! $user instanceof User || ! is_array($raw) || ($raw['status'] ?? null) !== 'success' || ! is_string($raw['report_task_id'] ?? null)) {
+                return [];
+            }
+            try {
+                return [app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportTasks::class)
+                    ->artifact($raw['report_task_id'], $user, (int) $organization->id)];
+            } catch (\Throwable) {
+                return [];
+            }
+        }
         if ($this->isReportTool($toolName) && $this->reportFileService instanceof AssistantReportFileService) {
             $artifacts = $this->reportFileService->artifactsFromToolResult($toolName, $raw, $organization, $user, $arguments);
 

@@ -47,6 +47,9 @@ final readonly class AssistantAgentPlanner
     public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null, ?callable $resolveEntityScope = null): AssistantAgentDecision
     {
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
+        if (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportIntent::matches($message, $requestUnderstanding)) {
+            return new AssistantAgentDecision(type: 'answer', clearPendingState: $pendingState?->status === 'waiting_for_slots');
+        }
         if (\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportIntent::matches($message, $requestUnderstanding)) {
             return new AssistantAgentDecision(type: 'answer', clearPendingState: $pendingState?->status === 'waiting_for_slots');
         }

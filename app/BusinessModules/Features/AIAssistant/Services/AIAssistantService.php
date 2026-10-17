@@ -1126,6 +1126,13 @@ class AIAssistantService
             $reportArtifacts = [];
             $reportReferences = [];
             foreach ($this->activeToolResults as $activeResult) {
+                if (($activeResult['_tool_name'] ?? null) === 'generate_published_report' && ($activeResult['status'] ?? null) === 'success'
+                    && is_string($activeResult['report_task_id'] ?? null)) {
+                    $reportArtifacts = [...$reportArtifacts, ...$this->filterAgentArtifactsForOrganization($organizationId,
+                        [['artifact_type' => 'core_report_task', 'task_id' => $activeResult['report_task_id']]], (int) $user->id)];
+
+                    continue;
+                }
                 if (($activeResult['_tool_name'] ?? null) !== 'generate_custom_report' || ($activeResult['status'] ?? null) !== 'success') {
                     continue;
                 }
@@ -1135,8 +1142,9 @@ class AIAssistantService
                 $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
             }
             if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
-                $assistantContent = trans_message('ai_custom_reports.ready');
-                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'verified',
+                $publishedPending = array_filter($reportArtifacts, static fn (array $artifact): bool => ($artifact['artifact_type'] ?? null) === 'core_report_task') !== [];
+                $assistantContent = trans_message($publishedPending ? 'ai_published_reports.queued' : 'ai_custom_reports.ready');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $publishedPending ? 'partial' : 'verified',
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = false;
             } else {
@@ -1484,7 +1492,7 @@ class AIAssistantService
 
         return new AssistantRequestUnderstanding(
             primaryIntent: 'generate_report',
-            outputFormat: 'pdf',
+            outputFormat: in_array($understanding?->outputFormat, ['pdf', 'xlsx', 'csv'], true) ? $understanding->outputFormat : 'pdf',
             actionPolicy: 'allow_file_generation',
             constraints: [],
             requestedEntities: $requestedEntities,
@@ -1534,14 +1542,28 @@ class AIAssistantService
     {
         $expectedPrefix = sprintf('org-%d/reports/', $organizationId);
         $personalPrefix = sprintf('org-%d/personal-files/user-%d/', $organizationId, $actorId);
+        $filtered = [];
+        foreach ($artifacts as $artifact) {
+            if (($artifact['artifact_type'] ?? null) === 'core_report_task') {
+                try {
+                    $actor = User::query()->findOrFail($actorId);
+                    $filtered[] = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportTasks::class)
+                        ->artifact((string) ($artifact['task_id'] ?? ''), $actor, $organizationId);
+                } catch (\Throwable) {
+                }
 
-        return array_values(array_filter($artifacts, static function (array $artifact) use ($expectedPrefix, $personalPrefix): bool {
-            return ($artifact['storage_disk'] ?? null) === 's3'
+                continue;
+            }
+            if (($artifact['storage_disk'] ?? null) === 's3'
                 && is_string($artifact['storage_path'] ?? null)
                 && ! str_contains($artifact['storage_path'], '..')
                 && (str_starts_with($artifact['storage_path'], $expectedPrefix)
-                    || str_starts_with($artifact['storage_path'], $personalPrefix));
-        }));
+                    || str_starts_with($artifact['storage_path'], $personalPrefix))) {
+                $filtered[] = $artifact;
+            }
+        }
+
+        return array_values($filtered);
     }
 
     protected function buildAgentToolAnswer(string $status, array $artifacts): string
@@ -1554,6 +1576,9 @@ class AIAssistantService
         }
 
         $artifact = $artifacts[0];
+        if (($artifact['artifact_type'] ?? null) === 'core_report_task') {
+            return trans_message('ai_published_reports.queued');
+        }
         $url = trim((string) ($artifact['url'] ?? ''));
 
         return $url !== ''
