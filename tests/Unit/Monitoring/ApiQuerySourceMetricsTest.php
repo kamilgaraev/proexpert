@@ -393,6 +393,23 @@ final class ApiQuerySourceMetricsTest extends TestCase
         };
         $user = (new User)->forceFill(['id' => 7, 'current_organization_id' => 38]);
         $context = ['project_id' => 9, 'organization_id' => 38];
+        $previousFacadeApp = Facade::getFacadeApplication();
+        Facade::setFacadeApplication(Container::getInstance());
+        $cache = new class(new ArrayStore) extends Repository {
+            public function driver(?string $name = null): self { return $this; }
+        };
+        $proof = $this->createMock(\App\Services\Billing\Bank\BankPaymentProofAccess::class);
+        $proof->method('cacheDiscriminator')->willReturn('none');
+        app()->instance(\App\Services\Billing\Bank\BankPaymentProofAccess::class, $proof);
+        try {
+            Cache::swap($cache);
+            self::assertTrue($service->can($user, 'private.view', $context));
+            self::assertSame([], $metrics->summary()['processing_phases']);
+        } finally {
+            Cache::clearResolvedInstance('cache');
+            Facade::setFacadeApplication($previousFacadeApp);
+        }
+        $state->reads = 0;
         self::assertTrue($service->canCurrent($user, 'private.view', $context));
         $state->condition = false;
         self::assertFalse($service->canCurrent($user, 'private.view', $context));

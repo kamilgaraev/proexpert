@@ -65,6 +65,11 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         $metrics = new \App\Services\Monitoring\ApiQueryMetrics(true);
         $request->attributes->set(\App\Services\Monitoring\ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $this->application->instance('request', $request);
+        $access = Mockery::mock(AccessController::class);
+        $access->shouldReceive('hasModuleAccess')->once()->with(37, 'ai_assistant')->andReturn(true);
+        self::assertTrue($this->resolver(new ModulePermissionChecker($access))
+            ->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertSame([], $metrics->summary()['processing_phases']);
         $failure = new LogicException('private-entitlement-failure');
         $state = (object) ['reads' => 0];
         $injected = Mockery::mock(OrganizationEntitlementService::class);

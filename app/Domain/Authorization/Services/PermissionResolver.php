@@ -59,6 +59,11 @@ class PermissionResolver
         return $scope;
     }
 
+    private function measureCurrentAccessPhase(string $phase, callable $operation): mixed
+    {
+        return $this->currentChecks ? ApiQueryMetrics::measureProcessingPhase($phase, $operation) : $operation();
+    }
+
     private function rememberCurrent(string $key, int $ttl, Closure $read): mixed
     {
         return $this->currentChecks ? $read() : Cache::remember($key, $ttl, $read);
@@ -268,7 +273,7 @@ class PermissionResolver
             'modules_to_check' => $modulesToCheck,
         ]);
 
-        $modulePermissions = ApiQueryMetrics::measureProcessingPhase('access_module_roles', fn () => $this->getModulePermissions($assignment));
+        $modulePermissions = $this->measureCurrentAccessPhase('access_module_roles', fn () => $this->getModulePermissions($assignment));
 
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
@@ -276,7 +281,7 @@ class PermissionResolver
             if (! $this->currentChecks) {
                 $cacheKey .= '_'.app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->cacheDiscriminator((int) $organizationId);
             }
-            $isActive = ApiQueryMetrics::measureProcessingPhase('access_module_entitlement', fn () => $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+            $isActive = $this->measureCurrentAccessPhase('access_module_entitlement', fn () => $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
                         function () use ($organizationId, $moduleToCheck): array {
@@ -310,7 +315,7 @@ class PermissionResolver
                 continue;
             }
 
-            if (ApiQueryMetrics::measureProcessingPhase('access_module_permission',
+            if ($this->measureCurrentAccessPhase('access_module_permission',
                 fn () => $this->checkModulePermission($modulePermissions, $moduleToCheck, $module, $action, $permission))) {
                 return true;
             }
