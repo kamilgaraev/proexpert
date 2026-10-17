@@ -48,6 +48,15 @@ final readonly class AssistantCustomReportReference
                 if (! is_array($ids) || count($ids) > 1000 || count(array_unique($ids)) !== count($ids)) {
                     return false;
                 }
+                $paymentContracts = $scope['entity_type'] === 'payment_document'
+                    && array_intersect(['contract_id', 'contract_number'], $reference['checked_fields']) !== [];
+                if ($paymentContracts) {
+                    if (! $this->canReadPaymentContracts($source['query'], $scope['contract_links'] ?? null, $ids)) {
+                        return false;
+                    }
+                } elseif (array_key_exists('contract_links', $scope)) {
+                    return false;
+                }
                 if (array_key_exists('customer_project_ids', $scope)) {
                     $projectIds = $scope['customer_project_ids'];
                     if ($scope['entity_type'] !== 'contract' || ! in_array('counterparty_name', $reference['checked_fields'], true)
@@ -76,6 +85,39 @@ final readonly class AssistantCustomReportReference
         } catch (Throwable) {
             return false;
         }
+    }
+
+    private function canReadPaymentContracts(\Illuminate\Database\Eloquent\Builder $query, mixed $links, array $ids): bool
+    {
+        if (! is_array($links) || ! array_is_list($links) || count($links) !== count($ids)) {
+            return false;
+        }
+        $expected = [];
+        foreach ($links as $link) {
+            if (! is_array($link) || count($link) !== 2 || array_diff(['document_id', 'contract_id'], array_keys($link)) !== []
+                || ! is_int($link['document_id']) || $link['document_id'] < 1
+                || ($link['contract_id'] !== null && (! is_int($link['contract_id']) || $link['contract_id'] < 1))
+                || array_key_exists($link['document_id'], $expected)) {
+                return false;
+            }
+            $expected[$link['document_id']] = $link['contract_id'];
+        }
+        $expectedIds = array_map('strval', array_keys($expected));
+        $sourceIds = array_map('strval', $ids);
+        sort($expectedIds, SORT_STRING);
+        sort($sourceIds, SORT_STRING);
+        if ($expectedIds !== $sourceIds) {
+            return false;
+        }
+        $table = $query->getModel()->getTable();
+        $current = [];
+        foreach ($query->whereKey($ids)->get([$table.'.id', $table.'.contract_id']) as $row) {
+            $current[(int) $row->getKey()] = $row->getRawOriginal('contract_id') === null ? null : (int) $row->getRawOriginal('contract_id');
+        }
+        ksort($expected, SORT_NUMERIC);
+        ksort($current, SORT_NUMERIC);
+
+        return $expected === $current;
     }
 
     private function sign(array $payload): string

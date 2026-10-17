@@ -113,6 +113,11 @@ final readonly class AssistantCustomReportBuilder
         if ($assigneeProjection) {
             $selected[] = 'assigned_user_id';
         }
+        $paymentContractProjection = $scope['entity_type'] === 'payment_document'
+            && array_intersect(['contract_id', 'contract_number'], $fields) !== [];
+        if ($paymentContractProjection) {
+            $selected[] = 'contract_id';
+        }
         $counterpartyProjection = $scope['entity_type'] === 'contract' && in_array('counterparty_name', $fields, true);
         if ($counterpartyProjection) {
             $selected[] = '_report_counterparty_id';
@@ -227,6 +232,12 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $scope['plan'] = $section;
+        if ($paymentContractProjection) {
+            $scope['contract_links'] = array_map(static fn (array $row): array => ['document_id' => (int) $row['id'],
+                'contract_id' => $row['contract_id'] === null ? null : (int) $row['contract_id']], $raw);
+            usort($scope['contract_links'], static fn (array $left, array $right): int => $left['document_id'] <=> $right['document_id']);
+            $labelDomains[] = 'contracts';
+        }
         if ($assigneeProjection) {
             $scope['assigned_user_ids'] = array_values(array_unique(array_map('intval', array_column(array_filter($raw,
                 static fn (array $row): bool => ($row['assigned_user_name'] ?? null) !== null), 'assigned_user_id'))));
