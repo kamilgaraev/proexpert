@@ -106,7 +106,9 @@ final readonly class AssistantPublishedReportTasks
     {
         $this->assertInput($task);
         $this->access->actor((int) $task->user_id, (int) $task->organization_id);
-        $this->authorization->createRun((int) $task->user_id, (int) $task->organization_id, $task->parameters);
+        if ($task->run_id === null) {
+            $this->authorization->createRun((int) $task->user_id, (int) $task->organization_id, $task->parameters);
+        }
         $status = $task->status;
         $root = $task->assistantRequest;
         if ($root === null || ! $this->sameOwner($task, $root)) {
@@ -135,6 +137,7 @@ final readonly class AssistantPublishedReportTasks
 
         return ['id' => (string) $task->id, 'status' => $status, 'title' => $task->parameters['title'],
             'format' => $task->parameters['format'], 'export_id' => $status === 'ready' ? $task->export_id : null,
+            'failure_reason' => $status === 'failed' && $task->error_code === 'REPORT_SOURCE_UNAVAILABLE' ? 'source_unavailable' : null,
             'expires_at' => $task->expires_at->toIso8601String(),
             'poll_after_ms' => 1000 * min(30, AssistantPublishedReportPolling::seconds(now()->getTimestamp() - $task->created_at->getTimestamp()))];
     }

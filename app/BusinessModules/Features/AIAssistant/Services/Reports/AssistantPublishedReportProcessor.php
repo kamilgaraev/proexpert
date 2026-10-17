@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportRunData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -51,8 +53,8 @@ final readonly class AssistantPublishedReportProcessor
             $this->tasks->assertInput($task);
             $this->access->actor((int) $task->user_id, (int) $task->organization_id);
             $parameters = $task->parameters;
-            $context = $this->authorization->createRun((int) $task->user_id, (int) $task->organization_id, $parameters);
             if ($task->run_id === null) {
+                $context = $this->authorization->createRun((int) $task->user_id, (int) $task->organization_id, $parameters);
                 $run = $this->createRuns->handle($context, new CreateReportRunData(
                     $parameters['report_code'], new ReportFilterSet($parameters['filters']), $parameters['comparison'],
                     new DateTimeImmutable($parameters['as_of']), $parameters['locale'], null,
@@ -97,9 +99,11 @@ final readonly class AssistantPublishedReportProcessor
             $permanent = $exception instanceof AuthorizationException || $exception instanceof InvalidArgumentException
                 || $exception instanceof ModelNotFoundException;
             $failures = (int) $task->failure_count + 1;
+            $errorCode = $exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SOURCE_UNAVAILABLE
+                ? ReportErrorCode::REPORT_SOURCE_UNAVAILABLE->value : ($permanent ? 'ACCESS_OR_INPUT_CHANGED' : 'REPORT_UNAVAILABLE');
             Log::warning('assistant_published_report_attempt_failed', ['task_id' => $id, 'exception_type' => $exception::class, 'attempt' => $failures]);
             $this->finish($task, ['status' => $permanent || $failures >= 5 ? 'failed' : $task->status,
-                'failure_count' => $failures, 'error_code' => $permanent ? 'ACCESS_OR_INPUT_CHANGED' : 'REPORT_UNAVAILABLE'], min(60, 5 * $failures));
+                'failure_count' => $failures, 'error_code' => $errorCode], min(60, 5 * $failures));
         }
     }
 

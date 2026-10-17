@@ -65,7 +65,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
 
     public static function interruptions(): array
     {
-        return [['normal'], ['run'], ['export']];
+        return [['normal'], ['run'], ['export'], 'definition_change' => ['definition']];
     }
 
     #[DataProvider('interruptions')]
@@ -110,7 +110,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $runAction = app(CreateReportRunAction::class);
         $exportAction = app(CreateReportExportAction::class);
         $didInterrupt = false;
-        if ($interruption !== 'normal') {
+        if (in_array($interruption, ['run', 'export'], true)) {
             $interface = $interruption === 'run' ? CreateReportRunAction::class : CreateReportExportAction::class;
             $original = $interruption === 'run' ? $runAction : $exportAction;
             $wrapper = $this->createMock($interface);
@@ -135,6 +135,12 @@ final class AssistantPublishedReportTasksTest extends TestCase
         }
         $task->refresh();
         self::assertNotNull($task->run_id);
+        if ($interruption === 'definition') {
+            $this->replaceCurrentPublishedDefinition();
+            $tasks = app(AssistantPublishedReportTasks::class);
+            $processor = app(AssistantPublishedReportProcessor::class);
+            self::assertSame('building_run', $tasks->state($task->fresh())['status']);
+        }
         $queue->push(new MaterializeReportRunJob($task->run_id));
         $this->process($processor, $task);
         if ($interruption === 'export') {
@@ -153,6 +159,10 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $state = $tasks->read($task->id, $actor, $organizationId);
         self::assertSame('ready', $state['status']);
         self::assertSame($task->export_id, $state['export_id']);
+        if ($interruption === 'definition') {
+            $this->withHeaders($this->headers($actor, $organizationId))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)
+                ->assertOk()->assertJsonPath('data.export_id', $task->export_id);
+        }
         $this->assertExcel($files->bytes, $acceptedAt->format('Y-m-d'));
         self::assertSame(0, DB::table('report_saved_views')->where('organization_id', $organizationId)->count());
         $actor->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
@@ -523,6 +533,60 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertSame('reporting', $record->domain);
         self::assertSame('report_'.$stage, $record->subject_type);
         self::assertEqualsCanonicalizing($intent->subject, json_decode($record->domain_context, true, 512, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_definition_change_before_run_still_blocks_obsolete_task(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $this->replaceCurrentPublishedDefinition();
+        $this->process(app(AssistantPublishedReportProcessor::class), $task);
+        self::assertSame('failed', $task->fresh()->status);
+        self::assertNull($task->fresh()->run_id);
+        self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
+    }
+
+    public function test_source_unavailability_keeps_the_report_failure_reason(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $action = $this->createMock(CreateReportRunAction::class);
+        $action->expects(self::exactly(5))->method('handle')->willThrowException(
+            \App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::fromCode(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
+        app()->instance(CreateReportRunAction::class, $action);
+        $processor = app(AssistantPublishedReportProcessor::class);
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $this->process($processor, $task);
+        }
+        self::assertSame('failed', $task->fresh()->status);
+        self::assertNull($task->fresh()->run_id);
+        self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
+        $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)
+            ->assertOk()->assertJsonPath('data.failure_reason', 'source_unavailable')->assertJsonPath('data.export_id', null);
+    }
+
+    private function replaceCurrentPublishedDefinition(): void
+    {
+        $interface = \App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver::class;
+        $original = app($interface);
+        $target = $original->createRun('accepted_production_progress');
+        $definition = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition(...array_replace(get_object_vars($target->definition), [
+            'definitionHash' => new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash(str_repeat('f', 64)), 'formats' => ['csv'],
+        ]));
+        $changed = new \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget($definition, $target->operation, null);
+        $replacement = $this->createMock($interface);
+        $replacement->method('createRun')->willReturnCallback(static fn (string $code) => $code === 'accepted_production_progress' ? $changed : $original->createRun($code));
+        foreach (['run', 'createExport', 'export', 'catalog'] as $method) {
+            $replacement->method($method)->willReturnCallback(static fn (...$arguments) => $original->{$method}(...$arguments));
+        }
+        app()->instance($interface, $replacement);
     }
 
     private function root(User $actor, ?DateTimeImmutable $asOf = null): AssistantRequest
