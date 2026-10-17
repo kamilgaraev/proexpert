@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActLine;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceOwnerVersion;
@@ -14,6 +15,8 @@ use InvalidArgumentException;
 
 final readonly class ProductionAcceptanceOwnerVersionWriter
 {
+    public function __construct(private ProductionAcceptanceUnitResolver $units) {}
+
     public function record(
         ContractPerformanceAct $act,
         string $eventType,
@@ -112,25 +115,25 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
                 ->all(),
             true,
         );
-        $members = $completedWorkLines->map(function (PerformanceActLine $line): array {
+        $members = $completedWorkLines->map(function (PerformanceActLine $line) use ($act): array {
             $work = $line->completedWork;
 
             return $this->member(
                 'performance_act_line',
                 (int) $line->id,
                 $work,
-                trim((string) $line->unit) !== ''
-                    ? (string) $line->unit
-                    : (string) ($work?->workType?->measurementUnit?->short_name ?? ''),
+                $work === null ? '' : (string) $this->units->resolve($work, (int) $act->contract->organization_id,
+                    (int) $act->project_id, $line->unit)->short_name,
             );
         })->all();
         $pivotMembers = $act->completedWorks
             ->filter(static fn ($work): bool => ! isset($canonicalWorkIds[(int) $work->id]))
-            ->map(fn ($work): array => $this->member(
+            ->map(fn (CompletedWork $work): array => $this->member(
                 'completed_work',
                 (int) $work->id,
                 $work,
-                (string) ($work->workType?->measurementUnit?->short_name ?? ''),
+                (string) $this->units->resolve($work, (int) $act->contract->organization_id,
+                    (int) $act->project_id, PerformanceActLine::capturedUnitFromCompletedWork($work))->short_name,
             ))
             ->all();
         $members = array_merge($members, $pivotMembers);
