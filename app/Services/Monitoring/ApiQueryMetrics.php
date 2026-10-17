@@ -7,6 +7,7 @@ namespace App\Services\Monitoring;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
+use Illuminate\Redis\Events\CommandExecuted;
 
 final class ApiQueryMetrics
 {
@@ -37,6 +38,8 @@ final class ApiQueryMetrics
     private array $processingPhases = [];
 
     private array $entityBuilds = [];
+
+    private array $roleCatalogRedisGet = ['observed' => false, 'count' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0];
 
     private ?array $assistantSnapshot = null;
 
@@ -112,6 +115,25 @@ final class ApiQueryMetrics
             'sql_total_ms' => $metrics->total, 'process_cpu_ms' => self::processCpuMilliseconds()];
     }
 
+    public static function recordRoleCatalogRedisGet(Request $request, CommandExecuted $event): void
+    {
+        $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
+        if (! $metrics instanceof self || ! $metrics->captureSources
+            || ! is_string($event->command) || strcasecmp($event->command, 'get') !== 0
+            || ! is_array($event->parameters) || count($event->parameters) !== 1
+            || ! is_string($event->parameters[0] ?? null) || strlen($event->parameters[0]) > 4096
+            || ! str_ends_with($event->parameters[0], 'authorization_roles:v2')
+            || (! is_float($event->time) && ! is_int($event->time)) || ! is_finite((float) $event->time) || $event->time < 0
+            || ! is_finite($metrics->roleCatalogRedisGet['total_ms'] + $event->time)) {
+            return;
+        }
+
+        $metrics->roleCatalogRedisGet['observed'] = true;
+        $metrics->roleCatalogRedisGet['count']++;
+        $metrics->roleCatalogRedisGet['total_ms'] += $event->time;
+        $metrics->roleCatalogRedisGet['max_ms'] = max($metrics->roleCatalogRedisGet['max_ms'], $event->time);
+    }
+
     public static function recordProcessingPhase(Request $request, string $phase, int $startedAt, ?array $checkpoint = null, ?string $entityType = null): void
     {
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
@@ -122,10 +144,10 @@ final class ApiQueryMetrics
             'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
             'rag_expected_counts', 'rag_documents', 'rag_finalize',
-            'sql_tracing',
+            'sql_tracing', 'redis_tracing',
             'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
             'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
-            'access_system_match', 'access_module_match', 'security_emit',
+            'access_system_match', 'access_module_match', 'security_emit', 'security_prepare', 'security_write',
         ], true)) {
             return;
         }
@@ -183,6 +205,9 @@ final class ApiQueryMetrics
         ];
         if ($this->captureSources) {
             $summary['release_sha'] = self::runtimeReleaseSha();
+            $summary['role_catalog_redis_get'] = $this->roleCatalogRedisGet;
+            $summary['role_catalog_redis_get']['total_ms'] = round($this->roleCatalogRedisGet['total_ms'], 2);
+            $summary['role_catalog_redis_get']['max_ms'] = round($this->roleCatalogRedisGet['max_ms'], 2);
             $summary['rag_entity_builds'] = $this->entityBuildSummary();
             $summary['sql_sources'] = array_map(static function (array $source): array {
                 $source['total_ms'] = round($source['total_ms'], 2);

@@ -6,7 +6,6 @@ use App\Services\Logging\Context\RequestContext;
 use App\Services\Logging\Context\UserContext;
 use App\Services\Logging\Context\PerformanceContext;
 use App\Services\Monitoring\ApiQueryMetrics;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 
 class SecurityLogger
@@ -41,16 +40,14 @@ class SecurityLogger
 
     private function emitSecurityEvent(string $event, array $context, string $level): void
     {
-        $securityEntry = $this->createSecurityEntry($event, $context, $level);
+        $securityEntry = ApiQueryMetrics::measureProcessingPhase('security_prepare', fn () => $this->createSecurityEntry($event, $context, $level));
         
         // Логировать с соответствующим уровнем
-        match(strtolower($level)) {
+        ApiQueryMetrics::measureProcessingPhase('security_write', fn () => match(strtolower($level)) {
             'critical' => $this->writer->write('security', 'critical', "[SECURITY] {$event}", $securityEntry),
             'error' => $this->writer->write('security', 'error', "[SECURITY] {$event}", $securityEntry),
             'warning' => $this->writer->write('security', 'warning', "[SECURITY] {$event}", $securityEntry),
-            // default => Log::channel('security')->info("[SECURITY] {$event}", $securityEntry)
-            default => null // Disable info level logs
-        };
+        });
 
         // Критические события безопасности отправляем в мониторинг
         if (in_array($level, ['critical', 'error'])) {

@@ -320,12 +320,32 @@ final class TracingService
 
     public function recordRedis(CommandExecuted $event): void
     {
-        $operation = $this->operation($event->command);
-        $this->recordCompletedOperation('redis '.$operation, (float) $event->time, [
-            'db.system.name' => 'redis',
-            'db.operation.name' => $operation,
-            'db.connection.name' => (string) $event->connectionName,
-        ]);
+        $request = null;
+        $checkpoint = null;
+        try {
+            $candidate = app()->bound('request') ? app('request') : null;
+            if ($candidate instanceof Request) {
+                $request = $candidate;
+                $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+            }
+        } catch (Throwable) {
+        }
+        try {
+            $operation = $this->operation($event->command);
+            $this->recordCompletedOperation('redis '.$operation, (float) $event->time, [
+                'db.system.name' => 'redis',
+                'db.operation.name' => $operation,
+                'db.connection.name' => (string) $event->connectionName,
+            ]);
+        } finally {
+            try {
+                if ($request !== null && $checkpoint !== null) {
+                    ApiQueryMetrics::recordProcessingPhase($request, 'redis_tracing', $checkpoint['started_at'], $checkpoint);
+                    ApiQueryMetrics::recordRoleCatalogRedisGet($request, $event);
+                }
+            } catch (Throwable) {
+            }
+        }
     }
 
     public function queuePayload(): array
