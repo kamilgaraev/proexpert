@@ -10,10 +10,7 @@ final class AssistantCustomReportProjectedRows
 {
     public static function filterAndSort(array $rows, array $section, array $fields): array
     {
-        foreach ($section['filters'] as $filter) {
-            $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matches($row[$filter['field']] ?? null,
-                $filter, $fields[$filter['field']]['type'])));
-        }
+        $rows = array_values(array_filter($rows, static fn (array $row): bool => self::matchesFilters($row, $section['filters'], $fields)));
         if ($section['metrics'] === []) {
             usort($rows, static function (array $left, array $right) use ($section, $fields): int {
                 foreach ($section['order_by'] as $order) {
@@ -33,6 +30,17 @@ final class AssistantCustomReportProjectedRows
         }
 
         return $rows;
+    }
+
+    public static function matchesFilters(array $row, array $filters, array $fields): bool
+    {
+        foreach ($filters as $filter) {
+            if (! self::matches($row[$filter['field']] ?? null, $filter, $fields[$filter['field']]['type'])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static function matches(mixed $actual, array $filter, string $type): bool

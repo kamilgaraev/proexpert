@@ -627,6 +627,45 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertTrue($this->references->canReadReference($actor, $org->id, $summary['source_refs'][0]));
     }
 
+    public function test_machinery_projection_filters_large_source_before_match_limit(): void
+    {
+        $this->extraModules = ['machinery-operations'];
+        config(['asset_registry.strict_canonical_reads' => false]);
+        [$org, $actor, $project] = $this->fixture();
+        $ordinary = [];
+        for ($index = 0; $index < 1001; $index++) {
+            $ordinary[] = ['organization_id' => $org->id, 'current_project_id' => $project->id,
+                'asset_code' => 'BULK-'.$index, 'name' => 'Обычная техника '.$index, 'inventory_number' => 'BULK-'.$index,
+                'ownership_type' => 'owned', 'status' => 'available', 'created_at' => now(), 'updated_at' => now()];
+        }
+        DB::table('machinery_assets')->insert($ordinary);
+        foreach (['Бета', 'Альфа'] as $index => $name) {
+            $asset = \Tests\Support\MachineryOperationsAssetFactory::create($org->id,
+                ['asset_code' => 'MATCH-'.$index, 'name' => $name, 'current_project_id' => $project->id]);
+            $asset->organizationAsset->updateQuietly(['lifecycle_status' => 'retired']);
+            $asset->updateQuietly(['name' => 'Устаревшее имя', 'status' => 'available']);
+        }
+        $section = ['domain' => 'machinery', 'entity_type' => 'machinery_asset', 'project_id' => $project->id,
+            'columns' => ['name'], 'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'archived']],
+            'order_by' => [['field' => 'name', 'direction' => 'asc']], 'row_limit' => 1];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Альфа']], $report['sections'][0]['rows']);
+        self::assertSame(2, $report['sections'][0]['source_row_count']);
+        self::assertTrue($report['sections'][0]['output_limited']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+
+        $grouped = array_replace($section, ['columns' => ['status'], 'group_by' => ['status'], 'order_by' => [],
+            'metrics' => [['field' => null, 'operation' => 'count', 'label' => 'Единиц']]]);
+        $summary = $this->builder->build($this->plan($grouped), $actor, $org->id);
+        self::assertSame(2, $summary['sections'][0]['source_row_count']);
+        self::assertSame(2, $summary['sections'][0]['rows'][0][1]);
+
+        $this->expectException(ValidationException::class);
+        $this->builder->build($this->plan(array_replace($section, [
+            'filters' => [['field' => 'status', 'operator' => 'eq', 'value' => 'available']],
+        ])), $actor, $org->id);
+    }
+
     public function test_machinery_current_project_scope_and_download_recheck_ignore_stale_legacy_placement(): void
     {
         $this->extraModules = ['machinery-operations'];
