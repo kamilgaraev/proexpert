@@ -15,13 +15,13 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVer
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\Organization;
 use App\Models\User;
@@ -416,11 +416,14 @@ class AIAssistantServiceBudgetTest extends TestCase
         $tool->method('execute')->willThrowException(\Illuminate\Validation\ValidationException::withMessages([
             'predicate' => ['unsupported_predicate'], 'secret_field' => ['PRIVATE-VALUE'], 'fields' => ['unsupported_field', 'PRIVATE-CONTENT'],
         ]));
-        $registry = new AIToolRegistry; $registry->registerTool($tool); $failures = [];
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $failures = [];
         $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'assistant_domain_search', 'arguments' => '{}'], [], $failures);
         self::assertSame('invalid_arguments', $result['status']);
         self::assertSame(['predicate' => ['unsupported_predicate'], 'fields' => ['unsupported_field']], $result['validation_errors']);
-        self::assertSame([], $result['source_refs']); self::assertSame([], $failures);
+        self::assertSame([], $result['source_refs']);
+        self::assertSame([], $failures);
         self::assertStringNotContainsString('PRIVATE', json_encode($result));
     }
 
@@ -462,6 +465,32 @@ class AIAssistantServiceBudgetTest extends TestCase
             $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $name,
                 'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], ['request' => ['message' => 'Договоры на этом объекте?',
                     'context' => ['entity_references' => [['entity_type' => 'project', 'entity_id' => '52']]]]], $failures);
+            self::assertCount(1, $result['source_refs']);
+            self::assertSame([], $failures);
+        }
+    }
+
+    public function test_current_project_search_uses_real_tool_schema_and_trusted_context_instead_of_model_selection(): void
+    {
+        foreach ([['query' => 'текущий проект'], ['query' => 'текущий проект', 'project_id' => 100]] as $arguments) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('search_projects');
+            $tool->method('getParametersSchema')->willReturn((new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool)->getParametersSchema());
+            $observedArguments = null;
+            $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $actualArguments) use (&$observedArguments): array {
+                $observedArguments = $actualArguments;
+
+                return ['source_refs' => [['entity_type' => 'project', 'entity_id' => 52]]];
+            });
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'search_projects',
+                'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], ['request' => [
+                    'message' => 'Сделай Excel по динамике принятой выработки текущего проекта за 13–17 октября 2026 года.',
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 52, 'label' => 'Поддельное имя']]],
+                ]], $failures);
+            self::assertSame(['query' => 'текущий проект', 'project_id' => 52], $observedArguments);
             self::assertCount(1, $result['source_refs']);
             self::assertSame([], $failures);
         }
@@ -536,7 +565,6 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
-
     public function test_bim_package_alias_uses_only_current_verified_project_after_complete_negative_project_lookup(): void
     {
         foreach ([['empty', true], ['found', false], ['truncated', false], ['denied', false], ['other_context', false]] as [$mode, $expectedRead]) {
@@ -553,9 +581,15 @@ class AIAssistantServiceBudgetTest extends TestCase
             $service->canonicalBimProjects = [52 => 'Тестовый'];
             $service->bimAliases = [52 => ['Севгу']];
             $service->freshProjectSearch = ['status' => 'success', 'results' => [], 'result_window' => ['returned' => 0, 'has_more' => false]];
-            if ($mode === 'found') { $service->freshProjectSearch['results'] = [['id' => 95]]; }
-            if ($mode === 'truncated') { $service->freshProjectSearch['result_window']['has_more'] = true; }
-            if ($mode === 'denied') { $service->freshProjectSearch = null; }
+            if ($mode === 'found') {
+                $service->freshProjectSearch['results'] = [['id' => 95]];
+            }
+            if ($mode === 'truncated') {
+                $service->freshProjectSearch['result_window']['has_more'] = true;
+            }
+            if ($mode === 'denied') {
+                $service->freshProjectSearch = null;
+            }
             $query = 'В проекте Севгу есть кондиционеры, сколько их?';
             $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
                 'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => $mode === 'other_context' ? 95 : 52]]]]];
@@ -578,6 +612,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->exactly(2))->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen[] = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -612,6 +647,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -651,6 +687,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             $seen = [];
             $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
                 $seen = $args;
+
                 return ['status' => 'success'];
             });
             $registry = new AIToolRegistry;
@@ -806,6 +843,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -865,6 +903,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             $seen = [];
             $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
                 $seen = $args;
+
                 return ['status' => 'success'];
             });
             $registry = new AIToolRegistry;
@@ -920,6 +959,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -962,6 +1002,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -995,6 +1036,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -1024,6 +1066,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $seen = [];
         $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
             $seen = $args;
+
             return ['status' => 'success'];
         });
         $registry = new AIToolRegistry;
@@ -1037,9 +1080,13 @@ class AIAssistantServiceBudgetTest extends TestCase
             'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
                 'element_query' => 'вентиляционные установки', 'equipment_kinds' => null, 'version_id' => 88, 'compare_version_id' => 77, 'include_properties' => true,
                 'include_quantities' => true, 'include_estimate_links' => true, 'answer_kind' => 'elements', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
-        self::assertSame('models', $seen['answer_kind']); self::assertNull($seen['model_query']); self::assertNull($seen['equipment_kinds']);
+        self::assertSame('models', $seen['answer_kind']);
+        self::assertNull($seen['model_query']);
+        self::assertNull($seen['equipment_kinds']);
         self::assertNull($seen['equipment_kind']);
-        self::assertNull($seen['element_query']); self::assertNull($seen['version_id']); self::assertNull($seen['compare_version_id']);
+        self::assertNull($seen['element_query']);
+        self::assertNull($seen['version_id']);
+        self::assertNull($seen['compare_version_id']);
         self::assertFalse($seen['include_properties']);
         self::assertFalse($seen['include_quantities']);
         self::assertFalse($seen['include_estimate_links']);
@@ -1068,7 +1115,6 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame('success', $result['status']);
         self::assertSame([], $failures);
     }
-
 
     public function test_reports_capability_exposes_schedule_report_tools(): void
     {
@@ -1877,6 +1923,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             self::assertSame('function', $options['tools'][0]['type']);
             self::assertArrayNotHasKey('function', $options['tools'][0]);
             self::assertSame('Запрос', $input[0]['content']);
+
             return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'response_status' => 'completed',
                 'model' => 'openai/gpt-6-luna', 'input_tokens' => 10, 'output_tokens' => 5, 'tokens_used' => 15];
         });
@@ -2023,8 +2070,12 @@ class AIAssistantServiceBudgetTest extends TestCase
             new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
             new AssistantAgentExecutor($toolRegistry, $permissionChecker, new AssistantArtifactNormalizer),
             new AssistantResponseVerifier,
-            tokenBudget: new \App\Support\AI\TokenBudgetService(new \App\Support\AI\TokenCounter(new class {
-                public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
+            tokenBudget: new \App\Support\AI\TokenBudgetService(new \App\Support\AI\TokenCounter(new class
+            {
+                public function encode(string $text): array
+                {
+                    return array_fill(0, mb_strlen($text), 1);
+                }
             }))
         );
     }
@@ -2070,9 +2121,13 @@ class AIAssistantServiceBudgetTest extends TestCase
 class TestableAIAssistantService extends AIAssistantService
 {
     public array|string|null $freshProjectSearch = null;
+
     public array $freshProjectSearchCalls = [];
+
     public array $bimAliases = [];
+
     public ?array $bimAliasAnswer = null;
+
     public array $bimFallbackCalls = [];
 
     protected function scopedBimAliasMatches(User $actor, int $organizationId, int $projectId, string $alias): bool
@@ -2083,6 +2138,7 @@ class TestableAIAssistantService extends AIAssistantService
     protected function readBimAliasFallback(string $question, string $alias, User $actor, int $organizationId, int $projectId): ?array
     {
         $this->bimFallbackCalls[] = [$alias, $projectId];
+
         return $this->bimAliasAnswer;
     }
 
@@ -2097,7 +2153,9 @@ class TestableAIAssistantService extends AIAssistantService
     {
         return $this->verifyEmptyNamedProjectSearch($question, $results, $actor, $organizationId, $projectId);
     }
+
     public bool $ragQueryResolved = false;
+
     public array $canonicalBimProjects = [];
 
     protected function readableBimProjectName(User $actor, int $organizationId, int $projectId): ?string
@@ -2116,6 +2174,7 @@ class TestableAIAssistantService extends AIAssistantService
     {
         $actor = new User;
         $actor->id = 7;
+
         return $this->requestAssistantResponse($input, $options, 15, $actor);
     }
 

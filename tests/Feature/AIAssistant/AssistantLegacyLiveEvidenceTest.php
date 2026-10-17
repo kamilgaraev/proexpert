@@ -37,11 +37,17 @@ use Tests\TestCase;
 final class AssistantLegacyLiveEvidenceTest extends TestCase
 {
     private AssistantLegacyLiveEvidenceAdapter $adapter;
+
     private bool $permissions = true;
+
     private bool $financialPermissions = true;
+
     private bool $contractorPermissions = true;
+
     private Organization $organization;
+
     private User $actor;
+
     private Project $project;
 
     protected function setUp(): void
@@ -111,6 +117,32 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         $complete = $tool->execute(['query' => 'QA_LEGACY_WINDOW', 'limit' => 3], $this->actor, $this->organization);
         self::assertSame(['limit' => 3, 'returned' => 3, 'has_more' => false], $complete['result_window']);
         self::assertSame(array_map(static fn (Project $project): int => $project->id, $visible), array_column($complete['results'], 'id'));
+    }
+
+    public function test_current_project_search_reads_exact_authorized_id_and_rechecks_hidden_foreign_and_revoked_access(): void
+    {
+        $permission = Mockery::mock(AIPermissionChecker::class);
+        $permission->shouldReceive('canExecuteTool')->andReturn(true);
+        $this->app->instance(AIPermissionChecker::class, $permission);
+        $selected = $this->project('Проект для выбранного контекста');
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id,
+            'name' => 'Скрытый проект', 'is_archived' => false]));
+        $foreignOrganization = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $foreignOrganization->id,
+            'name' => 'Чужой проект', 'is_archived' => false]));
+        $tool = new SearchProjectsTool;
+        $arguments = ['query' => 'текущий проект', 'project_id' => $selected->id, 'limit' => 1];
+        $result = $tool->execute($arguments, $this->actor, $this->organization);
+        self::assertSame([$selected->id], array_column($result['results'], 'id'));
+        self::assertSame($selected->name, $result['results'][0]['name']);
+        self::assertSame(['limit' => 1, 'returned' => 1, 'has_more' => false], $result['result_window']);
+        $reads = $this->adapter->read('search_projects', $result, $this->actor, $this->organization->id);
+        self::assertSame($selected->name, $reads[0]['source_refs'][0]['display_label']);
+        foreach ([$hidden, $foreign] as $unavailable) {
+            self::assertSame([], $tool->execute(array_replace($arguments, ['project_id' => $unavailable->id]), $this->actor, $this->organization)['results']);
+        }
+        $this->actor->assignedProjects()->updateExistingPivot($selected->id, ['is_active' => false]);
+        self::assertSame([], $tool->execute($arguments, $this->actor, $this->organization)['results']);
     }
 
     public function test_contract_snapshot_rereads_exact_money_and_dates(): void
