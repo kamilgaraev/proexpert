@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
+use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
@@ -32,6 +33,7 @@ use App\Services\Logging\LoggingService;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Cache\DatabaseStore;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -238,6 +240,65 @@ final class AssistantStatusSnapshotTest extends TestCase
         $permissions->denied = ['ai_assistant.chat'];
         $this->expectException(AuthorizationException::class);
         $service->status($organization->id, $actor, 'sources');
+    }
+
+    public function test_database_cache_refresh_and_expired_snapshot_cleanup_run_outside_read_only_transactions(): void
+    {
+        $previous = config('cache.default');
+        config(['cache.default' => 'database', 'cache.stores.database.connection' => 'pgsql']);
+        $store = Cache::store('database')->getStore();
+        self::assertInstanceOf(DatabaseStore::class, $store);
+        $slow = false;
+        DB::listen(static function ($query) use (&$slow): void {
+            if ($slow && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
+                $slow = false;
+                usleep(2_600_000);
+            }
+        });
+
+        try {
+            foreach (['sources', 'all'] as $section) {
+                Cache::store('database')->flush();
+                [$organization, $actor, , $service, $policy, $permissions] = $this->scope();
+                $legacyKeys = ['ai-rag-coverage-revision:'.$organization->id, 'ai-rag-coverage:'.$organization->id.':0:*:0'];
+                foreach ($legacyKeys as $legacyKey) { Cache::put($legacyKey, ['projection_generation' => 'expired-cache-generation'], 60); }
+                self::assertSame(2, DB::table('cache')->whereIn('key', array_map(fn (string $key): string => $store->getPrefix().$key, $legacyKeys))
+                    ->update(['expiration' => now()->subSecond()->timestamp]));
+                $slow = $section === 'sources';
+                self::assertFalse($service->status($organization->id, $actor, $section)['status_available']);
+                $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
+                self::assertInstanceOf(RefreshAssistantIndexStatusJob::class, $job);
+                self::assertSame($section, $job->section);
+                $job->handle($service, $policy);
+                Queue::assertPushed(RefreshRagCoverageJob::class);
+                self::assertTrue($service->status($organization->id, $actor, $section)['status_available']);
+                self::assertSame(1, DB::table('cache')->where('key', $store->getPrefix().$job->cacheKey)
+                    ->update(['expiration' => now()->subSecond()->timestamp]));
+                $before = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->count();
+                self::assertFalse($service->status($organization->id, $actor, $section)['status_available']);
+                self::assertSame($before + 1, $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->count());
+                $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last()->handle($service, $policy);
+                self::assertTrue($service->status($organization->id, $actor, $section)['status_available']);
+                $revokeOnRead = true;
+                $cacheKey = $store->getPrefix().$job->cacheKey;
+                DB::listen(static function ($query) use ($cacheKey, $permissions, &$revokeOnRead): void {
+                    if ($revokeOnRead && str_starts_with(strtolower($query->sql), 'select')
+                        && str_contains($query->sql, '"cache"') && in_array($cacheKey, $query->bindings, true)) {
+                        $revokeOnRead = false;
+                        $permissions->denied = ['ai_assistant.chat'];
+                    }
+                });
+                $denied = false;
+                try { $service->status($organization->id, $actor, $section); }
+                catch (AuthorizationException) { $denied = true; }
+                self::assertFalse($revokeOnRead);
+                self::assertTrue($denied);
+                $permissions->denied = [];
+            }
+        } finally {
+            Cache::store('database')->flush();
+            config(['cache.default' => $previous]);
+        }
     }
 
     public function test_live_source_counts_stay_bounded_for_a_large_project_corpus(): void
