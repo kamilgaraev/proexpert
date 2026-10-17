@@ -217,7 +217,8 @@ final readonly class SaveManualProjectFacts
                         }
                     }
                     $measurement = $basis === 'measurement';
-                    $nativeReference = $descriptionProposal === null ? 'input_payload.manual_facts' : 'input_payload.description';
+                    $nativeReference = ($descriptionProposal === null ? 'input_payload.manual_facts_' : 'input_payload.description_')
+                        .hash('sha256', $entity->id.'|'.$parameter);
                     $node = $this->evidence->insertOrGet(new EvidenceData(...[
                         ...$scope, $measurement ? EvidenceType::Measured : EvidenceType::SourceFact, EvidenceSourceType::UserInput, 'input:'.$sessionId, $sourceVersion,
                         ['source_key' => 'source:'.hash('sha256', $requestId.'|'.$entity->id.'|'.$parameter.'|'.$basis), 'native_reference' => $nativeReference],

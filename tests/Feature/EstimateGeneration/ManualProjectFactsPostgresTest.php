@@ -72,7 +72,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         $fact = array_values(array_filter($snapshot->facts, static fn ($fact): bool => $fact->type === 'area'))[0];
         self::assertSame('user_input', $fact->origin);
         $proof = array_column($snapshot->evidence, null, 'id')[$fact->evidenceIds[0]];
-        self::assertSame('input_payload.description', $proof->nativeReference);
+        self::assertSame('input_payload.description_'.hash('sha256', $fact->entityId.'|area'), $proof->nativeReference);
         $decision = $models->decisionsForSelectedFacts(...[...$scope, [$fact->id]])[0];
         self::assertStringContainsString($proposal['proposal_id'], $decision->reason);
         self::assertStringContainsString($proposal['source_fact_id'], $decision->reason);
@@ -544,16 +544,19 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
             [...$this->entity('room', 'room-1', ['length' => '5000', 'width' => '4000'], 'mm'), 'floor' => '1', 'zone' => 'А', 'coverage' => ['room_walls' => 'covered_with_entities']],
             [...$this->entity('wall', 'wall-1', ['length' => '10', 'height' => '3']), 'parent_key' => 'room-1', 'floor' => '1', 'zone' => 'А', 'coverage' => ['wall_openings' => 'covered_with_entities']],
             [...$this->entity('opening', 'door-1', ['width' => '1', 'height' => '2']), 'parent_key' => 'wall-1', 'floor' => '1', 'zone' => 'А'],
+            [...$this->entity('opening', 'door-2', ['width' => '1.5', 'height' => '2']), 'parent_key' => 'wall-1', 'floor' => '1', 'zone' => 'А'],
             ['key' => 'roof-1', 'type' => 'roof', 'coverage' => ['roof_facets' => 'covered_with_entities', 'roof_openings' => 'covered_empty']],
             [...$this->entity('roof_facet', 'facet-1', ['plan_area' => '40', 'slope_rise' => '3', 'slope_run' => '4']), 'parent_key' => 'roof-1',
-                'parameters' => ['plan_area' => ['value' => '40', 'unit' => 'm2', 'basis' => 'input'], 'slope_rise' => ['value' => '3', 'unit' => 'm', 'basis' => 'input'], 'slope_run' => ['value' => '4', 'unit' => 'm', 'basis' => 'input']]],
+                'parameters' => ['plan_area' => ['value' => '20', 'unit' => 'm2', 'basis' => 'input'], 'slope_rise' => ['value' => '3', 'unit' => 'm', 'basis' => 'input'], 'slope_run' => ['value' => '4', 'unit' => 'm', 'basis' => 'input']]],
+            [...$this->entity('roof_facet', 'facet-2', []), 'parent_key' => 'roof-1',
+                'parameters' => ['plan_area' => ['value' => '20', 'unit' => 'm2', 'basis' => 'input'], 'slope_rise' => ['value' => '3', 'unit' => 'm', 'basis' => 'input'], 'slope_run' => ['value' => '4', 'unit' => 'm', 'basis' => 'input']]],
             ['key' => 'site-1', 'type' => 'site', 'parameters' => ['area' => ['value' => '100', 'unit' => 'm2', 'basis' => 'input'], 'depth' => ['value' => '0.5', 'unit' => 'm', 'basis' => 'input']]],
         ]];
         $request = (string) Str::uuid();
         $save = app(SaveManualProjectFacts::class);
         $result = $save->handle($actor, (int) $session->project_id, (int) $session->id, 0, $request, $input);
         self::assertSame('20', $result['quantities']['floor_area']['amount']);
-        self::assertSame('28', $result['quantities']['net_wall_area']['amount']);
+        self::assertSame('25', $result['quantities']['net_wall_area']['amount']);
         self::assertSame('50', $result['quantities']['roof_area']['amount']);
         self::assertSame('50', $result['quantities']['earthwork_volume']['amount']);
         self::assertSame('0', $result['cost_units']);
