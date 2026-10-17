@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockSer
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -124,6 +125,8 @@ class ProjectMaterialDeliveryController extends Controller
                 new ProjectMaterialDeliveryResource($updated),
                 trans_message('basic_warehouse.project_material_deliveries.shipped')
             );
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('basic_warehouse.project_material_deliveries.errors.not_found'), 404);
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
         } catch (DomainException $exception) {

@@ -316,6 +316,25 @@ class ProjectMaterialDeliveryMovementTest extends TestCase
         }
     }
 
+    public function test_shipping_an_unassigned_project_returns_not_found_without_moving_stock(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createPurchaseDeliveryContext($context);
+        $context->user->organizations()->updateExistingPivot($context->organization->id, ['project_access_mode' => 'assigned_projects']);
+        $setup['project']->users()->detach($context->user->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/project-material-deliveries/{$setup['delivery']->id}/ship", [
+                'quantity' => 10, 'warehouse_id' => $setup['sourceWarehouse']->id,
+            ])->assertNotFound()->assertJsonPath('success', false);
+        $this->assertNull($setup['delivery']->fresh()->warehouse_id);
+        $this->assertSame(0.0, (float) $setup['delivery']->fresh()->shipped_quantity);
+        $this->assertSame(0, WarehouseMovement::query()->where('project_material_delivery_id', $setup['delivery']->id)->count());
+        $this->assertSame(100.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $setup['sourceWarehouse']->id)->sum('available_quantity'));
+    }
+
     public function test_shipping_accepts_an_active_responsible_member_with_a_different_current_organization(): void
     {
         $context = AdminApiTestContext::create();
