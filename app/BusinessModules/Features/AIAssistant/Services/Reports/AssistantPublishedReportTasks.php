@@ -135,7 +135,8 @@ final readonly class AssistantPublishedReportTasks
 
         return ['id' => (string) $task->id, 'status' => $status, 'title' => $task->parameters['title'],
             'format' => $task->parameters['format'], 'export_id' => $status === 'ready' ? $task->export_id : null,
-            'expires_at' => $task->expires_at->toIso8601String(), 'poll_after_ms' => 2000];
+            'expires_at' => $task->expires_at->toIso8601String(),
+            'poll_after_ms' => 1000 * min(30, AssistantPublishedReportPolling::seconds(now()->getTimestamp() - $task->created_at->getTimestamp()))];
     }
 
     public function assertInput(AssistantCoreReportTask $task): void

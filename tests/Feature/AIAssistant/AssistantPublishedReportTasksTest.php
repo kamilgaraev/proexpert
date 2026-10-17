@@ -267,6 +267,32 @@ final class AssistantPublishedReportTasksTest extends TestCase
         return ['Authorization' => 'Bearer '.$tokens->accessToken, 'Accept' => 'application/json', 'Origin' => 'https://admin.1мост.рф'];
     }
 
+    public function test_long_running_report_backs_off_queue_checks_and_http_polling(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $checkpoint = DB::table('production_acceptance_history_checkpoints')->where('organization_id', $org)->sole();
+        $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
+        $this->seedAcceptedSource($org, (int) $this->project->id, $acceptedAt);
+        $this->root($actor, $acceptedAt->modify('+1 day'));
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR)]);
+        $result = $tasks->create($arguments, $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $processor = app(AssistantPublishedReportProcessor::class);
+        $this->process($processor, $task);
+        self::assertNotNull($task->fresh()->run_id);
+        self::assertSame(0, $task->fresh()->failure_count);
+        $task->refresh()->update(['created_at' => now()->subMinutes(10)]);
+        $this->process($processor, $task);
+        $delay = $task->fresh()->retry_at->getTimestamp() - now()->getTimestamp();
+        self::assertGreaterThanOrEqual(59, $delay);
+        self::assertLessThanOrEqual(60, $delay);
+        self::assertSame(30000, $tasks->read($task->id, $actor, $org)['poll_after_ms']);
+        self::assertNotNull($task->fresh()->run_id);
+        self::assertNull($task->fresh()->export_id);
+    }
+
     private function root(User $actor, ?DateTimeImmutable $asOf = null): AssistantRequest
     {
         $root = AssistantRequest::query()->create(['request_id' => (string) Str::uuid(), 'organization_id' => $this->fixture->organization->id,

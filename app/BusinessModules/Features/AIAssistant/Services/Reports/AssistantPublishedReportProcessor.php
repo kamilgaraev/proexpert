@@ -133,8 +133,10 @@ final readonly class AssistantPublishedReportProcessor
         }, 3);
     }
 
-    private function finish(AssistantCoreReportTask $claimed, array $changes, int $delay = 2): void
+    private function finish(AssistantCoreReportTask $claimed, array $changes, ?int $delay = null): void
     {
+        $delay ??= array_intersect_key($changes, ['run_id' => true, 'export_id' => true]) !== []
+            ? 1 : AssistantPublishedReportPolling::seconds(now()->getTimestamp() - $claimed->created_at->getTimestamp());
         $dispatch = DB::transaction(function () use ($claimed, $changes, $delay): bool {
             $task = AssistantCoreReportTask::query()->lockForUpdate()->find($claimed->id);
             if ($task === null || $task->lease_token !== $claimed->lease_token
