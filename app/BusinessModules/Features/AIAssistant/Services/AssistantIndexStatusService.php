@@ -57,7 +57,17 @@ final class AssistantIndexStatusService
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
+        $sourceRecoveryKey = $checkCurrentAccess && $section === 'sources'
+            ? $this->snapshotKey($organizationId, (int) $actor->id, $this->currentSurface()).':sources:background-recovery'
+            : null;
+        if ($sourceRecoveryKey !== null && Cache::has($sourceRecoveryKey)) {
+            Cache::put($sourceRecoveryKey, true, 180);
+
+            return $this->snapshotStatus($organizationId, $actor, $section);
+        }
+
         $phase = (object) ['value' => 'schema', 'missing_release' => false];
+        $budgetExceeded = false;
         $started = hrtime(true);
         $metricsRequest = request();
         $processingPhase = 'rag_prepare';
@@ -134,6 +144,7 @@ final class AssistantIndexStatusService
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
             }
+            $budgetExceeded = true;
             \Illuminate\Support\Facades\Log::warning('assistant.rag_status_budget_exceeded', [
                 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'section' => $section,
                 'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
@@ -142,6 +153,12 @@ final class AssistantIndexStatusService
             if ($checkCurrentAccess && ! $phase->missing_release) { AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section); }
         } finally {
             $setProcessingPhase(null);
+        }
+
+        if ($budgetExceeded && $sourceRecoveryKey !== null && ! $phase->missing_release) {
+            Cache::put($sourceRecoveryKey, true, 180);
+
+            return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
         if ($checkCurrentAccess && ($result['status_available'] ?? false)) { AssistantStatusSnapshotDiagnostics::request('fresh_read', $section); }
