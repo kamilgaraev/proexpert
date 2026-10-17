@@ -15,7 +15,6 @@ use App\BusinessModules\Features\AIAssistant\Models\AssistantCoreReportTask;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
-use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Models\User;
 use DateTimeImmutable;
@@ -206,10 +205,7 @@ final readonly class AssistantPublishedReportTasks
 
     private function assertProject(AssistantRequest $request, array $parameters): void
     {
-        $scope = AssistantRequestProjectScope::fromPlan(['request' => $request->payload]);
-        if (($scope->requested && $scope->projectId === null)
-            || ($scope->requested && $scope->projectId !== null && $parameters['project_id'] !== $scope->projectId)
-            || (AssistantRequestProjectScope::organizationWide((string) ($request->payload['message'] ?? '')) && $parameters['project_id'] !== null)) {
+        if (! AssistantPublishedReportProjectScope::allows($request->payload, $parameters['project_id'])) {
             throw new AuthorizationException;
         }
     }
