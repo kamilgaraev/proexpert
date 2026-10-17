@@ -6,10 +6,14 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CancelOwnedReportWork;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRunAction;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantCoreReportTask;
+use Illuminate\Auth\Access\AuthorizationException;
 
 final readonly class AssistantPublishedReportCancellation
 {
@@ -20,11 +24,31 @@ final readonly class AssistantPublishedReportCancellation
         private GetReportExportAction $exports,
         private CancelReportRunAction $cancelRuns,
         private CancelReportExportAction $cancelExports,
+        private CancelOwnedReportWork $ownedWork,
     ) {}
 
     public function cancel(AssistantCoreReportTask $task): void
     {
         $this->tasks->assertInput($task);
+        try {
+            $this->cancelWithCurrentAccess($task);
+        } catch (AuthorizationException|ReportContractException) {
+            $this->cancelOwned($task);
+
+            return;
+        }
+        $this->cancelOwned($task);
+    }
+
+    private function cancelOwned(AssistantCoreReportTask $task): void
+    {
+        $this->ownedWork->handle((int) $task->organization_id, (int) $task->user_id, $task->run_id,
+            new IdempotencyKey('assistant-core:'.$task->id.':run:v1'), $task->export_id,
+            new IdempotencyKey('assistant-core:'.$task->id.':export:v1'));
+    }
+
+    private function cancelWithCurrentAccess(AssistantCoreReportTask $task): void
+    {
         $actorId = (int) $task->user_id;
         $organizationId = (int) $task->organization_id;
         if ($task->export_id !== null) {

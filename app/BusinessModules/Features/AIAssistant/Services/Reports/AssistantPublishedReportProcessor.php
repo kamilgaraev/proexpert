@@ -105,6 +105,8 @@ final readonly class AssistantPublishedReportProcessor
 
     public function recover(): void
     {
+        AssistantCoreReportTask::query()->whereNull('assistant_request_id')->where('execution_expires_at', '<=', now())
+            ->where(static fn ($query) => $query->where('status', 'ready')->orWhereNotNull('core_cleanup_completed_at'))->delete();
         AssistantCoreReportTask::query()->where(static fn ($query) => $query->whereIn('status', AssistantCoreReportTask::PENDING)
             ->orWhere(static fn ($stopped) => $stopped->whereIn('status', AssistantCoreReportTask::STOPPED)
                 ->whereNull('core_cleanup_completed_at')->where('core_cleanup_attempts', '<', 5)))
@@ -161,9 +163,18 @@ final readonly class AssistantPublishedReportProcessor
 
                 return false;
             }
-            if ($task->lease_token !== $claimed->lease_token
-                || ! hash_equals((string) $task->input_sha256, (string) $claimed->input_sha256)
-                || ! in_array($task->status, AssistantCoreReportTask::PENDING, true)) {
+            if (! hash_equals((string) $task->input_sha256, (string) $claimed->input_sha256)) {
+                return false;
+            }
+            if (in_array($task->status, AssistantCoreReportTask::STOPPED, true)) {
+                $task->fill(array_intersect_key($changes, ['run_id' => true, 'export_id' => true]) + [
+                    'core_cleanup_completed_at' => null, 'core_cleanup_attempts' => 0, 'retry_at' => now(),
+                    'lease_token' => null, 'lease_expires_at' => null,
+                ])->save();
+
+                return true;
+            }
+            if ($task->lease_token !== $claimed->lease_token || ! in_array($task->status, AssistantCoreReportTask::PENDING, true)) {
                 return false;
             }
             $task->fill(array_intersect_key($changes, ['run_id' => true, 'export_id' => true]));

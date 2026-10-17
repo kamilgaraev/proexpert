@@ -39,11 +39,14 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
 
 #[Group('postgres-contract')]
 final class AssistantPublishedReportTasksTest extends TestCase
 {
+    use EnablesImmutableAuditWriter;
+
     protected $connectionsToTransact = [];
 
     private AssistantRealAuthorizationFixture $fixture;
@@ -209,7 +212,9 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $processor->process($task->id);
         self::assertSame('expired', $task->fresh()->status);
         $root->delete();
-        self::assertNull($task->fresh());
+        self::assertNotNull($task->fresh());
+        self::assertNull($task->fresh()->assistant_request_id);
+        self::assertSame('expired', $task->fresh()->status);
     }
 
     public function test_real_admin_get_returns_read_only_owner_status_and_rechecks_source_permission(): void
@@ -296,11 +301,20 @@ final class AssistantPublishedReportTasksTest extends TestCase
     public static function stoppedWork(): array
     {
         return [['run', 'cancel'], ['run', 'failed'], ['run', 'expiry'], ['export', 'cancel'],
-            ['export', 'expiry'], ['run_race', 'cancel'], ['export_race', 'cancel'], ['run_retry', 'cancel']];
+            ['export', 'expiry'], ['run_race', 'cancel'], ['export_race', 'cancel'], ['run_retry', 'cancel'],
+            ['run', 'deleted'], ['export', 'deleted'], ['run_race', 'deleted'], ['export_race', 'deleted'],
+            ['run', 'membership_revoked'], ['export', 'membership_revoked'], ['run', 'role_revoked'], ['export', 'role_revoked'],
+            ['run_active', 'membership_revoked'], ['export_active', 'role_revoked'], ['export_uploading', 'membership_revoked'],
+            ['run_lost', 'deleted'], ['export_lost', 'deleted'], ['run_stale', 'deleted'], ['export_stale', 'deleted']];
     }
 
     #[DataProvider('stoppedWork')]
     public function test_stopped_task_cancels_its_native_work(string $stage, string $reason): void
+    {
+        $this->assertStoppedTaskCancelsItsNativeWork($stage, $reason);
+    }
+
+    private function assertStoppedTaskCancelsItsNativeWork(string $stage, string $reason): void
     {
         $actor = $this->fixture->owner;
         $org = (int) $this->fixture->organization->id;
@@ -308,6 +322,9 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->setTimezone(new DateTimeZone('UTC'))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
         $this->seedAcceptedSource($org, (int) $this->project->id, $acceptedAt);
         $root = $this->root($actor, $acceptedAt->modify('+1 day'));
+        $manager = app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class);
+        $conversation = $manager->createConversation($org, $actor, 'Отчёт с проверкой остановки');
+        $root->update(['conversation_id' => $conversation->id]);
         $tasks = app(AssistantPublishedReportTasks::class);
         $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR)]);
         $result = $tasks->create($arguments, $actor, $org);
@@ -328,13 +345,26 @@ final class AssistantPublishedReportTasksTest extends TestCase
             });
             app()->instance($interface, $wrapper);
         }
-        if (str_ends_with($stage, '_race')) {
-            $interface = $stage === 'run_race' ? CreateReportRunAction::class : CreateReportExportAction::class;
+        $unattachedId = null;
+        if (str_ends_with($stage, '_race') || str_ends_with($stage, '_lost') || str_ends_with($stage, '_stale')) {
+            $interface = str_starts_with($stage, 'run') ? CreateReportRunAction::class : CreateReportExportAction::class;
             $original = app($interface);
             $wrapper = $this->createMock($interface);
-            $wrapper->method('handle')->willReturnCallback(function (...$arguments) use ($original, $root) {
+            $wrapper->method('handle')->willReturnCallback(function (...$arguments) use ($original, $root, $reason, $manager, $conversation, $actor, $stage, $task, &$unattachedId) {
                 $result = $original->handle(...$arguments);
-                $root->update(['cancel_requested_at' => now()]);
+                if (str_ends_with($stage, '_lost')) {
+                    $unattachedId = $result->id;
+                    throw new \RuntimeException('process_interrupted_before_attach_then_cancelled');
+                }
+                if ($reason === 'deleted') {
+                    $manager->deleteConversation($conversation, $actor);
+                } else {
+                    $root->update(['cancel_requested_at' => now()]);
+                }
+                if (str_ends_with($stage, '_stale')) {
+                    $task->fresh()->update(['status' => 'cancelled', 'core_cleanup_completed_at' => now(),
+                        'lease_token' => null, 'lease_expires_at' => null]);
+                }
 
                 return $result;
             });
@@ -342,26 +372,83 @@ final class AssistantPublishedReportTasksTest extends TestCase
         }
         $processor = app(AssistantPublishedReportProcessor::class);
         $this->process($processor, $task);
-        self::assertNotNull($task->fresh()->run_id);
+        $runId = $task->fresh()->run_id ?? ($stage === 'run_lost' ? $unattachedId : null);
+        self::assertNotNull($runId);
+        if ($stage === 'run' && $reason === 'role_revoked') {
+            $ownedWork = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CancelOwnedReportWork::class);
+            $key = new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey('assistant-core:'.$task->id.':run:v1');
+            foreach ([[(int) $this->fixture->foreignOrganization->id, (int) $actor->id, $key, null, null],
+                [$org, (int) $this->fixture->member->id, $key, null, null],
+                [$org, (int) $actor->id, new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey('wrong-owned-key'), null, null],
+                [$org, (int) $actor->id, $key, (string) Str::ulid(), new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey('wrong-export-key')]] as [$testOrg, $testActor, $testKey, $testExport, $testExportKey]) {
+                try {
+                    $ownedWork->handle($testOrg, $testActor, $task->fresh()->run_id, $testKey, $testExport, $testExportKey);
+                    self::fail('Unowned report work was cancelled');
+                } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+                    self::assertSame(\App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_NOT_FOUND, $exception->errorCode);
+                    self::assertSame('queued', DB::table('report_runs')->where('id', $task->fresh()->run_id)->value('status'));
+                }
+            }
+        }
         $hasExport = str_starts_with($stage, 'export');
+        $exportId = null;
         if ($hasExport) {
             $queue = new SyncQueue;
             $queue->setContainer($this->app);
             $queue->push(new MaterializeReportRunJob($task->fresh()->run_id));
             $this->process($processor, $task);
-            self::assertNotNull($task->fresh()->export_id);
+            $exportId = $task->fresh()->export_id ?? $unattachedId;
+            self::assertNotNull($exportId);
+        }
+        if (in_array($stage, ['run_active', 'export_active', 'export_uploading'], true)) {
+            $lease = (string) Str::uuid();
+            $at = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock::class)->now();
+            $leaseSeconds = app(\App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration::class)->executionLeaseSeconds;
+            $leaseExpiresAt = $at->modify('+'.$leaseSeconds.' seconds');
+            if ($stage === 'run_active') {
+                $runId = $task->fresh()->run_id;
+                app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunAttemptLifecycleStore::class)
+                    ->claimOrRenew($runId, $lease, $leaseExpiresAt, $at);
+                $context = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunExecutionContextRehydrator::class)->forRun($runId);
+                app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore::class)
+                    ->claimMaterialization($context, $runId, $lease, $leaseExpiresAt, $at);
+                self::assertSame('materializing', DB::table('report_runs')->where('id', $runId)->value('status'));
+            } else {
+                $exportId = $task->fresh()->export_id;
+                app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportAttemptLifecycleStore::class)
+                    ->claimOrRenew($exportId, $lease, $leaseExpiresAt, $at);
+                $context = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportExecutionContextRehydrator::class)->forExport($exportId);
+                $store = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore::class);
+                $store->startRendering($context, $exportId, $lease, $leaseExpiresAt, $at);
+                if ($stage === 'export_uploading') {
+                    $store->startUploading($context, $exportId, $lease, $leaseExpiresAt, $at);
+                }
+                self::assertSame($stage === 'export_uploading' ? 'uploading' : 'running', DB::table('report_exports')->where('id', $exportId)->value('status'));
+            }
         }
         if ($reason === 'expiry') {
             $task->fresh()->update(['execution_expires_at' => now()->subSecond()]);
         } elseif ($reason === 'failed') {
             $root->update(['status' => 'failed']);
+        } elseif ($reason === 'deleted') {
+            if ($conversation->fresh() !== null) {
+                $manager->deleteConversation($conversation, $actor);
+            }
+        } elseif ($reason === 'membership_revoked') {
+            $actor->organizations()->updateExistingPivot($org, ['is_active' => false]);
+        } elseif ($reason === 'role_revoked') {
+            $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
         } else {
             $root->update(['cancel_requested_at' => now()]);
         }
         $this->process($processor, $task);
-        self::assertSame($reason === 'expiry' ? 'expired' : 'cancelled', $task->fresh()->status);
+        $revoked = str_ends_with($reason, '_revoked');
+        self::assertSame($revoked ? 'failed' : ($reason === 'expiry' ? 'expired' : 'cancelled'), $task->fresh()->status);
+        if ($reason === 'deleted') {
+            self::assertNull($task->fresh()->assistant_request_id);
+        }
         if ($stage === 'run_retry') {
-            self::assertSame('queued', DB::table('report_runs')->where('id', $task->fresh()->run_id)->value('status'));
+            self::assertSame('queued', DB::table('report_runs')->where('id', $runId)->value('status'));
             self::assertNull($task->fresh()->core_cleanup_completed_at);
             $task->fresh()->update(['retry_at' => now()->subSecond()]);
             Queue::fake();
@@ -370,15 +457,72 @@ final class AssistantPublishedReportTasksTest extends TestCase
                 fn ($job): bool => $job->taskId === $task->id);
             $this->process($processor, $task);
         }
-        self::assertSame($hasExport ? 'ready' : 'cancelled', DB::table('report_runs')->where('id', $task->fresh()->run_id)->value('status'));
+        self::assertSame($hasExport ? 'ready' : 'cancelled', DB::table('report_runs')->where('id', $runId)->value('status'));
         if ($hasExport) {
-            self::assertSame('cancelled', DB::table('report_exports')->where('id', $task->fresh()->export_id)->value('status'));
+            self::assertSame('cancelled', DB::table('report_exports')->where('id', $exportId)->value('status'));
         }
         self::assertNotNull($task->fresh()->core_cleanup_completed_at);
-        self::assertSame($stage === 'run_retry' ? 2 : 1, $cancelCalls);
+        $lost = str_ends_with($stage, '_lost');
+        self::assertSame($revoked || $lost ? 0 : ($stage === 'run_retry' ? 2 : 1), $cancelCalls);
+        if ($revoked || $lost) {
+            $aggregateId = $hasExport ? $exportId : $runId;
+            $kind = $hasExport ? 'export' : 'run';
+            $audit = DB::table('report_audit_intents')->where('event_key', "reports:{$kind}:{$aggregateId}:cancelled:owned-cleanup")->sole();
+            self::assertSame($org, $audit->organization_id);
+            self::assertSame($actor->id, $audit->actor_id);
+            self::assertNull(DB::table($hasExport ? 'report_exports' : 'report_runs')->where('id', $aggregateId)->value('execution_lease_token'));
+            if ($revoked) {
+                $this->denied(fn () => $tasks->read($task->id, $actor, $org));
+            }
+            $queue = new SyncQueue;
+            $queue->setContainer($this->app);
+            $queue->push($hasExport ? new GenerateReportExportJob($aggregateId) : new MaterializeReportRunJob($aggregateId));
+            self::assertSame('cancelled', DB::table($hasExport ? 'report_exports' : 'report_runs')->where('id', $aggregateId)->value('status'));
+        }
         $before = $task->fresh()->getAttributes();
         $processor->process($task->id);
         self::assertSame($before, $task->fresh()->getAttributes());
+        if ($reason === 'deleted') {
+            $processor->recover();
+            self::assertNotNull($task->fresh());
+            $task->fresh()->update(['execution_expires_at' => now()->subSecond()]);
+            $processor->recover();
+            self::assertNull($task->fresh());
+        }
+    }
+
+    public static function auditStages(): array
+    {
+        return [['run'], ['export']];
+    }
+
+    #[DataProvider('auditStages')]
+    public function test_owned_cleanup_event_reaches_immutable_audit(string $stage): void
+    {
+        $this->assertStoppedTaskCancelsItsNativeWork($stage, 'role_revoked');
+        $this->enableImmutableAuditWriter();
+        $org = (int) $this->fixture->organization->id;
+        $event = DB::table('report_audit_intents')->where('organization_id', $org)
+            ->where('event_type', 'report.'.$stage.'.cancelled')->where('event_key', 'like', '%:owned-cleanup')->sole();
+        $store = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportAuditIntentStore::class);
+        $at = app(\App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock::class)->now();
+        $runtime = app(\App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionRuntimeConfiguration::class);
+        $token = (string) Str::uuid();
+        self::assertNotNull($store->claim($event->id, $token, $at, $at->modify('+'.$runtime->auditLeaseSeconds.' seconds')));
+        $intent = $store->loadLeased($event->id, $token);
+        $consumer = app(\App\BusinessModules\Core\Reporting\Infrastructure\Audit\CoreReportAuditIntentConsumer::class);
+        $consumer->append($intent);
+        $consumer->append($intent);
+        $store->acknowledge($event->id, $token, $at);
+        self::assertSame('delivered', DB::table('report_audit_intents')->where('id', $event->id)->value('status'));
+        $records = DB::table('immutable_audit_events')->where('organization_id', $org)->where('source_event_id', $event->event_key)->get();
+        self::assertCount(1, $records);
+        $record = $records->sole();
+        self::assertSame('report.'.$stage.'.cancelled', $record->event_type);
+        self::assertSame($this->fixture->owner->id, $record->actor_user_id);
+        self::assertSame('reporting', $record->domain);
+        self::assertSame('report_'.$stage, $record->subject_type);
+        self::assertEqualsCanonicalizing($intent->subject, json_decode($record->domain_context, true, 512, JSON_THROW_ON_ERROR));
     }
 
     private function root(User $actor, ?DateTimeImmutable $asOf = null): AssistantRequest

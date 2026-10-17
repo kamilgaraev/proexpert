@@ -213,6 +213,7 @@ final class ReportingExecutionServiceProvider extends ServiceProvider
     private function registerActions(): void
     {
         $bindings = [
+            \App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CancelOwnedReportWork::class => \App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentCancelOwnedReportWork::class,
             CreateReportRunAction::class => CreateReportRunHandler::class,
             GetReportRunAction::class => GetReportRunHandler::class,
             RetryReportRunAction::class => RetryReportRunHandler::class,

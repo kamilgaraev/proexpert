@@ -12,7 +12,7 @@ return new class extends Migration
     {
         Schema::create('ai_assistant_core_report_tasks', function (Blueprint $table): void {
             $table->ulid('id')->primary();
-            $table->foreignId('assistant_request_id')->constrained('ai_assistant_requests')->cascadeOnDelete();
+            $table->foreignId('assistant_request_id')->nullable()->constrained('ai_assistant_requests')->nullOnDelete();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->string('surface', 16);
