@@ -59,6 +59,49 @@ final class PermissionResolverCurrentEntitlementInjectionTest extends TestCase
         self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
     }
 
+    public function testDiagnosticSubphasesKeepFreshEntitlementsAndOriginalFailure(): void
+    {
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/personal-files', 'GET');
+        $metrics = new \App\Services\Monitoring\ApiQueryMetrics(true);
+        $request->attributes->set(\App\Services\Monitoring\ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $this->application->instance('request', $request);
+        $access = Mockery::mock(AccessController::class);
+        $access->shouldReceive('hasModuleAccess')->once()->with(37, 'ai_assistant')->andReturn(true);
+        self::assertTrue($this->resolver(new ModulePermissionChecker($access))
+            ->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertSame([], $metrics->summary()['processing_phases']);
+        $failure = new LogicException('private-entitlement-failure');
+        $state = (object) ['reads' => 0];
+        $injected = Mockery::mock(OrganizationEntitlementService::class);
+        $injected->shouldReceive('getEffectiveModuleSlugs')->with(37)->andReturnUsing(static function () use ($state, $failure): array {
+            $state->reads++;
+            if ($state->reads >= 5) { throw $failure; }
+
+            return $state->reads <= 2 ? ['ai-assistant'] : [];
+        });
+        $resolver = $this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks();
+        self::assertTrue($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertFalse($resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        try {
+            $resolver->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]);
+            self::fail('Original entitlement exception must propagate.');
+        } catch (LogicException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        self::assertSame(5, $state->reads);
+        $phases = $metrics->summary()['processing_phases'];
+        self::assertSame(3, $phases['access_module_roles']['count']);
+        self::assertSame(5, $phases['access_module_entitlement']['count']);
+        self::assertSame(1, $phases['access_module_permission']['count']);
+        self::assertStringNotContainsString('private', json_encode($phases, JSON_THROW_ON_ERROR));
+        $request->attributes->set(\App\Services\Monitoring\ApiQueryMetrics::REQUEST_ATTRIBUTE, $disabled = new \App\Services\Monitoring\ApiQueryMetrics(false));
+        $injected = Mockery::mock(OrganizationEntitlementService::class);
+        $injected->shouldReceive('getEffectiveModuleSlugs')->twice()->with(37)->andReturn(['ai-assistant']);
+        self::assertTrue($this->resolver()->withCurrentEntitlementSource($injected)->forCurrentChecks()
+            ->hasModulePermission(self::assignment(), 'ai_assistant.chat', ['organization_id' => 37]));
+        self::assertArrayNotHasKey('processing_phases', $disabled->summary());
+    }
+
     public function testClonePreservesSourceAcrossCurrentAndReadScopesWithoutMutatingOriginal(): void
     {
         $default = Mockery::mock(OrganizationEntitlementService::class);
