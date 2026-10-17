@@ -2279,6 +2279,9 @@ class AIAssistantService
         $toolFailureStage = 'argument_validation';
         try {
             $schema = $tool->getParametersSchema();
+            if ($toolName === 'search_projects') {
+                unset($args['project_id']);
+            }
             if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
