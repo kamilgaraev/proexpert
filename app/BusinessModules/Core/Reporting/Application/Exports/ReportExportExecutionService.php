@@ -36,6 +36,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRen
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRenderer;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
 use App\Services\Storage\OrganizationStoragePath;
@@ -468,10 +469,10 @@ final readonly class ReportExportExecutionService
 
         $operations = [ReportOperation::EXPORT];
         $classification = $source->outputClassification;
-        if ($classification->requiresSensitiveForColumns($columns)) {
+        if ($classification->requiresSensitiveForColumns(ReportExportColumnReferences::all($columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
-        if ($classification->requiresAuditForColumns($columns)) {
+        if ($classification->requiresAuditForColumns(ReportExportColumnReferences::all($columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_AUDIT;
         }
 

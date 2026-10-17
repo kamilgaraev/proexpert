@@ -714,6 +714,34 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
     }
 
+    public function test_task_assignee_name_is_bounded_to_active_organization_members_without_users_directory_permission(): void
+    {
+        $this->extraModules = ['schedule-management'];
+        $this->denied = ['users.view'];
+        [$org, $actor, $project] = $this->fixture();
+        $colleague = User::factory()->create(['name' => 'Ответственный коллега', 'is_active' => true]);
+        $colleague->organizations()->attach($org->id, ['is_active' => true]);
+        $foreign = User::factory()->create(['name' => 'Чужое имя', 'is_active' => true]);
+        $schedule = \App\Models\ProjectSchedule::query()->create(['organization_id' => $org->id, 'project_id' => $project->id,
+            'name' => 'График', 'created_by_user_id' => $actor->id, 'planned_start_date' => '2026-01-01', 'planned_end_date' => '2026-12-31']);
+        foreach ([$colleague, $foreign] as $assignee) {
+            \App\Models\ScheduleTask::query()->create(['schedule_id' => $schedule->id, 'organization_id' => $org->id,
+                'created_by_user_id' => $actor->id, 'assigned_user_id' => $assignee->id, 'name' => 'Задача '.$assignee->id,
+                'task_type' => 'task', 'planned_start_date' => now()->subDays(2)->toDateString(), 'planned_end_date' => now()->subDay()->toDateString(),
+                'planned_duration_days' => 1, 'status' => 'not_started']);
+        }
+        $section = ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'columns' => ['name', 'assigned_user_name']];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame([['Задача '.$colleague->id, 'Ответственный коллега'], ['Задача '.$foreign->id, null]], $report['sections'][0]['rows']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        self::assertNull($this->policy->entityQuery($actor, $org->id, 'user'));
+        $colleague->organizations()->updateExistingPivot($org->id, ['is_active' => false]);
+        self::assertNull($this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows'][0][1]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
     private function fixture(): array
     {
         $org = Organization::factory()->create();

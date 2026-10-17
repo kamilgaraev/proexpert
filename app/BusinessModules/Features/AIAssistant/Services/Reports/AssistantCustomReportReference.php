@@ -60,6 +60,16 @@ final readonly class AssistantCustomReportReference
                         return false;
                     }
                 }
+                if (array_key_exists('assigned_user_ids', $scope)) {
+                    $assigneeIds = $scope['assigned_user_ids'];
+                    if ($scope['entity_type'] !== 'schedule_task' || ! in_array('assigned_user_name', $reference['checked_fields'], true)
+                        || ! is_array($assigneeIds) || count($assigneeIds) > 1000 || count(array_unique($assigneeIds)) !== count($assigneeIds)
+                        || array_filter($assigneeIds, static fn (mixed $id): bool => ! is_int($id) || $id < 1) !== []
+                        || User::query()->whereKey($assigneeIds)->where('is_active', true)->whereHas('organizations',
+                            static fn ($organizations) => $organizations->where('organizations.id', $organizationId)->where('organization_user.is_active', true))->count() !== count($assigneeIds)) {
+                        return false;
+                    }
+                }
 
                 return $ids === [] || $source['query']->whereKey($ids)->count() === count($ids);
             }, true);

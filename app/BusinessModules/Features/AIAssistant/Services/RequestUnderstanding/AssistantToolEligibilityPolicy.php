@@ -45,6 +45,7 @@ final class AssistantToolEligibilityPolicy
     ];
 
     private const MUTATION_TOOLS = [
+        'create_report_subscription', 'update_report_subscription',
         'approve_payment_request', 'create_schedule_task', 'update_schedule_task_status', 'send_project_notification',
         'create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units',
     ];
@@ -184,6 +185,8 @@ final class AssistantToolEligibilityPolicy
     private function matchesMutationIntent(string $toolName, AssistantRequestUnderstanding $understanding): bool
     {
         $intent = match ($toolName) {
+            'create_report_subscription' => 'create',
+            'update_report_subscription' => 'update',
             'create_measurement_unit', 'mass_create_measurement_units', 'create_schedule_task' => 'create',
             'update_measurement_unit', 'update_schedule_task_status' => 'update',
             'delete_measurement_unit' => 'delete',
@@ -194,6 +197,10 @@ final class AssistantToolEligibilityPolicy
 
         if ($understanding->primaryIntent !== $intent) {
             return false;
+        }
+
+        if (in_array($toolName, ['create_report_subscription', 'update_report_subscription'], true)) {
+            return in_array('report_subscription', $understanding->requestedEntities, true);
         }
 
         return ! str_contains($toolName, 'measurement_unit')

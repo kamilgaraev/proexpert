@@ -713,6 +713,11 @@ final class FakeReportSavedViewStore implements ReportSavedViewStore
         return $this->view;
     }
 
+    public function lockVisible(int $organizationId, int $ownerId, string $id): ReportSavedView
+    {
+        return $this->getVisible($organizationId, $ownerId, $id);
+    }
+
     public function markNeedsMigrationLocked(int $organizationId, string $id): ReportSavedView
     {
         throw new \BadMethodCallException(__METHOD__);

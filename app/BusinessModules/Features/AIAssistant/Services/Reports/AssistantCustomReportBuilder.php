@@ -109,6 +109,10 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $selected = array_values(array_unique([$model->getKeyName(), ...$fields]));
+        $assigneeProjection = $scope['entity_type'] === 'schedule_task' && in_array('assigned_user_name', $fields, true);
+        if ($assigneeProjection) {
+            $selected[] = 'assigned_user_id';
+        }
         $counterpartyProjection = $scope['entity_type'] === 'contract' && in_array('counterparty_name', $fields, true);
         if ($counterpartyProjection) {
             $selected[] = '_report_counterparty_id';
@@ -223,6 +227,10 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $scope['plan'] = $section;
+        if ($assigneeProjection) {
+            $scope['assigned_user_ids'] = array_values(array_unique(array_map('intval', array_column(array_filter($raw,
+                static fn (array $row): bool => ($row['assigned_user_name'] ?? null) !== null), 'assigned_user_id'))));
+        }
         $reference = $this->references->create($actor, $organizationId, $scope, array_values(array_unique($fields)),
             $rows->modelKeys(), hash('sha256', json_encode($data, JSON_THROW_ON_ERROR)), $fetchedAt);
 

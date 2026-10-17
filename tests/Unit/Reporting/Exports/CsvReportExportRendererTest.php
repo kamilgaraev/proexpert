@@ -39,8 +39,8 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeZone;
-use Illuminate\Container\Container;
 use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
@@ -64,10 +64,10 @@ abstract class ReportExportRendererTestCase extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
+        $container = new Container;
         $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
         $container->instance('translator', new Translator(
-            new FileLoader(new Filesystem(), dirname(__DIR__, 4).'/lang'),
+            new FileLoader(new Filesystem, dirname(__DIR__, 4).'/lang'),
             'ru',
         ));
         Facade::setFacadeApplication($container);
@@ -82,7 +82,7 @@ abstract class ReportExportRendererTestCase extends TestCase
     }
 
     /**
-     * @param list<array<string, mixed>> $rowSchema
+     * @param  list<array<string, mixed>>  $rowSchema
      * @return array{ReportRunExportSource, PublishedReportDefinition}
      */
     protected function source(
@@ -96,17 +96,19 @@ abstract class ReportExportRendererTestCase extends TestCase
         bool $official = false,
         string $rendererVersion = 'renderer-1',
         array $formats = ['csv', 'xlsx', 'pdf'],
+        string $reportCode = 'report',
     ): array {
         $definitionHash = new Sha256Hash(str_repeat('a', 64));
         $outputClassification = new ReportOutputClassification(
             ReportDataClassification::STANDARD,
-            ['amount'],
-            ['name'],
+            array_values(array_intersect(['amount'], array_column($rowSchema, 'id'))),
+            array_values(array_intersect(['name'], array_column($rowSchema, 'id'))),
             false,
             true,
             true,
         );
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
+            ->code($reportCode)
             ->definitionHash($definitionHash)
             ->contractVersion('contract-1')
             ->formulaVersion('formula-1')
@@ -175,7 +177,8 @@ abstract class ReportExportRendererTestCase extends TestCase
             $rowSchema,
             [],
         );
-        $run = (new ReportRunBuilder())
+        $run = (new ReportRunBuilder)
+            ->reportCode($reportCode)
             ->definitionHash($definitionHash)
             ->contractVersion('contract-1')
             ->formulaVersion('formula-1')
@@ -280,17 +283,17 @@ abstract class ReportExportRendererTestCase extends TestCase
 
     protected function renderBlade(ReportPdfDocument $document): string
     {
-        $files = new Filesystem();
+        $files = new Filesystem;
         $cachePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-blade-'.bin2hex(random_bytes(8));
-        if (!$files->makeDirectory($cachePath, 0700, true)) {
+        if (! $files->makeDirectory($cachePath, 0700, true)) {
             throw new RuntimeException('blade_cache_directory_failed');
         }
 
         try {
             $compiler = new BladeCompiler($files, $cachePath);
-            $engines = new EngineResolver();
+            $engines = new EngineResolver;
             $engines->register('blade', static fn (): CompilerEngine => new CompilerEngine($compiler, $files));
-            $container = new Container();
+            $container = new Container;
             $factory = new Factory(
                 $engines,
                 new FileViewFinder($files, [dirname(__DIR__, 4).'/resources/views']),
@@ -314,9 +317,7 @@ final class InMemoryReportArtifactStream implements ReportArtifactStream
 
     private int $cancellationChecks = 0;
 
-    public function __construct(private readonly ?int $cancelOnCheck = null)
-    {
-    }
+    public function __construct(private readonly ?int $cancelOnCheck = null) {}
 
     public function write(string $bytes): void
     {
@@ -378,8 +379,7 @@ final class FakeReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
     public function __construct(
         private readonly string $bytes = '%PDF-1.7 fake',
         private readonly ?Throwable $failure = null,
-    ) {
-    }
+    ) {}
 
     public function render(ReportPdfDocument $document, ReportPdfRenderBudget $budget): string
     {
@@ -395,11 +395,23 @@ final class FakeReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
 
 final class CsvReportExportRendererTest extends ReportExportRendererTestCase
 {
+    public function test_accepted_report_localizes_id_only_schema_without_changing_snapshot(): void
+    {
+        $schema = [['id' => 'accepted_quantity'], ['id' => 'event_status'], ['id' => 'recognized_on']];
+        [$source] = $this->source(0, rowSchema: $schema, reportCode: 'accepted_production_progress');
+        $stream = new InMemoryReportArtifactStream;
+        $hash = $source->resultHash->value;
+        (new CsvReportExportRenderer)->render($source, $this->data('csv', array_column($schema, 'id')), [], $stream);
+        self::assertSame(['Принятый объём', 'Состояние приёмки', 'Дата признания'], str_getcsv(substr($stream->bytes(), 3), ';', '"', ''));
+        self::assertSame($schema, $source->result->rowSchema);
+        self::assertSame($hash, $source->resultHash->value);
+    }
+
     public function test_streams_utf8_rfc4180_with_locale_headers_and_formula_neutralization(): void
     {
         [$source] = $this->source(2, ['amount' => '13.75']);
-        $stream = new InMemoryReportArtifactStream();
-        $renderer = new CsvReportExportRenderer();
+        $stream = new InMemoryReportArtifactStream;
+        $renderer = new CsvReportExportRenderer;
 
         $count = $renderer->render(
             $source,
@@ -453,9 +465,9 @@ final class CsvReportExportRendererTest extends ReportExportRendererTestCase
             $this->chunk($source, [['name' => 'A', 'amount' => '1.25', 'date' => '2026-07-29']]),
             $this->chunk($source, [['name' => 'B', 'amount' => '2.25', 'date' => '2026-07-30']], 1),
         ];
-        $first = new InMemoryReportArtifactStream();
-        $second = new InMemoryReportArtifactStream();
-        $renderer = new CsvReportExportRenderer();
+        $first = new InMemoryReportArtifactStream;
+        $second = new InMemoryReportArtifactStream;
+        $renderer = new CsvReportExportRenderer;
         $renderer->render($source, $this->data('csv'), $chunks, $first);
         $renderer->render($source, $this->data('csv'), $chunks, $second);
 
@@ -468,14 +480,14 @@ final class CsvReportExportRendererTest extends ReportExportRendererTestCase
         } catch (Throwable $exception) {
             $this->assertLimit($exception);
         }
-        self::assertStringContainsString("A", $cancelled->bytes());
-        self::assertStringNotContainsString("B", $cancelled->bytes());
+        self::assertStringContainsString('A', $cancelled->bytes());
+        self::assertStringNotContainsString('B', $cancelled->bytes());
     }
 
     public function test_row_column_and_projected_byte_limits_are_enforced(): void
     {
         [$source] = $this->source(2);
-        $stream = new InMemoryReportArtifactStream();
+        $stream = new InMemoryReportArtifactStream;
         $renderer = new CsvReportExportRenderer(new ReportExportLimits(1, 3, 1024, 4, 60));
 
         try {
@@ -495,7 +507,7 @@ final class CsvReportExportRendererTest extends ReportExportRendererTestCase
 
         $tiny = new CsvReportExportRenderer(new ReportExportLimits(2, 3, 4, 4, 60));
         try {
-            $tiny->render($source, $this->data('csv'), [], new InMemoryReportArtifactStream());
+            $tiny->render($source, $this->data('csv'), [], new InMemoryReportArtifactStream);
             self::fail('Expected byte limit.');
         } catch (Throwable $exception) {
             $this->assertLimit($exception);

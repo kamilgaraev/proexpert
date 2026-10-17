@@ -27,9 +27,7 @@ final readonly class ReportPdfDocumentBuilder
 
     private const RETAINED_CELL_OVERHEAD_BYTES = 160;
 
-    public function __construct(private ReportExportLimits $limits)
-    {
-    }
+    public function __construct(private ReportExportLimits $limits) {}
 
     /** @param iterable<ReportRowChunk> $chunks */
     public function build(
@@ -67,7 +65,7 @@ final readonly class ReportPdfDocumentBuilder
         );
         $totals = [];
         foreach ($data->columns as $columnId) {
-            if (!array_key_exists($columnId, $source->result->totals)) {
+            if (! array_key_exists($columnId, $source->result->totals)) {
                 continue;
             }
 
@@ -105,7 +103,7 @@ final readonly class ReportPdfDocumentBuilder
                 $rowHtmlBytes = self::HTML_ROW_OVERHEAD_BYTES;
                 $rowRetainedBytes = self::RETAINED_ROW_OVERHEAD_BYTES;
                 foreach ($data->columns as $columnId) {
-                    if (!array_key_exists($columnId, $row->values)) {
+                    if (! array_key_exists($columnId, $row->values)) {
                         throw $this->limit();
                     }
 
@@ -190,7 +188,7 @@ final readonly class ReportPdfDocumentBuilder
 
         $schemaIds = array_fill_keys(array_column($source->result->rowSchema, 'id'), true);
         foreach ($data->columns as $columnId) {
-            if (!isset($schemaIds[$columnId])) {
+            if (! isset($schemaIds[$columnId])) {
                 throw $this->limit();
             }
         }
@@ -205,11 +203,11 @@ final readonly class ReportPdfDocumentBuilder
         ReportPdfRenderBudget $budget,
     ): void {
         if ($stream->cancellationRequested()
-            || !$chunk instanceof ReportRowChunk
+            || ! $chunk instanceof ReportRowChunk
             || count($chunk->rows) > $this->limits->maxChunkRows
-            || !hash_equals($source->snapshot->id, $chunk->snapshotId)
-            || !hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
-            || !hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
+            || ! hash_equals($source->snapshot->id, $chunk->snapshotId)
+            || ! hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
+            || ! hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
             || max(0, memory_get_usage(true) - $memoryAtStart) > $budget->maxMemoryDeltaBytes
             || (hrtime(true) - $startedAt) > $this->limits->maxElapsedSeconds * 1_000_000_000) {
             throw $this->limit();
@@ -241,7 +239,7 @@ final readonly class ReportPdfDocumentBuilder
         int $memoryAtStart,
         ReportPdfRenderBudget $budget,
     ): void {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             $this->reserveScalar(
                 self::normalizeCell($value, new DateTimeZone('UTC')),
                 $projectedHtmlBytes,
@@ -327,15 +325,8 @@ final readonly class ReportPdfDocumentBuilder
         }
 
         return array_map(
-            static function (string $columnId) use ($schema, $data): array {
-                $column = $schema[$columnId];
-                $localizedLabels = $column['labels'] ?? null;
-                $label = is_array($localizedLabels) && isset($localizedLabels[$data->locale])
-                    ? $localizedLabels[$data->locale]
-                    : ($column['label'] ?? $columnId);
-
-                return ['id' => $columnId, 'label' => is_string($label) && trim($label) !== '' ? $label : $columnId];
-            },
+            static fn (string $columnId): array => ['id' => $columnId, 'label' => ReportExportColumnLabels::resolve(
+                $source->run->reportCode, $columnId, $data->locale, $schema[$columnId])],
             $data->columns,
         );
     }

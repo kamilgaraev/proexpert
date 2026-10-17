@@ -22,6 +22,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\OrganizationStoragePath;
 use DateTimeImmutable;
@@ -238,10 +239,10 @@ final readonly class ReconcileCompletedReportArtifacts
         }
 
         $operations = [ReportOperation::EXPORT];
-        if ($source->outputClassification->requiresSensitiveForColumns($columns)) {
+        if ($source->outputClassification->requiresSensitiveForColumns(ReportExportColumnReferences::all($columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
-        if ($source->outputClassification->requiresAuditForColumns($columns)) {
+        if ($source->outputClassification->requiresAuditForColumns(ReportExportColumnReferences::all($columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_AUDIT;
         }
 

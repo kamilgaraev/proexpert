@@ -26,7 +26,9 @@ final readonly class AssistantReportSubscriptionsReader extends AssistantOrganiz
 
     public static function matches(string $query): bool
     {
-        return self::hasIntent($query) && preg_match('/создай|измени|удали|запусти|отправь|приостанови|возобнови|отмени|\bправ[а-яё]*|избран|сотрудник|договор|склад|сч[её]т/iu', $query) !== 1;
+        return self::hasIntent($query)
+            && \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantReportSubscriptionIntent::type($query) === null
+            && preg_match('/создай|измени|удали|запусти|отправь|приостанови|возобнови|отмени|\bправ[а-яё]*|избран|сотрудник|договор|склад|сч[её]т/iu', $query) !== 1;
     }
 
     protected function collect(User $actor, int $organizationId): array

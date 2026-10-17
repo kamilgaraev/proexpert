@@ -13,6 +13,15 @@ return [
         'actual_duration_known' => 'Часы подтверждены',
         'status_label' => 'Состояние',
     ],
+    'accepted_production_columns' => [
+        'recognized_on' => 'Дата признания', 'project_id' => 'Проект', 'wbs_code' => 'Код работы по графику',
+        'work_id' => 'Работа', 'performance_act_id' => 'Акт', 'source_line_type' => 'Вид строки', 'source_line_id' => 'Строка источника',
+        'planned_quantity' => 'Плановый объём', 'reported_quantity' => 'Предъявленный объём', 'accepted_quantity' => 'Принятый объём',
+        'accepted_plan_variance' => 'Отклонение принятого объёма от плана', 'reported_accepted_variance' => 'Разница предъявленного и принятого объёма',
+        'completion_ratio' => 'Доля выполнения', 'unit_dimension' => 'Вид единицы измерения', 'unit_code' => 'Единица измерения',
+        'currency' => 'Валюта', 'approved_rate_minor' => 'Утверждённая ставка в минимальных денежных единицах',
+        'accepted_amount_minor' => 'Принятая сумма в минимальных денежных единицах', 'event_status' => 'Состояние приёмки',
+    ],
     'statuses' => [
         'fact_unconfirmed' => 'Фактические часы не подтверждены',
         'presence_duration_unconfirmed' => 'Присутствие подтверждено, часы не подтверждены',

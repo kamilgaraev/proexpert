@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\ReportExportRendererRegistry;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 use DateTimeImmutable;
 use DateTimeZone;
 
@@ -56,7 +57,7 @@ final readonly class ReportExportCoordinator
 
         $published = $this->publishedFor($currentSource);
         $columns = $published->definition->validatedSelectedColumnIds($data->columns);
-        $fence = $this->authorizationFence($context, $currentSource, $published, $columns, $data->format);
+        $fence = $this->authorizationFence($context, $currentSource, $published, ReportExportColumnReferences::all($columns, $data->sort->field), $data->format);
         $fence->assertCurrent($context);
         $this->renderers->resolve($published, $data);
 

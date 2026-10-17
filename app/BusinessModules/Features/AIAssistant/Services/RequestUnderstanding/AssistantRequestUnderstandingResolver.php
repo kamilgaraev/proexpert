@@ -34,6 +34,12 @@ final class AssistantRequestUnderstandingResolver
         $sectionNavigation = ! in_array('no_navigation', $constraints, true)
             && $this->isSectionNavigation($normalized, $context, $capability);
         $primaryIntent = $sectionNavigation ? 'navigate' : $this->resolvePrimaryIntent($normalized, $constraints);
+        $subscriptionIntent = AssistantReportSubscriptionIntent::type($message);
+        if ($subscriptionIntent !== null) {
+            $requestedEntities[] = 'report_subscription';
+            $primaryIntent = $subscriptionIntent;
+            $sectionNavigation = false;
+        }
         $compoundMutation = AssistantMutationIntent::compoundType($message);
         if ($compoundMutation !== null && ! $this->hasConstraint($constraints, ['no_actions', 'text_only', 'json_only'])) {
             $primaryIntent = $compoundMutation;

@@ -21,6 +21,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 
 final readonly class RetryReportExportHandler implements RetryReportExportAction
 {
@@ -47,10 +48,10 @@ final readonly class RetryReportExportHandler implements RetryReportExportAction
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
         $operations = [ReportOperation::EXPORT];
-        if ($definition->outputClassification->requiresSensitiveForColumns($export->columns)) {
+        if ($definition->outputClassification->requiresSensitiveForColumns(ReportExportColumnReferences::all($export->columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
-        if ($definition->outputClassification->requiresAuditForColumns($export->columns)) {
+        if ($definition->outputClassification->requiresAuditForColumns(ReportExportColumnReferences::all($export->columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_AUDIT;
         }
         (new ReportAuthorizationFence(

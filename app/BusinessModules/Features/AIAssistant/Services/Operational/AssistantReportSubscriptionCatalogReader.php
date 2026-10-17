@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAu
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportCatalogAction;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogDefinitionView;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportColumns;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantMutationIntent;
 use App\Models\User;
 
@@ -43,15 +44,15 @@ final readonly class AssistantReportSubscriptionCatalogReader extends AssistantO
         $auth = app(CurrentReportScopeAuthorizer::class)->authorizeCatalog((int) $actor->id, $organizationId,
             new \DateTimeZone((string) config('app.timezone', 'UTC')), app(ReportHttpAuthorizationTargetResolver::class)->catalog());
         $catalog = app(GetReportCatalogAction::class)->handle($auth->context, $auth);
-        $supported = array_values(array_filter($catalog->definitions, static fn (ReportCatalogDefinitionView $definition): bool =>
-            $definition->scheduling->supportsSubscriptions && $definition->scheduling->reproducibleScheduledSnapshot));
-        $available = array_values(array_filter($supported, static fn (ReportCatalogDefinitionView $definition): bool =>
-            $definition->visibility->canManage && $definition->visibility->canRun && $definition->visibility->canExport && $definition->formats !== []));
+        $supported = array_values(array_filter($catalog->definitions, static fn (ReportCatalogDefinitionView $definition): bool => $definition->scheduling->supportsSubscriptions && $definition->scheduling->reproducibleScheduledSnapshot));
+        $available = array_values(array_filter($supported, static fn (ReportCatalogDefinitionView $definition): bool => $definition->visibility->canManage && $definition->visibility->canRun && $definition->visibility->canExport && $definition->formats !== []));
 
         return ['manifest' => $catalog->manifestSha256->value, 'catalog_total' => count($catalog->definitions),
             'supported_total' => count($supported), 'available_total' => count($available),
             'items' => array_map(static fn (ReportCatalogDefinitionView $definition): array => [
                 'code' => $definition->code, 'title' => trans_message($definition->titleKey), 'formats' => $definition->formats,
+                'filters' => $definition->filters, 'columns' => AssistantPublishedReportColumns::exportable($definition->code, $definition->columns), 'sorts' => $definition->sorts,
+                'can_view_sensitive' => $definition->visibility->canViewSensitive, 'can_view_audit' => $definition->visibility->canViewAudit,
             ], array_slice($available, 0, 20))];
     }
 

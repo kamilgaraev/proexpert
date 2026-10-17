@@ -17,6 +17,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Core\Reporting\Support\ReportExportColumnReferences;
 
 final readonly class CancelReportExportHandler implements CancelReportExportAction
 {
@@ -40,10 +41,10 @@ final readonly class CancelReportExportHandler implements CancelReportExportActi
         }
 
         $operations = [ReportOperation::EXPORT];
-        if ($definition->outputClassification->requiresSensitiveForColumns($export->columns)) {
+        if ($definition->outputClassification->requiresSensitiveForColumns(ReportExportColumnReferences::all($export->columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
-        if ($definition->outputClassification->requiresAuditForColumns($export->columns)) {
+        if ($definition->outputClassification->requiresAuditForColumns(ReportExportColumnReferences::all($export->columns, $export->sort->field))) {
             $operations[] = ReportOperation::VIEW_AUDIT;
         }
         $fence = new ReportAuthorizationFence(

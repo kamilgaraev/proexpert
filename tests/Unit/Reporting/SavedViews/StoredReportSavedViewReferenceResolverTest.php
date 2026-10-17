@@ -26,7 +26,7 @@ final class StoredReportSavedViewReferenceResolverTest extends TestCase
         $view = $this->view();
         $resolver = new StoredReportSavedViewReferenceResolver(new InMemoryReferenceSavedViewStore($view));
 
-        $reference = $resolver->resolve((new ReportExecutionContextBuilder())->build(), $view->id);
+        $reference = $resolver->resolve((new ReportExecutionContextBuilder)->build(), $view->id);
 
         self::assertSame($view->id, $reference->id);
         self::assertGreaterThan(0, $reference->revision);
@@ -37,7 +37,7 @@ final class StoredReportSavedViewReferenceResolverTest extends TestCase
     {
         $store = new InMemoryReferenceSavedViewStore($this->view());
         $resolver = new StoredReportSavedViewReferenceResolver($store);
-        $context = (new ReportExecutionContextBuilder())->build();
+        $context = (new ReportExecutionContextBuilder)->build();
         $reference = $resolver->resolve($context, $store->view->id);
         $store->view = $this->view(name: 'Изменённое представление', updatedAt: '2026-07-26T00:00:01.000000Z');
 
@@ -53,7 +53,7 @@ final class StoredReportSavedViewReferenceResolverTest extends TestCase
 
         $this->expectException(ReportContractException::class);
 
-        $resolver->resolve((new ReportExecutionContextBuilder())->build(), $view->id);
+        $resolver->resolve((new ReportExecutionContextBuilder)->build(), $view->id);
     }
 
     private function view(
@@ -81,13 +81,16 @@ final class StoredReportSavedViewReferenceResolverTest extends TestCase
 
 final class InMemoryReferenceSavedViewStore implements ReportSavedViewStore
 {
-    public function __construct(public ReportSavedView $view)
-    {
-    }
+    public function __construct(public ReportSavedView $view) {}
 
     public function getVisible(int $organizationId, int $ownerId, string $id): ReportSavedView
     {
         return $this->view;
+    }
+
+    public function lockVisible(int $organizationId, int $ownerId, string $id): ReportSavedView
+    {
+        return $this->getVisible($organizationId, $ownerId, $id);
     }
 
     public function list(int $organizationId, int $ownerId, ReportSavedViewWindow $window): ReportSavedViewPage

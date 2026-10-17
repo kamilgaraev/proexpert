@@ -25,9 +25,8 @@ class AssistantActionService
         private readonly AIPermissionChecker $permissionChecker,
         private readonly ConversationManager $conversationManager,
         private readonly LoggingService $logging,
-        private readonly PendingActionStateResolver $stateResolver = new PendingActionStateResolver()
-    ) {
-    }
+        private readonly PendingActionStateResolver $stateResolver = new PendingActionStateResolver
+    ) {}
 
     public function preview(array $actionPayload, int $organizationId, User $user, ?Conversation $conversation = null): array
     {
@@ -37,7 +36,7 @@ class AssistantActionService
 
         return DB::transaction(function () use ($actionPayload, $organizationId, $user, $conversation): array {
             $conversation = $this->assertConversationContext($conversation, $organizationId, $user);
-            $proposal = (new AssistantActionProposalService())->resolve($conversation, $user, $actionPayload);
+            $proposal = (new AssistantActionProposalService)->resolve($conversation, $user, $actionPayload);
             if (($proposal['allowed'] ?? null) !== true) {
                 throw new AuthorizationException($this->assistantMessage('ai_assistant.action_origin_invalid', 'Исходный запрос действия недействителен.'));
             }
@@ -67,10 +66,10 @@ class AssistantActionService
                 throw new RuntimeException($this->assistantMessage('ai_assistant.organization_not_found', 'Организация не найдена.'));
             }
 
-            $targetState = $this->lockTarget($action['tool_name'], $action['arguments'], $organizationId);
-            $state = $this->stateResolver->snapshot($action['tool_name'], $action['arguments'], $organizationId);
+            $targetState = $this->lockTarget($action['tool_name'], $action['arguments'], $organizationId, $user);
+            $state = $this->stateResolver->snapshot($action['tool_name'], $action['arguments'], $organizationId, (int) $user->id);
             $token = Str::random(64);
-            $pending = $existing ?? new AIPendingAction();
+            $pending = $existing ?? new AIPendingAction;
             $pending->fill([
                 'id' => $existing?->id ?? (string) Str::uuid(),
                 'organization_id' => $organization->id,
@@ -105,10 +104,10 @@ class AssistantActionService
                 ],
                 'preview_token' => $token,
                 'expires_at' => $pending->expires_at->toIso8601String(),
-                'before' => $state,
-                'after' => $this->buildAfterState($action['tool_name'], $action['arguments'], $state),
+                'before' => $state['display_before'] ?? $state,
+                'after' => $state['display_after'] ?? $this->buildAfterState($action['tool_name'], $action['arguments'], $state),
                 'warnings' => [],
-                'summary_items' => $this->summaryItems($action['arguments']),
+                'summary_items' => $state['display_after'] ?? $this->summaryItems($action['arguments']),
                 'navigation_target' => null,
                 'executable' => true,
             ];
@@ -153,7 +152,7 @@ class AssistantActionService
             if (! is_string($pending->origin_request_hash) || ! hash_equals($pending->origin_request_hash, $this->requestHash($origin))) {
                 throw new AuthorizationException($this->assistantMessage('ai_assistant.action_origin_invalid', 'Исходный запрос действия недействителен.'));
             }
-            $proposal = (new AssistantActionProposalService())->resolve($conversation, $user, [
+            $proposal = (new AssistantActionProposalService)->resolve($conversation, $user, [
                 'tool_name' => $pending->tool_name, 'arguments' => $pending->arguments,
                 'origin_request_id' => $pending->origin_request_id,
             ]);
@@ -176,8 +175,8 @@ class AssistantActionService
                 throw new RuntimeException($this->assistantMessage('ai_assistant.action_stale', 'Данные изменились. Подготовьте действие заново.'));
             }
 
-            $targetState = $this->lockTarget($pending->tool_name, $pending->arguments, $organizationId);
-            $currentHash = $this->canonicalHash([$this->stateResolver->snapshot($pending->tool_name, $pending->arguments, $organizationId), $targetState]);
+            $targetState = $this->lockTarget($pending->tool_name, $pending->arguments, $organizationId, $user);
+            $currentHash = $this->canonicalHash([$this->stateResolver->snapshot($pending->tool_name, $pending->arguments, $organizationId, (int) $user->id), $targetState]);
             if (! hash_equals((string) $pending->entity_state_hash, $currentHash)) {
                 throw new RuntimeException($this->assistantMessage('ai_assistant.action_stale', 'Данные изменились. Подготовьте действие заново.'));
             }
@@ -240,6 +239,7 @@ class AssistantActionService
             || $this->conversationManager->findAccessibleConversation((int) $fresh->id, $user, $organizationId, true) === null) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
         }
+
         return $fresh;
     }
 
@@ -250,6 +250,7 @@ class AssistantActionService
         if (! $origin instanceof Message || ($origin->metadata['request']['allow_actions'] ?? null) !== true) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.action_origin_invalid', 'Исходный запрос действия недействителен.'));
         }
+
         return $origin;
     }
 
@@ -258,8 +259,11 @@ class AssistantActionService
         return $this->canonicalHash([(int) $origin->id, $origin->content, $origin->metadata]);
     }
 
-    private function lockTarget(string $toolName, array $arguments, int $organizationId): ?array
+    private function lockTarget(string $toolName, array $arguments, int $organizationId, User $actor): ?array
     {
+        if ($toolName === 'update_report_subscription') {
+            return app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::class)->lockTarget($arguments, $actor, $organizationId);
+        }
         $target = match ($toolName) {
             'update_measurement_unit', 'delete_measurement_unit' => [\App\Models\MeasurementUnit::class, 'id'],
             'create_schedule_task' => [\App\Models\ProjectSchedule::class, 'schedule_id'],
@@ -287,9 +291,11 @@ class AssistantActionService
                 if ($parent === null) {
                     throw new AuthorizationException(trans_message('ai_assistant.tool_access_denied'));
                 }
+
                 return ['schedule' => $entity->getAttributes(), 'parent' => $parent->getAttributes()];
             }
         }
+
         return $entity->getAttributes();
     }
 
@@ -304,8 +310,10 @@ class AssistantActionService
                     $value[$key] = $sort($item);
                 }
             }
+
             return $value;
         };
+
         return hash('sha256', json_encode($sort($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     }
 
@@ -378,6 +386,7 @@ class AssistantActionService
         foreach ($arguments as $key => $value) {
             $items[] = ['label' => ucfirst(str_replace('_', ' ', (string) $key)), 'value' => $this->stringifyValue($value)];
         }
+
         return $items;
     }
 
@@ -389,6 +398,7 @@ class AssistantActionService
         if (is_scalar($value) || $value === null) {
             return (string) $value;
         }
+
         return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[complex]';
     }
 
@@ -402,6 +412,7 @@ class AssistantActionService
         if (! is_array($pending->result)) {
             throw new RuntimeException($this->assistantMessage('ai_assistant.action_result_unavailable', 'Результат действия недоступен.'));
         }
+
         return $pending->result;
     }
 
@@ -412,6 +423,7 @@ class AssistantActionService
         } catch (Throwable) {
             return $fallback;
         }
+
         return is_string($translated) && trim($translated) !== '' && $translated !== $key ? trim($translated) : $fallback;
     }
 }

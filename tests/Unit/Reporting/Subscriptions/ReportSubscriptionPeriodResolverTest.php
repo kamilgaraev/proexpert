@@ -25,6 +25,39 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 final class ReportSubscriptionPeriodResolverTest extends TestCase
 {
     #[DataProvider('periods')]
+    public function test_initial_filters_seed_the_same_local_calendar_window(string $mode, string $at, string $timezone, string $from, string $to): void
+    {
+        $definition = (new ReportDefinitionBuilder)->filters([['id' => 'period_from'], ['id' => 'period_to']])->payload();
+        $filters = ['status' => 'accepted', ...($mode === 'fixed_filters' ? ['period_from' => $from, 'period_to' => $to] : [])];
+        $result = (new ReportSubscriptionPeriodResolver)->initialFilters($definition, $filters, ['mode' => $mode], new DateTimeImmutable($at), new DateTimeZone($timezone));
+        self::assertSame($from, $result['period_from']);
+        self::assertSame($to, $result['period_to']);
+        self::assertSame('accepted', $result['status']);
+    }
+
+    public function test_initial_filters_use_declared_inclusive_operators(): void
+    {
+        $definition = (new ReportDefinitionBuilder)->filters([
+            ['id' => 'period_start', 'type' => 'date', 'operators' => ['gte']],
+            ['id' => 'period_end', 'type' => 'date', 'operators' => ['lte']],
+        ])->payload();
+        self::assertSame(['period_start' => ['operator' => 'gte', 'value' => '2026-10-05'],
+            'period_end' => ['operator' => 'lte', 'value' => '2026-10-11']],
+            (new ReportSubscriptionPeriodResolver)->initialFilters($definition, [], ['mode' => 'previous_week'],
+                new DateTimeImmutable('2026-10-16T12:00:00Z'), new DateTimeZone('Europe/Moscow')));
+    }
+
+    public function test_initial_filters_reject_unsupported_date_operators(): void
+    {
+        $definition = (new ReportDefinitionBuilder)->filters([
+            ['id' => 'period_from', 'type' => 'date', 'operators' => ['contains']],
+            ['id' => 'period_to', 'type' => 'date', 'operators' => ['contains']],
+        ])->payload();
+        $this->expectException(ReportContractException::class);
+        (new ReportSubscriptionPeriodResolver)->initialFilters($definition, [], ['mode' => 'previous_week'], new DateTimeImmutable, new DateTimeZone('UTC'));
+    }
+
+    #[DataProvider('periods')]
     public function test_resolves_completed_local_period_and_preserves_scheduled_as_of(string $mode, string $at, string $timezone, string $from, string $to): void
     {
         $input = $this->input(['mode' => $mode], $timezone);

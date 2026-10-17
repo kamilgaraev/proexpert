@@ -43,6 +43,11 @@ final class EloquentReportSavedViewStore implements ReportSavedViewStore
         return $this->dto($this->visible($organizationId, $ownerId, $id));
     }
 
+    public function lockVisible(int $organizationId, int $ownerId, string $id): ReportSavedView
+    {
+        return $this->dto($this->visible($organizationId, $ownerId, $id, true));
+    }
+
     public function create(int $organizationId, int $ownerId, CreateReportSavedViewData $data, string $contractVersion): ReportSavedView
     {
         return DB::transaction(function () use ($organizationId, $ownerId, $data, $contractVersion) {

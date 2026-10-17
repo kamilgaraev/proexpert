@@ -192,12 +192,23 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
+        if (in_array($toolName, \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::TOOLS, true)) {
+            try {
+                app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSubscriptionManager::class)->authorize($user, $organizationId, $toolName, $params);
+
+                return true;
+            } catch (\Throwable) {
+                return false;
+            }
+        }
         if ($toolName === 'get_organization_advance_settings') {
             return in_array('advance-accounting', $policy->effectiveModuleSlugs($user, $organizationId), true)
                 && $policy->canCurrentPermission($user, $organizationId, 'advance_settings.view')
                 && $policy->canCurrentPermission($user, $organizationId, 'finance.view');
         }
-        if ($toolName === 'get_project_material_stock' && ! $policy->canCurrentPermission($user, $organizationId, 'warehouse.manage_stock')) { return false; }
+        if ($toolName === 'get_project_material_stock' && ! $policy->canCurrentPermission($user, $organizationId, 'warehouse.manage_stock')) {
+            return false;
+        }
         if ($toolName === 'get_bim_model_elements') {
             return $policy->canReadDomain($user, $organizationId, 'design')
                 && $policy->canCurrentPermission($user, $organizationId, 'design-management.models.view');
@@ -323,6 +334,7 @@ class AIPermissionChecker
     private function domainsForTool(string $toolName): array
     {
         return match ($toolName) {
+            'create_report_subscription', 'update_report_subscription' => ['reports'],
             'search_projects', 'send_project_notification' => ['projects'],
             'get_bim_model_elements' => ['design'],
             'get_project_material_stock' => ['warehouse', 'projects'],

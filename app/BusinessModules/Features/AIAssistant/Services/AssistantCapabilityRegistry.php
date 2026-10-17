@@ -278,6 +278,13 @@ class AssistantCapabilityRegistry
         $assistantPath = mb_strtolower(trim((string) ($context['ui_state']['assistant_path'] ?? '')));
 
         $capabilities = $this->all();
+        if (\App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantReportSubscriptionIntent::type($query) !== null) {
+            foreach ($capabilities as $capability) {
+                if ($capability['domain'] === 'reports') {
+                    return $capability;
+                }
+            }
+        }
         if (AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
             foreach ($capabilities as $capability) {
                 if ($capability['domain'] === 'finance') {
