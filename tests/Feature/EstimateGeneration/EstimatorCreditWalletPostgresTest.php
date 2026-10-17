@@ -687,6 +687,74 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
     }
 
+    public function test_confirmed_manual_input_with_ignored_system_failure_queues_with_one_approved_reservation(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['status' => 'ready_to_generate', 'input_payload' => [
+            'description' => 'Ремонт помещения по подтверждённым ручным размерам', 'manual_input_revision' => 1,
+            'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'renovation',
+            'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => ['finishing'],
+        ]]);
+        $session->documents()->create([
+            'organization_id' => $organization->id, 'project_id' => $scope->projectId, 'user_id' => $actor->id,
+            'filename' => 'project.pdf', 'mime_type' => 'application/pdf', 'storage_path' => 'org-'.$organization->id.'/project.pdf',
+            'checksum_sha256' => str_repeat('d', 64), 'source_version' => 'sha256:'.str_repeat('d', 64),
+            'status' => 'ignored', 'processing_stage' => 'completed', 'error_code' => 'document_processing_system_failed',
+            'facts_summary' => ['processing_outcome' => ['type' => 'system_failure']],
+        ]);
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:manual-ignored-system-failure');
+        $id = (string) Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id']];
+        $generate = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration::class);
+
+        $result = $generate->handle($session, 0, 'ai_assisted', $actor, creditApproval: $approval);
+
+        self::assertTrue($result->successful);
+        self::assertSame('generating', $result->session->status->value);
+        self::assertSame($id, $result->session->input_payload['generation_credit_operation_id']);
+        self::assertTrue($generate->handle($session->fresh(), 0, 'ai_assisted', $actor, creditApproval: $approval)->successful);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        $readiness = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::class)
+            ->evaluate($session->fresh(['documents']));
+        self::assertSame(0, $readiness['summary']['system_failure_count']);
+        self::assertTrue($readiness['summary']['items'][0]['is_system_failure']);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
+    }
+
+    public function test_ignored_permanent_failure_does_not_change_the_active_document_failure_reason(): void
+    {
+        foreach (['temporary_failure' => 'document_processing_temporarily_unavailable', 'system_failure' => 'document_processing_system_failed'] as $type => $code) {
+            [$organization, $actor, $scope] = $this->fixture();
+            $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+            $session->update(['status' => 'processing_documents', 'processing_stage' => 'processing_documents']);
+            foreach ([['ignored', 'system_failure', 'document_processing_system_failed', 'd'], ['failed', $type, $code, 'e']] as [$status, $outcome, $error, $hash]) {
+                $session->documents()->create([
+                    'organization_id' => $organization->id, 'project_id' => $scope->projectId, 'user_id' => $actor->id,
+                    'filename' => $status.'.pdf', 'mime_type' => 'application/pdf', 'storage_path' => 'org-'.$organization->id.'/'.$status.'.pdf',
+                    'checksum_sha256' => str_repeat($hash, 64), 'source_version' => 'sha256:'.str_repeat($hash, 64),
+                    'status' => $status, 'processing_stage' => 'completed', 'error_code' => $error,
+                    'facts_summary' => ['processing_outcome' => ['type' => $outcome]],
+                ]);
+            }
+
+            $failed = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments::class)->reconcile($session);
+
+            self::assertSame('failed', $failed->status->value);
+            self::assertSame($code, $failed->failure_code);
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
+    }
+
     public function test_simple_paid_understanding_keeps_current_conflict_questions_without_any_model_expense(): void
     {
         $this->seedGlobalSettings();

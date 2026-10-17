@@ -60,10 +60,11 @@ class DocumentGenerationReadinessService
         $documents = $session->relationLoaded('documents')
             ? $session->documents
             : $session->documents()->get();
-        $hasSystemFailure = $documents->contains(
+        $activeDocuments = $documents->where('status', '!=', 'ignored');
+        $hasSystemFailure = $activeDocuments->contains(
             fn (EstimateGenerationDocument $document): bool => $this->systemFailures->detected($document),
         );
-        $needsQualitySettings = $documents->contains(
+        $needsQualitySettings = $activeDocuments->contains(
             fn (EstimateGenerationDocument $document): bool => ! $this->systemFailures->detected($document)
                 && ! $this->readinessClassifier->requiresAction($document)
                 && ! in_array((string) $document->status, self::PENDING_STATUSES, true),
@@ -133,7 +134,7 @@ class DocumentGenerationReadinessService
         $items = $documents->map(fn (EstimateGenerationDocument $document): array => $this->documentState($document, $settings));
         $pending = $items->where('is_pending', true);
         $failed = $items->where('status', 'failed');
-        $systemFailures = $items->where('is_system_failure', true);
+        $systemFailures = $items->where('is_system_failure', true)->where('status', '!=', 'ignored');
         $needsReview = $items->where('status', 'needs_review');
         $ignored = $items->where('status', 'ignored');
         $ready = $items->where('is_ready', true);
