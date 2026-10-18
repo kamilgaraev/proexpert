@@ -34,7 +34,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
         $connection = new class {
             public function getName(): string { return 'private-connection'; }
         };
-        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v2'], 2.5, $connection);
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v3'], 2.5, $connection);
         ApiQueryMetrics::recordRoleCatalogRedisGet($request, $event);
         $second = clone $event;
         $second->command = 'GET';
@@ -42,9 +42,9 @@ final class ApiQuerySourceMetricsTest extends TestCase
         ApiQueryMetrics::recordRoleCatalogRedisGet($request, $second);
         $badValues = [
             ['command', 'mget'], ['command', new \stdClass],
-            ['parameters', ['private-other-key']], ['parameters', ['authorization_roles:v2', 'private-value']],
+            ['parameters', ['private-other-key']], ['parameters', ['private-prefix:authorization_roles:v2']], ['parameters', ['authorization_roles:v3', 'private-value']],
             ['parameters', [new \stdClass]], ['parameters', null],
-            ['parameters', [str_repeat('x', 4097).'authorization_roles:v2']],
+            ['parameters', [str_repeat('x', 4097).'authorization_roles:v3']],
             ['time', INF], ['time', NAN], ['time', -1], ['time', '2.0'], ['time', new \stdClass],
         ];
         foreach ($badValues as [$property, $value]) {
@@ -68,7 +68,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
         [$request, $metrics] = $this->metrics();
         app()->instance('request', $request);
         $tracing = new \App\Services\Monitoring\TracingService(new \OpenTelemetry\API\Trace\NoopTracerProvider);
-        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v2'], 1.5, new class {
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['private-prefix:authorization_roles:v3'], 1.5, new class {
             public function getName(): string { return 'private-connection'; }
         });
         $tracing->recordRedis($event);
@@ -106,7 +106,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
             public int $calls = 0;
             public function __toString(): string { $this->calls++; return 'primary'; }
         };
-        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['authorization_roles:v2'], 1.5, new class {
+        $event = new \Illuminate\Redis\Events\CommandExecuted('get', ['authorization_roles:v3'], 1.5, new class {
             public function getName(): string { return 'primary'; }
         });
         $event->connectionName = $name;
@@ -184,7 +184,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame(300, $summary['processing_phases']['rag_acl_entity_build']['count']);
     }
 
-    public function test_captured_runtime_release_uses_valid_cached_config_and_has_no_private_fallback(): void
+    public function test_runtime_release_uses_valid_cached_config_without_source_capture_or_private_fallback(): void
     {
         $previousRelease = getenv('MOST_RELEASE_SHA');
         $hadConfig = app()->bound('config');
@@ -205,7 +205,11 @@ final class ApiQuerySourceMetricsTest extends TestCase
             putenv('MOST_RELEASE_SHA='.str_repeat('b', 40));
             self::assertSame(str_repeat('b', 40), $metrics->summary()['release_sha']);
             [, $disabled] = $this->metrics(false);
-            self::assertArrayNotHasKey('release_sha', $disabled->summary());
+            self::assertSame(str_repeat('b', 40), $disabled->summary()['release_sha']);
+            self::assertArrayNotHasKey('sql_sources', $disabled->summary());
+            $config->set('ai-assistant.status_snapshot_release', 'private-invalid-release');
+            self::assertNull($disabled->summary()['release_sha']);
+            self::assertStringNotContainsString('private', json_encode($disabled->summary(), JSON_THROW_ON_ERROR));
             self::assertStringNotContainsString('private', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
         } finally {
             $previousRelease === false ? putenv('MOST_RELEASE_SHA') : putenv('MOST_RELEASE_SHA='.$previousRelease);
@@ -609,7 +613,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
             $cache = new Repository(new ArrayStore);
             Cache::swap($cache);
             $catalog = collect(['private-role-fixture' => ['slug' => 'private-role-fixture']]);
-            $cache->put('authorization_roles:v2', $catalog, 60);
+            $cache->put('authorization_roles:v3', $catalog, 60);
             app()->instance('request', $request);
             self::assertSame($catalog, (new RoleScanner)->getAllRoles());
             $failure = $this->createMock(Repository::class);
@@ -702,15 +706,24 @@ final class ApiQuerySourceMetricsTest extends TestCase
             $this->recordFour($request, $event);
             $this->recordFive($request, $event);
         }
+        self::assertCount(40, $metrics->summary()['sql_sources']);
+        self::assertSame(0, $metrics->summary()['sql_sources_dropped_count']);
+        foreach ($queries as $sql) {
+            $event = new QueryExecuted($sql, [], 1.5, new Connection(null));
+            $this->recordSix($request, $event);
+            $this->recordSeven($request, $event);
+            $this->recordEight($request, $event);
+            $this->recordNine($request, $event);
+        }
         ApiQueryMetrics::recordProcessingPhase($request, 'rag_expected_counts', $checkpoint['started_at'], $checkpoint);
         $summary = $metrics->summary();
-        self::assertSame(40, $summary['sql_count']);
-        self::assertSame(60.0, $summary['sql_total_ms']);
-        self::assertCount(32, $summary['sql_sources']);
+        self::assertSame(72, $summary['sql_count']);
+        self::assertSame(108.0, $summary['sql_total_ms']);
+        self::assertCount(64, $summary['sql_sources']);
         self::assertSame(8, $summary['sql_sources_dropped_count']);
-        self::assertSame(32, array_sum(array_column($summary['sql_sources'], 'count')));
-        self::assertSame(40, $summary['processing_phases']['rag_expected_counts']['sql_count']);
-        self::assertSame(60.0, $summary['processing_phases']['rag_expected_counts']['sql_total_ms']);
+        self::assertSame(64, array_sum(array_column($summary['sql_sources'], 'count')));
+        self::assertSame(72, $summary['processing_phases']['rag_expected_counts']['sql_count']);
+        self::assertSame(108.0, $summary['processing_phases']['rag_expected_counts']['sql_total_ms']);
     }
 
     public function test_diagnostic_failure_preserves_query_totals_and_does_not_escape(): void
@@ -780,6 +793,26 @@ final class ApiQuerySourceMetricsTest extends TestCase
     }
 
     private function recordFive(Request $request, QueryExecuted $query): void
+    {
+        ApiQueryMetrics::recordQuery($request, $query);
+    }
+
+    private function recordSix(Request $request, QueryExecuted $query): void
+    {
+        ApiQueryMetrics::recordQuery($request, $query);
+    }
+
+    private function recordSeven(Request $request, QueryExecuted $query): void
+    {
+        ApiQueryMetrics::recordQuery($request, $query);
+    }
+
+    private function recordEight(Request $request, QueryExecuted $query): void
+    {
+        ApiQueryMetrics::recordQuery($request, $query);
+    }
+
+    private function recordNine(Request $request, QueryExecuted $query): void
     {
         ApiQueryMetrics::recordQuery($request, $query);
     }

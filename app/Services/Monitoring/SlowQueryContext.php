@@ -23,6 +23,7 @@ final class SlowQueryContext
 
         return [
             'duration_ms' => round($query->time, 2),
+            'release_sha' => RuntimeReleaseSha::current(),
             'connection' => $query->connectionName,
             'sql' => mb_substr(self::safeSql($query->sql), 0, 4000),
             'sql_length' => mb_strlen($query->sql),

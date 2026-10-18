@@ -13,7 +13,7 @@ final class ApiQueryMetrics
 {
     public const REQUEST_ATTRIBUTE = 'most.api_query_metrics';
 
-    private const MAX_SOURCE_GROUPS = 32;
+    private const MAX_SOURCE_GROUPS = 64;
 
     private const MAX_VARIANTS = 16;
 
@@ -122,7 +122,7 @@ final class ApiQueryMetrics
             || ! is_string($event->command) || strcasecmp($event->command, 'get') !== 0
             || ! is_array($event->parameters) || count($event->parameters) !== 1
             || ! is_string($event->parameters[0] ?? null) || strlen($event->parameters[0]) > 4096
-            || ! str_ends_with($event->parameters[0], 'authorization_roles:v2')
+            || ! str_ends_with($event->parameters[0], 'authorization_roles:v3')
             || (! is_float($event->time) && ! is_int($event->time)) || ! is_finite((float) $event->time) || $event->time < 0
             || ! is_finite($metrics->roleCatalogRedisGet['total_ms'] + $event->time)) {
             return;
@@ -204,9 +204,9 @@ final class ApiQueryMetrics
             'sql_total_ms' => round($this->total, 2),
             'sql_max_ms' => round($this->maximum, 2),
             'sql_groups' => $groups,
+            'release_sha' => RuntimeReleaseSha::current(),
         ];
         if ($this->captureSources) {
-            $summary['release_sha'] = self::runtimeReleaseSha();
             $summary['role_catalog_redis_get'] = $this->roleCatalogRedisGet;
             $summary['role_catalog_redis_get']['total_ms'] = round($this->roleCatalogRedisGet['total_ms'], 2);
             $summary['role_catalog_redis_get']['max_ms'] = round($this->roleCatalogRedisGet['max_ms'], 2);
@@ -271,17 +271,6 @@ final class ApiQueryMetrics
         }
 
         return $result;
-    }
-
-    private static function runtimeReleaseSha(): ?string
-    {
-        try {
-            $release = (app()->bound('config') ? config('ai-assistant.status_snapshot_release') : null) ?: getenv('MOST_RELEASE_SHA');
-        } catch (\Throwable) {
-            return null;
-        }
-
-        return is_string($release) && preg_match('/^[a-f0-9]{40}$/D', $release) === 1 ? $release : null;
     }
 
     public function recordAssistantSnapshot(array $context): void
