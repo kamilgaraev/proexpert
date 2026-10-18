@@ -60,6 +60,7 @@ final readonly class EstimateAuditInput
         // sent before section/context partitioning and admission checks.
         $serverPayload = $this->canonicalPayload();
         $serverPayload['draft'] = $this->draft;
+        $serverPayload['derived_quantities'] = $this->derivedQuantities;
         if (strlen($this->canonicalJson($serverPayload)) > ($partId === 'whole' ? 33_554_432 : 2_097_152)) {
             throw new InvalidArgumentException('estimate_audit_input_too_large');
         }
@@ -76,7 +77,7 @@ final readonly class EstimateAuditInput
             'snapshot_token' => $this->snapshotToken,
             'cycle' => $this->cycle,
             'facts' => $this->facts,
-            'derived_quantities' => $this->derivedQuantities,
+            'derived_quantities' => EstimateAuditQuantityWireProjection::project($this->derivedQuantities),
             'draft' => EstimateAuditDraftWireProjection::project($this->draft, $this->derivedQuantities),
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
@@ -90,6 +91,7 @@ final readonly class EstimateAuditInput
         $payload = $this->canonicalPayload();
         // Replay binds the complete server artifact, including fields deduplicated on wire.
         $payload['draft'] = $this->draft;
+        $payload['derived_quantities'] = $this->derivedQuantities;
         if ($this->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
         }
