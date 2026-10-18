@@ -6,6 +6,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestActionSummaryService;
 use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
@@ -138,6 +139,20 @@ class SiteRequestResource extends JsonResource
                 'name' => $this->assignedUser->name,
                 'email' => $this->assignedUser->email,
             ] : null),
+            'history' => $this->whenLoaded('history', fn () => $this->history->map(fn (SiteRequestHistory $entry) => [
+                'id' => $entry->id,
+                'site_request_id' => $entry->site_request_id,
+                'user_id' => $entry->user_id,
+                'action' => $entry->action,
+                'old_values' => $entry->old_value,
+                'new_values' => $entry->new_value,
+                'comment' => $entry->notes,
+                'created_at' => $entry->created_at?->toIso8601String(),
+                'user' => $entry->relationLoaded('user') && $entry->user ? [
+                    'id' => $entry->user->id,
+                    'name' => $entry->user->name,
+                ] : null,
+            ])->values()),
             'files' => $this->whenLoaded('files', fn () => $this->files->map(fn ($file) => [
                 'id' => $file->id,
                 'name' => $file->name,

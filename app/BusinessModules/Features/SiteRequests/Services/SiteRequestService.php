@@ -509,7 +509,8 @@ class SiteRequestService
                 }
             }
 
-            return $group->fresh(['requests.estimateItem.measurementUnit']);
+            return $this->findGroup($group->id, $group->organization_id, $userId)
+                ?? throw new \LogicException('Updated site request group is unavailable.');
         });
     }
 
