@@ -4,12 +4,24 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementCyclePolicyDefinition;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementCycleStage;
+use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCyclePolicyPublisher;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseRequestResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\SupplierRequestResource;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
@@ -22,6 +34,7 @@ use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use DateTimeImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\DB;
@@ -216,6 +229,73 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
         $this->assertDatabaseHas('supplier_requests', ['id' => $supplierRequest->id, 'status' => 'expired']);
     }
 
+    public function test_purchase_request_list_batches_order_and_receipt_graphs_as_the_page_grows(): void
+    {
+        $this->assertOrderAndReceiptGraphsAreBatched('draft');
+    }
+
+    public function test_purchase_request_list_batches_order_graphs_with_unexpired_sent_supplier_requests(): void
+    {
+        $this->assertOrderAndReceiptGraphsAreBatched('sent');
+    }
+
+    public function test_prepared_purchase_request_list_keeps_nested_payment_state_fresh_on_the_same_request(): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+        $this->createSupplierRequest($purchaseRequest, 'sent');
+        $order = $this->createOrderWithReceipts($purchaseRequest, 1);
+        $payment = PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'document_number' => 'PAY-PAGE-'.$order->id,
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'payer_organization_id' => $context->organization->id,
+            'payee_organization_id' => $context->organization->id,
+            'amount' => 500,
+            'currency' => 'RUB',
+            'paid_amount' => 100,
+            'remaining_amount' => 400,
+            'status' => PaymentDocumentStatus::APPROVED,
+            'metadata' => ['purchase_order_id' => $order->id],
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $page = app(PurchaseRequestService::class)->paginateForListView($context->organization->id);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-requests', 'GET');
+        $request->setUserResolver(fn () => $context->user);
+
+        $before = PurchaseRequestResource::collection($page)->response($request)->getData(true);
+        $payment->update([
+            'paid_amount' => 500,
+            'remaining_amount' => 0,
+            'status' => PaymentDocumentStatus::PAID,
+            'paid_at' => now(),
+        ]);
+        $after = PurchaseRequestResource::collection($page)->response($request)->getData(true);
+
+        $this->assertEquals(100, data_get($before, 'data.0.purchase_orders.0.payment_summary.paid_amount'));
+        $this->assertEquals(500, data_get($after, 'data.0.purchase_orders.0.payment_summary.paid_amount'));
+        $this->assertEquals(100, data_get($after, 'data.0.purchase_orders.0.payment_summary.received_amount'));
+        $this->assertEquals(400, data_get($after, 'data.0.purchase_orders.0.payment_summary.available_paid_amount'));
+        $this->assertFalse(data_get($before, 'data.0.purchase_orders.0.can_receive_materials'));
+        $this->assertTrue(data_get($after, 'data.0.purchase_orders.0.can_receive_materials'));
+        $this->assertSame(1, data_get($after, 'data.0.purchase_orders.0.payment_summary.documents_count'));
+        $this->assertSame(
+            data_get($before, 'data.0.purchase_orders.0.receipts.0.id'),
+            data_get($after, 'data.0.purchase_orders.0.receipts.0.id'),
+        );
+        $this->assertSame(
+            data_get($before, 'data.0.purchase_orders.0.receipts.0.lines'),
+            data_get($after, 'data.0.purchase_orders.0.receipts.0.lines'),
+        );
+    }
+
     public function test_purchase_request_list_and_show_preserve_compact_chain_and_organization_scope(): void
     {
         Event::fake();
@@ -277,6 +357,25 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
         $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $stageSla = [];
+        foreach (ProcurementCycleStage::cases() as $stage) {
+            $stageSla[$stage->value] = 3600;
+        }
+        app(ProcurementCyclePolicyPublisher::class)->publish(
+            new ProcurementCyclePolicyDefinition(
+                organizationId: (int) $context->organization->id,
+                projectId: (int) $project->id,
+                timezone: 'UTC',
+                weeklyWindows: [1 => [['00:00', '23:59']]],
+                exceptions: [],
+                stageSlaSeconds: $stageSla,
+                totalSlaSeconds: 3600,
+                terminalCancellationPolicy: ['request_rejected'],
+                effectiveFrom: DateTimeImmutable::createFromInterface(now('UTC')->subDay())->setTime(0, 0),
+            ),
+            (int) $context->user->id,
+            DateTimeImmutable::createFromInterface(now('UTC')),
+        );
         $siteRequest = $this->createSiteRequest($context, $project);
         $unit = $this->createUnit($context->organization->id, 'Piece', 'pcs');
         $material = $this->createMaterial($context->organization->id, $unit->id, 'Rebar A500', 'REB-PR');
@@ -529,6 +628,110 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
         $this->assertSame(0, PurchaseOrder::query()
             ->where('purchase_request_id', $purchaseRequest->id)
             ->count());
+    }
+
+    private function assertOrderAndReceiptGraphsAreBatched(string $supplierStatus): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $ids = [];
+        for ($index = 0; $index < 8; $index++) {
+            $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+            $purchaseRequest->update(['site_request_id' => $this->createSiteRequest($context, $project)->id]);
+            $this->createSupplierRequest($purchaseRequest, $supplierStatus);
+            $this->createOrderWithReceipts($purchaseRequest);
+            $ids[] = $purchaseRequest->id;
+        }
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $expected = [];
+        foreach (array_reverse($ids) as $id) {
+            $detail = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/procurement/purchase-requests/{$id}");
+            $detail->assertOk();
+            $expected[] = $detail->json('data');
+        }
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $small = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=1&sort_by=id&sort_dir=desc');
+            $smallQueries = DB::getQueryLog();
+            DB::flushQueryLog();
+            $large = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=8&sort_by=id&sort_dir=desc');
+            $largeQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $small->assertOk();
+        $large->assertOk();
+        $this->assertSame(array_reverse($ids), collect($large->json('data'))->pluck('id')->all());
+        $this->assertSame($small->json('data.0'), $large->json('data.0'));
+        foreach ($expected as $index => $payload) {
+            $this->assertSame($payload, $large->json("data.{$index}"));
+            $this->assertCount(2, $large->json("data.{$index}.purchase_orders.0.receipts"));
+        }
+        $graphQueryCount = static fn (array $queries): int => count(array_filter(
+            $queries,
+            static fn (array $query): bool => preg_match('/\\bsum\\s*\\(/i', $query['query']) !== 1
+                && preg_match('/\\b(?:from|join)\\s+"?(?:purchase_requests|purchase_orders|supplier_proposals|supplier_proposal_decisions|purchase_order_items|purchase_receipts|purchase_receipt_lines|organization_warehouses|material_deliveries|site_requests)\\b/i', $query['query']) === 1,
+        ));
+        $this->assertGreaterThan(0, $graphQueryCount($smallQueries));
+        $this->assertLessThanOrEqual($graphQueryCount($smallQueries) + 1, $graphQueryCount($largeQueries));
+    }
+
+    private function createOrderWithReceipts(PurchaseRequest $purchaseRequest, int $receiptCount = 2): PurchaseOrder
+    {
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => $purchaseRequest->organization_id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'order_number' => 'PO-GRAPH-'.$purchaseRequest->id,
+            'order_date' => now()->toDateString(),
+            'status' => 'confirmed',
+            'total_amount' => 500,
+            'currency' => 'RUB',
+        ]);
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $order->id,
+            'material_name' => 'Cement',
+            'quantity' => 5,
+            'unit' => 'pcs',
+            'unit_price' => 100,
+            'total_price' => 500,
+        ]);
+        $warehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $purchaseRequest->organization_id,
+            'name' => 'Procurement graph warehouse',
+            'code' => 'WH-GRAPH-'.$order->id,
+            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
+            'is_main' => true,
+            'is_active' => true,
+        ]);
+        for ($index = 0; $index < $receiptCount; $index++) {
+            $receipt = PurchaseReceipt::query()->create([
+                'organization_id' => $purchaseRequest->organization_id,
+                'purchase_order_id' => $order->id,
+                'warehouse_id' => $warehouse->id,
+                'receipt_number' => 'REC-GRAPH-'.$order->id.'-'.$index,
+                'receipt_date' => now()->toDateString(),
+                'status' => 'posted',
+            ]);
+            $receipt->lines()->create([
+                'purchase_order_item_id' => $item->id,
+                'quantity_received' => 1,
+                'price' => 100,
+                'total_amount' => 100,
+            ]);
+        }
+
+        return $order;
     }
 
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest

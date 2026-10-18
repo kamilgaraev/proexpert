@@ -580,7 +580,7 @@ final class ProcurementChainControllerTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can', 'canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
         });
     }
@@ -589,7 +589,7 @@ final class ProcurementChainControllerTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permission): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturnUsing(
+            $mock->shouldReceive('can', 'canCurrent')->andReturnUsing(
                 static fn (User $user, string $checkedPermission, ?array $context = null): bool => $checkedPermission !== $permission
             );
             $mock->shouldReceive('hasRole')->andReturn(true);
