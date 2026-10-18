@@ -108,6 +108,11 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 
                         continue;
                     }
+                    if (($workItem['quantity'] ?? null) === null) {
+                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->quantityReview($workItem);
+
+                        continue;
+                    }
                     $telemetry->required();
                     if (! is_string($datasetVersion) || $datasetVersion === '') {
                         $telemetry->blocked('dataset_not_pinned');
@@ -249,6 +254,30 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
             'local_estimates' => $data['local_estimates'],
             ...(isset($data['evaluation_policy']) ? ['evaluation_policy' => $data['evaluation_policy']] : []),
         ]);
+    }
+
+    private function quantityReview(array $workItem): array
+    {
+        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
+        $metadata['quantity_key'] ??= $workItem['quantity_formula'] ?? $workItem['key'];
+        $metadata['display_role'] = 'quantity_review';
+        unset($workItem['quantity_evidence'], $workItem['quantity_evidence_id'], $workItem['quantity_evidence_fingerprint'],
+            $workItem['quantity_evidence_source_version'], $workItem['normative_match'], $workItem['normative_rate_code'],
+            $workItem['normative_dataset'], $workItem['price_dataset'], $workItem['price_snapshot']);
+
+        return [...$workItem,
+            'item_type' => 'quantity_review', 'quantity' => null, 'metadata' => $metadata,
+            'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_review_required',
+            'pricing_blocker_message' => null, 'price_source' => null, 'unit_price' => null,
+            'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [],
+            'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null,
+            'labor_cost' => null, 'other_cost' => null, 'total_cost' => null,
+            'validation_flags' => array_values(array_unique([
+                ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+                'quantity_review_required', 'pricing_not_calculated',
+                ...(($workItem['unit'] ?? null) === null ? ['unit_requires_confirmation'] : []),
+            ])),
+        ];
     }
 
     private function blocked(array $workItem, string $status, string $issue): array
