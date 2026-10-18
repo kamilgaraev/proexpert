@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\SiteRequests\Services;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestTemplate;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -12,6 +13,8 @@ use App\Models\User;
 use App\Services\Mobile\MobileProjectAccessResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\Enum;
 
 /**
  * Сервис для работы с шаблонами заявок
@@ -191,6 +194,21 @@ class SiteRequestTemplateService
             ],
             $overrides
         );
+
+        if (! array_key_exists('estimated_cost', $data)
+            && is_array($data['metadata'] ?? null)
+            && array_key_exists('estimated_cost', $data['metadata'])) {
+            $data['estimated_cost'] = $data['metadata']['estimated_cost'];
+        }
+
+        if (($data['personnel_type'] ?? null) === 'worker') {
+            $data['personnel_type'] = PersonnelTypeEnum::GENERAL_WORKER->value;
+        }
+
+        Validator::make($data, [
+            'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
+            'personnel_type' => ['nullable', new Enum(PersonnelTypeEnum::class)],
+        ])->validate();
 
         // Создаем заявку
         $request = $this->requestService->create($organizationId, $userId, $data);

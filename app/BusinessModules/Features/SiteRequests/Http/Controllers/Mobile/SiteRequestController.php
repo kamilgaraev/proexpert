@@ -31,6 +31,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class SiteRequestController extends Controller
 {
@@ -619,6 +620,8 @@ class SiteRequestController extends Controller
                 trans_message('site_requests::mobile.from_template_success'),
                 201
             );
+        } catch (ValidationException $e) {
+            return MobileResponse::error(trans_message('site_requests.validation_error'), 422, $e->errors());
         } catch (\InvalidArgumentException|\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
