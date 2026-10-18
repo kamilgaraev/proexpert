@@ -93,6 +93,12 @@ final class EstimateAuditDraftRecordPlanner
                 }
                 if ($path === 'estimate_composition.request_info') {
                     $candidateLoads = array_intersect_key($loads, $owners);
+                    if (is_array($record)) {
+                        foreach (array_keys($candidateLoads) as $candidateIndex) {
+                            $candidatePart = $parts[$candidateIndex];
+                            $candidateLoads[$candidateIndex] += $this->attachRequestSources($candidatePart, $record, $allFacts, $allEvidence);
+                        }
+                    }
                     $owners = [array_keys($candidateLoads, min($candidateLoads), true)[0] => true];
                 }
                 $bytes = strlen(CanonicalPipelineJson::encode([$record]));

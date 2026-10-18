@@ -149,4 +149,31 @@ final class EstimateAuditDraftRecordPlannerTest extends TestCase
             self::assertSame($result, (new EstimateAuditDraftRecordPlanner)->distribute($draft, $parts));
         }
     }
+
+    public function test_request_assignment_compares_load_after_adding_all_missing_source_proofs(): void
+    {
+        $request = ['index' => 1, 'reason' => 'source_required', 'source_fact_ids' => ['fact:shared', 'fact:large']];
+        $draft = ['estimate_composition' => ['request_info' => [$request]]];
+        $shared = ['id' => 'fact:shared', 'entity_id' => 'room:1', 'value' => '5'];
+        $large = ['id' => 'fact:large', 'entity_id' => 'room:2', 'value' => str_repeat('source basis ', 3000)];
+        $proof = ['fact_id' => 'fact:large', 'locator' => ['evidence_id' => 'evidence:large',
+            'native_reference' => str_repeat('full evidence ', 50)]];
+        $parts = [];
+        for ($i = 0; $i < 2; $i++) {
+            $parts[] = ['draft' => [...$draft, 'local_estimates' => [['key' => 'work:'.$i,
+                'name' => $i === 0 ? 'Source owner' : str_repeat('additional work context ', 1000)]]],
+                'entity_ids' => ['room:1'], 'work_keys' => ['work:'.$i],
+                'facts' => $i === 0 ? [$shared, $large] : [$shared],
+                'evidence' => $i === 0 ? [$proof] : [], 'derived_quantities' => []];
+        }
+
+        $result = (new EstimateAuditDraftRecordPlanner)->distribute($draft, $parts);
+
+        self::assertSame([$request], $result['parts'][0]['draft']['estimate_composition']['request_info']);
+        self::assertSame([], $result['parts'][1]['draft']['estimate_composition']['request_info']);
+        self::assertSame([$shared, $large], $result['parts'][0]['facts']);
+        self::assertSame([$proof], $result['parts'][0]['evidence']);
+        self::assertSame([$shared], $result['parts'][1]['facts']);
+        self::assertSame($result, (new EstimateAuditDraftRecordPlanner)->distribute($draft, $parts));
+    }
 }
