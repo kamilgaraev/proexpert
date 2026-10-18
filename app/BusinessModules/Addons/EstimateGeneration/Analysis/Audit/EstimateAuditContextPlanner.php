@@ -38,13 +38,14 @@ final class EstimateAuditContextPlanner
     private function quantityIndex(array $quantities): array
     {
         $index = ['ids' => [], 'bases' => [], 'bytes' => []];
-        foreach ($quantities as $quantity) {
+        $wireQuantities = EstimateAuditQuantityWireProjection::project($quantities);
+        foreach ($quantities as $position => $quantity) {
             $id = $quantity['id'] ?? null;
             if (! is_string($id)) {
                 continue;
             }
             $index['ids'][$id] = true;
-            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($quantity));
+            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($wireQuantities[$position]));
             if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
                 $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
             }

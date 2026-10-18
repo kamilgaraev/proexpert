@@ -157,6 +157,39 @@ final class EstimateAuditQuantityWireProjectionTest extends TestCase
         self::assertSame(array_column($quantities, 'id'), $seen);
     }
 
+    public function test_unused_quantities_are_balanced_by_projected_size_instead_of_repeated_proofs(): void
+    {
+        $compressible = $this->quantities()[0];
+        $unique = ['id' => 'quantity:unique', 'operand_fact_ids' => [],
+            'quantity_basis' => ['key' => 'unique', 'proof' => str_repeat('unique proof; ', 900)]];
+        $facts = array_map(static fn (string $id): array => ['id' => $id, 'entity_id' => 'wall:1'], $compressible['operand_fact_ids']);
+        $draft = ['project_proof' => str_repeat('retained source; ', 1700),
+            'local_estimates' => [['sections' => [['work_items' => [
+                ['key' => 'large-work', 'proof' => str_repeat('large work; ', 1600)],
+                ['key' => 'small-work'],
+            ]]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [$compressible, $unique], $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        $seen = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            $seen = [...$seen, ...$input->derivedQuantities];
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
+            ]));
+        }
+        self::assertSame(CanonicalPipelineJson::encode([$compressible, $unique]), CanonicalPipelineJson::encode($seen));
+        self::assertSame([], $parts[0]['input']->derivedQuantities);
+        self::assertCount(2, $parts[1]['input']->derivedQuantities);
+    }
+
     private function quantities(): array
     {
         $snapshot = ['scope' => 'current model', 'identities' => array_fill(0, 18, str_repeat('a', 64))];
