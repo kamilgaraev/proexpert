@@ -53,11 +53,15 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
+        if (! $project || ! $entry->journal) {
             return false;
         }
 
-        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
+        if ($entry->journal->status !== JournalStatusEnum::ACTIVE || ! $entry->canBeEdited()) {
+            return false;
+        }
+
+        if (! $this->hasJournalAccess($user, $entry->journal)) {
             return false;
         }
 
@@ -68,10 +72,6 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        if (! $entry->canBeEdited()) {
-            return false;
-        }
-
         return $this->hasModulePermission($user, ['edit', '*'], $project);
     }
 
@@ -79,15 +79,15 @@ class ConstructionJournalEntryPolicy
     {
         $project = $entry->journal?->project;
 
-        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
+        if (! $project || ! $entry->journal) {
             return false;
         }
 
-        if ($entry->status !== JournalEntryStatusEnum::DRAFT || $this->hasApprovalEvents($entry)) {
+        if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->journal->status !== JournalStatusEnum::ACTIVE) {
             return false;
         }
 
-        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
+        if (! $this->hasJournalAccess($user, $entry->journal) || $this->hasApprovalEvents($entry)) {
             return false;
         }
 
