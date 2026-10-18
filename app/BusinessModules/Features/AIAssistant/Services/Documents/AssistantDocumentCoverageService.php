@@ -73,7 +73,8 @@ final class AssistantDocumentCoverageService
         if ($checkpoint !== null) { $checkpoint(); }
         $canManage = $this->canManageSettings($organizationId, $actor);
         if ($checkpoint !== null) { $checkpoint(); }
-        $files = $this->policy->accessibleFiles($actor, $organizationId, false);
+        $fileCandidates = $this->policy->accessibleFilesWithTypes($actor, $organizationId, false);
+        $files = $fileCandidates['query'];
         $operations = app(AssistantOperationsNativeFileAdapter::class);
         foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeFileType) {
             $files->whereNotIn('files.id', $operations->sourceQueryForActor($actor, $organizationId, $nativeFileType)
@@ -87,7 +88,10 @@ final class AssistantDocumentCoverageService
         $documents = $documents->getModel()->newQueryWithoutScopes()->from('assistant_coverage_documents as ai_assistant_documents');
         $types = [];
         if ($checkpoint !== null) { $checkpoint(); }
-        foreach ((clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type') as $fileType) {
+        $fileTypes = $this->canReuseFileTypes($files, $fileCandidates['types'])
+            ? $fileCandidates['types']
+            : (clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type')->all();
+        foreach ($fileTypes as $fileType) {
             $entityType = $this->policy->entityTypeForModel((string) $fileType);
             if ($entityType !== null) $types[(string) $fileType] = $entityType;
         }
@@ -278,6 +282,18 @@ final class AssistantDocumentCoverageService
                 'storage_unverified_file_count' => $nativeMetadataCount,
                 'last_file_id' => $lastVisible, 'completed_at' => $completedAt,
                 'processing' => ! $completed || $unmappedNativeCount > 0]];
+    }
+
+    private function canReuseFileTypes(Builder $files, array $fileTypes): bool
+    {
+        $connection = $files->getQuery()->getConnection();
+        if ($connection !== DB::connection() || $connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() === 0
+            || in_array(null, $fileTypes, true) || in_array('', $fileTypes, true)) {
+            return false;
+        }
+        $snapshot = $connection->selectOne("SELECT pg_catalog.current_setting('transaction_isolation') AS isolation, pg_catalog.current_setting('transaction_read_only') AS read_only");
+
+        return in_array($snapshot->isolation, ['repeatable read', 'serializable'], true) && $snapshot->read_only === 'on';
     }
 
     private function scopeEntityToProject(Builder $query, ?int $projectId, User $actor, int $organizationId, string $type): void

@@ -63,6 +63,28 @@ final class AssistantStatusSnapshotTest extends TestCase
         Cache::flush();
     }
 
+    public function test_snapshot_footprint_ignores_only_the_exact_transaction_mode_probe(): void
+    {
+        $footprint = app(AssistantStatusSnapshotFootprint::class);
+        $probe = "SELECT pg_catalog.current_setting('transaction_isolation') AS isolation, pg_catalog.current_setting('transaction_read_only') AS read_only";
+        $observed = $footprint->capture(static function () use ($probe): int {
+            DB::selectOne($probe);
+
+            return DB::table('files')->count();
+        });
+        self::assertSame(['public.files'], $observed['relations']);
+        self::assertArrayNotHasKey('reason', $observed);
+        foreach ([
+            ["SELECT pg_catalog.current_setting('search_path') AS path", []],
+            [$probe.', (SELECT COUNT(*) FROM files) AS file_count', []],
+            ['SELECT pg_catalog.current_setting(?) AS isolation, pg_catalog.current_setting(?) AS read_only', ['transaction_isolation', 'transaction_read_only']],
+        ] as [$sql, $bindings]) {
+            $rejected = $footprint->capture(static fn () => DB::selectOne($sql, $bindings));
+            self::assertNull($rejected['relations']);
+            self::assertSame('unsupported_function:current_setting', $rejected['reason']);
+        }
+    }
+
     public function test_source_counts_stay_current_while_indexed_chunks_change(): void
     {
         [$organization, $actor, $project, $service] = $this->scope();

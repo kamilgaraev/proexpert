@@ -62,6 +62,7 @@ final class AssistantStatusSnapshotFootprint
             $seen[$key] = true;
             if ($sql === "SELECT current_setting('statement_timeout') AS timeout, current_setting('jit') AS jit, current_setting('work_mem') AS work_mem, (SELECT setting::int FROM pg_settings WHERE name = 'work_mem') AS work_mem_kb"
                 || $sql === "SELECT set_config('statement_timeout', ?, true), set_config('jit', ?, true), set_config('work_mem', ?, true)") { continue; }
+            if ($bindings === [] && $sql === "SELECT pg_catalog.current_setting('transaction_isolation') AS isolation, pg_catalog.current_setting('transaction_read_only') AS read_only") { continue; }
             $syntax = preg_replace("/'(?:''|[^'])*'/s", "''", $sql);
             if (preg_match('/\$[A-Za-z_0-9]*\$|--|\/\*|\bU&/i', $syntax ?? '') === 1 || preg_match("/\\bE'/i", $sql) === 1) { return ['value' => $value, 'relations' => null, 'reason' => 'unsupported_sql_literal']; }
             $identifier = '(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z_0-9]*)';
