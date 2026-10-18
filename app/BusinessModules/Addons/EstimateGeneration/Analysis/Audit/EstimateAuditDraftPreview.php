@@ -106,13 +106,17 @@ final readonly class EstimateAuditDraftPreview
                 'maximum_part_bytes' => $prepared['maximum_part_bytes'],
                 'maximum_serialized_input_bytes' => $prepared['maximum_serialized_input_bytes'],
                 'parts' => array_map(static function (array $part): array {
-                    $encoded = CanonicalPipelineJson::encode(['audit_input' => $part['input']->canonicalPayload()]);
+                    $payload = $part['input']->canonicalPayload();
+                    $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
 
                     return ['id' => $part['id'], 'work_keys' => $part['work_keys'], 'payload_bytes' => strlen($encoded),
                         'serialized_input_upper' => EstimatorTextWirePolicy::serializedInputUpper([
                             ['role' => 'system', 'content' => str_repeat('context ', 1024)],
                             ['role' => 'user', 'content' => $encoded],
-                        ]), 'quantity_ids' => array_column($part['input']->derivedQuantities, 'id')];
+                        ]), 'quantity_ids' => array_column($part['input']->derivedQuantities, 'id'),
+                        'field_bytes' => array_map(self::bytes(...), $payload),
+                        'draft_field_bytes' => array_map(self::bytes(...), $payload['draft']),
+                        'context_manifest_field_bytes' => array_map(self::bytes(...), $payload['context_manifest'] ?? [])];
                 }, $prepared['parts'])];
         } catch (InvalidArgumentException $exception) {
             if ($exception->getMessage() === 'estimate_audit_snapshot_changed') {
