@@ -29,7 +29,7 @@ class OrganizationEntitlementService
             || preg_match('//u', $moduleSlug) !== 1) {
             $slugs = $this->getEffectiveModuleSlugs($organizationId);
         } else {
-            $slugs = $this->effectiveModuleQuery($organizationId)->where('modules.slug', $moduleSlug)->pluck('slug')->all();
+            $slugs = $this->effectiveModuleQuery($organizationId, $moduleSlug)->where('modules.slug', $moduleSlug)->pluck('slug')->all();
         }
 
         return array_values(array_filter($slugs, static fn (mixed $slug): bool => $slug === $moduleSlug));
@@ -43,7 +43,7 @@ class OrganizationEntitlementService
             ->get();
     }
 
-    private function effectiveModuleQuery(int $organizationId): Builder
+    private function effectiveModuleQuery(int $organizationId, ?string $moduleSlug = null): Builder
     {
         $slugs = array_values(array_unique(array_merge(
             $this->packageCatalog->foundationModules(),
@@ -51,6 +51,9 @@ class OrganizationEntitlementService
         )));
         foreach (app(\App\Services\Billing\Bank\BankPaymentProofAccess::class)->packageSlugs($organizationId) as $packageSlug) {
             $slugs = array_merge($slugs, $this->packageCatalog->tierModules($packageSlug, 'standard'));
+        }
+        if ($moduleSlug !== null) {
+            $slugs = array_values(array_filter($slugs, static fn (string $slug): bool => $slug === $moduleSlug));
         }
 
         $packages = [];
@@ -64,11 +67,11 @@ class OrganizationEntitlementService
                 continue;
             }
             $modules = $this->packageCatalog->tierModules($packageSlug, 'standard');
-            if ($modules === []) {
+            if ($modules === [] || $moduleSlug !== null && ! in_array($moduleSlug, $modules, true)) {
                 continue;
             }
             $packages[$packageSlug]['slugs'][] = $subscriptionSlug;
-            $packages[$packageSlug]['modules'] = $modules;
+            $packages[$packageSlug]['modules'] = $moduleSlug === null ? $modules : [$moduleSlug];
         }
         $subscriptions = $packages === [] ? null : $this->activePackageSubscriptionQuery($organizationId)
             ->selectRaw('1')->where(static function (Builder $query) use ($packages): void {
