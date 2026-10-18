@@ -8,6 +8,13 @@
         <p>Сумма договора: <span class="contract-specification-money">{{ \App\Services\Contract\ContractWorkSpecificationMoney::format($specification['contract']['amount']) }}</span>. Условия НДС указаны в строках.</p>
     @endif
     <table class="contract-work-specification">
+        <colgroup>
+            <col style="width:5%">
+            <col style="width:31%">
+            <col style="width:15%">
+            <col style="width:22%">
+            <col style="width:27%">
+        </colgroup>
         <tr>
             <td style="width:5%"><p>№</p></td>
             <td style="width:31%"><p>Работа / смета</p></td>
