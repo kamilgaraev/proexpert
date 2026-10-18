@@ -130,7 +130,7 @@ final class TenderRegistryService
             $query->where('project_id', (int) $filters['project_id']);
         }
 
-        if (!empty($filters['overdue'])) {
+        if (filter_var($filters['overdue'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
             $query->whereNotIn('status', self::TERMINAL_STATUSES)->where('next_deadline_at', '<', now());
         }
 

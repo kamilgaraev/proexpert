@@ -72,6 +72,42 @@ final class TenderModuleWorkflowTest extends TestCase
         $this->assertNotContains('TD-FOREIGN', $ids);
     }
 
+    public function test_list_interprets_overdue_query_values_as_booleans(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowModuleAccess();
+        $this->allowAdminAccess();
+
+        $sourceId = $this->createTenderSource($context->organization->id, 'manual', 'Ручной ввод');
+        $futureTenderId = $this->createTender($context->organization->id, $sourceId, [
+            'number' => 'TD-FUTURE',
+            'next_deadline_at' => now()->addDays(3),
+        ]);
+        $overdueTenderId = $this->createTender($context->organization->id, $sourceId, [
+            'number' => 'TD-OVERDUE',
+            'next_deadline_at' => now()->subDay(),
+        ]);
+
+        foreach (['false', '0'] as $value) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/tenders?overdue=' . $value);
+
+            $response->assertOk()->assertJsonPath('meta.total', 2);
+            $this->assertEqualsCanonicalizing(
+                [$futureTenderId, $overdueTenderId],
+                array_column($response->json('data'), 'id'),
+            );
+        }
+
+        foreach (['true', '1'] as $value) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/tenders?overdue=' . $value)
+                ->assertOk()
+                ->assertJsonPath('meta.total', 1)
+                ->assertJsonPath('data.0.id', $overdueTenderId);
+        }
+    }
+
     public function test_create_validates_customer_and_source_requirements(): void
     {
         $context = AdminApiTestContext::create();
@@ -321,6 +357,8 @@ final class TenderModuleWorkflowTest extends TestCase
         $this->mock(AccessController::class, function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')
                 ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'tenders');
+            $mock->shouldReceive('canUserAccessModule')
+                ->andReturnUsing(static fn (User $user, string $moduleSlug): bool => $moduleSlug === 'tenders');
         });
     }
 
