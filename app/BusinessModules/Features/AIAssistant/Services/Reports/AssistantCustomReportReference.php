@@ -44,6 +44,13 @@ final readonly class AssistantCustomReportReference
                 $scope = $reference['_report_scope'];
                 $source = $this->sources->resolve($actor, $organizationId, $scope['domain'], $scope['entity_type'], $scope['project_id']);
                 $this->sources->assertFields($reference['checked_fields'], $source['fields']);
+                if ($scope['entity_type'] === 'completed_work') {
+                    if (! $this->canReadWorkDependencies($actor, $organizationId, $scope['work_projection_dependencies'] ?? null)) {
+                        return false;
+                    }
+                } elseif (array_key_exists('work_projection_dependencies', $scope)) {
+                    return false;
+                }
                 $ids = $reference['_report_ids'];
                 if (! is_array($ids) || count($ids) > 1000 || count(array_unique($ids)) !== count($ids)) {
                     return false;
@@ -85,6 +92,28 @@ final readonly class AssistantCustomReportReference
         } catch (Throwable) {
             return false;
         }
+    }
+
+    private function canReadWorkDependencies(User $actor, int $organizationId, mixed $dependencies): bool
+    {
+        $types = array_keys(AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS);
+        if (! is_array($dependencies) || count($dependencies) !== count($types) || array_diff($types, array_keys($dependencies)) !== []) {
+            return false;
+        }
+        foreach ($dependencies as $entityType => $ids) {
+            if (! is_array($ids) || ! array_is_list($ids) || count($ids) > 4000 || count(array_unique($ids)) !== count($ids)
+                || array_filter($ids, static fn (mixed $id): bool => ! is_int($id) || $id < 1) !== []) {
+                return false;
+            }
+            if ($ids !== []) {
+                $query = $this->policy->entityQuery($actor, $organizationId, $entityType);
+                if ($query === null || $query->whereKey($ids)->count() !== count($ids)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private function canReadPaymentContracts(\Illuminate\Database\Eloquent\Builder $query, mixed $links, array $ids): bool

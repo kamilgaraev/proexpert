@@ -109,6 +109,11 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $selected = array_values(array_unique([$model->getKeyName(), ...$fields]));
+        if ($scope['entity_type'] === 'completed_work') {
+            foreach (AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS as $dependencies) {
+                $selected = [...$selected, ...array_keys($dependencies)];
+            }
+        }
         $assigneeProjection = $scope['entity_type'] === 'schedule_task' && in_array('assigned_user_name', $fields, true);
         if ($assigneeProjection) {
             $selected[] = 'assigned_user_id';
@@ -232,6 +237,16 @@ final readonly class AssistantCustomReportBuilder
             }
         }
         $scope['plan'] = $section;
+        if ($scope['entity_type'] === 'completed_work') {
+            $scope['work_projection_dependencies'] = [];
+            foreach (AssistantCompletedWorkReportProjection::DEPENDENCY_COLUMNS as $entityType => $dependencies) {
+                $ids = [];
+                foreach (array_keys($dependencies) as $field) {
+                    $ids = [...$ids, ...array_column($raw, $field)];
+                }
+                $scope['work_projection_dependencies'][$entityType] = array_values(array_unique(array_map('intval', array_filter($ids))));
+            }
+        }
         if ($paymentContractProjection) {
             $scope['contract_links'] = array_map(static fn (array $row): array => ['document_id' => (int) $row['id'],
                 'contract_id' => $row['contract_id'] === null ? null : (int) $row['contract_id']], $raw);

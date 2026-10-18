@@ -556,7 +556,7 @@ final class AssistantCustomReportsTest extends TestCase
     {
         [$org, $actor, $project] = $this->fixture();
         foreach (['task', 'task_item', 'work_item', 'estimate', 'stored', 'work_type', 'deleted_task',
-            'foreign_task_project', 'foreign_estimate_project', 'foreign_unit', 'system_unit'] as $case) {
+            'foreign_task_project', 'foreign_estimate_project', 'foreign_unit', 'foreign_system_unit'] as $case) {
             DB::beginTransaction();
             try {
                 $data = $this->linkedWorkForReport($org, $actor, $project);
@@ -591,11 +591,12 @@ final class AssistantCustomReportsTest extends TestCase
                     $hidden = Project::factory()->create(['organization_id' => $org->id]);
                     DB::table('project_schedules')->where('id', $data['schedule_id'])->update(['project_id' => $hidden->id]);
                     $expected = ['Работа сметы', 'м²'];
-                } elseif (in_array($case, ['foreign_unit', 'system_unit'], true)) {
+                } elseif (in_array($case, ['foreign_unit', 'foreign_system_unit'], true)) {
                     $foreign = Organization::factory()->create();
-                    $unitId = $this->reportWorkUnit($foreign, 'шт', $case === 'system_unit');
+                    $unitId = $this->reportWorkUnit($foreign, 'шт', $case === 'foreign_system_unit');
                     DB::table('schedule_tasks')->where('id', $data['task_id'])->update(['measurement_unit_id' => $unitId]);
-                    $expected[1] = $case === 'system_unit' ? 'шт' : 'кг';
+                    self::assertFalse($this->policy->canReadEntity($actor, $org->id, 'measurement_unit', $unitId));
+                    $expected[1] = 'кг';
                 }
                 $section = ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id,
                     'columns' => ['name', 'unit', 'quantity']];
@@ -661,6 +662,30 @@ final class AssistantCustomReportsTest extends TestCase
         }
     }
 
+    public function test_completed_work_report_rechecks_related_source_access_and_publication_dependencies(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $this->linkedWorkForReport($org, $actor, $project);
+        $section = ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id,
+            'columns' => ['name', 'unit']];
+        $original = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame(['Работа графика', 'шт'], $original['sections'][0]['rows'][0]);
+        foreach (['schedule.view' => ['Работа сметы', 'м²'], 'budget-estimates.view' => ['Работа графика', 'шт'],
+            'work_types.view' => ['Работа графика', 'шт'], 'measurement_units.view' => ['Работа графика', 'л']] as $permission => $expected) {
+            $this->denied = [$permission];
+            $report = $this->builder->build($this->plan($section), $actor, $org->id);
+            self::assertSame($expected, $report['sections'][0]['rows'][0], $permission);
+            self::assertFalse($this->references->canReadReference($actor, $org->id, $original['source_refs'][0]), $permission);
+            self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]), $permission);
+        }
+        $this->denied = [];
+        $this->extraModules = [];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame(['Сохранённая работа', 'л'], $report['sections'][0]['rows'][0]);
+        self::assertFalse($this->references->canReadReference($actor, $org->id, $original['source_refs'][0]));
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
     public function test_completed_work_source_hints_preserve_works_and_schedule_for_a_planning_report(): void
     {
         $this->extraModules = ['schedule-management'];
@@ -681,6 +706,7 @@ final class AssistantCustomReportsTest extends TestCase
 
     private function linkedWorkForReport(Organization $org, User $actor, Project $project): array
     {
+        $this->extraModules = ['schedule-management', 'budget-estimates', 'catalog-management'];
         $units = [];
         foreach (['шт', 'кг', 'м²', 'м³'] as $unit) {
             $units[$unit] = $this->reportWorkUnit($org, $unit);

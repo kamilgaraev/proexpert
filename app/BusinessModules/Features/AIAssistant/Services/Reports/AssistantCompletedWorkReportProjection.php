@@ -14,19 +14,31 @@ use Illuminate\Database\Query\JoinClause;
 
 final class AssistantCompletedWorkReportProjection
 {
-    public function apply(Builder $works, int $organizationId, array $columns): Builder
+    public const DEPENDENCY_COLUMNS = [
+        'schedule_task' => ['_report_work_task_id' => 'report_work_task.id'],
+        'estimate_item' => ['_report_work_item_id' => 'report_work_item.id', '_report_work_task_item_id' => 'report_work_task_item.id'],
+        'work_type' => ['_report_work_type_id' => 'report_work_type.id'],
+        'measurement_unit' => ['_report_work_task_unit_id' => 'report_work_task_unit.id', '_report_work_task_item_unit_id' => 'report_work_task_item_unit.id',
+            '_report_work_item_unit_id' => 'report_work_item_unit.id', '_report_work_type_unit_id' => 'report_work_type_unit.id'],
+    ];
+
+    public function apply(Builder $works, int $organizationId, array $columns, array $related): Builder
     {
-        $tasks = ScheduleTask::query()->join('project_schedules', 'project_schedules.id', '=', 'schedule_tasks.schedule_id')
+        $tasks = ($related['schedule_task'] ?? ScheduleTask::query()->whereRaw('1 = 0'))
+            ->join('project_schedules', 'project_schedules.id', '=', 'schedule_tasks.schedule_id')
             ->where('schedule_tasks.organization_id', $organizationId)->where('project_schedules.organization_id', $organizationId)
             ->whereNull('project_schedules.deleted_at')->select(['schedule_tasks.id', 'schedule_tasks.name',
                 'schedule_tasks.measurement_unit_id', 'schedule_tasks.estimate_item_id', 'project_schedules.project_id']);
-        $items = EstimateItem::query()->join('estimates', 'estimates.id', '=', 'estimate_items.estimate_id')
+        $items = ($related['estimate_item'] ?? EstimateItem::query()->whereRaw('1 = 0'))
+            ->join('estimates', 'estimates.id', '=', 'estimate_items.estimate_id')
             ->where('estimates.organization_id', $organizationId)->whereNull('estimates.deleted_at')
             ->select(['estimate_items.id', 'estimate_items.name', 'estimate_items.measurement_unit_id', 'estimates.project_id']);
-        $types = WorkType::query()->where(static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)->orWhereNull('organization_id'))
-            ->select(['id', 'name', 'measurement_unit_id']);
-        $units = MeasurementUnit::query()->where(static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)->orWhere('is_system', true))
-            ->select(['id', 'short_name']);
+        $types = ($related['work_type'] ?? WorkType::query()->whereRaw('1 = 0'))
+            ->where(static fn (Builder $query): Builder => $query->where('work_types.organization_id', $organizationId)->orWhereNull('work_types.organization_id'))
+            ->select(['work_types.id', 'work_types.name', 'work_types.measurement_unit_id']);
+        $units = ($related['measurement_unit'] ?? MeasurementUnit::query()->whereRaw('1 = 0'))
+            ->where(static fn (Builder $query): Builder => $query->where('measurement_units.organization_id', $organizationId)->orWhere('measurement_units.is_system', true))
+            ->select(['measurement_units.id', 'measurement_units.short_name']);
         $works->scopes(['physicalFacts'])->select(array_map(
             static fn (string $column): string => 'completed_works.'.$column,
             array_values(array_diff($columns, ['quantity'])),
@@ -51,6 +63,11 @@ final class AssistantCompletedWorkReportProjection
             ->selectRaw("COALESCE(report_work_task_unit.short_name, report_work_task_item_unit.short_name,
                 report_work_item_unit.short_name, NULLIF(completed_works.additional_info->>'unit_of_measurement', ''),
                 report_work_type_unit.short_name) AS unit");
+        foreach (self::DEPENDENCY_COLUMNS as $dependencies) {
+            foreach ($dependencies as $alias => $column) {
+                $works->selectRaw($column.' AS '.$alias);
+            }
+        }
 
         return $works->getModel()->newModelQuery()->fromSub($works, 'completed_works');
     }
