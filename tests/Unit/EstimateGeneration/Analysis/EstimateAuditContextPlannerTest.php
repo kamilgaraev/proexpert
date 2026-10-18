@@ -14,6 +14,107 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_unused_quantity_placement_accounts_for_required_proofs_that_appear_later_in_the_input(): void
+    {
+        $facts = [['id' => 'fact:area', 'entity_id' => 'house:1', 'value' => '40']];
+        $quantities = [];
+        foreach (['unused' => 1000, 'small' => 450, 'large' => 1800] as $key => $repetitions) {
+            $quantities[] = ['id' => 'quantity:'.$key, 'entity_id' => 'house:1', 'operand_fact_ids' => ['fact:area'],
+                'quantity_basis' => ['key' => $key, 'decision_reason' => str_repeat('confirmed dimension; ', $repetitions)]];
+        }
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [
+            ['key' => 'work:small', 'entity_id' => 'house:1', 'quantity_formula' => 'quantity:small',
+                'description' => str_repeat('source dimensions; ', 30)],
+            ['key' => 'work:large', 'entity_id' => 'house:1', 'quantity_formula' => 'quantity:large'],
+        ]]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft,
+            [['fact_id' => 'fact:area', 'locator' => ['page' => 1]]], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        foreach ($parts as $part) {
+            $expected = $part['work_keys'] === ['work:small'] ? ['quantity:unused', 'quantity:small'] : ['quantity:large'];
+            self::assertSame($expected, array_column($part['input']->derivedQuantities, 'id'));
+            self::assertSame($facts, $part['input']->facts);
+            self::assertSame($root->evidence, $part['input']->evidence);
+        }
+        self::assertSame($draft, $root->draft);
+    }
+
+    public function test_shared_entity_quantities_follow_work_dependencies_and_unused_proofs_are_preserved_once(): void
+    {
+        $facts = $evidence = $quantities = [];
+        for ($i = 0; $i < 3; $i++) {
+            $factId = 'fact:dimension:'.$i;
+            $facts[] = ['id' => $factId, 'entity_id' => 'house:1', 'value' => '40', 'unit' => 'm2'];
+            $evidence[] = ['fact_id' => $factId, 'locator' => ['evidence_id' => 'evidence:'.$i, 'page' => 1]];
+            $quantities[] = ['id' => 'quantity:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => [$factId],
+                'quantity_basis' => ['key' => 'quantity:'.$i, 'amount' => '40', 'unit' => 'm2',
+                    'formula_inputs' => ['entity_id' => 'house:1', 'operands' => [['fact_id' => $factId,
+                        'decision_reason' => str_repeat('confirmed dimension; ', 1000)]]]]];
+        }
+        $basis = $quantities[0]['quantity_basis'];
+        $items = [
+            ['key' => 'work:0', 'entity_id' => 'house:1', 'quantity_formula' => 'floor_area',
+                'quantity_evidence' => $basis, 'quantity_basis_details' => $basis],
+            ['key' => 'work:1', 'entity_id' => 'house:1', 'quantity_formula' => 'quantity:1'],
+            ['key' => 'work:2', 'entity_id' => 'house:1', 'quantity_formula' => 'quantity:0'],
+        ];
+        $draft = ['local_estimates' => [['key' => 'house', 'sections' => [['key' => 'structure', 'work_items' => $items]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        $seenFacts = $seenEvidence = $seenQuantities = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            $quantityIds = array_column($input->derivedQuantities, 'id');
+            foreach ($part['work_keys'] as $workKey) {
+                self::assertContains($workKey === 'work:1' ? 'quantity:1' : 'quantity:0', $quantityIds);
+            }
+            if (! in_array('work:1', $part['work_keys'], true)) {
+                self::assertNotContains('quantity:1', $quantityIds);
+            }
+            $factIds = array_column($input->facts, 'id');
+            foreach ($input->derivedQuantities as $quantity) {
+                foreach ($quantity['operand_fact_ids'] as $factId) {
+                    self::assertContains($factId, $factIds);
+                    self::assertContains($factId, array_column($input->evidence, 'fact_id'));
+                }
+            }
+            $wire = $input->canonicalPayload();
+            if (in_array('work:0', $part['work_keys'], true)) {
+                $row = $wire['draft']['local_estimates'][0]['sections'][0]['work_items'][0];
+                self::assertArrayNotHasKey('quantity_basis_details', $row);
+                self::assertSame(1, preg_match('/^audit_input\.derived_quantities\[([0-9]+)\]\.quantity_basis$/D', $row['quantity_basis_details_ref'], $matches));
+                self::assertSame($basis, $wire['derived_quantities'][(int) $matches[1]]['quantity_basis']);
+            }
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $wire])],
+            ]));
+            array_push($seenFacts, ...$factIds);
+            array_push($seenEvidence, ...array_column($input->evidence, 'fact_id'));
+            array_push($seenQuantities, ...$quantityIds);
+        }
+        self::assertSame(2, array_count_values($seenQuantities)['quantity:0']);
+        self::assertSame(1, array_count_values($seenQuantities)['quantity:1']);
+        self::assertSame(1, array_count_values($seenQuantities)['quantity:2']);
+        self::assertEqualsCanonicalizing(array_column($facts, 'id'), array_values(array_unique($seenFacts)));
+        self::assertEqualsCanonicalizing(array_column($evidence, 'fact_id'), array_values(array_unique($seenEvidence)));
+        self::assertSame($draft, $root->draft);
+        self::assertSame(array_column($parts, 'id'), array_column((new EstimateAuditContextPlanner($policy))->prepare($root, 458752), 'id'));
+    }
+
     public function test_exact_selected_composition_copies_reuse_the_full_work_proof_without_changing_the_business_item(): void
     {
         $composition = [str_repeat('Prepare the concrete base; ', 10), str_repeat('Install reinforcing mesh; ', 8)];

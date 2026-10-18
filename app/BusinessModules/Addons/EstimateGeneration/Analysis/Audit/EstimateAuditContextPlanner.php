@@ -20,9 +20,10 @@ final class EstimateAuditContextPlanner
     public function prepare(EstimateAuditInput $root, int $maximumBytes): array
     {
         $this->lastFailedPartSizes = [];
+        $quantityIndex = $this->quantityIndex($root->derivedQuantities);
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft, $size);
-            $inputs = $this->prepareParts($root, $parts, $maximumBytes);
+            $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
             if ($inputs !== null) {
                 return $inputs;
             }
@@ -33,7 +34,24 @@ final class EstimateAuditContextPlanner
         throw new InvalidArgumentException('estimate_audit_context_requires_source_split');
     }
 
-    private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes): ?array
+    private function quantityIndex(array $quantities): array
+    {
+        $index = ['ids' => [], 'bases' => []];
+        foreach ($quantities as $quantity) {
+            $id = $quantity['id'] ?? null;
+            if (! is_string($id)) {
+                continue;
+            }
+            $index['ids'][$id] = true;
+            if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
+                $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
+            }
+        }
+
+        return $index;
+    }
+
+    private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes, array $quantityIndex): ?array
     {
         $full = $root->canonicalPayload();
         $allFit = true;
@@ -59,9 +77,13 @@ final class EstimateAuditContextPlanner
                 return $prepared;
             }
         }
-        $factsById = [];
+        $factsById = $factBytes = [];
         foreach ($root->facts as $fact) {
             $factsById[$fact['id']] = $fact;
+            $factBytes[$fact['id']] = strlen(CanonicalPipelineJson::encode($fact));
+        }
+        foreach ($root->evidence as $record) {
+            $factBytes[$record['fact_id']] += strlen(CanonicalPipelineJson::encode($record));
         }
         $wanted = $entities = $quantityIds = [];
         foreach ($parts as $index => $part) {
@@ -97,23 +119,49 @@ final class EstimateAuditContextPlanner
                         }
                     }
                 }
-                foreach ($root->derivedQuantities as $quantity) {
-                    if (($quantity['id'] ?? null) === ($item['quantity_formula'] ?? null)) {
-                        $quantityIds[$index][$quantity['id']] = true;
-                    }
+                $quantityId = $item['quantity_formula'] ?? null;
+                if (is_string($quantityId) && isset($quantityIndex['ids'][$quantityId])) {
+                    $quantityIds[$index][$quantityId] = true;
+                }
+                $basisQuantityIds = is_array($basis) && $basis !== []
+                    ? ($quantityIndex['bases'][CanonicalPipelineJson::encode($basis)] ?? []) : [];
+                foreach ($basisQuantityIds as $id) {
+                    $quantityIds[$index][$id] = true;
                 }
             }
         }
         // Assign unused facts to a deterministic part rather than dropping them.
         // This lets its auditor detect a missing work from an otherwise unused source.
-        $loads = array_fill_keys(array_keys($parts), 0);
+        $loads = [];
+        foreach ($parts as $index => $part) {
+            $loads[$index] = strlen(CanonicalPipelineJson::encode(EstimateAuditDraftWireProjection::project($part['draft'], $root->derivedQuantities)));
+        }
+        foreach ($root->derivedQuantities as $quantity) {
+            $id = $quantity['id'] ?? null;
+            if (! is_string($id)) {
+                throw new InvalidArgumentException('estimate_audit_quantity_identity_invalid');
+            }
+            foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                if (! isset($factsById[$factId])) {
+                    throw new InvalidArgumentException('estimate_audit_quantity_dependency_missing');
+                }
+            }
+            foreach ($parts as $index => $_) {
+                if (isset($quantityIds[$index][$id])) {
+                    $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
+                    foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                        $wanted[$index][$factId] = true;
+                    }
+                }
+            }
+        }
         $assignedEntities = [];
         foreach ($root->facts as $fact) {
             foreach ($parts as $index => $_) {
                 if (isset($wanted[$index][$fact['id']]) || (is_string($fact['entity_id'] ?? null)
                     && isset($entities[$index][$fact['entity_id']]))) {
                     $wanted[$index][$fact['id']] = true;
-                    $loads[$index] += strlen(CanonicalPipelineJson::encode($fact));
+                    $loads[$index] += $factBytes[$fact['id']];
                 }
             }
         }
@@ -135,46 +183,53 @@ final class EstimateAuditContextPlanner
             }
             foreach ($owners as $index) {
                 if (! isset($wanted[$index][$fact['id']])) {
-                    $loads[$index] += strlen(CanonicalPipelineJson::encode($fact));
+                    $loads[$index] += $factBytes[$fact['id']];
                 }
                 $wanted[$index][$fact['id']] = true;
             }
         }
         foreach ($root->derivedQuantities as $quantity) {
-            $id = $quantity['id'] ?? null;
-            if (! is_string($id)) {
-                throw new InvalidArgumentException('estimate_audit_quantity_identity_invalid');
-            }
+            $id = $quantity['id'];
             $owners = [];
             foreach ($parts as $index => $_) {
-                if (isset($quantityIds[$index][$id]) || (is_string($quantity['entity_id'] ?? null)
-                    && isset($entities[$index][$quantity['entity_id']]))) {
+                if (isset($quantityIds[$index][$id])) {
                     $owners[] = $index;
                 }
             }
-            if ($owners === []) {
-                $entity = $quantity['entity_id'] ?? null;
-                if (is_string($entity) && isset($assignedEntities[$entity])) {
-                    $owners = $assignedEntities[$entity];
-                } else {
-                    foreach ($parts as $index => $_) {
-                        foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                            if (isset($wanted[$index][$factId])) {
-                                $owners[] = $index;
-                                break;
-                            }
+            if ($owners !== []) {
+                continue;
+            }
+            $entity = $quantity['entity_id'] ?? null;
+            if (is_string($entity) && isset($assignedEntities[$entity])) {
+                $owners = $assignedEntities[$entity];
+            } else {
+                foreach ($parts as $index => $_) {
+                    foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                        if (isset($wanted[$index][$factId])) {
+                            $owners[] = $index;
+                            break;
                         }
                     }
                 }
-                if ($owners === []) {
-                    $owners[] = array_keys($loads, min($loads), true)[0];
+            }
+            if ($owners === []) {
+                $owners = array_keys($parts);
+            }
+            $candidateLoads = array_intersect_key($loads, array_fill_keys($owners, true));
+            foreach (array_keys($candidateLoads) as $index) {
+                foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                    if (! isset($wanted[$index][$factId])) {
+                        $candidateLoads[$index] += $factBytes[$factId];
+                    }
                 }
             }
+            $owners = [array_keys($candidateLoads, min($candidateLoads), true)[0]];
             foreach ($owners as $index) {
                 $quantityIds[$index][$id] = true;
+                $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
                 foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                    if (! isset($factsById[$factId])) {
-                        throw new InvalidArgumentException('estimate_audit_quantity_dependency_missing');
+                    if (! isset($wanted[$index][$factId])) {
+                        $loads[$index] += $factBytes[$factId];
                     }
                     $wanted[$index][$factId] = true;
                 }
