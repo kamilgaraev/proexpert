@@ -531,6 +531,165 @@ final class AssistantCustomReportsTest extends TestCase
         self::assertLessThanOrEqual(40, count($hints[0]['fields']));
     }
 
+    public function test_completed_work_report_exposes_the_actual_work_name_and_quantity_unit(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $typeId = DB::table('work_types')->insertGetId(['organization_id' => $org->id,
+            'name' => 'Общий вид работы', 'code' => 'REPORT-WORK', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+        \App\Models\CompletedWork::withoutEvents(fn () => \App\Models\CompletedWork::query()->create([
+            'organization_id' => $org->id, 'project_id' => $project->id, 'user_id' => $actor->id,
+            'work_type_id' => $typeId, 'quantity' => '1.2500', 'completed_quantity' => '1.2500',
+            'price' => 0, 'total_amount' => 0, 'completion_date' => '2026-10-01', 'status' => 'confirmed',
+            'additional_info' => ['work_name' => 'Шпаклёвка стен', 'unit_of_measurement' => 'м²'],
+        ]));
+        $report = $this->builder->build($this->plan(['domain' => 'works', 'entity_type' => 'completed_work',
+            'columns' => ['name', 'quantity', 'unit'], 'project_id' => $project->id]), $actor, $org->id);
+
+        self::assertSame(1, $report['sections'][0]['source_row_count']);
+        self::assertSame('Шпаклёвка стен', $report['sections'][0]['rows'][0][0]);
+        self::assertSame(1.25, (float) $report['sections'][0]['rows'][0][1]);
+        self::assertSame('м²', $report['sections'][0]['rows'][0][2]);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+    }
+
+    public function test_completed_work_report_resolves_scoped_parent_names_and_units_before_reporting(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        foreach (['task', 'task_item', 'work_item', 'estimate', 'stored', 'work_type', 'deleted_task',
+            'foreign_task_project', 'foreign_estimate_project', 'foreign_unit', 'system_unit'] as $case) {
+            DB::beginTransaction();
+            try {
+                $data = $this->linkedWorkForReport($org, $actor, $project);
+                $expected = ['Работа графика', 'шт'];
+                if (in_array($case, ['task_item', 'work_item'], true)) {
+                    DB::table('schedule_tasks')->where('id', $data['task_id'])->update(['measurement_unit_id' => null]);
+                    $expected[1] = 'кг';
+                    if ($case === 'work_item') {
+                        DB::table('schedule_tasks')->where('id', $data['task_id'])->update(['estimate_item_id' => null]);
+                        $expected[1] = 'м²';
+                    }
+                } elseif (in_array($case, ['estimate', 'stored', 'work_type', 'foreign_estimate_project'], true)) {
+                    DB::table('completed_works')->where('id', $data['work_id'])->update(['schedule_task_id' => null]);
+                    $expected = ['Работа сметы', 'м²'];
+                    if (in_array($case, ['stored', 'work_type'], true)) {
+                        DB::table('completed_works')->where('id', $data['work_id'])->update(['estimate_item_id' => null]);
+                        $expected = ['Сохранённая работа', 'л'];
+                    }
+                    if ($case === 'work_type') {
+                        DB::table('completed_works')->where('id', $data['work_id'])->update(['additional_info' => '{}']);
+                        $expected = ['Общий вид работы', 'м³'];
+                    }
+                    if ($case === 'foreign_estimate_project') {
+                        $hidden = Project::factory()->create(['organization_id' => $org->id]);
+                        DB::table('estimates')->where('id', $data['estimate_id'])->update(['project_id' => $hidden->id]);
+                        $expected = ['Сохранённая работа', 'л'];
+                    }
+                } elseif ($case === 'deleted_task') {
+                    DB::table('schedule_tasks')->where('id', $data['task_id'])->update(['deleted_at' => now()]);
+                    $expected = ['Работа сметы', 'м²'];
+                } elseif ($case === 'foreign_task_project') {
+                    $hidden = Project::factory()->create(['organization_id' => $org->id]);
+                    DB::table('project_schedules')->where('id', $data['schedule_id'])->update(['project_id' => $hidden->id]);
+                    $expected = ['Работа сметы', 'м²'];
+                } elseif (in_array($case, ['foreign_unit', 'system_unit'], true)) {
+                    $foreign = Organization::factory()->create();
+                    $unitId = $this->reportWorkUnit($foreign, 'шт', $case === 'system_unit');
+                    DB::table('schedule_tasks')->where('id', $data['task_id'])->update(['measurement_unit_id' => $unitId]);
+                    $expected[1] = $case === 'system_unit' ? 'шт' : 'кг';
+                }
+                $section = ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id,
+                    'columns' => ['name', 'unit', 'quantity']];
+                $report = $this->builder->build($this->plan($section), $actor, $org->id);
+                self::assertSame(1, $report['sections'][0]['source_row_count'], $case);
+                self::assertSame($expected, array_slice($report['sections'][0]['rows'][0], 0, 2), $case);
+                self::assertSame(1.25, (float) $report['sections'][0]['rows'][0][2], $case);
+                $grouped = array_replace($section, ['columns' => ['unit'], 'group_by' => ['unit'],
+                    'metrics' => [['field' => 'quantity', 'operation' => 'sum', 'label' => 'Объём']]]);
+                $summary = $this->builder->build($this->plan($grouped), $actor, $org->id)['sections'][0]['rows'];
+                self::assertSame($expected[1], $summary[0][0], $case);
+                self::assertSame(1.25, (float) $summary[0][1], $case);
+                self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]), $case);
+                $this->denied = ['contracts.completed_works.view'];
+                self::assertFalse($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]), $case);
+                $this->denied = [];
+            } finally {
+                DB::rollBack();
+            }
+        }
+    }
+
+    public function test_completed_work_source_hints_preserve_works_and_schedule_for_a_planning_report(): void
+    {
+        $this->extraModules = ['schedule-management'];
+        [$org, $actor] = $this->fixture();
+        $query = 'Подготовь Excel к планёрке по проекту «Учебный ПТО»: выполненные работы с объёмами и единицами на первом листе, задачи графика с ответственными на втором.';
+        $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query, []);
+        $hints = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSourceHints(
+            new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $this->sources, $this->policy))->forRequest($actor, $org->id, $query, $understanding);
+        $domains = array_column($hints, null, 'domain');
+        self::assertLessThanOrEqual(3, count($hints));
+        self::assertArrayHasKey('works', $domains);
+        self::assertArrayHasKey('name', $domains['works']['fields']);
+        self::assertArrayHasKey('unit', $domains['works']['fields']);
+        self::assertSame(['unit'], $domains['works']['dimensions']['quantity']);
+        self::assertArrayHasKey('schedule', $domains);
+        self::assertSame('assigned_user_name', $domains['schedule']['preferred_fields']['responsible']);
+    }
+
+    private function linkedWorkForReport(Organization $org, User $actor, Project $project): array
+    {
+        $units = [];
+        foreach (['шт', 'кг', 'м²', 'м³'] as $unit) {
+            $units[$unit] = $this->reportWorkUnit($org, $unit);
+        }
+        $typeId = DB::table('work_types')->insertGetId(['organization_id' => $org->id, 'name' => 'Общий вид работы',
+            'code' => 'REPORT-LINKED-WORK', 'measurement_unit_id' => $units['м³'], 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $estimate = \App\Models\Estimate::withoutEvents(fn () => \App\Models\Estimate::query()->create([
+            'organization_id' => $org->id, 'project_id' => $project->id, 'number' => 'REPORT-ESTIMATE', 'name' => 'Смета',
+            'type' => 'local', 'status' => 'draft', 'estimate_date' => '2026-10-01', 'total_amount' => 0, 'total_amount_with_vat' => 0, 'vat_rate' => 0,
+        ]));
+        $section = \App\Models\EstimateSection::withoutEvents(fn () => \App\Models\EstimateSection::query()->create([
+            'estimate_id' => $estimate->id, 'section_number' => '1', 'full_section_number' => '1', 'name' => 'Работы', 'sort_order' => 1, 'section_total_amount' => 0,
+        ]));
+        $items = [];
+        foreach (['Работа сметы' => 'м²', 'Позиция задачи' => 'кг'] as $name => $unit) {
+            $items[] = \App\Models\EstimateItem::withoutEvents(fn () => \App\Models\EstimateItem::query()->create([
+                'estimate_id' => $estimate->id, 'estimate_section_id' => $section->id, 'position_number' => '1.'.(count($items) + 1),
+                'name' => $name, 'item_type' => 'work', 'measurement_unit_id' => $units[$unit], 'quantity' => 1.25, 'quantity_total' => 1.25, 'unit_price' => 0, 'total_amount' => 0,
+            ]));
+        }
+        $schedule = \App\Models\ProjectSchedule::withoutEvents(fn () => \App\Models\ProjectSchedule::query()->create([
+            'organization_id' => $org->id, 'project_id' => $project->id, 'created_by_user_id' => $actor->id,
+            'name' => 'График', 'planned_start_date' => '2026-10-01', 'planned_end_date' => '2026-10-02',
+        ]));
+        $task = \App\Models\ScheduleTask::withoutEvents(fn () => \App\Models\ScheduleTask::query()->create([
+            'schedule_id' => $schedule->id, 'organization_id' => $org->id, 'created_by_user_id' => $actor->id,
+            'estimate_item_id' => $items[1]->id, 'measurement_unit_id' => $units['шт'], 'name' => 'Работа графика', 'task_type' => 'task',
+            'planned_start_date' => '2026-10-01', 'planned_end_date' => '2026-10-02', 'planned_duration_days' => 1, 'status' => 'completed', 'progress_percent' => 100,
+        ]));
+        $work = \App\Models\CompletedWork::withoutEvents(fn () => \App\Models\CompletedWork::query()->create([
+            'organization_id' => $org->id, 'project_id' => $project->id, 'user_id' => $actor->id, 'work_type_id' => $typeId,
+            'schedule_task_id' => $task->id, 'estimate_item_id' => $items[0]->id, 'quantity' => '1.2500', 'completed_quantity' => '1.2500',
+            'price' => 0, 'total_amount' => 0, 'completion_date' => '2026-10-01', 'status' => 'confirmed',
+            'additional_info' => ['work_name' => 'Сохранённая работа', 'unit_of_measurement' => 'л'],
+        ]));
+
+        return ['work_id' => $work->id, 'task_id' => $task->id, 'schedule_id' => $schedule->id,
+            'estimate_id' => $estimate->id];
+    }
+
+    private function reportWorkUnit(Organization $org, string $unit, bool $system = false): int
+    {
+        $id = DB::table('measurement_units')->where('organization_id', $org->id)->where('short_name', $unit)->whereNull('deleted_at')->value('id');
+        if ($id === null) {
+            $id = DB::table('measurement_units')->insertGetId(['organization_id' => $org->id,
+                'name' => $unit, 'short_name' => $unit, 'type' => 'work', 'created_at' => now(), 'updated_at' => now()]);
+        }
+        DB::table('measurement_units')->where('id', $id)->update(['is_system' => $system]);
+
+        return (int) $id;
+    }
+
     public function test_contract_source_matches_active_organization_placement_with_shared_and_revoked_access(): void
     {
         [$org, $actor, $project] = $this->fixture();

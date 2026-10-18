@@ -21,9 +21,9 @@ final readonly class AssistantCustomReportSourceHints
         if (! AssistantCustomReportIntent::matches($query, $understanding)) {
             return [];
         }
-        $domains = [];
+        $domains = preg_match('/выполненн[а-яё]*\s+работ|фактическ[а-яё]*\s+работ|объ[её]м[а-яё]*\s+работ/iu', $query) === 1 ? ['works'] : [];
         foreach (['project' => 'projects', 'contract' => 'contracts', 'estimate' => 'estimates', 'warehouse' => 'warehouse',
-            'payment' => 'finance', 'schedule' => 'schedule'] as $entity => $domain) {
+            'payment' => 'finance', 'schedule' => 'schedule', 'work' => 'works', 'completed_work' => 'works'] as $entity => $domain) {
             if (in_array($entity, $understanding->requestedEntities, true)) {
                 $domains[] = $domain;
             }
@@ -52,7 +52,7 @@ final readonly class AssistantCustomReportSourceHints
                         'fields' => array_map(static fn (array $field): string => $field['type'], $fields),
                         'preferred_fields' => array_filter(['counterparty' => isset($fields['counterparty_name']) ? 'counterparty_name' : null,
                             'project' => isset($fields['project_id']) ? 'project_id' : null,
-                            'responsible' => isset($fields['assigned_user_id']) ? 'assigned_user_id' : null,
+                            'responsible' => isset($fields['assigned_user_name']) ? 'assigned_user_name' : (isset($fields['assigned_user_id']) ? 'assigned_user_id' : null),
                             'overdue' => isset($fields['is_overdue']) ? 'is_overdue' : null,
                             'role' => isset($fields['primary_role_label']) ? 'primary_role_label' : null,
                             'approval' => isset($fields['is_approved']) ? 'is_approved' : null]),
