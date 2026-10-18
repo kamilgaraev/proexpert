@@ -8,6 +8,8 @@ use App\BusinessModules\Features\AIAssistant\Contracts\ProjectPulse\ProjectPulse
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseFact;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts;
+use App\Enums\Contract\ContractStatusEnum;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 
 class ProjectPulseContractFactSource implements ProjectPulseFactSourceInterface
@@ -34,7 +36,23 @@ class ProjectPulseContractFactSource implements ProjectPulseFactSourceInterface
         }
 
         return $this->table($context, 'contracts')
-            ->whereNotIn('contracts.status', ['closed', 'completed', 'cancelled'])
+            ->where('contracts.status', ContractStatusEnum::ACTIVE->value)
+            ->when($this->hasTable('contract_organization_views'), function (Builder $query) use ($context): void {
+                $query->where(function (Builder $placement) use ($context): void {
+                    $placement->whereExists(function (Builder $view) use ($context): void {
+                        $view->selectRaw('1')
+                            ->from('contract_organization_views as pulse_contract_views')
+                            ->whereColumn('pulse_contract_views.contract_id', 'contracts.id')
+                            ->where('pulse_contract_views.organization_id', $context->organizationId)
+                            ->where('pulse_contract_views.visibility', 'active')
+                            ->whereNull('pulse_contract_views.access_revoked_at');
+                    })->orWhereNotExists(function (Builder $view): void {
+                        $view->selectRaw('1')
+                            ->from('contract_organization_views as pulse_contract_views')
+                            ->whereColumn('pulse_contract_views.contract_id', 'contracts.id');
+                    });
+                });
+            })
             ->whereNotNull('contracts.end_date')
             ->whereDate('contracts.end_date', '<', $context->date->toDateString())
             ->limit($this->limit())
