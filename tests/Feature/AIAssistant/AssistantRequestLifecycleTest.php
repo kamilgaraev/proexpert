@@ -1931,7 +1931,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('periodClarificationReplies')]
-    public function test_period_year_reply_restores_the_verified_project_before_planning_and_keeps_raw_bubble(string $reply, bool $continuation): void
+    public function test_period_year_reply_restores_the_verified_project_before_planning_and_keeps_raw_bubble(string $reply, bool $continuation, bool $alternateShape = false): void
     {
         $original = 'Сверь выполненные работы с графиком проекта «Северный дом» за октябрь';
         $semantic = 'Сверь выполненные работы с графиком проекта текущий за октябрь';
@@ -1965,7 +1965,9 @@ final class AssistantRequestLifecycleTest extends TestCase
         });
         $service = $this->providerService($provider, null, $orchestrator);
         $service->probeProviderDuringAsk = true;
-        $payload = $this->quote(['message' => $reply, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], conversationId: $conversation->id);
+        $uiContext = $alternateShape ? ['entity_references' => [['entity_type' => 'project', 'entity_id' => 104]]]
+            : ['entity_refs' => [['type' => 'project', 'id' => 104]]];
+        $payload = $this->quote(['message' => $reply, 'context' => $uiContext], conversationId: $conversation->id);
         $service->ask($reply, $this->organization->id, $this->actor, $conversation->id, $payload);
         self::assertSame($reply, Message::query()->where('role', 'user')->sole()->content);
         $context = $conversation->fresh()->context;
@@ -1980,7 +1982,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     public static function periodClarificationReplies(): array
     {
-        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true]];
+        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true]];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

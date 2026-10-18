@@ -24,7 +24,7 @@ final class AssistantProductionSchedulePeriod
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:(?:за|в|во)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d))';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -140,7 +140,7 @@ final class AssistantProductionSchedulePeriod
             && self::validArguments(['project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]])) {
             return ['query' => $query, 'project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]];
         }
-        $pattern = '/\b(?:за\s+'.self::MONTH.'|(?:за|в|во)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
+        $pattern = '/\b(?:за\s+'.self::MONTH.'|(?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
         if (preg_match_all($pattern, $query) !== 1) {
             return null;
         }
@@ -158,7 +158,7 @@ final class AssistantProductionSchedulePeriod
         $context = is_array($payload['context'] ?? null) ? $payload['context'] : [];
         foreach (['entity_refs', 'entity_references'] as $key) {
             $refs = is_array($context[$key] ?? null) ? $context[$key] : [];
-            $context[$key] = [...array_values(array_filter($refs, static fn ($ref): bool => is_array($ref) && ($ref['type'] ?? null) !== 'project')),
+            $context[$key] = [...array_values(array_filter($refs, static fn ($ref): bool => is_array($ref) && ($ref['type'] ?? null) !== 'project' && ($ref['entity_type'] ?? null) !== 'project')),
                 ['type' => 'project', 'id' => $clarification['project_id']]];
         }
         $payload['context'] = $context;
@@ -182,7 +182,7 @@ final class AssistantProductionSchedulePeriod
             return $period?->dateFrom !== null && $period->dateTo !== null
                 ? ['period_start' => $period->dateFrom, 'period_end' => $period->dateTo] : $unresolved;
         }
-        if ($years === 0 && preg_match('/\b(?:за|в|во)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+квартал[е]?\b/iu', $query, $relative) === 1) {
+        if ($years === 0 && preg_match('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+квартал[е]?\b/iu', $query, $relative) === 1) {
             if (self::hasOtherPeriod($query, $relative[0])) {
                 return $unresolved;
             }
@@ -195,7 +195,7 @@ final class AssistantProductionSchedulePeriod
 
             return ['period_start' => $start->format('Y-m-d'), 'period_end' => $end->format('Y-m-d')];
         }
-        if ($years !== 1 || preg_match('/\b(?:за|в|во)\s+('.self::QUARTER_NUMBER.')\s+квартал[ае]?\s+((?:19|20)\d{2})\b/iu', $query, $quarter) !== 1
+        if ($years !== 1 || preg_match('/\b(?:за|в|во|на)\s+('.self::QUARTER_NUMBER.')\s+квартал[ае]?\s+((?:19|20)\d{2})\b/iu', $query, $quarter) !== 1
             || self::hasOtherPeriod($query, $quarter[0])) {
             return $unresolved;
         }
@@ -213,10 +213,16 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace_callback('/\b(?:в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {
+            $relative = mb_strtolower($match[1]);
+            $adjective = str_starts_with($relative, 'эт') ? 'этот' : (str_starts_with($relative, 'текущ') ? 'текущий' : 'прошлый');
+
+            return 'за '.$adjective.' '.(str_starts_with(mb_strtolower($match[2]), 'год') ? 'год' : 'месяц');
+        }, $query) ?? $query;
         $months = ['январе' => 'январь', 'феврале' => 'февраль', 'марте' => 'март', 'апреле' => 'апрель', 'мае' => 'май', 'июне' => 'июнь',
             'июле' => 'июль', 'августе' => 'август', 'сентябре' => 'сентябрь', 'октябре' => 'октябрь', 'ноябре' => 'ноябрь', 'декабре' => 'декабрь'];
 
-        return preg_replace_callback('/\b(?:в|во)\s+('.self::MONTH.')\b/iu', static function (array $match) use ($months): string {
+        return preg_replace_callback('/\b(?:в|во|на)\s+('.self::MONTH.')\b/iu', static function (array $match) use ($months): string {
             $month = mb_strtolower($match[1]);
 
             return 'за '.($months[$month] ?? $month);

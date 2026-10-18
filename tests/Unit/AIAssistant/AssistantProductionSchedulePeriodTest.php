@@ -4,14 +4,50 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectClarificationIntent;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_period_prepositions_preserve_the_named_project_and_resolve_known_dates(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['на текущий год' => ['2026-01-01', '2026-10-19'], 'в этом году' => ['2026-01-01', '2026-10-19'],
+                'на текущий месяц' => ['2026-10-01', '2026-10-19'], 'в прошлом месяце' => ['2026-09-01', '2026-09-30'],
+                'на октябрь 2026' => ['2026-10-01', '2026-10-31'], 'на III квартал 2026' => ['2026-07-01', '2026-09-30']] as $phrase => [$start, $end]) {
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => [
+                    'status' => 'success', 'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false],
+                ]);
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end], AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_period_resume_clears_project_references_in_both_supported_shapes(): void
+    {
+        foreach (['entity_refs', 'entity_references'] as $key) {
+            $context = [$key => [['entity_type' => 'project', 'entity_id' => 104], ['type' => 'project', 'id' => 105],
+                ['type' => 'estimate', 'id' => 9, 'entity_type' => 'project', 'entity_id' => 106], ['entity_type' => 'estimate', 'entity_id' => 3]]];
+            $resumed = AssistantProductionSchedulePeriod::resumePayload(['context' => $context], ['project_id' => 102]);
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan(['request' => $resumed])->projectId);
+            self::assertSame([['entity_type' => 'estimate', 'entity_id' => 3], ['type' => 'project', 'id' => 102]], $resumed['context'][$key]);
+            self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantRequiredProjectRead::fromPlan([
+                'request' => ['message' => 'Сверь выполненные работы с графиком за октябрь 2026'] + $resumed,
+            ])['arguments']);
+        }
+    }
+
     public function test_period_adjectives_do_not_create_a_filter_or_hide_a_real_period(): void
     {
         foreach (['с квартальным графиком', 'с текущим квартальным графиком', 'с последним недельным графиком',

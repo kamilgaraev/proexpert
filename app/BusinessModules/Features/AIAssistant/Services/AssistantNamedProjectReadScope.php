@@ -109,7 +109,7 @@ final class AssistantNamedProjectReadScope
 
         return $candidate !== null
             && (preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1 || preg_match('/\?\s*$/u', $query) === 1)
-            && preg_match('/^\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано|ны|на|но|ен|ён)(?=\s|[.!?]|$))/u', $candidate) === 1;
+            && preg_match('/^(?:(?:онлайн|офлайн|оффлайн|online|offline)(?=\s|[.!?]|$)|\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано|ны|на|но|ен|ён)(?=\s|[.!?]|$)))/u', $candidate) === 1;
     }
 
     public static function clarifiedQuery(string $query, string $name): ?string
