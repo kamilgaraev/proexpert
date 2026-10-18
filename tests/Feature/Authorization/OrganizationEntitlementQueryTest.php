@@ -15,6 +15,32 @@ use Tests\TestCase;
 
 final class OrganizationEntitlementQueryTest extends TestCase
 {
+    public function test_matching_module_queries_do_not_build_unrelated_package_predicates(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $service = app(OrganizationEntitlementService::class);
+        $measure = null;
+        $widths = [];
+        DB::listen(static function ($query) use (&$measure, &$widths): void {
+            if ($measure !== null && preg_match('/^select\b.*from "modules"/is', $query->sql) === 1) {
+                $widths[$measure][] = ['sql_chars' => strlen($query->sql), 'bindings' => count($query->bindings)];
+            }
+        });
+        $measure = 'all';
+        $all = $service->getEffectiveModuleSlugs($fixture->organization->id);
+        $measure = 'matching';
+        try {
+            $matching = $service->getEffectiveModuleSlugsMatching($fixture->organization->id, 'ai-assistant');
+        } finally {
+            $measure = null;
+        }
+        self::assertSame(array_values(array_filter($all, static fn ($slug): bool => $slug === 'ai-assistant')), $matching);
+        self::assertCount(1, $widths['all']);
+        self::assertCount(1, $widths['matching']);
+        fwrite(STDERR, 'entitlement_matching_query_synthetic='.json_encode($widths, JSON_THROW_ON_ERROR).PHP_EOL);
+        self::assertLessThan(intdiv($widths['all'][0]['bindings'], 2), $widths['matching'][0]['bindings'], 'A single-module permission read must not bind every unrelated package module');
+    }
+
     public function test_matching_module_reads_preserve_access_and_fresh_revocation(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
@@ -32,6 +58,38 @@ final class OrganizationEntitlementQueryTest extends TestCase
         self::assertSame([$paid[0]], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
         OrganizationPackageSubscription::query()->where('organization_id', $fixture->organization->id)->update(['status' => 'canceled']);
         self::assertSame([], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]));
+    }
+
+    public function test_matching_reads_preserve_every_catalogue_module_for_paid_and_foreign_organizations(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $service = app(OrganizationEntitlementService::class);
+        $paid = $service->getEffectiveModuleSlugs($fixture->organization->id);
+        $free = $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id);
+        $candidates = array_values(array_unique([...$paid, ...$free, 'unknown-candidate-module']));
+        foreach ([$fixture->organization->id => $paid, $fixture->foreignOrganization->id => $free] as $organizationId => $slugs) {
+            foreach ($candidates as $candidate) {
+                self::assertSame(array_values(array_filter($slugs, static fn ($slug): bool => $slug === $candidate)),
+                    $service->getEffectiveModuleSlugsMatching($organizationId, $candidate));
+            }
+        }
+    }
+
+    public function test_matching_read_preserves_subclass_full_read_override(): void
+    {
+        $service = new class(app(PackageCatalogService::class)) extends OrganizationEntitlementService {
+            public int $reads = 0;
+
+            public function getEffectiveModuleSlugs(int $organizationId): array
+            {
+                $this->reads++;
+
+                return ['virtual-module'];
+            }
+        };
+        self::assertSame(['virtual-module'], $service->getEffectiveModuleSlugsMatching(123, 'virtual-module'));
+        self::assertSame([], $service->getEffectiveModuleSlugsMatching(123, 'unknown-module'));
+        self::assertSame(2, $service->reads);
     }
 
     public function test_non_bindable_candidates_keep_the_legacy_database_reads(): void
@@ -94,6 +152,7 @@ final class OrganizationEntitlementQueryTest extends TestCase
         self::assertSame(1, $reads);
         self::assertNotContains($foundation[0], $modules->pluck('slug')->all());
         self::assertTrue($modules->every(static fn (Module $module): bool => $module->is_active));
+        self::assertSame([], app(OrganizationEntitlementService::class)->getEffectiveModuleSlugsMatching($fixture->organization->id, $foundation[0]));
     }
 
     public function test_paid_modules_are_scoped_and_next_read_observes_revocation(): void
@@ -145,6 +204,7 @@ final class OrganizationEntitlementQueryTest extends TestCase
                 'current_period_end_at' => $periodEnd, 'trial_ends_at' => $trialEnd,
             ]);
             self::assertSame($expected, in_array($paid[0], $service->getEffectiveModuleSlugs($fixture->organization->id), true), $label);
+            self::assertSame($expected ? [$paid[0]] : [], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $paid[0]), $label);
             self::assertSame($expected, isset($service->getPackageModuleSources($fixture->organization->id)[$paid[0]]), $label);
         }
     }
@@ -159,8 +219,16 @@ final class OrganizationEntitlementQueryTest extends TestCase
         $fixture->subscription->update(['package_slug' => 'legacy-entitlement-fixture']);
         self::assertEqualsCanonicalizing($before, $service->getEffectiveModuleSlugs($fixture->organization->id));
         self::assertEquals($sources, $service->getPackageModuleSources($fixture->organization->id));
+        foreach ($before as $candidate) {
+            self::assertSame([$candidate], $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $candidate));
+        }
         $fixture->subscription->update(['package_slug' => 'unknown-entitlement-fixture']);
         self::assertSame([], $service->getPackageModuleSources($fixture->organization->id));
         self::assertEqualsCanonicalizing($service->getEffectiveModuleSlugs($fixture->foreignOrganization->id), $service->getEffectiveModuleSlugs($fixture->organization->id));
+        $free = $service->getEffectiveModuleSlugs($fixture->foreignOrganization->id);
+        foreach ($before as $candidate) {
+            self::assertSame(array_values(array_filter($free, static fn ($slug): bool => $slug === $candidate)),
+                $service->getEffectiveModuleSlugsMatching($fixture->organization->id, $candidate));
+        }
     }
 }
