@@ -7,6 +7,9 @@ namespace Tests\Unit\Contract;
 use App\Services\Contract\ContractDocumentExporter;
 use App\Services\Contract\ContractDocumentFonts;
 use App\Services\Contract\ContractWorkSpecificationMoney;
+use DOMDocument;
+use DOMElement;
+use DOMXPath;
 use Smalot\PdfParser\Config;
 use Smalot\PdfParser\Document;
 use Smalot\PdfParser\Parser;
@@ -89,6 +92,21 @@ final class ContractWorkSpecificationLayoutTest extends TestCase
             foreach (['20 000,00', '50 000,00', '30 000,00', '100 000,00'] as $amount) {
                 self::assertStringContainsString($amount, $wordText);
             }
+            $document = new DOMDocument;
+            self::assertTrue($document->loadXML($xml));
+            $xpath = new DOMXPath($document);
+            $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+            $columns = $xpath->query('//w:tbl[1]/w:tblGrid/w:gridCol');
+            self::assertNotFalse($columns);
+            self::assertCount(5, $columns);
+            $widths = [];
+            foreach ($columns as $column) {
+                self::assertInstanceOf(DOMElement::class, $column);
+                $widths[] = (int) $column->getAttribute('w:w');
+            }
+            self::assertGreaterThan(0, $widths[0]);
+            self::assertLessThan(0.07, $widths[0] / array_sum($widths), 'The row number must use a narrow column.');
+            self::assertGreaterThan($widths[0] * 5, $widths[1], 'The work name must have room for a readable description.');
         } finally {
             unlink($path);
         }
