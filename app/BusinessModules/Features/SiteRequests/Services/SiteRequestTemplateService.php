@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\Mobile\MobileProjectAccessResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Validator;
 
 /**
  * Сервис для работы с шаблонами заявок
@@ -197,6 +198,10 @@ class SiteRequestTemplateService
             && array_key_exists('estimated_cost', $data['metadata'])) {
             $data['estimated_cost'] = $data['metadata']['estimated_cost'];
         }
+
+        Validator::make($data, [
+            'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
+        ])->validate();
 
         // Создаем заявку
         $request = $this->requestService->create($organizationId, $userId, $data);

@@ -78,6 +78,42 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 4]);
     }
 
+    public function test_template_rejects_invalid_inherited_or_overridden_cost_without_creating_requests(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $template = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/site-requests/templates', [
+                'name' => 'Invalid training cost template',
+                'request_type' => 'other',
+                'template_data' => [
+                    'title' => 'Training request with invalid cost',
+                    'request_type' => 'other',
+                    'metadata' => ['estimated_cost' => 'invalid'],
+                ],
+            ])->assertCreated()->json('data.id');
+        $requestCount = SiteRequest::query()->count();
+        foreach ([
+            [],
+            ['metadata' => ['estimated_cost' => -1]],
+            ['metadata' => ['estimated_cost' => '1000000000000']],
+            ['metadata' => ['estimated_cost' => '1.234']],
+            ['estimated_cost' => -1],
+            ['estimated_cost' => 'invalid'],
+        ] as $overrides) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/site-requests/templates/{$template}/create", [
+                    'project_id' => $project->id,
+                    ...$overrides,
+                ])->assertUnprocessable();
+            $this->assertDatabaseCount('site_requests', $requestCount);
+            $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 0]);
+        }
+    }
+
     public function test_owner_can_create_material_request_group_and_list_only_own_requests(): void
     {
         Event::fake();
