@@ -6,12 +6,10 @@ namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
-use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\DTOs\PurchaseRequestListItem;
 use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTerminalReason;
@@ -94,14 +92,17 @@ class PurchaseRequestService
             $purchaseRequest,
             $this->lifecycleService->forPurchaseRequest($purchaseRequest),
         ));
-        $eligible = $items->filter(fn (PurchaseRequestListItem $item) => ! $item->purchaseRequest->supplierRequests->contains(
-            fn (SupplierRequest $supplierRequest) => $supplierRequest->status === SupplierRequestStatusEnum::SENT
-                && $supplierRequest->public_token_expires_at !== null
-        ));
-        $orders = new \Illuminate\Database\Eloquent\Collection($eligible->flatMap(
+        $orders = new \Illuminate\Database\Eloquent\Collection($items->flatMap(
             fn (PurchaseRequestListItem $item) => $item->purchaseRequest->purchaseOrders
         )->all());
         $orders->loadMissing(ProcurementChainResolver::PURCHASE_ORDER_RELATIONS);
+        foreach ($orders as $order) {
+            foreach ($order->receipts as $receipt) {
+                if ((int) $receipt->purchase_order_id === (int) $order->getKey()) {
+                    $receipt->setRelation('purchaseOrder', $order);
+                }
+            }
+        }
         $page->setCollection($items);
 
         return $page;
