@@ -85,21 +85,22 @@ final readonly class EstimateAuditDraftPreview
             return [...$unavailable, 'reason' => 'current_build_draft_stale'];
         }
         $draft = $prior->payload(ProcessingStage::BuildDraft)['draft'];
-        $root = $this->inputs->capture($context->organizationId, $context->projectId, $context->sessionId, $draft,
-            new AiSessionWireScope($context->stateVersion, $attempt, $operation));
-        $metrics = ['facts' => count($root->facts), 'evidence' => count($root->evidence),
-            'derived_quantities' => array_map(static function (array $quantity): array {
-                $basis = is_array($quantity['quantity_basis'] ?? null) ? $quantity['quantity_basis'] : [];
-
-                return ['id' => $quantity['id'] ?? null, 'bytes' => strlen(CanonicalPipelineJson::encode($quantity)),
-                    'field_bytes' => array_map(self::bytes(...), $quantity),
-                    'basis_field_bytes' => array_map(self::bytes(...), $basis),
-                    'formula_input_field_bytes' => array_map(self::bytes(...), $basis['formula_inputs'] ?? []),
-                    'operand_bytes' => array_map(self::bytes(...), $basis['formula_inputs']['operands'] ?? []),
-                    'operand_count' => count($basis['formula_inputs']['operands'] ?? []),
-                    'operand_fact_count' => count($quantity['operand_fact_ids'] ?? [])];
-            }, $root->derivedQuantities)];
+        $metrics = [];
         try {
+            $root = $this->inputs->capture($context->organizationId, $context->projectId, $context->sessionId, $draft,
+                new AiSessionWireScope($context->stateVersion, $attempt, $operation));
+            $metrics = ['facts' => count($root->facts), 'evidence' => count($root->evidence),
+                'derived_quantities' => array_map(static function (array $quantity): array {
+                    $basis = is_array($quantity['quantity_basis'] ?? null) ? $quantity['quantity_basis'] : [];
+
+                    return ['id' => $quantity['id'] ?? null, 'bytes' => strlen(CanonicalPipelineJson::encode($quantity)),
+                        'field_bytes' => array_map(self::bytes(...), $quantity),
+                        'basis_field_bytes' => array_map(self::bytes(...), $basis),
+                        'formula_input_field_bytes' => array_map(self::bytes(...), $basis['formula_inputs'] ?? []),
+                        'operand_bytes' => array_map(self::bytes(...), $basis['formula_inputs']['operands'] ?? []),
+                        'operand_count' => count($basis['formula_inputs']['operands'] ?? []),
+                        'operand_fact_count' => count($quantity['operand_fact_ids'] ?? [])];
+                }, $root->derivedQuantities)];
             $prepared = $this->cycle->prepareParts($root);
             $result = ['fits' => true, 'part_limit' => $prepared['part_limit'],
                 'maximum_part_bytes' => $prepared['maximum_part_bytes'],
@@ -115,7 +116,8 @@ final readonly class EstimateAuditDraftPreview
                 }, $prepared['parts'])];
         } catch (InvalidArgumentException $exception) {
             if (! in_array($exception->getMessage(), ['estimate_audit_context_requires_source_split',
-                'estimate_audit_parts_exceed_approved_plan'], true)) {
+                'estimate_audit_parts_exceed_approved_plan', 'estimate_audit_fact_limit_exceeded',
+                'estimate_audit_evidence_requires_section_split', 'estimate_audit_input_too_large'], true)) {
                 throw $exception;
             }
             $result = ['fits' => false, 'blocked_by' => $exception->getMessage()];

@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_unused_quantities_balance_their_large_diagnostics_before_requiring_more_parts(): void
+    {
+        $quantities = $diagnostics = [];
+        for ($i = 0; $i < 4; $i++) {
+            $quantities[] = ['id' => 'quantity:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => [],
+                'quantity_basis' => ['key' => 'quantity:'.$i]];
+            $diagnostics[] = ['derived_quantity_id' => 'quantity:'.$i, 'entity_id' => 'house:1',
+                'proof' => str_repeat('diagnostic source; ', $i % 2 === 0 ? 1700 : 1)];
+        }
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'local_estimates' => [['sections' => [['work_items' => array_map(
+                static fn (int $i): array => ['key' => 'work:'.$i, 'entity_id' => 'room:'.$i], range(0, 3)),
+            ]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, [], $quantities, $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        foreach ($parts as $part) {
+            self::assertCount(2, $part['input']->derivedQuantities);
+            self::assertCount(2, $part['input']->draft['building_quantities']['diagnostics']);
+            self::assertSame(array_column($part['input']->derivedQuantities, 'id'),
+                array_column($part['input']->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
+        }
+    }
+
     public function test_unused_quantities_can_move_outside_their_entity_part_with_all_operand_evidence(): void
     {
         $facts = [['id' => 'fact:house', 'entity_id' => 'house:1', 'value' => '40']];

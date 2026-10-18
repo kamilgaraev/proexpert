@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -32,6 +36,7 @@ use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
+use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
@@ -84,6 +89,37 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
         self::assertFalse($preview['validated']);
         self::assertSame($before, $this->databaseState($session));
         Http::assertNothingSent();
+    }
+
+    #[DataProvider('snapshotLimits')]
+    public function test_snapshot_size_limits_are_reported_as_free_preview_blockers(string $limit, string $code): void
+    {
+        [$actor, $project, $session] = $this->fixture(oversizedEvidence: $limit === 'evidence');
+        $source = 'sha256:'.str_repeat('a', 64);
+        $models = new InMemoryProjectModelRepository;
+        $facts = array_map(static fn (int $i): Fact => new Fact('fact:'.$i, (int) $session->organization_id,
+            (int) $project->id, (int) $session->id, $source, 'room:1', 'dimension:'.$i, '40', 'm2', 0.0, 'user_assumption', 'confirmed', []), [1, 2]);
+        $models->saveSourceModel([new Entity('room:1', (int) $session->organization_id,
+            (int) $project->id, (int) $session->id, $source, 'room', 'room:1')], $facts, []);
+        $this->app->instance(EstimateAuditInputFactory::class, new EstimateAuditInputFactory($models,
+            $this->createMock(EvidenceRepository::class), $limit === 'facts' ? 1 : 2));
+        $before = $this->databaseState($session);
+
+        $preview = $this->read($actor, $project, $session)['data'];
+
+        self::assertTrue($preview['available']);
+        self::assertFalse($preview['validated']);
+        self::assertFalse($preview['audit_preview']['fits']);
+        self::assertSame($code, $preview['audit_preview']['blocked_by']);
+        self::assertSame(0, $preview['cost_units']);
+        self::assertSame($before, $this->databaseState($session));
+        Http::assertNothingSent();
+    }
+
+    public static function snapshotLimits(): array
+    {
+        return ['facts' => ['facts', 'estimate_audit_fact_limit_exceeded'],
+            'evidence' => ['evidence', 'estimate_audit_evidence_requires_section_split']];
     }
 
     #[DataProvider('deniedScopes')]
@@ -177,7 +213,7 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
             'packages' => $session->packages()->count()];
     }
 
-    private function fixture(bool $oversized = false, bool $staleBase = false, bool $legacy = false): array
+    private function fixture(bool $oversized = false, bool $staleBase = false, bool $legacy = false, bool $oversizedEvidence = false): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -221,7 +257,8 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
             $context = new PipelineContext((int) $session->id, (int) $organization->id, (int) $project->id, 4, $input, 'generating',
                 generationAttemptId: $attempt, baseInputVersion: $base, stage: $definition->stage, dependencyVersions: $dependencies);
             $draft = ['local_estimates' => [['key' => 'house', 'sections' => [['key' => 'works', 'work_items' => [
-                ['key' => 'work:house', 'name' => 'Дом', 'quantity' => '40', 'unit' => 'm2'],
+                ['key' => 'work:house', 'name' => 'Дом', 'quantity' => '40', 'unit' => 'm2',
+                    ...($oversizedEvidence ? ['source_refs' => array_map(static fn (int $page): array => ['fact_id' => 'fact:1', 'page' => $page], range(1, 20001))] : [])],
             ]]]]], 'traceability' => ['source' => $oversized ? str_repeat('x', 200000) : 'private-provider-trace'],
                 'estimate_composition' => ['derived_quantities' => [['id' => 'quantity:house',
                     'quantity_basis' => ['formula_inputs' => ['operands' => []]], 'operand_fact_ids' => []]]]];
