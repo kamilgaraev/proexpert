@@ -32,4 +32,6 @@ return [
     'required_relation_missing' => 'Отсутствует обязательное приложение или связь.',
     'required_signatory_missing' => 'Отсутствует обязательный подписант: :role.',
     'authority_details_missing' => 'Укажите документ-основание полномочий, ФИО и организацию подписанта.',
+    'signatories_missing' => 'Не заполнены обязательные подписанты',
+    'signatures_not_verified' => 'Подписи не проверялись',
 ];

@@ -6,7 +6,6 @@ namespace App\Services\Pto;
 
 use App\BusinessModules\Features\BudgetEstimates\Models\WorkVolumeStatement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
-use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRemark;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRequirement;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
@@ -529,8 +528,24 @@ final class PtoWorkspaceQuery
             ->orderBy('id')
             ->get();
         $readinessBySet = [];
+        $versionsBySet = [];
+        $latestVersionIdsBySet = [];
         foreach ($sets as $set) {
             $readinessBySet[(int) $set->id] = $this->requirements->readiness($set);
+            $versionsBySet[(int) $set->id] = [];
+            $latestVersionIdsBySet[(int) $set->id] = [];
+            foreach ($set->documents as $document) {
+                if ((int) $document->organization_id !== (int) $set->organization_id
+                    || (int) $document->project_id !== (int) $set->project_id) {
+                    continue;
+                }
+                $latestVersionIdsBySet[(int) $set->id][(int) $document->id] = (int) $document->versions->max('id');
+                foreach ($document->versions as $version) {
+                    if ((int) $version->organization_id === (int) $set->organization_id) {
+                        $versionsBySet[(int) $set->id][(int) $version->id] = $version->setRelation('document', $document);
+                    }
+                }
+            }
         }
         $rows = [];
         foreach ($requirements as $requirement) {
@@ -543,10 +558,25 @@ final class PtoWorkspaceQuery
                 static fn ($item): bool => is_array($item) && (int) ($item['requirement_id'] ?? 0) === (int) $requirement->id
             );
             $profile = $this->profiles->find($requirement->profile_type);
-            $document = $set->documents->first(
-                static fn (ExecutiveDocument $document): bool => $document->document_type->value === $requirement->profile_type
+            $versions = $versionsBySet[(int) $set->id];
+            $evidence = $this->requirements->evidenceFor(
+                $requirement, $set, $versions, $latestVersionIdsBySet[(int) $set->id]
             );
-            $latest = $document?->versions->sortByDesc('id')->first();
+            $versionId = (int) ($evidence[0]['version_id'] ?? 0);
+            if ($versionId === 0 && ($blocker['target']['type'] ?? null) === 'executive_document') {
+                $versionId = (int) ($blocker['target']['version_id'] ?? 0);
+            }
+            if ($versionId === 0 && in_array($set->status->value, ['transmitted', 'archived'], true)) {
+                foreach ((array) $requirement->evidence as $item) {
+                    $frozenVersion = is_array($item) ? ($versions[(int) ($item['version_id'] ?? 0)] ?? null) : null;
+                    if ($frozenVersion?->document?->document_type->value === $requirement->profile_type) {
+                        $versionId = (int) $frozenVersion->id;
+                        break;
+                    }
+                }
+            }
+            $version = $versions[$versionId] ?? null;
+            $document = $version?->document;
             $openRemarks = $document?->remarks->filter(
                 static fn ($remark): bool => in_array($remark->status->value, ['open', 'answered', 'returned'], true)
             )->count() ?? 0;
@@ -565,11 +595,11 @@ final class PtoWorkspaceQuery
                     'name' => $requirement->projectLocation->name,
                 ] : null,
                 'work' => $requirement->workType?->name ?? $requirement->completedWork?->notes,
-                'version' => $latest?->version_number,
-                'version_id' => $latest?->id ? (int) $latest->id : null,
+                'version' => $version?->version_number,
+                'version_id' => $version?->id ? (int) $version->id : null,
                 'document_id' => $document?->id ? (int) $document->id : null,
                 'review_status' => $document?->status?->label() ?? 'Документ не создан',
-                'signatures_status' => $missingSignature ? 'Нет обязательной подписи' : ($blocker ? (string) ($blocker['message'] ?? 'Не готово') : 'Подписи собраны'),
+                'signatures_status' => $missingSignature ? trans_message('executive_requirements.signatories_missing') : ($blocker ? (string) ($blocker['message'] ?? 'Не готово') : trans_message('executive_requirements.signatures_not_verified')),
                 'transmittal_status' => $set->transmittal?->status ?? $set->status->label(),
                 'customer_decision' => $set->transmittal?->status,
                 'open_remarks' => $openRemarks,
