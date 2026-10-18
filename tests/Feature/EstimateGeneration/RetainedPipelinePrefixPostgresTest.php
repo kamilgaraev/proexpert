@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
@@ -28,6 +31,7 @@ use App\Models\User;
 use App\Services\Credits\AICreditService;
 use DateTimeImmutable;
 use DomainException;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -44,12 +48,17 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         self::assertSame($sourceId, $quote['continuation']['source_operation_id']);
         self::assertSame('validate_draft', $quote['continuation']['resume_stage']);
         $plan = $this->plan($operationId);
+        self::assertSame(['estimate_audit', 'estimate_composer_correction'], array_keys($plan['roles']));
+        self::assertLessThan($sourceBefore->maximum_calls, $plan['maximum_calls']);
+        self::assertLessThan($sourceBefore->maximum_provider_cost_micro_rub, $plan['maximum_provider_cost_micro_rub']);
         self::assertSame($sourceId, $plan['retained_pipeline_prefix']['source_attempt_id']);
         self::assertCount(8, $plan['retained_pipeline_prefix']['stages']);
-        self::assertSame($operationId, DB::transaction(fn () => app(EstimatorCreditOperations::class)
-            ->begin($actor, $session, 4, $operationId, $quote['quote_id'], 'generation')));
-        $session->update(['status' => 'generating', 'state_version' => 5,
-            'input_payload' => [...$session->input_payload, 'generation_attempt_id' => $operationId, 'generation_credit_operation_id' => $operationId]]);
+        Bus::fake([GenerateEstimateDraftJob::class]);
+        $session = app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+            (int) $session->id, (int) $session->organization_id, (int) $session->project_id, 4, $actor,
+            ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]));
+        self::assertSame(5, (int) $session->state_version);
+        Bus::assertDispatched(GenerateEstimateDraftJob::class);
         $base = app(EvidenceAwarePipelineBaseInputVersionResolver::class)->fromSession($session);
         $seed = new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
             5, $base, 'generating', generationAttemptId: $operationId, baseInputVersion: $base, creditOperationId: $operationId);
@@ -91,14 +100,26 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         } elseif ($change === 'input') {
             $session->update(['input_payload' => [...$session->input_payload, 'description' => 'Изменённый дом']]);
         }
-        [$id] = $this->quote($actor, $session);
+        [$id, $quote] = $this->quote($actor, $session);
         self::assertArrayNotHasKey('retained_pipeline_prefix', $this->plan($id));
+        if ($change === 'actor') {
+            Bus::fake([GenerateEstimateDraftJob::class]);
+            $session = app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+                (int) $session->id, (int) $session->organization_id, (int) $session->project_id, 4, $actor,
+                ['request_id' => $id, 'quote_id' => $quote['quote_id']]));
+            self::assertSame(5, (int) $session->state_version);
+            self::assertSame((int) $actor->id, $session->input_payload['generation_actor_id']);
+            $base = app(EvidenceAwarePipelineBaseInputVersionResolver::class)->fromSession($session);
+            $seed = new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
+                5, $base, 'generating', generationAttemptId: $id, baseInputVersion: $base, creditOperationId: $id);
+            self::assertNull(app(RetainedPipelinePrefix::class)->reuse(app(PipelinePlanResolver::class)->next($seed)));
+        }
         Http::assertNothingSent();
     }
 
     public static function invalidSources(): array
     {
-        return array_map(static fn (string $value): array => [$value], ['invalidated', 'missing', 'base', 'active', 'scope', 'input']);
+        return array_map(static fn (string $value): array => [$value], ['invalidated', 'missing', 'base', 'active', 'scope', 'input', 'actor']);
     }
 
     public function test_changed_prefix_is_rejected_before_credit_reservation(): void
@@ -154,7 +175,8 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => ['selected_sections' => ['finishing']]]);
+            'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0,
+            'input_payload' => ['selected_sections' => ['finishing'], 'generation_actor_type' => 'user', 'generation_actor_id' => (int) $actor->id]]);
         app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:retained-prefix');
         $sourceId = (string) Str::uuid();
         $sourceQuote = app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, $sourceId, 'generation');
@@ -209,6 +231,10 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
                 'project_id' => Project::factory()->create(['organization_id' => $session->organization_id])->id,
                 'user_id' => $actor->id, 'status' => 'failed', 'resume_status' => 'generating', 'state_version' => 4,
                 'input_payload' => $session->input_payload]);
+        }
+        if ($change === 'actor') {
+            $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+            $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         }
         Http::swap(new \Illuminate\Http\Client\Factory);
         Http::preventStrayRequests();

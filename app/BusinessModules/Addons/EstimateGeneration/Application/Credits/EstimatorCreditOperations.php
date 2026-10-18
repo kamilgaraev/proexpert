@@ -141,7 +141,7 @@ final readonly class EstimatorCreditOperations
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         if (isset($plan['retained_pipeline_prefix'])) {
             app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)
-                ->assertCurrent($session, $plan['retained_pipeline_prefix'], $plan['known_context']);
+                ->assertCurrent($session, $plan['retained_pipeline_prefix'], $plan['known_context'], (int) $actor->id);
         }
         $request = $this->request($identity);
         $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
@@ -181,8 +181,9 @@ final readonly class EstimatorCreditOperations
         if ($known !== null) {
             $plan['known_context'] = $known;
             if ($kind === 'generation') {
-                $prefix = app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)->capture($session, $known);
+                $prefix = app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)->capture($session, $known, (int) $actor->id);
                 if ($prefix !== null) {
+                    $plan = $this->plans->forRetainedPrefix($plan);
                     $plan['retained_pipeline_prefix'] = $prefix;
                 }
             }

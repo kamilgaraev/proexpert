@@ -22,9 +22,11 @@ final readonly class RetainedPipelinePrefix
         private StageResultFactory $results,
     ) {}
 
-    public function capture(EstimateGenerationSession $session, array $known): ?array
+    public function capture(EstimateGenerationSession $session, array $known, int $actorId): ?array
     {
-        if ($session->status->value !== 'failed' || $session->resume_status?->value !== 'generating') {
+        if ($session->status->value !== 'failed' || $session->resume_status?->value !== 'generating'
+            || ($session->input_payload['generation_actor_type'] ?? null) !== 'user'
+            || ($session->input_payload['generation_actor_id'] ?? null) !== $actorId) {
             return null;
         }
 
@@ -32,9 +34,9 @@ final readonly class RetainedPipelinePrefix
             $session->input_payload['generation_credit_operation_id'] ?? null, $known['fingerprint'] ?? null);
     }
 
-    public function assertCurrent(EstimateGenerationSession $session, array $prefix, array $known): void
+    public function assertCurrent(EstimateGenerationSession $session, array $prefix, array $known, int $actorId): void
     {
-        $current = $this->capture($session, $known);
+        $current = $this->capture($session, $known, $actorId);
         if ($current === null || CanonicalPipelineJson::encode($current) !== CanonicalPipelineJson::encode($prefix)) {
             throw new DomainException('estimator_retained_pipeline_prefix_changed');
         }
