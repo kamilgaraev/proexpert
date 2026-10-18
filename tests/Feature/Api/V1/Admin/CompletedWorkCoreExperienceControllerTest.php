@@ -31,6 +31,55 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_confirmation_filter_includes_pending_and_in_review_works_only(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organization = $context->organization;
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $contractor = $this->createContractor($organization, 'Confirmation filter');
+        $workType = $this->createWorkType($organization, 'Confirmation filter work');
+        $this->allowAdminAccess();
+        $works = [];
+        foreach (['pending', 'in_review', 'confirmed', 'draft', 'rejected'] as $status) {
+            $works[$status] = $this->createCompletedWork($organization, $project, $contractor, [
+                'work_type_id' => $workType->id,
+                'user_id' => $context->user->id,
+                'status' => $status,
+            ]);
+        }
+
+        $endpoint = "/api/v1/admin/projects/{$project->id}/works";
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson($endpoint . '?confirmation_required=1&per_page=20')->assertOk();
+        $rows = $response->json('data.data', $response->json('data'));
+        self::assertEqualsCanonicalizing(
+            [$works['pending']->id, $works['in_review']->id],
+            collect($rows)->pluck('id')->all(),
+        );
+
+        $all = $this->withHeaders($context->authHeaders())
+            ->getJson($endpoint . '?confirmation_required=0&per_page=20')->assertOk();
+        self::assertCount(5, $all->json('data.data', $all->json('data')));
+
+        $singleStatus = $this->withHeaders($context->authHeaders())
+            ->getJson($endpoint . '?status=confirmed')->assertOk();
+        self::assertSame(
+            [$works['confirmed']->id],
+            collect($singleStatus->json('data.data', $singleStatus->json('data')))->pluck('id')->all(),
+        );
+    }
+
+    public function test_confirmation_filter_rejects_an_invalid_flag(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/works?confirmation_required=invalid")
+            ->assertUnprocessable()->assertJsonValidationErrors('confirmation_required');
+    }
+
     public function test_manual_work_needs_identity_for_review_and_confirmation_but_allows_zero_draft(): void
     {
         $context = AdminApiTestContext::create();
