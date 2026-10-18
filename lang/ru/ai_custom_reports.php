@@ -21,6 +21,7 @@ return [
     'counterparty_name' => 'Контрагент',
     'current_project' => 'Текущий проект',
     'assignee_id' => 'Идентификатор ответственного',
+    'work_unit' => 'Единица измерения',
     'member_position' => 'Должность',
     'member_active' => 'Активен',
     'member_roles' => 'Роли в организации',
