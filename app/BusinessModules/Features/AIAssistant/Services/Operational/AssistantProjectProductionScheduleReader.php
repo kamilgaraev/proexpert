@@ -31,17 +31,14 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     public static function matches(string $query): bool
     {
         return self::hasIntent($query)
-            && preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд/iu', self::semanticQuery($query)) !== 1;
+            && preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд|потрач|расход|затрат|прибыл|выручк|рентаб|марж|финанс/iu', self::semanticQuery($query)) !== 1;
     }
 
     private static function semanticQuery(string $query): string
     {
-        if (preg_match('/(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)[«“„"]/iu', $query) !== 1) {
-            return $query;
-        }
-        $name = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::extract($query, 'project');
+        $name = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::name(['request' => ['message' => $query]]);
 
-        return $name === null ? $query : str_replace($name, '', $query);
+        return $name === null ? $query : (preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)[«“„"]?)'.preg_quote($name, '/').'/iu', '$1', $query, 1) ?? $query);
     }
 
     public function read(User $actor, int $organizationId, array $arguments): array

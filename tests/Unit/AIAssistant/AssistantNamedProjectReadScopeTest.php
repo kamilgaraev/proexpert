@@ -117,6 +117,24 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         }
     }
 
+    public function test_project_name_words_do_not_become_commands_or_financial_topics(): void
+    {
+        foreach (['Сметный дом', 'Договорный парк', 'Бюджетный квартал', 'работы'] as $name) {
+            $query = 'Сверь выполненные работы с графиком проекта '.$name;
+            self::assertTrue(AssistantProjectProductionScheduleReader::matches($query), $query);
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $query);
+            foreach ([' и оплати договор', ' и закрой проект', '. Перенеси срок', ' нужно оплатить договор',
+                ' и сколько потрачено?', ' и сформируй Excel'] as $suffix) {
+                self::assertFalse(AssistantProjectProductionScheduleReader::matches($query.$suffix), $query.$suffix);
+            }
+        }
+    }
+
     public function test_unquoted_name_after_our_project_is_resolved_instead_of_background_project(): void
     {
         foreach (['Сверь выполненные работы с графиком в нашем проекте Северный дом',
