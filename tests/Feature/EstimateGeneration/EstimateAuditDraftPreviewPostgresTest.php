@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
@@ -23,6 +24,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Credits\AICreditService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -69,6 +71,50 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
         self::assertSame('estimate_audit_context_requires_source_split', $preview['audit_preview']['blocked_by']);
         self::assertSame($before, $this->databaseState($session));
         Http::assertNothingSent();
+    }
+
+    public function test_preview_works_without_a_credit_operation_when_the_wallet_is_disabled(): void
+    {
+        [$actor, $project, $session] = $this->fixture(legacy: true);
+        $before = $this->databaseState($session);
+        $preview = $this->read($actor, $project, $session)['data'];
+
+        self::assertTrue($preview['available']);
+        self::assertTrue($preview['audit_preview']['fits']);
+        self::assertFalse($preview['validated']);
+        self::assertSame($before, $this->databaseState($session));
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('deniedScopes')]
+    public function test_the_service_authorizes_direct_calls_before_reading_an_artifact(string $scope): void
+    {
+        [$actor, $project, $session] = $this->fixture();
+        if ($scope === 'organization') {
+            $actor = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
+        } elseif ($scope === 'project') {
+            $project = Project::factory()->for(Organization::factory()->create())->create();
+        } else {
+            $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $permissions->allows('canCurrent')->andReturn(false);
+            $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        }
+        Http::swap(new \Illuminate\Http\Client\Factory);
+        Http::preventStrayRequests();
+        Http::fake();
+        $before = $this->databaseState($session);
+        try {
+            app(EstimateAuditDraftPreview::class)->read($actor, (int) $project->id, (int) $session->id);
+            self::fail('A direct preview call bypassed actor authorization.');
+        } catch (AuthorizationException) {
+            self::assertSame($before, $this->databaseState($session));
+            Http::assertNothingSent();
+        }
+    }
+
+    public static function deniedScopes(): array
+    {
+        return ['organization' => ['organization'], 'project' => ['project'], 'permission' => ['permission']];
     }
 
     #[DataProvider('staleCases')]
@@ -131,7 +177,7 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
             'packages' => $session->packages()->count()];
     }
 
-    private function fixture(bool $oversized = false, bool $staleBase = false): array
+    private function fixture(bool $oversized = false, bool $staleBase = false, bool $legacy = false): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -152,10 +198,16 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
             'input_payload' => ['selected_sections' => ['finishing', 'structure', 'equipment']]]);
         app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:free-audit-preview');
         $operation = (string) Str::uuid();
-        app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, $operation, 'generation');
+        if (! $legacy) {
+            app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, $operation, 'generation');
+        }
         $attempt = (string) Str::uuid();
         $session->update(['status' => 'failed', 'state_version' => 4,
-            'input_payload' => [...$session->input_payload, 'generation_attempt_id' => $attempt, 'generation_credit_operation_id' => $operation]]);
+            'input_payload' => [...$session->input_payload, 'generation_attempt_id' => $attempt,
+                ...($legacy ? [] : ['generation_credit_operation_id' => $operation])]]);
+        if ($legacy) {
+            config(['estimate-generation.credits.enabled' => false]);
+        }
         $base = app(EvidenceAwarePipelineBaseInputVersionResolver::class)->fromSession($session);
         $artifacts = new InMemoryPipelineArtifactStore;
         $this->app->instance(PipelineOutputRepository::class, new EloquentPipelineOutputRepository($artifacts));

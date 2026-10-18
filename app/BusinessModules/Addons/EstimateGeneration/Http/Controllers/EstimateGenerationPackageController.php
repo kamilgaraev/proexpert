@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -117,7 +118,7 @@ final class EstimateGenerationPackageController extends Controller
 
             $validated = $request->validate(['include_audit_preview' => ['sometimes', 'boolean']]);
             if ($validated['include_audit_preview'] ?? false) {
-                return AdminResponse::success(app(EstimateAuditDraftPreview::class)->read($session));
+                return AdminResponse::success(app(EstimateAuditDraftPreview::class)->read($request->user(), (int) $project->id, (int) $session->id));
             }
 
             return AdminResponse::success($session->draft_payload ?? []);
@@ -173,7 +174,7 @@ final class EstimateGenerationPackageController extends Controller
     {
         try {
             return $callback();
-        } catch (HttpExceptionInterface $exception) {
+        } catch (HttpExceptionInterface|AuthorizationException $exception) {
             throw $exception;
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());

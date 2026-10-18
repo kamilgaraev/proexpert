@@ -23,7 +23,9 @@ final class EstimateAuditContextPlannerTest extends TestCase
             $quantities[] = ['id' => 'unused:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => ['fact:house'],
                 'quantity_basis' => ['key' => 'unused:'.$i, 'decision_reason' => str_repeat('confirmed dimension; ', 1000)]];
         }
-        $draft = ['traceability' => ['source_proof' => str_repeat('trace proof; ', 1400)],
+        $diagnostics = array_map(static fn (array $quantity): array => ['entity_id' => 'house:1', 'derived_quantity_id' => $quantity['id'], 'code' => 'unused_quantity_review'], $quantities);
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'traceability' => ['source_proof' => str_repeat('trace proof; ', 1400)],
             'local_estimates' => [['sections' => [['work_items' => [
                 ['key' => 'work:house', 'entity_id' => 'house:1'],
                 ['key' => 'work:room', 'entity_id' => 'room:1'],
@@ -41,6 +43,7 @@ final class EstimateAuditContextPlannerTest extends TestCase
         foreach ($parts as $part) {
             $input = $part['input'];
             self::assertCount(1, $input->derivedQuantities);
+            self::assertSame([$input->derivedQuantities[0]['id']], array_column($input->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
             self::assertSame($facts, $input->facts);
             self::assertSame($evidence, $input->evidence);
             self::assertSame($draft['traceability'], $input->draft['traceability']);

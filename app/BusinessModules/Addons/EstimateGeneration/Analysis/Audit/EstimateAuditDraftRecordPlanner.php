@@ -151,6 +151,24 @@ final class EstimateAuditDraftRecordPlanner
             return $owners;
         }
         foreach ([$record, $record['details'] ?? []] as $scope) {
+            if (! is_array($scope)) {
+                continue;
+            }
+            foreach (['logical_id', 'derived_quantity_id'] as $field) {
+                if (is_string($scope[$field] ?? null)) {
+                    $owners += $lookups['quantities'][$scope[$field]] ?? [];
+                }
+            }
+            foreach (is_array($scope['quantity_ids'] ?? null) ? $scope['quantity_ids'] : [] as $id) {
+                if (is_string($id)) {
+                    $owners += $lookups['quantities'][$id] ?? [];
+                }
+            }
+        }
+        if ($owners !== []) {
+            return $owners;
+        }
+        foreach ([$record, $record['details'] ?? []] as $scope) {
             if (is_array($scope) && is_string($scope['entity_id'] ?? null)) {
                 $owners += $lookups['work_entities'][$scope['entity_id']] ?? [];
             }
@@ -162,15 +180,9 @@ final class EstimateAuditDraftRecordPlanner
             if (! is_array($scope)) {
                 continue;
             }
-            foreach (['entity_id' => 'entities', 'work_item_key' => 'works', 'fact_id' => 'facts',
-                'logical_id' => 'quantities', 'derived_quantity_id' => 'quantities'] as $field => $lookup) {
+            foreach (['entity_id' => 'entities', 'work_item_key' => 'works', 'fact_id' => 'facts'] as $field => $lookup) {
                 if (is_string($scope[$field] ?? null)) {
                     $owners += $lookups[$lookup][$scope[$field]] ?? [];
-                }
-            }
-            foreach (is_array($scope['quantity_ids'] ?? null) ? $scope['quantity_ids'] : [] as $id) {
-                if (is_string($id)) {
-                    $owners += $lookups['quantities'][$id] ?? [];
                 }
             }
             foreach (is_array($scope['source_fact_ids'] ?? null) ? $scope['source_fact_ids'] : [] as $id) {

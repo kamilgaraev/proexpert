@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
@@ -16,6 +17,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGra
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineInputVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -26,15 +29,23 @@ final readonly class EstimateAuditDraftPreview
         private EvidenceAwarePipelineBaseInputVersionResolver $baseVersions,
         private EstimateAuditInputFactory $inputs,
         private ApplyComposerCorrectionCycle $cycle,
+        private EstimateGenerationActionAuthorization $authorization,
     ) {}
 
-    public function read(EstimateGenerationSession $session): array
+    public function read(User $actor, int $projectId, int $sessionId): array
     {
+        $session = EstimateGenerationSession::query()->whereKey($sessionId)
+            ->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId)->first();
+        if ($session === null) {
+            throw new AuthorizationException(trans_message('estimate_generation.access_denied'));
+        }
+        $this->authorization->authorize($actor, $session, 'estimate_generation.view');
         $unavailable = ['preview_only' => true, 'cost_units' => 0, 'available' => false,
             'state_version' => (int) $session->state_version, 'validated' => false];
         $attempt = $session->input_payload['generation_attempt_id'] ?? null;
         $operation = $session->input_payload['generation_credit_operation_id'] ?? null;
-        if (! is_string($attempt) || ! Str::isUuid($attempt) || ! is_string($operation) || ! Str::isUuid($operation)) {
+        if (! is_string($attempt) || ! Str::isUuid($attempt)
+            || ($operation !== null && (! is_string($operation) || ! Str::isUuid($operation)))) {
             return [...$unavailable, 'reason' => 'current_build_draft_unavailable'];
         }
         $base = $this->baseVersions->fromSession($session);
