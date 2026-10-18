@@ -173,6 +173,128 @@ final class PipelineStageFunctionalTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('unmappedComposedQuantities')]
+    public function an_unmapped_composed_quantity_survives_matching_and_universal_draft_building(array $overrides): void
+    {
+        $plan = $this->unknownDocumentPlan();
+        $candidate = [
+            'candidate_id' => '101', 'normative_id' => 101, 'dataset_id' => 77,
+            'dataset_version' => 'synthetic-2026.1', 'dataset_status' => 'parsed', 'code' => '11-01-999-01',
+            'name' => 'Монтаж плинтусов', 'unit' => '100 m',
+            'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+            'section' => ['code' => '11', 'name' => 'Полы'], 'work_composition' => ['Монтаж плинтусов'],
+            'resources' => ['materials' => [], 'labor' => [[
+                'code' => 'labor-1', 'name' => 'Рабочие', 'unit' => 'person_hour', 'quantity' => 100,
+                'price_id' => 9001, 'price_source' => 'regional_catalog', 'linked_resource_id' => 501,
+                'norm_resource_id' => 7001,
+            ]], 'machinery' => [], 'other' => []],
+        ];
+        $item = [
+            'key' => 'baseboard', 'name' => 'Монтаж плинтусов', 'unit' => 'm', 'item_type' => 'priced_work',
+            'pricing_blocker' => 'quantity_mapping_missing', 'validation_flags' => ['requires_quantity_review'],
+            'composition_intent' => ['kind' => 'supplementary', 'work_key' => 'baseboard'],
+            'source_refs' => [['fact_id' => 'fact:room:length', 'role' => 'context']],
+            'normative_candidates' => [['key' => '101', 'code' => '11-01-999-01']],
+            ...$overrides,
+        ];
+        $note = ['key' => 'baseboard-note', 'name' => 'Уточнить длину плинтуса', 'item_type' => 'review_note'];
+        $plan['regional_context'] = [
+            'dataset_id' => 77, 'dataset_version' => 'synthetic-2026.1',
+            'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8, 'price_version' => 'synthetic-prices-2026.07',
+        ];
+        $plan['normative_context_pin'] = [
+            'dataset_version' => 'synthetic-2026.1', 'applicability_date' => '2026-07-13',
+            'catalog_candidates' => [$candidate], 'regional_context' => $plan['regional_context'],
+        ];
+        $plan['local_estimates'][0]['sections'][0]['work_items'] = [$item, $note];
+        $workflow = new NormativeMatchingWorkflow(
+            new NormativeRetrievalService(new class implements NormativeCandidateSource
+            {
+                public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+                {
+                    throw new \LogicException('Matching must use the pinned catalog.');
+                }
+            }, new NormativeHardGate, 16, null),
+            new class implements NormativeCandidateRerankerInterface
+            {
+                public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+                {
+                    throw new \LogicException('Deterministic matching must not rerank.');
+                }
+            },
+        );
+        $results = new StageResultFactory(new InMemoryPipelineArtifactStore, PipelineDefinitionGraph::standard());
+        $matcher = new ResourceAssemblyService(
+            $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+        );
+        $matched = (new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results))->execute(
+            $this->documentStageContext(ProcessingStage::MatchNormatives, [ProcessingStage::PlanWorkItems->value => $plan], $results),
+        );
+        $review = $matched->transientData['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('quantity_review', $review['item_type']);
+        self::assertSame('quantity_review_required', $review['pricing_blocker']);
+        self::assertSame($item['source_refs'], $review['source_refs']);
+        self::assertSame($item['composition_intent'], $review['composition_intent']);
+        self::assertSame($item['normative_candidates'], $review['normative_candidates']);
+        self::assertArrayNotHasKey('normative_match', $review);
+        self::assertSame($note, $matched->transientData['local_estimates'][0]['sections'][0]['work_items'][1]);
+        self::assertSame($item['metadata']['quantity_key'] ?? $item['key'], $review['metadata']['quantity_key']);
+        if ($item['unit'] === null) {
+            self::assertContains('unit_requires_confirmation', $review['validation_flags']);
+        }
+        $assembled = (new AssembleResourcesStage(new AssembleMatchedResources, $results))->execute(
+            $this->documentStageContext(ProcessingStage::AssembleResources, [ProcessingStage::MatchNormatives->value => $matched->transientData], $results),
+        );
+        $priced = (new ResolvePricesStage(new EstimatePricingService, $results))->execute(
+            $this->documentStageContext(ProcessingStage::ResolvePrices, [ProcessingStage::AssembleResources->value => $assembled->transientData], $results),
+        );
+        $unknown = $priced->transientData['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertNull($unknown['quantity']);
+        foreach (['work_cost', 'materials_cost', 'machinery_cost', 'labor_cost', 'other_cost', 'total_cost'] as $field) {
+            self::assertNull($unknown[$field], $field);
+        }
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            self::assertSame([], $unknown[$group]);
+        }
+        $built = (new BuildDraftStage($results, quantityEvidence: new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier(
+            new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+        )))->execute($this->documentStageContext(ProcessingStage::BuildDraft, [
+            ProcessingStage::UnderstandDocuments->value => [
+                'base_input_version' => 'sha256:'.str_repeat('a', 64), 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null,
+            ],
+            ProcessingStage::UnderstandObject->value => ['analysis' => [
+                'object' => ['description' => 'Монтаж плинтусов'], 'evaluation_policy' => ['mode' => 'universal'],
+            ]],
+            ProcessingStage::ExtractQuantities->value => [
+                'quantity_learning_hints' => [], 'quantity_coverage_warnings' => [], 'building_quantities' => [], 'stage6_generation_context' => [],
+            ],
+            ProcessingStage::PlanWorkItems->value => $plan,
+            ProcessingStage::ResolvePrices->value => $priced->transientData,
+        ], $results));
+        $rows = $built->transientData['draft']['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertCount(2, $rows);
+        self::assertSame('baseboard', $rows[0]['key']);
+        self::assertSame('priced_work', $rows[0]['item_type']);
+        self::assertTrue($rows[0]['metadata']['requires_quantity_confirmation']);
+        self::assertSame('unknown', $rows[0]['quantity_status']);
+        self::assertSame('quantity_unknown', $rows[0]['pricing_blocker']);
+        self::assertNull($rows[0]['quantity']);
+        self::assertNull($rows[0]['total_cost']);
+        self::assertSame('review_note', $rows[1]['item_type']);
+    }
+
+    public static function unmappedComposedQuantities(): array
+    {
+        return [
+            'missing_quantity' => [[]],
+            'null_quantity_with_existing_key' => [['quantity' => null, 'metadata' => ['quantity_key' => 'finish.baseboard']]],
+            'unknown_unit' => [['quantity' => null, 'unit' => null]],
+        ];
+    }
+
+    #[Test]
     public function real_price_stage_keeps_unknown_document_costs_null(): void
     {
         $plan = $this->unknownDocumentPlan();
