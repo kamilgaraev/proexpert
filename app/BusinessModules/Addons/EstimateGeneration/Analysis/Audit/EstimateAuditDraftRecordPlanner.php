@@ -29,13 +29,20 @@ final class EstimateAuditDraftRecordPlanner
         if (array_sum($counts) === 0) {
             return ['parts' => $parts, 'counts' => $counts];
         }
-        $lookups = ['entities' => [], 'facts' => [], 'quantities' => [], 'works' => [], 'packages' => []];
+        $lookups = ['entities' => [], 'facts' => [], 'quantities' => [], 'works' => [], 'packages' => [], 'candidates' => []];
         $allFacts = $allEvidence = [];
         $loads = [];
         foreach ($parts as $index => $part) {
             foreach ($part['draft']['local_estimates'] ?? [] as $estimate) {
                 if (is_string($estimate['key'] ?? null)) {
                     $lookups['packages'][$estimate['key']][$index] = true;
+                }
+                foreach ($estimate['sections'] ?? [] as $section) {
+                    foreach ($section['work_items'] ?? [] as $item) {
+                        if (is_string($item['composition_intent']['candidate_id'] ?? null)) {
+                            $lookups['candidates'][$item['composition_intent']['candidate_id']][$index] = true;
+                        }
+                    }
                 }
             }
             foreach ($part['entity_ids'] as $id) {
@@ -73,6 +80,14 @@ final class EstimateAuditDraftRecordPlanner
             foreach ($records as $record) {
                 $owners = $path === 'package_plan.packages' && is_array($record) && is_string($record['key'] ?? null)
                     ? ($lookups['packages'][$record['key']] ?? []) : $this->owners($record, $lookups);
+                if ($path === 'estimate_composition.request_info' && ($record['next_action'] ?? null) === 'keep_existing_work') {
+                    $covering = is_string($record['covered_by_position_key'] ?? null)
+                        ? ($lookups['works'][$record['covered_by_position_key']] ?? [])
+                        : ($lookups['candidates'][$record['covered_by_candidate_id'] ?? ''] ?? []);
+                    if ($covering !== []) {
+                        $owners = $covering;
+                    }
+                }
                 if ($owners === []) {
                     $owners[array_keys($loads, min($loads), true)[0]] = true;
                 }

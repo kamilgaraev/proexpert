@@ -118,4 +118,35 @@ final class EstimateAuditDraftRecordPlannerTest extends TestCase
         self::assertCount(1, $parts[0]['facts']);
         self::assertCount(1, $parts[1]['facts']);
     }
+
+    public function test_a_covered_request_follows_its_position_or_candidate_before_fact_load_balancing(): void
+    {
+        foreach (['covered_by_position_key' => 'work:covered', 'covered_by_candidate_id' => 'candidate:covered'] as $field => $reference) {
+            $request = ['index' => 2, 'reason' => 'estimate_composer_physical_duplicate_covered',
+                'next_action' => 'keep_existing_work', $field => $reference,
+                'source_fact_ids' => ['fact:shared', 'fact:external']];
+            $draft = ['estimate_composition' => ['request_info' => [$request]]];
+            $shared = ['id' => 'fact:shared', 'entity_id' => 'room:shared', 'value' => '5'];
+            $external = ['id' => 'fact:external', 'entity_id' => 'room:other', 'value' => '7'];
+            $proof = ['fact_id' => 'fact:external', 'locator' => ['evidence_id' => 'evidence:external']];
+            $parts = [];
+            foreach (['work:other', 'work:covered'] as $index => $key) {
+                $item = ['key' => $key, 'name' => $index === 0 ? 'Other' : str_repeat('Covering work ', 100),
+                    'composition_intent' => ['candidate_id' => $index === 0 ? 'candidate:other' : 'candidate:covered']];
+                $parts[] = ['draft' => [...$draft, 'local_estimates' => [['key' => 'floors',
+                    'sections' => [['key' => 'finish', 'work_items' => [$item]]]]]],
+                    'entity_ids' => ['room:shared'], 'work_keys' => [$key],
+                    'facts' => $index === 0 ? [$shared, $external] : [$shared],
+                    'evidence' => $index === 0 ? [$proof] : [], 'derived_quantities' => []];
+            }
+
+            $result = (new EstimateAuditDraftRecordPlanner)->distribute($draft, $parts);
+
+            self::assertSame([], $result['parts'][0]['draft']['estimate_composition']['request_info'], $field);
+            self::assertSame([$request], $result['parts'][1]['draft']['estimate_composition']['request_info'], $field);
+            self::assertContains($external, $result['parts'][1]['facts']);
+            self::assertContains($proof, $result['parts'][1]['evidence']);
+            self::assertSame($result, (new EstimateAuditDraftRecordPlanner)->distribute($draft, $parts));
+        }
+    }
 }
