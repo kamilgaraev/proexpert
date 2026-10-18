@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectProductionScheduleSummaryTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
@@ -147,7 +150,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
     public function test_named_project_lookup_and_reader_recheck_current_assignment_without_ui_fallback(): void
     {
         $this->fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'],
-            'project-management' => ['projects.view', 'contracts.completed_works.view'], 'schedule-management' => ['schedule.view']]]);
+            'project-management' => ['projects.view'], 'contract-management' => ['contracts.completed_works.view'], 'schedule-management' => ['schedule.view']]]);
         $ui = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => 'Другой проект']));
         foreach ([$this->project, $ui] as $project) {
             $this->fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
@@ -177,6 +180,45 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         $member->assignedProjects()->attach($this->project->id, ['is_active' => true, 'role' => 'member']);
         $this->expectException(\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException::class);
         app(AssistantProjectProductionScheduleReader::class)->read($member, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+    }
+
+    public function test_registered_tool_is_exposed_and_executable_only_with_current_domains_and_project_access(): void
+    {
+        $checker = app(AIPermissionChecker::class);
+        $registry = app(AIToolRegistry::class);
+        $name = GetProjectProductionScheduleSummaryTool::NAME;
+        self::assertTrue($checker->hasExplicitToolPolicy($name));
+        self::assertTrue($checker->canExposeTool($this->fixture->owner, $name));
+        self::assertTrue($checker->canExecuteTool($this->fixture->owner, $name, ['project_id' => $this->project->id]));
+        $definitions = $registry->getToolsDefinitions(array_values(array_filter([$name], fn (string $tool): bool => $checker->canExposeTool($this->fixture->owner, $tool))), true);
+        self::assertCount(1, $definitions);
+        self::assertSame($name, $definitions[0]['name']);
+        self::assertInstanceOf(GetProjectProductionScheduleSummaryTool::class, $registry->getTool($name));
+        $read = $registry->getTool($name)->execute(['project_id' => $this->project->id], $this->fixture->owner, $this->fixture->organization);
+        self::assertSame($this->project->id, $read['data']['project']['id']);
+        self::assertSame(0, $read['data']['confirmed_works']);
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id]));
+        self::assertFalse($checker->canExecuteTool($this->fixture->owner, $name, ['project_id' => $foreign->id]));
+        $grants = ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view'], 'contract-management' => ['contracts.completed_works.view'],
+            'schedule-management' => ['schedule.view']];
+        $this->fixture->memberRole->update(['module_permissions' => $grants]);
+        self::assertFalse($checker->canExecuteTool($this->fixture->member, $name, ['project_id' => $this->project->id]));
+        $this->fixture->member->assignedProjects()->attach($this->project->id, ['is_active' => true, 'role' => 'member']);
+        self::assertTrue($checker->canExposeTool($this->fixture->member, $name));
+        self::assertTrue($checker->canExecuteTool($this->fixture->member, $name, ['project_id' => $this->project->id]));
+        $memberRead = $registry->getTool($name)->execute(['project_id' => $this->project->id], $this->fixture->member, $this->fixture->organization);
+        self::assertSame($this->project->id, $memberRead['data']['project']['id']);
+        foreach (['works', 'schedule'] as $domain) {
+            $restricted = $grants;
+            if ($domain === 'works') {
+                $restricted['contract-management'] = [];
+            } else {
+                $restricted['schedule-management'] = [];
+            }
+            $this->fixture->memberRole->update(['module_permissions' => $restricted]);
+            self::assertFalse($checker->canExposeTool($this->fixture->member, $name));
+            self::assertFalse($checker->canExecuteTool($this->fixture->member, $name, ['project_id' => $this->project->id]));
+        }
     }
 
     private function work(string $quantity, ?string $unit, array $overrides = []): CompletedWork
