@@ -98,7 +98,7 @@ final readonly class AssistantPublishedReportProcessor
                 'expires_at' => min($task->expires_at->toDateTimeImmutable(), $export->expiresAt)]);
         } catch (Throwable $exception) {
             $sourceError = null;
-            if ($exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SOURCE_UNAVAILABLE
+            if ($exception instanceof ReportContractException && in_array($exception->errorCode, [ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, ReportErrorCode::REPORT_FILTER_RANGE_INVALID], true)
                 && $task->run_id === null && $task->parameters['report_code'] === 'accepted_production_progress') {
                 try {
                     $sourceError = $this->readiness->check(

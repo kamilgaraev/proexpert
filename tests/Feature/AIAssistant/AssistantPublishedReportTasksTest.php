@@ -37,6 +37,7 @@ use Illuminate\Queue\SyncQueue;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
@@ -757,41 +758,44 @@ final class AssistantPublishedReportTasksTest extends TestCase
 
     public static function sourceReadinessFailures(): array
     {
-        return [['source_incomplete'], ['source_history_incomplete'], ['source_reference_missing'], ['source_unavailable']];
+        return [
+            'missing_rate' => ['source_incomplete', ['approved_rate_minor' => null, 'currency' => null, 'currency_source' => null]],
+            'invalid_currency' => ['source_incomplete', ['currency' => 'XXX']],
+            'missing_currency_source' => ['source_incomplete', ['currency_source' => '']],
+            'incomplete_history' => ['source_history_incomplete', null],
+            'valid_snapshot_without_current_references' => ['source_unavailable', []],
+        ];
     }
 
     #[DataProvider('sourceReadinessFailures')]
-    public function test_native_source_readiness_explains_the_source_failure_with_an_exact_safe_reason(string $reason): void
+    public function test_native_source_readiness_explains_the_source_failure_with_an_exact_safe_reason(string $reason, ?array $eventOverrides): void
     {
         $actor = $this->fixture->owner;
         $org = (int) $this->fixture->organization->id;
-        $root = $this->root($actor);
-        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $arguments = $this->arguments();
+        if ($eventOverrides !== null) {
+            $checkpoint = DB::table('production_acceptance_history_checkpoints')->where('organization_id', $org)->sole();
+            $acceptedAt = (new DateTimeImmutable((string) $checkpoint->completed_at))->modify('monday next week')->modify('+1 day')->setTime(8, 0);
+            $this->seedAcceptedSource($org, (int) $this->project->id, $acceptedAt, $eventOverrides);
+            $this->root($actor, $acceptedAt->modify('+1 day'));
+            $arguments['filters_json'] = json_encode(['period_from' => $acceptedAt->format('Y-m-d'), 'period_to' => $acceptedAt->format('Y-m-d')], JSON_THROW_ON_ERROR);
+        } else {
+            $this->root($actor);
+        }
+        $result = app(AssistantPublishedReportTasks::class)->create($arguments, $actor, $org);
         $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $expectedCode = $reason === 'source_unavailable' ? null : array_search($reason, \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportSourceReadiness::REASONS, true);
+        self::assertSame($expectedCode, app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportSourceReadiness::class)->check(
+            app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAuthorization::class)->createRun((int) $actor->id, $org, $task->parameters),
+            $task->parameters,
+        ));
         $attempts = $reason === 'source_unavailable' ? 5 : 1;
-        $source = $this->createMock(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class);
-        $source->expects(self::exactly($attempts))->method('snapshot')->willReturnCallback(function ($scope, $query) use ($reason, $org, $root, $task) {
-            self::assertSame($org, $scope->organizationId);
-            self::assertSame([(int) $this->project->id], $scope->projectIds);
-            self::assertSame($task->parameters['filters']['period_from'], $query->filters->values['period_from']);
-            self::assertSame($task->parameters['filters']['period_to'], $query->filters->values['period_to']);
-            self::assertSame($root->created_at->format('U.u'), $query->asOf->format('U.u'));
-            if ($reason === 'source_history_incomplete') {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
-            }
-            if ($reason === 'source_reference_missing') {
-                return \App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSourceSnapshot::available(
-                    workIds: [PHP_INT_MAX], actIds: [], contractorIds: [], unitCodes: [], zones: [], statuses: [],
-                );
-            }
-
-            return \App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSourceSnapshot::unavailable($reason);
-        });
-        app()->instance(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class, $source);
-        $action = $this->createMock(CreateReportRunAction::class);
-        $action->expects(self::exactly($attempts))->method('handle')->willThrowException(
-            ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
-        app()->instance(CreateReportRunAction::class, $action);
+        if ($reason === 'source_unavailable') {
+            $action = $this->createMock(CreateReportRunAction::class);
+            $action->expects(self::exactly($attempts))->method('handle')->willThrowException(
+                ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
+            app()->instance(CreateReportRunAction::class, $action);
+        }
         for ($attempt = 0; $attempt < $attempts; $attempt++) {
             $this->process(app(AssistantPublishedReportProcessor::class), $task);
         }
@@ -817,9 +821,12 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $this->root($actor);
         $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
         $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
-        $source = $this->createMock(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class);
-        $source->expects(self::never())->method('snapshot');
-        app()->instance(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class, $source);
+        $sourceQueries = [];
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$sourceQueries): void {
+            if (str_contains($query->sql, 'production_acceptance_')) {
+                $sourceQueries[] = $query->sql;
+            }
+        });
         $action = $this->createMock(CreateReportRunAction::class);
         $action->expects(self::once())->method('handle')->willReturnCallback(function (): never {
             $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
@@ -831,7 +838,42 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertSame('ACCESS_OR_INPUT_CHANGED', $task->fresh()->error_code);
         self::assertNull($task->fresh()->run_id);
         self::assertNull($task->fresh()->export_id);
+        self::assertSame([], $sourceQueries);
         $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)->assertForbidden();
+    }
+
+    public static function futurePeriods(): array
+    {
+        return [['new_task'], ['existing_task']];
+    }
+
+    #[DataProvider('futurePeriods')]
+    public function test_future_period_is_rejected_in_the_snapshot_timezone_without_claiming_incomplete_history(string $mode): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $asOf = now()->utc()->toDateTimeImmutable()->setTime(21, 30);
+        $day = $asOf->setTimezone(new DateTimeZone('Europe/Moscow'))->format('Y-m-d');
+        self::assertNotSame($asOf->format('Y-m-d'), $day);
+        $this->root($actor, $asOf);
+        $arguments = array_replace($this->arguments(), ['filters_json' => json_encode(['period_from' => $day, 'period_to' => $day], JSON_THROW_ON_ERROR)]);
+        if ($mode === 'new_task') {
+            $arguments['filters_json'] = json_encode(['period_from' => $day, 'period_to' => $asOf->modify('+1 day')->setTimezone(new DateTimeZone('Europe/Moscow'))->format('Y-m-d')], JSON_THROW_ON_ERROR);
+            try {
+                app(AssistantPublishedReportTasks::class)->create($arguments, $actor, $org);
+                self::fail('Expected rejection before queueing');
+            } catch (InvalidArgumentException) {
+                self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+            }
+        } else {
+            $result = app(AssistantPublishedReportTasks::class)->create($arguments, $actor, $org);
+            $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+            $parameters = $task->parameters;
+            $parameters['filters']['period_to'] = $asOf->modify('+1 day')->setTimezone(new DateTimeZone('Europe/Moscow'))->format('Y-m-d');
+            $context = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAuthorization::class)->createRun((int) $actor->id, $org, $parameters);
+            $this->expectException(InvalidArgumentException::class);
+            app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportSourceReadiness::class)->check($context, $parameters);
+        }
     }
 
     private function replaceCurrentPublishedDefinition(): void
@@ -902,7 +944,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
         }
     }
 
-    private function seedAcceptedSource(int $organizationId, int $projectId, DateTimeImmutable $acceptedAt): void
+    private function seedAcceptedSource(int $organizationId, int $projectId, DateTimeImmutable $acceptedAt, array $eventOverrides = []): void
     {
         $member = ['contractor_id' => 19, 'source_line_id' => 91, 'source_line_type' => 'performance_act_line',
             'unit_code' => 'm3', 'work_id' => 77, 'zone' => 'A'];
@@ -916,7 +958,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
             'owner_version_id' => $ownerId, 'organization_id' => $organizationId, 'project_id' => $projectId,
             'performance_act_id' => 51, ...$member,
         ]);
-        DB::table('production_acceptance_events')->insert([
+        DB::table('production_acceptance_events')->insert(array_replace([
             'organization_id' => $organizationId, 'project_id' => $projectId, 'contract_id' => 21, 'performance_act_id' => 51,
             'source_line_type' => 'performance_act_line', 'source_line_id' => 91, 'work_id' => 77, 'task_id' => 31,
             'wbs_code' => '1.2', 'zone' => 'A', 'contractor_id' => 19, 'transition_version' => 1, 'event_type' => 'accepted',
@@ -925,7 +967,7 @@ final class AssistantPublishedReportTasksTest extends TestCase
             'currency' => 'RUB', 'currency_source' => 'performance_act_line.unit_price@contract_performance_act.currency',
             'recognized_at' => $acceptedAt, 'actor_id' => 5, 'source_hash' => hash('sha256', 'event:'.$organizationId),
             'evidence_refs' => json_encode([['type' => 'performance_act', 'id' => 51, 'project_id' => $projectId]], JSON_THROW_ON_ERROR),
-        ]);
+        ], $eventOverrides));
     }
 
     private function assertExcel(string $bytes, string $day): void
