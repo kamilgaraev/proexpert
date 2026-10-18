@@ -7,15 +7,18 @@ namespace Tests\Unit\BudgetEstimates;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\PDFEstimateBuilder;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Most\MostTemplateHandler;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
+use App\Models\ImportSession;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Eloquent\Collection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 use Smalot\PdfParser\Parser;
@@ -133,6 +136,78 @@ final class EstimateExportReadbackTest extends TestCase
             if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
                 file_put_contents($directory.'/estimate-without-prices.xlsx', $result['content']);
             }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_own_excel_roundtrip_uses_visible_edits_and_excludes_signature_footer(bool $showPrices): void
+    {
+        $estimate = $this->fixture();
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['show_prices' => $showPrices]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-roundtrip-');
+        try {
+            file_put_contents($path, $result['content']);
+            $handler = $this->app->make(MostTemplateHandler::class);
+            $session = new ImportSession(['options' => []]);
+            self::assertSame(1.0, $handler->detect($session, $path)->confidence);
+            $structure = $handler->detectStructure($session, $path);
+            self::assertTrue($structure->metadata['most_export'] ?? false);
+
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                if (str_contains((string) $sheet->getCell("C{$row}")->getValue(), 'учебная ведомость')) {
+                    $sheet->setCellValue("E{$row}", 23);
+                    if ($showPrices) {
+                        $sheet->setCellValue("G{$row}", 23 * (float) $sheet->getCell("F{$row}")->getValue());
+                    }
+                    break;
+                }
+            }
+            (new Xlsx($book))->save($path);
+            $book->disconnectWorksheets();
+
+            foreach ([$structure, $handler->detectStructureFromHeaderRow($session, $path, $structure->headerRow)] as $detectedStructure) {
+                $preview = $handler->preview($session, $path, $detectedStructure);
+                self::assertCount(1, $preview->sections);
+                self::assertCount(3, $preview->items);
+                self::assertEquals(23, $preview->items[0]['quantity']);
+                self::assertNotContains('ПОДПИСИ ОТВЕТСТВЕННЫХ ЛИЦ', array_column($preview->sections, 'item_name'));
+                $streamed = iterator_to_array($handler->streamRows($session, $path, $detectedStructure), false);
+                self::assertCount(4, $streamed);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith(['MOST_TEMPLATE_V1', 1.0])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['PROHELPER_TEMPLATE_V1', 1.0])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['MOST_ESTIMATE_EXPORT_V1 edited', 0.4])]
+    public function test_other_template_markers_do_not_change_section_detection(string $description, float $confidence): void
+    {
+        $estimate = $this->fixture();
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-template-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $book->getProperties()->setDescription($description);
+            (new Xlsx($book))->save($path);
+            $book->disconnectWorksheets();
+            $handler = $this->app->make(MostTemplateHandler::class);
+            $session = new ImportSession(['options' => []]);
+            self::assertSame($confidence, $handler->detect($session, $path)->confidence);
+            $structure = $handler->detectStructure($session, $path);
+            self::assertFalse($structure->metadata['most_export'] ?? false);
+            $preview = $handler->preview($session, $path, $structure);
+            self::assertContains('ПОДПИСИ ОТВЕТСТВЕННЫХ ЛИЦ', array_column($preview->sections, 'item_name'));
+            self::assertCount(3, $preview->items);
         } finally {
             unlink($path);
         }

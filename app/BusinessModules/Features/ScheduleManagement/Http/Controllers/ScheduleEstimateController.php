@@ -55,6 +55,9 @@ class ScheduleEstimateController extends Controller
             }
 
             $options = $validated['options'] ?? [];
+            if (isset($validated['name'])) {
+                $options['name'] = $validated['name'];
+            }
             if (isset($validated['start_date'])) {
                 $options['start_date'] = $validated['start_date'];
             }
