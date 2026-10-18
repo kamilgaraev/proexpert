@@ -6,6 +6,7 @@ namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
@@ -69,6 +70,26 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
         $ambiguousYear = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «Северный дом» за октябрь'), fn (): array => $this->projectSearchResult([['id' => 102]], false));
         self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantRequiredProjectRead::fromPlan($ambiguousYear)['arguments']);
+    }
+
+    public function test_a_delimiter_before_the_period_is_not_part_of_the_project_name(): void
+    {
+        foreach ([',', ':', ';', '—'] as $delimiter) {
+            foreach (['Северный дом', 'Южный, корпус 2'] as $name) {
+                $query = 'Сверь выполненные работы с графиком проекта '.$name.$delimiter.' за октябрь 2026';
+                $seen = [];
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name, &$seen): array {
+                    $seen[] = $arguments['query'];
+
+                    return $this->projectSearchResult($arguments['query'] === $name ? [['id' => 102]] : [], false);
+                });
+                self::assertSame([$name.$delimiter.' за октябрь 2026', $name], $seen);
+                self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+                $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 95]], false));
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            }
+        }
+        self::assertSame('Южный, корпус 2:', AssistantProductionSchedulePeriod::withoutSuffix('Южный, корпус 2:'));
     }
 
     public function test_unique_named_project_overrides_background_scope_and_tool_arguments(): void

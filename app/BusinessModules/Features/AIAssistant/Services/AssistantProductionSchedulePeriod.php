@@ -20,7 +20,9 @@ final class AssistantProductionSchedulePeriod
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d))';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
-        return trim((string) ($parts[0] ?? $name));
+        $head = trim((string) ($parts[0] ?? $name));
+
+        return count($parts) > 1 ? (preg_replace('/[\s,;:—–\-]+$/u', '', $head) ?? $head) : $head;
     }
 
     public static function arguments(int $projectId, array $plan): array
