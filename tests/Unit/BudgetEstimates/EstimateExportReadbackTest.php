@@ -138,6 +138,40 @@ final class EstimateExportReadbackTest extends TestCase
         }
     }
 
+    public function test_excel_keeps_long_codes_and_text_readable_when_printing(): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->normative_rate_code = 'ГЭСН08-02-002-05';
+        $item->is_not_accounted = true;
+        $item->name = str_repeat('Подготовка и обработка стен учебного помещения. ', 5);
+        $item->description = str_repeat('Условное примечание для проверки печати. ', 5);
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-long-text-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            foreach (['B', 'C', 'H'] as $column) {
+                self::assertLessThanOrEqual(70, $sheet->getColumnDimension($column)->getWidth());
+            }
+            self::assertSame('ГЭСН08-02-002-05 (Н)', $sheet->getCell('B17')->getValue());
+            self::assertSame($item->name, $sheet->getCell('C17')->getValue());
+            self::assertSame($item->description, $sheet->getCell('H17')->getValue());
+            foreach (['B17', 'C17', 'H17'] as $coordinate) {
+                self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
+            }
+            self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-long-text.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     #[WithoutErrorHandler]
     public function test_short_pdf_keeps_totals_quantities_and_all_signatures_on_one_page(): void
     {

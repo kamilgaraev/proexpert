@@ -87,7 +87,7 @@ class ExcelEstimateBuilder
             ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
             ->setPaperSize(PageSetup::PAPERSIZE_A4)
             ->setFitToWidth(1)
-            ->setFitToHeight($sheet->getHighestRow() <= 45 ? 1 : 0)
+            ->setFitToHeight($this->fitsShortPrintPage($sheet) ? 1 : 0)
             ->setPrintArea('A1:H'.$sheet->getHighestRow());
     }
 
@@ -432,6 +432,10 @@ class ExcelEstimateBuilder
         // Apply borders - determine last column
         $lastCol = $col;
         $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+            'alignment' => [
+                'wrapText' => true,
+                'vertical' => Alignment::VERTICAL_TOP,
+            ],
             'borders' => [
                 'allBorders' => [
                     'borderStyle' => Border::BORDER_THIN,
@@ -711,7 +715,7 @@ class ExcelEstimateBuilder
     {
         // Устанавливаем минимальную ширину для основных колонок
         $sheet->getColumnDimension('A')->setWidth(8);  // №
-        $sheet->getColumnDimension('B')->setWidth(15); // Код
+        $sheet->getColumnDimension('B')->setWidth(22); // Код
         $sheet->getColumnDimension('C')->setWidth(60); // Наименование - увеличено
         $sheet->getColumnDimension('D')->setWidth(12); // Ед.изм.
         $sheet->getColumnDimension('E')->setWidth(14); // Кол-во
@@ -719,10 +723,24 @@ class ExcelEstimateBuilder
         $sheet->getColumnDimension('G')->setWidth(18); // Сумма
         $sheet->getColumnDimension('H')->setWidth(35); // Примечание
         
-        // Включаем автоподбор ширины для колонок с динамическим контентом
-        foreach (['C', 'D', 'E', 'F', 'G', 'H'] as $col) {
-            $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    private function fitsShortPrintPage(Worksheet $sheet): bool
+    {
+        $lastRow = $sheet->getHighestRow();
+        if ($lastRow > 45) {
+            return false;
         }
+        for ($row = 1; $row <= $lastRow; $row++) {
+            foreach (['B', 'C', 'D', 'F', 'H'] as $column) {
+                $value = (string) $sheet->getCell($column.$row)->getValue();
+                if (mb_strwidth($value, 'UTF-8') > $sheet->getColumnDimension($column)->getWidth() * 2) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**
