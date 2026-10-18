@@ -26,7 +26,7 @@ final class EstimateAuditContextPlanner
         $this->lastFailedPartSizes = [];
         $quantityIndex = $this->quantityIndex($root->derivedQuantities);
         $quantityIndex['records'] = (new EstimateAuditDraftRecordPlanner)->quantityRecordIndex($root->draft);
-        if ($root->contractVersion === 'estimate-auditor:v3') {
+        if (in_array($root->contractVersion, ['estimate-auditor:v3', 'estimate-auditor:v4'], true)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft);
             for ($attempt = 0; $attempt < 6; $attempt++) {
                 $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
@@ -89,7 +89,7 @@ final class EstimateAuditContextPlanner
             if ($part['id'] !== 'whole') {
                 $payload['part_id'] = $part['id'];
             }
-            $sourceFits = $root->contractVersion !== 'estimate-auditor:v3'
+            $sourceFits = ! in_array($root->contractVersion, ['estimate-auditor:v3', 'estimate-auditor:v4'], true)
                 || strlen(CanonicalPipelineJson::encode([...$payload,
                     'draft' => $part['draft'], 'derived_quantities' => $root->derivedQuantities])) <= 2097152;
             if (! $sourceFits || ! $this->fits($payload, $maximumBytes)) {

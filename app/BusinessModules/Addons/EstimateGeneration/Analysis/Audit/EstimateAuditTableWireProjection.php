@@ -12,12 +12,12 @@ final class EstimateAuditTableWireProjection
 
     public static function forAudit(array $payload): array
     {
-        if (($payload['contract_version'] ?? null) !== 'estimate-auditor:v3'
+        if (! in_array($payload['contract_version'] ?? null, ['estimate-auditor:v3', 'estimate-auditor:v4'], true)
             || array_key_exists('_tables', $payload) || array_key_exists('_wire', $payload)
             || ! self::safe($payload)) {
             return $payload;
         }
-        $projected = self::project($payload);
+        $projected = self::project($payload, $payload['contract_version'] === 'estimate-auditor:v4' ? 2 : 3);
         $projected['_tables'] = self::CONTRACT;
 
         return strlen(CanonicalPipelineJson::encode($projected)) < strlen(CanonicalPipelineJson::encode($payload))
@@ -48,15 +48,15 @@ final class EstimateAuditTableWireProjection
         return true;
     }
 
-    private static function project(mixed $value): mixed
+    private static function project(mixed $value, int $minimumRows): mixed
     {
         if (! is_array($value)) {
             return $value;
         }
         foreach ($value as $key => $child) {
-            $value[$key] = self::project($child);
+            $value[$key] = self::project($child, $minimumRows);
         }
-        if (! array_is_list($value) || count($value) < 3 || count($value) > 20000) {
+        if (! array_is_list($value) || count($value) < $minimumRows || count($value) > 20000) {
             return $value;
         }
         $schemas = $indices = $rows = [];
