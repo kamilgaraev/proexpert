@@ -10,14 +10,14 @@ final class AssistantProductionSchedulePeriod
 {
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
-    private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3})';
+    private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
 
     private const TIME_START = '(?:(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:недел|месяц|квартал|год|день|дня|дней|сут|'.self::MONTH.')|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
         $time = '(?:(?:за|в|во)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:недел|месяц|квартал|год)|\d+\s+(?:недел|месяц|квартал|год|дней))'
-            .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|на\s+\d{4}\s+год)';
+            .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d))';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
         return trim((string) ($parts[0] ?? $name));
@@ -37,6 +37,11 @@ final class AssistantProductionSchedulePeriod
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         if (preg_match('/\bквартал[а-яё]*\b/iu', $query) === 1) {
             return $arguments + self::quarterDates($query);
+        }
+        if (preg_match('/\b(?:за|в|во|на)\s+((?:19|20)\d{2})(?:\s+год[ау]?)?\b(?![-.\/]\d)/iu', $query, $year) === 1) {
+            return $arguments + (preg_match_all('/\b(?:19|20)\d{2}\b/u', $query) === 1
+                && preg_match('/\b'.self::MONTH.'\b/iu', $query) !== 1 && preg_match_all('/\b'.self::TIME_START.'/iu', $query) === 1
+                ? ['period_start' => $year[1].'-01-01', 'period_end' => $year[1].'-12-31'] : ['period_start' => null, 'period_end' => null]);
         }
         if (preg_match('/\b'.self::TIME_START.'/iu', $query) !== 1) {
             return $arguments;
@@ -154,16 +159,46 @@ final class AssistantProductionSchedulePeriod
     private static function quarterDates(string $query): array
     {
         $unresolved = ['period_start' => null, 'period_end' => null];
-        if (preg_match_all('/\bквартал[а-яё]*\b/iu', $query) !== 1
-            || preg_match_all('/\b(?:19|20)\d{2}\b/u', $query) !== 1
-            || preg_match('/\b'.self::MONTH.'\b/iu', $query) === 1
-            || preg_match('/\b(?:за|в|во)\s+('.self::QUARTER_NUMBER.')\s+квартал[ае]?\s+((?:19|20)\d{2})\b/iu', $query, $quarter) !== 1) {
+        if (preg_match_all('/\bквартал[а-яё]*\b/iu', $query) !== 1 || preg_match('/\b'.self::MONTH.'\b/iu', $query) === 1) {
             return $unresolved;
         }
-        $number = ['i' => 1, 'ii' => 2, 'iii' => 3, 'iv' => 4][mb_strtolower($quarter[1])] ?? (int) $quarter[1];
+        $years = preg_match_all('/\b(?:19|20)\d{2}\b/u', $query);
+        if ($years === 0 && preg_match('/\bза\s+(?:последний\s+)?квартал\b/iu', $query, $rolling) === 1) {
+            if (self::hasOtherPeriod($query, $rolling[0])) {
+                return $unresolved;
+            }
+            $period = (new AssistantPeriodResolver)->resolve($query);
+
+            return $period?->dateFrom !== null && $period->dateTo !== null
+                ? ['period_start' => $period->dateFrom, 'period_end' => $period->dateTo] : $unresolved;
+        }
+        if ($years === 0 && preg_match('/\b(?:за|в|во)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+квартал[е]?\b/iu', $query, $relative) === 1) {
+            if (self::hasOtherPeriod($query, $relative[0])) {
+                return $unresolved;
+            }
+            $end = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
+            $start = $end->setDate((int) $end->format('Y'), intdiv((int) $end->format('n') - 1, 3) * 3 + 1, 1);
+            if (preg_match('/^(?:прошл|предыдущ)/iu', $relative[1]) === 1) {
+                $end = $start->modify('-1 day');
+                $start = $start->modify('-3 months');
+            }
+
+            return ['period_start' => $start->format('Y-m-d'), 'period_end' => $end->format('Y-m-d')];
+        }
+        if ($years !== 1 || preg_match('/\b(?:за|в|во)\s+('.self::QUARTER_NUMBER.')\s+квартал[ае]?\s+((?:19|20)\d{2})\b/iu', $query, $quarter) !== 1
+            || self::hasOtherPeriod($query, $quarter[0])) {
+            return $unresolved;
+        }
+        $number = ['i' => 1, 'ii' => 2, 'iii' => 3, 'iv' => 4, 'первый' => 1, 'первом' => 1, 'второй' => 2, 'втором' => 2,
+            'третий' => 3, 'третьем' => 3, 'четвертый' => 4, 'четвертом' => 4, 'четвёртый' => 4, 'четвёртом' => 4][mb_strtolower($quarter[1])] ?? (int) $quarter[1];
         $start = new \DateTimeImmutable(sprintf('%d-%02d-01', (int) $quarter[2], ($number - 1) * 3 + 1));
 
         return ['period_start' => $start->format('Y-m-d'), 'period_end' => $start->modify('+2 months')->format('Y-m-t')];
+    }
+
+    private static function hasOtherPeriod(string $query, string $phrase): bool
+    {
+        return preg_match('/\b'.self::TIME_START.'/iu', str_replace($phrase, ' ', $query)) === 1;
     }
 
     private static function normalizedQuery(string $query): string

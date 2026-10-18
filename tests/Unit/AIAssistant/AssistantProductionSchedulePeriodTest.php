@@ -12,18 +12,60 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_a_quarter_does_not_hide_another_requested_period(): void
+    {
+        foreach (['за 3 квартал 2026 и за прошлый год', 'в III квартале 2026 и сегодня',
+            'за последний квартал и за текущий месяц', 'за текущий квартал и за последнюю неделю'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
+    public function test_relative_quarters_keep_rolling_and_calendar_meanings(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за последний квартал' => ['2026-07-19', '2026-10-19'], 'за квартал' => ['2026-07-19', '2026-10-19'],
+                'за текущий квартал' => ['2026-10-01', '2026-10-19'], 'в этом квартале' => ['2026-10-01', '2026-10-19'],
+                'за прошлый квартал' => ['2026-07-01', '2026-09-30'], 'в предыдущем квартале' => ['2026-07-01', '2026-09-30']] as $phrase => [$start, $end]) {
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$phrase]]), $phrase);
+            }
+            \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-12 10:00:00', 'Europe/Moscow'));
+            self::assertSame(['project_id' => 102, 'period_start' => '2025-10-01', 'period_end' => '2025-12-31'],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком за прошлый квартал']]));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_explicit_calendar_year_is_resolved_without_reasking_the_year(): void
+    {
+        foreach (['за 2026 год', 'в 2026 году', 'на 2026 год', 'за 2026', 'за 2024 год'] as $phrase) {
+            $year = str_contains($phrase, '2024') ? '2024' : '2026';
+            self::assertSame(['project_id' => 102, 'period_start' => $year.'-01-01', 'period_end' => $year.'-12-31'],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Дом', AssistantProductionSchedulePeriod::withoutSuffix('Дом '.$phrase));
+        }
+        foreach (['за 2025 и 2026 годы', 'за 2025 год и за 2026 год', 'за 2026 год и за октябрь'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
     public function test_numbered_quarters_use_calendar_boundaries_and_unknown_quarters_require_dates(): void
     {
-        foreach ([1 => ['I', '2026-01-01', '2026-03-31'], 2 => ['II', '2026-04-01', '2026-06-30'],
-            3 => ['III', '2026-07-01', '2026-09-30'], 4 => ['IV', '2026-10-01', '2026-12-31']] as $number => [$roman, $start, $end]) {
-            foreach (['за '.$number.' квартал 2026 года', 'за '.$number.'-й квартал 2026 года', 'в '.$roman.' квартале 2026 года'] as $period) {
+        foreach ([1 => ['I', 'первый', 'первом', '2026-01-01', '2026-03-31'], 2 => ['II', 'второй', 'втором', '2026-04-01', '2026-06-30'],
+            3 => ['III', 'третий', 'третьем', '2026-07-01', '2026-09-30'], 4 => ['IV', 'четвёртый', 'четвёртом', '2026-10-01', '2026-12-31']] as $number => [$roman, $ordinal, $locative, $start, $end]) {
+            foreach (['за '.$number.' квартал 2026 года', 'за '.$number.'-й квартал 2026 года', 'в '.$roman.' квартале 2026 года',
+                'за '.$ordinal.' квартал 2026 года', 'в '.$locative.' квартале 2026 года'] as $period) {
                 $query = 'Сверь выполненные работы с графиком '.$period;
                 self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
                     AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $query]]), $query);
                 self::assertSame('Дом', AssistantProductionSchedulePeriod::withoutSuffix('Дом '.$period));
             }
         }
-        foreach (['за 3 квартал', 'за 5 квартал 2026', 'за 2 и 3 кварталы 2026', 'за третий квартал 2026',
+        foreach (['за 3 квартал', 'за 5 квартал 2026', 'за 2 и 3 кварталы 2026',
             'за 3 квартал 2026 и за октябрь 2026', 'за 3 квартал 2025 и 2026 годов'] as $period) {
             self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
                 AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$period]]), $period);
