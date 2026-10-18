@@ -39,9 +39,75 @@ final readonly class AssistantPublishedReportTasks
         private GetReportRunAction $runs,
         private GetReportExportAction $exports,
         private SearchProjectsTool $projects,
+        private AssistantPublishedReportAvailability $availability,
     ) {}
 
     public function create(array $arguments, User $actor, int $organizationId): array
+    {
+        return $this->createPrepared($this->prepare($arguments, $actor, $organizationId), $organizationId);
+    }
+
+    public function createIfReady(array $arguments, User $actor, int $organizationId): array
+    {
+        $prepared = $this->prepare($arguments, $actor, $organizationId);
+        $existing = $this->reusePrepared($prepared, $organizationId);
+        if ($existing !== null) {
+            return $existing;
+        }
+        $readiness = $this->inspectPrepared($prepared, $arguments, $organizationId);
+        if ($readiness['readiness']['state'] === 'not_ready') {
+            return $this->reusePrepared($prepared, $organizationId) ?? array_replace($readiness, ['status' => 'source_not_ready']);
+        }
+
+        return $this->createPrepared($prepared, $organizationId);
+    }
+
+    private function reusePrepared(AssistantPreparedPublishedReport $prepared, int $organizationId): ?array
+    {
+        $id = AssistantCoreReportTask::query()->where('assistant_request_id', $prepared->request->id)
+            ->where('input_sha256', hash('sha256', CanonicalJson::encode($prepared->parameters)))->value('id');
+        if (! is_string($id)) {
+            return null;
+        }
+        $this->artifact($id, $prepared->actor, $organizationId);
+
+        return $this->createPrepared($prepared, $organizationId);
+    }
+
+    public function inspect(array $arguments, User $actor, int $organizationId): array
+    {
+        return $this->inspectPrepared($this->prepare($arguments, $actor, $organizationId), $arguments, $organizationId);
+    }
+
+    public function verifyReadiness(array $result, User $actor, int $organizationId): ?array
+    {
+        $reference = $result['readiness_reference'] ?? null;
+        if (! is_array($reference) || ! is_string($reference['request_id'] ?? null)
+            || ! is_string($reference['input_sha256'] ?? null) || ! is_array($reference['arguments'] ?? null)) {
+            return null;
+        }
+        $prepared = $this->prepare($reference['arguments'], $actor, $organizationId);
+        if ($reference['request_id'] !== $prepared->request->request_id
+            || ! hash_equals($reference['input_sha256'], hash('sha256', CanonicalJson::encode($prepared->parameters)))) {
+            return null;
+        }
+
+        return $this->inspectPrepared($prepared, $reference['arguments'], $organizationId);
+    }
+
+    private function inspectPrepared(AssistantPreparedPublishedReport $prepared, array $arguments, int $organizationId): array
+    {
+        $parameters = $prepared->parameters;
+        $context = $this->authorization->createRun((int) $prepared->actor->id, $organizationId, $parameters);
+
+        return ['status' => 'success', 'report_code' => $parameters['report_code'], 'project_id' => $parameters['project_id'],
+            'as_of' => $parameters['as_of'], 'timezone' => $parameters['timezone'],
+            'readiness' => $this->availability->inspect($context, $parameters),
+            'readiness_reference' => ['request_id' => $prepared->request->request_id,
+                'input_sha256' => hash('sha256', CanonicalJson::encode($parameters)), 'arguments' => $arguments]];
+    }
+
+    private function prepare(array $arguments, User $actor, int $organizationId): AssistantPreparedPublishedReport
     {
         $actor = $this->access->actor((int) $actor->id, $organizationId, true);
         if ($this->policy->trustedSurface() !== KnowledgeSurface::ADMIN) {
@@ -53,6 +119,15 @@ final readonly class AssistantPublishedReportTasks
         }
         $parameters = $this->input->prepare($arguments, $actor, $organizationId, DateTimeImmutable::createFromInterface($request->created_at));
         $this->assertProject($request, $parameters, $actor);
+
+        return new AssistantPreparedPublishedReport($actor, $request, $parameters);
+    }
+
+    private function createPrepared(AssistantPreparedPublishedReport $prepared, int $organizationId): array
+    {
+        $actor = $prepared->actor;
+        $request = $prepared->request;
+        $parameters = $prepared->parameters;
         $hash = hash('sha256', CanonicalJson::encode($parameters));
         $task = DB::transaction(function () use ($request, $parameters, $hash, $actor, $organizationId): AssistantCoreReportTask {
             $root = AssistantRequest::query()->lockForUpdate()->findOrFail($request->id);
@@ -95,13 +170,13 @@ final readonly class AssistantPublishedReportTasks
         }
         $this->assertProject($request, $task->parameters, $actor);
         $state = $this->state($task);
-        if (! in_array($state['status'], [...AssistantCoreReportTask::PENDING, 'ready'], true)) {
+        if (! in_array($state['status'], [...AssistantCoreReportTask::PENDING, 'ready', 'failed'], true)) {
             throw new InvalidArgumentException('assistant_report_task_not_available');
         }
 
         return ['artifact_type' => 'core_report_task', 'task_id' => (string) $task->id,
             'title' => $state['title'], 'type' => $state['format'], 'format' => $state['format'],
-            'report_type' => $task->parameters['report_code'], 'status' => $state['status'],
+            'report_type' => $task->parameters['report_code'], 'status' => $state['status'], 'failure_reason' => $state['failure_reason'],
             'url' => '/ai-assistant/report-tasks/'.$task->id];
     }
 

@@ -11,6 +11,7 @@ final class AssistantToolEligibilityPolicy
 {
     private const READ_TOOLS = [
         'describe_published_reports',
+        'check_published_report_readiness',
         'describe_custom_report_source',
         'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities',
         'get_published_report_financial_evidence', 'get_live_project_financial_evidence',

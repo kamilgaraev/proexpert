@@ -19,6 +19,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportPresentation;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportProcessor;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportTasks;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
@@ -100,6 +101,10 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertNotContains('row_key', array_column($catalog['items'][0]['columns'], 'id'));
         self::assertNotContains('accepted_amount_minor', array_column($catalog['items'][0]['columns'], 'id'));
         $this->denied(fn () => $tasks->create(array_replace($arguments, ['sort' => ['field' => 'accepted_amount_minor', 'direction' => 'desc']]), $actor, $organizationId));
+        self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
+        $readiness = app(AIToolRegistry::class)->getTool('check_published_report_readiness')->execute($arguments, $actor, $this->fixture->organization);
+        self::assertSame('ready', $readiness['readiness']['state']);
+        self::assertNull($readiness['readiness']['failure_reason']);
         self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
         $tool = app(AIToolRegistry::class)->getTool('generate_published_report');
         self::assertNotNull($tool);
@@ -840,6 +845,270 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertNull($task->fresh()->export_id);
         self::assertSame([], $sourceQueries);
         $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)->assertForbidden();
+    }
+
+    public function test_generation_checks_source_before_queueing_and_does_not_promise_a_missing_file(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $result = app(AIToolRegistry::class)->getTool('generate_published_report')->execute($this->arguments(), $actor, $this->fixture->organization);
+        self::assertIsArray($result);
+        self::assertSame('source_not_ready', $result['status']);
+        self::assertSame('source_history_incomplete', $result['readiness']['failure_reason']);
+        self::assertArrayNotHasKey('report_task_id', $result);
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+        self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
+        self::assertSame(0, DB::table('report_exports')->where('organization_id', $org)->count());
+    }
+
+    public function test_a_failed_task_keeps_its_authorized_card_with_the_confirmed_reason(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $result = $tasks->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $this->process(app(AssistantPublishedReportProcessor::class), $task);
+        self::assertSame('failed', $task->fresh()->status);
+        $artifact = $tasks->artifact($task->id, $actor, $org);
+        self::assertSame('failed', $artifact['status']);
+        self::assertSame('source_history_incomplete', $artifact['failure_reason']);
+        self::assertSame('/ai-assistant/report-tasks/'.$task->id, $artifact['url']);
+        self::assertArrayNotHasKey('export_id', $artifact);
+        $text = app(AssistantPublishedReportPresentation::class)->artifacts([$artifact]);
+        self::assertSame(trans_message('ai_published_reports.failure.source_history_incomplete'), $text);
+        self::assertStringNotContainsString('запущено', $text);
+        $service = (new \ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
+        self::assertSame($text, (new \ReflectionMethod($service, 'buildAgentToolAnswer'))->invoke($service, 'success', [$artifact]));
+        $this->assertCanonicalArtifact($tasks, $task, $actor, $org);
+        $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
+        $this->denied(fn () => $tasks->artifact($task->id, $actor, $org));
+    }
+
+    public function test_readiness_tool_is_read_only_and_revalidates_its_source_and_request_reference(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $tool = app(AIToolRegistry::class)->getTool('check_published_report_readiness');
+        self::assertNotNull($tool);
+        self::assertTrue(app(AIPermissionChecker::class)->canExecuteTool($actor, $tool->getName(), $this->arguments()));
+        self::assertFalse(app(AIPermissionChecker::class)->isMutationTool($tool->getName()));
+        $result = $tool->execute($this->arguments(), $actor, $this->fixture->organization);
+        self::assertSame('success', $result['status']);
+        self::assertSame('not_ready', $result['readiness']['state']);
+        self::assertSame('source_history_incomplete', $result['readiness']['failure_reason']);
+        self::assertArrayNotHasKey('report_task_id', $result);
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+        self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
+        self::assertSame(0, DB::table('report_exports')->where('organization_id', $org)->count());
+        $result['readiness'] = ['state' => 'ready', 'failure_reason' => null];
+        $presenter = app(AssistantPublishedReportPresentation::class);
+        $control = $presenter->control($tool->getName(), $result, $actor, $org);
+        self::assertTrue($control['validated']);
+        self::assertFalse($control['blocked']);
+        self::assertSame('source_history_incomplete', $control['readiness']['failure_reason']);
+        self::assertSame(trans_message('ai_published_reports.failure.source_history_incomplete'), $control['text']);
+        $verifier = app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier::class);
+        self::assertSame($control['text'], $verifier->verify($control['text'], ['task_id' => 'report.published', 'artifacts' => []], $org, (int) $actor->id));
+        $tampered = $result;
+        $tampered['readiness_reference']['input_sha256'] = str_repeat('0', 64);
+        self::assertFalse($presenter->control($tool->getName(), $tampered, $actor, $org)['validated']);
+        self::assertNull($presenter->control('untrusted_tool', $result, $actor, $org));
+        $this->root($actor);
+        self::assertFalse($presenter->control($tool->getName(), $result, $actor, $org)['validated']);
+    }
+
+    public function test_generation_reuses_an_existing_task_when_a_later_source_check_would_fail(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $original = $tasks->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($original['report_task_id']);
+        $tool = app(AIToolRegistry::class)->getTool('generate_published_report');
+        self::assertSame($original, $tool->execute($this->arguments(), $actor, $this->fixture->organization));
+        $this->process(app(AssistantPublishedReportProcessor::class), $task);
+        self::assertSame('failed', $task->fresh()->status);
+        self::assertSame($original, $tool->execute($this->arguments(), $actor, $this->fixture->organization));
+        self::assertSame('failed', $tasks->artifact($task->id, $actor, $org)['status']);
+        self::assertSame(1, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+    }
+
+    public function test_readiness_presentation_rechecks_access_before_reading_or_explaining_the_source(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $result = app(AssistantPublishedReportTasks::class)->inspect($this->arguments(), $actor, $org);
+        $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
+        $queries = [];
+        DB::listen(static function (\Illuminate\Database\Events\QueryExecuted $query) use (&$queries): void {
+            if (str_contains($query->sql, 'production_acceptance_')) {
+                $queries[] = $query->sql;
+            }
+        });
+        $control = app(AssistantPublishedReportPresentation::class)->control('check_published_report_readiness', $result, $actor, $org);
+        self::assertFalse($control['validated']);
+        self::assertNull($control['readiness']);
+        self::assertSame(trans_message('ai_published_reports.check_unavailable'), $control['text']);
+        self::assertSame([], $queries);
+        self::assertFalse(app(AIPermissionChecker::class)->canExecuteTool($actor, 'check_published_report_readiness', $this->arguments()));
+    }
+
+    public static function portfolioReadinessCases(): array
+    {
+        return [['missing'], ['duplicate'], ['unknown'], ['changed']];
+    }
+
+    public static function readinessAgentTools(): array
+    {
+        return [['generate_published_report', 'failed'], ['check_published_report_readiness', 'completed']];
+    }
+
+    public static function genericReadinessProbes(): array
+    {
+        return [['none', 'unchecked'], ['source', 'ready'], ['source', 'not_ready'], ['run', 'ready'], ['run', 'not_ready']];
+    }
+
+    #[DataProvider('genericReadinessProbes')]
+    public function test_availability_preserves_native_source_and_run_guards_and_does_not_call_an_unchecked_source_ready(string $type, string $expected): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $root = $this->root($actor);
+        $parameters = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportInput::class)
+            ->prepare($this->arguments(), $actor, $org, DateTimeImmutable::createFromInterface($root->created_at));
+        $context = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAuthorization::class)->createRun((int) $actor->id, $org, $parameters);
+        $parameters['report_code'] = 'project_margin';
+        $probe = null;
+        if ($type === 'source') {
+            $probe = $this->createMock(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceReadinessProbe::class);
+            $readiness = (new \App\Support\Reporting\ReportSourceReadinessFactory)->make([['row' => 1]], $expected === 'ready' ? [['row' => 1]] : [], $expected === 'ready' ? 0 : 1, 0, 'test-watermark');
+            $probe->expects(self::once())->method('inspect')->willReturnCallback(static function ($receivedContext, $query) use ($context, $parameters, $readiness) {
+                self::assertSame($context, $receivedContext);
+                self::assertSame('project_margin', $query->definition->code);
+                self::assertSame($parameters['as_of'], $query->asOf->format('Y-m-d\TH:i:s.uP'));
+
+                return $readiness;
+            });
+        } elseif ($type === 'run') {
+            $probe = $this->createMock(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRunReadinessProbe::class);
+            $assertion = $probe->expects(self::once())->method('assertReady');
+            if ($expected === 'not_ready') {
+                $assertion->willThrowException(ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
+            }
+        }
+        $binding = app(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap::class)->get('project_margin');
+        $bindings = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap([
+            'project_margin' => new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding(...array_replace(get_object_vars($binding), ['readinessProbe' => $probe])),
+        ]);
+        $filters = $this->createMock(\App\BusinessModules\Core\Reporting\Application\Contracts\ReportFilterInputNormalizer::class);
+        $filters->expects($type === 'none' ? self::never() : self::once())->method('forExecution')
+            ->willReturn(new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]));
+        $availability = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAvailability(
+            app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class), $bindings, $filters,
+            app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportSourceReadiness::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPortfolioReportReadiness::class),
+        );
+        self::assertSame(['state' => $expected, 'failure_reason' => $expected === 'not_ready' ? 'source_unavailable' : null], $availability->inspect($context, $parameters));
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+    }
+
+    #[DataProvider('readinessAgentTools')]
+    public function test_agent_flow_explains_confirmed_readiness_without_a_fake_artifact_or_service_error(string $tool, string $status): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $conversations = app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class);
+        $conversation = $conversations->createConversation($org, $actor, 'Проверка источника');
+        $registry = app(AIToolRegistry::class);
+        $permissions = app(AIPermissionChecker::class);
+        $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        $usage->expects(self::once())->method('trackRequest');
+        $usage->method('getUsageStats')->willReturn([]);
+        $service = new AIAssistantService(
+            $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class),
+            $conversations,
+            $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\ContextBuilder::class),
+            $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer::class),
+            $usage,
+            $this->createMock(\App\Services\Logging\LoggingService::class),
+            $registry, $permissions,
+            $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor::class),
+            app(\App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier::class),
+            dataAccess: app(AssistantDataAccessPolicy::class),
+        );
+        $message = $tool === 'generate_published_report' ? 'Сформируй Excel о принятой выработке' : 'Проверь источники принятой выработки без создания файла';
+        $state = new \App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState('report.published', 'reports', 'reports', $tool, 'ready_to_execute', [], $message);
+        $plan = ['request' => ['message' => $message, 'context' => []], 'task_type' => 'report', 'capability' => ['id' => 'reports'],
+            'request_understanding' => (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($message)->toArray()];
+        $response = (new \ReflectionMethod($service, 'executeAgentTool'))->invoke($service, $conversation, $org, $actor, $state, $plan, $tool, $this->arguments());
+        self::assertSame(trans_message('ai_published_reports.failure.source_history_incomplete'), $response['message']['content']);
+        $metadata = $response['message']['metadata'];
+        self::assertSame([], $metadata['artifacts']);
+        self::assertSame('partial', $metadata['validation_status']);
+        self::assertSame($status, $metadata['task_status']);
+        self::assertFalse($metadata['service_error'] ?? false);
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+    }
+
+    #[DataProvider('portfolioReadinessCases')]
+    public function test_portfolio_readiness_exposes_only_bounded_diagnostics_from_the_same_authorized_tuple(string $case): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $root = $this->root($actor);
+        $parameters = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportInput::class)
+            ->prepare($this->arguments(), $actor, $org, DateTimeImmutable::createFromInterface($root->created_at));
+        $context = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAuthorization::class)->createRun((int) $actor->id, $org, $parameters);
+        $definition = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class)->published('project_portfolio_health')->payload();
+        $query = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery($definition, $context->scope,
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]), $parameters['comparison'], new DateTimeImmutable($parameters['as_of']), 'ru');
+        $components = [];
+        foreach (\App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceTupleAssembler::REQUIRED_KINDS as $kind) {
+            $components[] = new \App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceComponent(
+                $kind, 'private-source-id-'.$kind, str_repeat('a', 64), 'private-version', $parameters['as_of']);
+        }
+        $gaps = [];
+        if ($case === 'missing') {
+            array_shift($components);
+        } elseif ($case === 'duplicate') {
+            $components[] = new \App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceComponent(
+                'project_margin', 'private-source-id-duplicate', str_repeat('b', 64), 'private-version', $parameters['as_of']);
+        } elseif ($case === 'unknown') {
+            $gaps[] = ['code' => 'private-unknown-gap', 'kind' => 'project_margin'];
+        }
+        $tuple = (new \App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceTupleAssembler)->assemble($components, $gaps);
+        $reader = $this->createMock(\App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthSourceReader::class);
+        $reader->expects(self::once())->method('read')->with($context, $query)->willReturnCallback(static function () use ($components, $gaps): array {
+            self::assertSame(1, DB::transactionLevel());
+
+            return ['components' => $components, 'gaps' => $gaps, 'calendar' => ['private-amount' => 900000], 'projects' => ['private-project-id' => 99000]];
+        });
+        $diagnostics = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPortfolioReportReadiness($reader, new \App\Support\Reporting\StableReportingSourceView);
+        $result = $diagnostics->inspect($context, $query, $case === 'changed' ? str_repeat('0', 64) : $tuple->watermark);
+        if ($case === 'changed') {
+            self::assertSame([], $result);
+        } else {
+            self::assertCount(4, $result);
+            self::assertSame(['kind' => 'project_margin', 'ready' => false, 'reasons' => [match ($case) {
+                'missing' => 'missing', 'duplicate' => 'ambiguous', default => 'unavailable',
+            }]], $result[0]);
+            self::assertTrue($result[3]['ready']);
+            self::assertStringNotContainsString('private', json_encode($result, JSON_THROW_ON_ERROR));
+            self::assertStringNotContainsString(str_repeat('a', 64), json_encode($result, JSON_THROW_ON_ERROR));
+        }
+        self::assertSame(0, DB::transactionLevel());
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
     }
 
     public static function futurePeriods(): array

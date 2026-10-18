@@ -89,7 +89,7 @@ final class AssistantRequestLifecycleTest extends TestCase
             $table->id(); $table->string('name'); $table->boolean('is_active')->default(true); $table->boolean('is_verified')->default(true); $table->timestamps(); $table->softDeletes();
         });
         Schema::create('users', function (Blueprint $table): void {
-            $table->id(); $table->string('name'); $table->string('email'); $table->string('password'); $table->boolean('is_active')->default(true); $table->unsignedBigInteger('current_organization_id')->nullable(); $table->timestamps(); $table->softDeletes();
+            $table->id(); $table->string('name'); $table->string('email'); $table->string('password'); $table->string('position')->nullable(); $table->boolean('is_active')->default(true); $table->unsignedBigInteger('current_organization_id')->nullable(); $table->timestamps(); $table->softDeletes();
         });
         Schema::create('organization_user', function (Blueprint $table): void {
             $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(false); $table->timestamps();
@@ -205,7 +205,9 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(1, AICreditProviderUsage::query()->count());
         $this->assertSame(1, AICreditLedgerEntry::query()->where('type', 'consume')->count());
         $this->assertSame(8100, $this->credits->successfulCostMicroRub(AICreditReservation::query()->findOrFail($request->reservation_id)));
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         $rootReplay = $this->providerService($provider)->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
         $this->assertSameJsonObject($response, $rootReplay);
@@ -221,8 +223,10 @@ final class AssistantRequestLifecycleTest extends TestCase
             'input_tokens' => 80, 'output_tokens' => 128, 'tokens_used' => 208, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
             'tool_calls' => [['id' => 'call_partial', 'type' => 'function', 'function' => ['name' => 'read_project', 'arguments' => '{"id":']]],
         ];
-        $provider = $this->createMock(LLMProviderInterface::class);
-        $invocation = $provider->expects($this->once())->method('chat');
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $invocation = $provider->expects($this->once())->method('responses');
         if ($providerThrows) {
             $invocation->willThrowException(new AssistantResponseIncomplete($response));
         } else {
@@ -289,7 +293,9 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame('not_submitted', $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id)['status']);
         $cancelled = $this->lifecycle->cancel($payload['request_id'], $this->actor, $this->organization->id);
         $this->assertSame('cancelled', $cancelled['status']);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         $this->assertOperationThrows(AssistantRequestCancelled::class, fn () => $this->providerService($provider)->ask($payload['message'], $this->organization->id, $this->actor, null, $payload));
         $this->assertSame(0, AICreditReservation::query()->count());
@@ -431,7 +437,9 @@ final class AssistantRequestLifecycleTest extends TestCase
             ],
         ]);
         $this->assertSame(0, AICreditQuote::query()->where('public_id', $payload['quote_id'])->sole()->max_units_minor);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->expects($this->never())->method('plan');
@@ -462,7 +470,9 @@ final class AssistantRequestLifecycleTest extends TestCase
             'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 56]], 'ui_state' => ['assistant_path' => '/ai-assistant/chat']],
         ]);
         $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk')['request'];
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->expects($this->never())->method('plan');
@@ -852,8 +862,10 @@ final class AssistantRequestLifecycleTest extends TestCase
     public function test_cancellation_prevents_next_root_provider_call_and_releases_reservation(): void
     {
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
-        $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->expects($this->once())->method('chat')->willReturn(['content' => 'Ответ', 'input_tokens' => 100, 'output_tokens' => 10, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna']);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->once())->method('responses')->willReturn($this->nativeResponse('Ответ', ['input_tokens' => 100, 'output_tokens' => 10, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna']));
         $service = $this->providerService($provider);
         $service->invokeProvider($request, $this->actor, [['role' => 'system', 'content' => 'Правила'], ['role' => 'user', 'content' => 'Запрос']]);
         $this->lifecycle->cancel($request->request_id, $this->actor, $this->organization->id);
@@ -870,7 +882,9 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
         $request = $this->lifecycle->claimQueued($request->id);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
         $usage->method('canMakeRequest')->willReturn(true);
@@ -906,11 +920,13 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
         $request = $this->lifecycle->claimQueued($request->id);
-        $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->expects($this->once())->method('chat')->willReturnCallback(function () use ($request): array {
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->once())->method('responses')->willReturnCallback(function () use ($request): array {
             $this->lifecycle->cancel($request->request_id, $this->actor, $this->organization->id, 'lk');
 
-            return ['content' => 'Ответ', 'input_tokens' => 100, 'output_tokens' => 10, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
+            return $this->nativeResponse('Ответ', ['input_tokens' => 100, 'output_tokens' => 10, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna']);
         });
         $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
         $usage->method('canMakeRequest')->willReturn(true);
@@ -940,11 +956,13 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
         $this->lifecycle->stage($request, $this->actor, 'reading');
-        $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->expects($this->once())->method('chat')->willReturn([
-            'content' => 'Ответ', 'input_tokens' => 100, 'output_tokens' => 10,
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->once())->method('responses')->willReturn($this->nativeResponse('Ответ', [
+            'input_tokens' => 100, 'output_tokens' => 10,
             'provider' => 'test-fixture', 'model' => 'gpt-6-luna',
-        ]);
+        ]));
 
         try {
             $this->travel(5)->minutes();
@@ -958,7 +976,9 @@ final class AssistantRequestLifecycleTest extends TestCase
     public function test_expired_lease_still_blocks_provider_and_cannot_be_renewed(): void
     {
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
 
         try {
@@ -992,10 +1012,12 @@ final class AssistantRequestLifecycleTest extends TestCase
         config()->set('ai-assistant-credits.pricing.input_micro_rub_per_million', 999999999);
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $payload)['request'];
         $this->assertSameJsonObject(['input_tokens' => 8192, 'output_tokens' => 1024, 'max_calls' => 2], $this->lifecycle->limits($request));
-        $provider = $this->createMock(LLMProviderInterface::class);
-        $provider->expects($this->once())->method('chat')->with($this->callback(static fn (array $messages): bool => end($messages)['content'] === str_repeat('я', 4000)),
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->once())->method('responses')->with($this->callback(static fn (array $messages): bool => end($messages)['content'] === str_repeat('я', 4000)),
             $this->callback(static fn (array $options): bool => $options['max_completion_tokens'] === 1024 && $options['budget_limits']['input_tokens'] === 8192 && $options['estimated_input_tokens'] <= 8192))
-            ->willReturn(['content' => 'Ответ', 'input_tokens' => 1, 'output_tokens' => 1, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna']);
+            ->willReturn($this->nativeResponse('Ответ', ['input_tokens' => 1, 'output_tokens' => 1, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna']));
         $this->providerService($provider)->invokeProvider($request, $this->actor, [['role' => 'system', 'content' => 'Обязательные правила'], ['role' => 'user', 'content' => str_repeat('я', 4000)]]);
         $this->assertSame(81, AICreditProviderUsage::query()->sole()->cost_micro_rub);
     }
@@ -1037,7 +1059,9 @@ final class AssistantRequestLifecycleTest extends TestCase
             $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
             $attempt = $this->lifecycle->beforeProviderCall($request, $this->actor, 1, 1);
             $this->lifecycle->recordProviderUsage($request, ['input_tokens' => 1, 'output_tokens' => 1, 'token_calibration' => $calibration], $attempt);
-            $provider = $this->createMock(LLMProviderInterface::class);
+            $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+            $provider->method('getModel')->willReturn('gpt-6-luna');
+            $provider->expects(self::never())->method('responses');
             $provider->expects($this->never())->method('chat');
             $this->assertOperationThrows(AssistantBudgetExceeded::class, fn () => $this->providerService($provider)->invokeProvider($request, $this->actor, [['role' => 'user', 'content' => 'Следующий вызов']]));
             $this->assertSame(1, $request->fresh()->calls_used);
@@ -1231,12 +1255,13 @@ final class AssistantRequestLifecycleTest extends TestCase
         $tool->expects($this->never())->method('execute');
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
-        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
-            $usage + ['content' => '', 'tool_calls' => [['id' => 'acl-read', 'function' => ['name' => 'assistant_domain_read', 'arguments' => '{"domain":"contracts","id":123}']]]],
-            $usage + ['content' => 'У вас нет доступа к данным договора.']
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $this->nativeResponse('', $usage, [['call_id' => 'acl-read', 'name' => 'assistant_domain_read', 'arguments' => '{"domain":"contracts","id":123}']]),
+            $this->nativeResponse('У вас нет доступа к данным договора.', $usage)
         );
         $access = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver::class);
         $orchestrator = new \App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator(new \App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry, $access);
@@ -1277,12 +1302,13 @@ final class AssistantRequestLifecycleTest extends TestCase
         $tool->expects($this->once())->method('execute')->willReturn($toolResponse);
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
-        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
-            $usage + ['content' => '', 'tool_calls' => [['id' => 'financial-incomplete', 'function' => ['name' => $name, 'arguments' => '{}']]]],
-            $usage + ['content' => 'Вот полный ответ по финансовому вопросу.']
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $this->nativeResponse('', $usage, [['call_id' => 'financial-incomplete', 'name' => $name, 'arguments' => '{}']]),
+            $this->nativeResponse('Вот полный ответ по финансовому вопросу.', $usage)
         );
         $service = $this->providerService($provider, $registry);
         $payload = $this->quote(['message' => 'Покажи точные суммы проекта']);
@@ -1348,12 +1374,13 @@ final class AssistantRequestLifecycleTest extends TestCase
         $reader->expects($this->once())->method('execute')->willReturn($proof);
         $registry->registerTool($reader);
 
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
-        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
-            $usage + ['content' => '', 'tool_calls' => [['id' => 'discover', 'function' => ['name' => 'assistant_domain_discover_capabilities', 'arguments' => '{}']]]],
-            $usage + ['content' => 'Неподтверждённое утверждение', 'tool_calls' => [['id' => 'read', 'function' => ['name' => 'assistant_domain_read', 'arguments' => '{"domain":"people"}']]]]
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $this->nativeResponse('', $usage, [['call_id' => 'discover', 'name' => 'assistant_domain_discover_capabilities', 'arguments' => '{}']]),
+            $this->nativeResponse('Неподтверждённое утверждение', $usage, [['call_id' => 'read', 'name' => 'assistant_domain_read', 'arguments' => '{"domain":"people"}']])
         );
         $payload = $this->quote(['message' => 'Покажи текущий статус пользователя']);
         $service = $this->providerService($provider, $registry);
@@ -1434,11 +1461,12 @@ final class AssistantRequestLifecycleTest extends TestCase
             $registry->registerTool($tool);
         }
         $payload = $this->quote(['message' => 'Покажи текущий статус пользователя']);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
         $provider->method('getModel')->willReturn('gpt-6-luna');
         $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
         $call = 0;
-        $provider->expects($this->exactly(2))->method('chat')->willReturnCallback(function () use (&$call, $usage, $payload, $change): array {
+        $provider->expects(self::never())->method('chat');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function () use (&$call, $usage, $payload, $change): array {
             $call++;
             if ($call === 2) {
                 if ($change === 'cancel') {
@@ -1447,10 +1475,8 @@ final class AssistantRequestLifecycleTest extends TestCase
                     $this->actor->forceFill(['current_organization_id' => null])->saveQuietly();
                 }
             }
-            return $usage + ['content' => '', 'tool_calls' => [[
-                'id' => $call === 1 ? 'discover' : 'read',
-                'function' => ['name' => $call === 1 ? 'assistant_domain_discover_capabilities' : 'assistant_domain_read', 'arguments' => '{}'],
-            ]]];
+            return $this->nativeResponse('', $usage, [['call_id' => $call === 1 ? 'discover' : 'read',
+                'name' => $call === 1 ? 'assistant_domain_discover_capabilities' : 'assistant_domain_read', 'arguments' => '{}']]);
         });
 
         $this->assertOperationThrows($exception, fn () => $this->providerService($provider, $registry)
@@ -1484,22 +1510,25 @@ final class AssistantRequestLifecycleTest extends TestCase
         $image = $this->imageFixture();
         $payload = $this->quote(['message' => 'Привет', 'profile' => 'normal', 'attachment_ids' => [$image->public_id]]);
         $this->assertGreaterThan(0, AICreditQuote::query()->where('public_id', $payload['quote_id'])->sole()->max_units_minor);
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
         $imageCall = 0;
-        $provider->expects($this->exactly(2))->method('chat')->willReturnCallback(function (array $messages, array $options) use (&$imageCall): array {
+        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function (array $messages, array $options) use (&$imageCall): array {
             $imageCall++;
             if ($imageCall === 2) {
                 foreach ($messages as $message) { $this->assertIsString($message['content']); }
-                return ['content' => 'Могу помочь разобрать документы и данные.', 'tool_calls' => [], 'input_tokens' => 100, 'output_tokens' => 7, 'tokens_used' => 107, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+                return $this->nativeResponse('Могу помочь разобрать документы и данные.', ['input_tokens' => 100, 'output_tokens' => 7, 'tokens_used' => 107, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true]);
             }
             $current = $messages[array_key_last($messages)];
             $this->assertSame('user', $current['role']);
-            $this->assertSame(['type' => 'text', 'text' => 'Привет'], $current['content'][0]);
-            $this->assertSame('high', $current['content'][1]['image_url']['detail']);
-            $this->assertStringStartsWith('data:image/png;base64,', $current['content'][1]['image_url']['url']);
+            $this->assertSame(['type' => 'input_text', 'text' => 'Привет'], $current['content'][0]);
+            $this->assertSame('input_image', $current['content'][1]['type']);
+            $this->assertSame('high', $current['content'][1]['detail']);
+            $this->assertStringStartsWith('data:image/png;base64,', $current['content'][1]['image_url']);
             $this->assertArrayNotHasKey('_trusted_chat_images', $current);
             $this->assertLessThanOrEqual(16384, $options['estimated_input_tokens']);
-            return ['content' => 'На изображении виден цветной квадрат.', 'tool_calls' => [], 'input_tokens' => 3020, 'output_tokens' => 7, 'tokens_used' => 3027, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+            return $this->nativeResponse('На изображении виден цветной квадрат.', ['input_tokens' => 3020, 'output_tokens' => 7, 'tokens_used' => 3027, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true]);
         });
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
         $orchestrator->method('plan')->willReturn(['request' => ['message' => 'Привет', 'context' => []], 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []]);
@@ -1526,9 +1555,11 @@ final class AssistantRequestLifecycleTest extends TestCase
         $image = $this->imageFixture();
         $transcription = 'На фото список замечаний: 1. Нет линии связи до шкафа СКС. 2. Нет счётчиков электроэнергии.';
         $explanation = 'Вероятно, это замечания к монтажу: не проложена линия связи и не установлены счётчики. СКС обычно означает структурированную кабельную систему.';
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
         $call = 0;
-        $provider->expects($this->exactly(3))->method('chat')->willReturnCallback(function (array $messages, array $options) use (&$call, $transcription, $explanation): array {
+        $provider->expects($this->exactly(3))->method('responses')->willReturnCallback(function (array $messages, array $options) use (&$call, $transcription, $explanation): array {
             $call++;
             $this->assertEmpty($options['tools'] ?? []);
             $this->assertStringContainsString(trans_message('ai_assistant.image_discussion_instructions'), $messages[0]['content']);
@@ -1538,16 +1569,22 @@ final class AssistantRequestLifecycleTest extends TestCase
                 $this->assertIsArray($messages[array_key_last($messages)]['content']);
             } else {
                 foreach ($messages as $message) {
-                    $this->assertIsString($message['content']);
+                    if (isset($message['role']) && is_array($message['content'] ?? null)) {
+                        foreach ($message['content'] as $part) {
+                            $this->assertSame('output_text', $part['type']);
+                            $this->assertIsString($part['text']);
+                        }
+                    } elseif (isset($message['role'])) {
+                        $this->assertIsString($message['content']);
+                    }
                 }
                 $this->assertContains(trans_message('ai_assistant.image_discussion_history', ['text' => $transcription]), array_column($messages, 'content'));
                 $this->assertContains('что это может значить', array_column($messages, 'content'));
             }
-            return ['content' => $call === 1 ? $transcription : ($call === 2 ? '' : $explanation),
-                'tool_calls' => $call === 2 ? [['id' => 'unrelated_estimate', 'type' => 'function',
-                    'function' => ['name' => 'assistant_domain_read', 'arguments' => '{"domain":"estimates","entity_type":"estimate_item","id":280417}']]] : [],
+            return $this->nativeResponse($call === 1 ? $transcription : ($call === 2 ? '' : $explanation), [
                 'input_tokens' => $call === 1 ? 3020 : 150, 'output_tokens' => 40, 'tokens_used' => $call === 1 ? 3060 : 190,
-                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true],
+                $call === 2 ? [['call_id' => 'unrelated_estimate', 'name' => 'assistant_domain_read', 'arguments' => '{"domain":"estimates","entity_type":"estimate_item","id":280417}']] : []);
         });
         $registry = $this->createMock(AIToolRegistry::class);
         $registry->expects($this->never())->method('getTool');
@@ -1614,7 +1651,9 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertArrayNotHasKey('attachment_manifest', $request->payload);
         $this->assertStringNotContainsString('base64', json_encode($request->payload, JSON_THROW_ON_ERROR));
         $image->forceFill(['checksum' => str_repeat('f', 64)])->save();
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('responses');
         $provider->expects($this->never())->method('chat');
         app()->instance(AIAssistantService::class, $this->providerService($provider));
         $this->assertOperationThrows(AuthorizationException::class, fn () => (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class)));
@@ -1663,7 +1702,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         try {
             $operation();
         } catch (Throwable $exception) {
-            $this->assertInstanceOf($class, $exception);
+            $this->assertInstanceOf($class, $exception, $exception::class.': '.$exception->getMessage());
 
             return;
         }
@@ -1672,12 +1711,64 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+        return ['user_role_assignments', 'organization_custom_roles', 'authorization_contexts', 'ai_assistant_report_access', 'report_files', 'personal_files', 'ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_payments', 'commercial_orders', 'organization_commercial_accounts', 'users', 'organizations'];
+    }
+
+    public static function unverifiedReportResults(): array
+    {
+        return [['generate_published_report', 'source_not_ready', 'Сформируй Excel отчёт о принятой выработке'],
+            ['check_published_report_readiness', 'success', 'Проверь готовность отчёта по всей организации без файла'],
+            ['generate_published_report', 'success', 'Сформируй Excel отчёт о принятой выработке', true]];
+    }
+
+    #[DataProvider('unverifiedReportResults')]
+    public function test_main_loop_replaces_model_file_promises_when_report_proof_cannot_be_verified(string $toolName, string $status, string $query, bool $taskMissing = false): void
+    {
+        $permissions = app(AIPermissionChecker::class);
+        $permissions->shouldReceive('canExposeTool')->andReturn(true);
+        $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('isMutationTool')->andReturn(false);
+        $registry = new AIToolRegistry;
+        $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $tool->method('getName')->willReturn($toolName);
+        $tool->method('getDescription')->willReturn('Readiness fixture');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['format' => ['type' => 'string', 'enum' => ['xlsx']]], 'required' => ['format'], 'additionalProperties' => false]);
+        $tool->expects(self::once())->method('execute')->willReturn(['status' => $status] + ($taskMissing
+            ? ['report_task_id' => (string) Str::ulid()]
+            : ['readiness' => ['state' => 'not_ready', 'failure_reason' => 'untrusted-private-reason']]));
+        $registry->registerTool($tool);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna', 'response_status' => 'completed'];
+        $call = ['type' => 'function_call', 'id' => 'fc_readiness', 'status' => 'completed', 'call_id' => 'readiness', 'name' => $toolName, 'arguments' => '{"format":"xlsx"}'];
+        $text = 'Формирование отчёта запущено. Файл готов: https://untrusted.invalid/report.xlsx';
+        $message = ['type' => 'message', 'id' => 'msg_readiness', 'status' => 'completed', 'role' => 'assistant',
+            'content' => [['type' => 'output_text', 'text' => $text, 'annotations' => []]]];
+        $provider->expects(self::exactly(2))->method('responses')->willReturnOnConsecutiveCalls(
+            $usage + ['content' => '', 'output' => [$call], 'function_calls' => [$call]],
+            $usage + ['content' => $text, 'output' => [$message], 'function_calls' => []]
+        );
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->method('plan')->willReturn(['request' => ['message' => $query, 'context' => []], 'task_type' => 'summary',
+            'request_understanding' => (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'access_context_public' => [], 'capability' => ['id' => 'reports']]);
+        $payload = $this->quote(['message' => $query]);
+        $response = $this->providerService($provider, $registry, $orchestrator)->ask($query, $this->organization->id, $this->actor, null, $payload);
+        self::assertSame(trans_message('ai_published_reports.'.($taskMissing ? 'task_unavailable' : 'check_unavailable')), $response['message']['content']);
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertSame('unverified', $response['message']['metadata']['validation_status']);
+        self::assertFalse($response['message']['metadata']['needs_clarification']);
+        self::assertStringNotContainsString('untrusted', json_encode($response['message'], JSON_THROW_ON_ERROR));
     }
 
     #[DataProvider('customReportRequests')]
     public function test_custom_report_from_main_llm_loop_publishes_verified_private_artifact(string $query, bool $hasPendingReport = false): void
     {
+        foreach (['2025_09_12_200001_create_authorization_contexts_table.php', '2025_09_12_200002_create_user_role_assignments_table.php',
+            '2025_09_12_200003_create_organization_custom_roles_table.php', '2026_10_14_010000_bind_custom_role_assignments.php'] as $migration) {
+            (require database_path('migrations/'.$migration))->up();
+        }
         (require database_path('migrations/2026_08_06_000050_scope_personal_files_to_organizations.php'))->up();
         (require database_path('migrations/2025_07_09_000001_create_report_files_table.php'))->up();
         (require database_path('migrations/2025_07_17_000100_add_organization_id_to_report_files_table.php'))->up();
@@ -1713,6 +1804,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportReference::class, $references);
         $reference = $references->create($this->actor, $this->organization->id,
             ['domain' => 'people', 'entity_type' => 'user', 'project_id' => null], ['name'], [$this->actor->id], hash('sha256', 'snapshot'), now()->toISOString());
+        self::assertSame(1, $sources->resolve($this->actor, $this->organization->id, 'people', 'user', null)['query']->whereKey($this->actor->id)->count());
         $files = $this->createMock(\App\Services\Storage\FileService::class);
         $files->expects($this->once())->method('putPrivate')->willReturnCallback(static fn (string $path, $stream, string $mime, string $hash) => new \App\Services\Storage\DTO\CurrentStoredFile($path, 'etag', 4, $hash, $mime));
         $storage = new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantGeneratedReportStorage(new \App\Services\Storage\PersonalFileService($files));
@@ -1781,6 +1873,19 @@ final class AssistantRequestLifecycleTest extends TestCase
     public static function customReportRequests(): array
     {
         return [['Сделай Excel со списком сотрудников'], ['Подготовь сводку по сотрудникам в Excel без PDF'], ['Не делай PDF, сделай Excel со списком сотрудников'], ['Не делай файл PDF, сделай Excel со списком сотрудников'], ['Сделай Excel со списком сотрудников', true]];
+    }
+
+    private function nativeResponse(string $content, array $usage, array $calls = []): array
+    {
+        $calls = array_map(static fn (array $call): array => $call + ['type' => 'function_call', 'id' => 'fc_'.$call['call_id'], 'status' => 'completed'], $calls);
+        $output = $calls;
+        if ($content !== '') {
+            $output[] = ['type' => 'message', 'id' => 'msg_'.Str::ulid(), 'status' => 'completed', 'role' => 'assistant',
+                'content' => [['type' => 'output_text', 'text' => $content, 'annotations' => []]]];
+        }
+
+        return $usage + ['content' => $content, 'output' => $output, 'function_calls' => $calls, 'response_status' => 'completed',
+            'tokens_used' => ($usage['input_tokens'] ?? 0) + ($usage['output_tokens'] ?? 0)];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

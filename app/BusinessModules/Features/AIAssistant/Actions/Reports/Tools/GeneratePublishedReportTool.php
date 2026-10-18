@@ -27,6 +27,11 @@ final readonly class GeneratePublishedReportTool implements AIToolInterface
 
     public function getParametersSchema(): array
     {
+        return self::schema();
+    }
+
+    public static function schema(): array
+    {
         $schema = AssistantReportSubscriptionSchema::create();
         unset($schema['properties']['name']);
         $schema['properties']['title'] = ['type' => 'string', 'maxLength' => 120];
@@ -45,6 +50,6 @@ final readonly class GeneratePublishedReportTool implements AIToolInterface
             throw new AuthorizationException;
         }
 
-        return $this->tasks->create($arguments, $user, (int) $organization->id);
+        return $this->tasks->createIfReady($arguments, $user, (int) $organization->id);
     }
 }

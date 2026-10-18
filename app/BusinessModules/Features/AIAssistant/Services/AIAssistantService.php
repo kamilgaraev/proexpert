@@ -1125,11 +1125,21 @@ class AIAssistantService
             }
             $reportArtifacts = [];
             $reportReferences = [];
+            $reportControls = [];
+            $reportPresentation = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportPresentation::class);
             foreach ($this->activeToolResults as $activeResult) {
+                $control = $reportPresentation->control((string) ($activeResult['_tool_name'] ?? ''), $activeResult, $user, $organizationId);
+                if ($control !== null) {
+                    $reportControls[] = $control;
+                }
                 if (($activeResult['_tool_name'] ?? null) === 'generate_published_report' && ($activeResult['status'] ?? null) === 'success'
                     && is_string($activeResult['report_task_id'] ?? null)) {
-                    $reportArtifacts = [...$reportArtifacts, ...$this->filterAgentArtifactsForOrganization($organizationId,
-                        [['artifact_type' => 'core_report_task', 'task_id' => $activeResult['report_task_id']]], (int) $user->id)];
+                    $taskArtifacts = $this->filterAgentArtifactsForOrganization($organizationId,
+                        [['artifact_type' => 'core_report_task', 'task_id' => $activeResult['report_task_id']]], (int) $user->id);
+                    $reportArtifacts = [...$reportArtifacts, ...$taskArtifacts];
+                    if ($taskArtifacts === []) {
+                        $reportControls[] = ['text' => trans_message('ai_published_reports.task_unavailable'), 'validated' => false];
+                    }
 
                     continue;
                 }
@@ -1142,13 +1152,21 @@ class AIAssistantService
                 $reportReferences = [...$reportReferences, ...($activeResult['source_refs'] ?? [])];
             }
             if ($reportArtifacts !== [] && $requestProjectScope->allowsReferences($reportReferences, $verificationToolResults)) {
-                $publishedPending = array_filter($reportArtifacts, static fn (array $artifact): bool => ($artifact['artifact_type'] ?? null) === 'core_report_task') !== [];
-                $assistantContent = trans_message($publishedPending ? 'ai_published_reports.queued' : 'ai_custom_reports.ready');
-                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $publishedPending ? 'partial' : 'verified',
+                $hasPublishedTask = array_filter($reportArtifacts, static fn (array $artifact): bool => ($artifact['artifact_type'] ?? null) === 'core_report_task') !== [];
+                $assistantContent = $reportPresentation->artifacts($reportArtifacts);
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $hasPublishedTask ? 'partial' : 'verified',
                     'source_refs' => $reportReferences, 'needs_clarification' => false];
                 $degradedMode = false;
             } else {
                 $reportArtifacts = [];
+            }
+            if ($reportControls !== []) {
+                $controlText = implode("\n\n", array_unique(array_column($reportControls, 'text')));
+                $assistantContent = $reportArtifacts === [] ? $controlText : $assistantContent."\n\n".$controlText;
+                $validated = ! in_array(false, array_column($reportControls, 'validated'), true);
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => $validated ? 'partial' : 'unverified',
+                    'source_refs' => $reportReferences, 'needs_clarification' => false];
+                $degradedMode = ! $validated;
             }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'artifacts' => $reportArtifacts,
@@ -1200,7 +1218,7 @@ class AIAssistantService
                 && ! ($financialCheck['replaced'] ?? false)
                 && ! ($structuredCheck['replaced'] ?? false);
             $assistantPayload['fetched_at'] = now()->toISOString();
-            if ($reportArtifacts !== []) {
+            if ($reportArtifacts !== [] || $reportControls !== []) {
                 $assistantPayload['artifacts'] = $reportArtifacts;
                 $assistantPayload['answer'] = $assistantContent;
                 $assistantPayload['needs_clarification'] = false;
@@ -1415,15 +1433,19 @@ class AIAssistantService
         )), (int) $user->id);
 
         $toolStatus = (string) ($toolResult['status'] ?? 'error');
-        if ($toolStatus === 'error' || $artifacts === []) {
+        $reportPresentation = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportPresentation::class);
+        $control = $reportPresentation->control($toolName, is_array($toolResult['raw'] ?? null) ? $toolResult['raw'] : [], $user, $organizationId);
+        $hasControl = $control !== null && $control['validated'];
+        $completed = $toolStatus !== 'error' && ($artifacts !== [] || ($hasControl && ! $control['blocked']));
+        if ($toolStatus === 'error' || ($artifacts === [] && ! $hasControl)) {
             $this->recordRequestOutcome('service_error');
         }
         $finalState = $this->stateWithStatus(
             $state,
-            $toolStatus === 'error' || $artifacts === [] ? 'failed' : 'completed'
+            $completed ? 'completed' : 'failed'
         );
 
-        $answer = $this->buildAgentToolAnswer($toolStatus, $artifacts);
+        $answer = $control['text'] ?? $this->buildAgentToolAnswer($toolStatus, $artifacts);
         $answer = $this->responseVerifier->verify($answer, [
             'task_id' => $finalState->id,
             'state' => $finalState->toArray(),
@@ -1441,15 +1463,15 @@ class AIAssistantService
                 'evidence' => array_values($toolResult['evidence'] ?? []),
             ],
             'tool_evidence' => array_values($toolResult['evidence'] ?? []),
-            'missing_data' => $artifacts === [] ? ['artifacts'] : [],
-            'confidence' => $artifacts === [] ? 'low' : 'high',
+            'missing_data' => $hasControl ? ($control['blocked'] ? ['report_source'] : []) : ($artifacts === [] ? ['artifacts'] : []),
+            'confidence' => $artifacts === [] && ! $hasControl ? 'low' : 'high',
         ]);
         if ($this->isReportAgentState($finalState)) {
             $payload = $this->sanitizeReportPayload($payload);
         }
         $payload['source_refs'] = $this->collectSourceRefs([], [is_array($toolResult['raw'] ?? null) ? $toolResult['raw'] : []]);
-        $payload['validation_status'] = $artifacts === [] ? 'unverified' : 'partial';
-        $payload['task_status'] = $artifacts === [] ? 'failed' : 'completed';
+        $payload['validation_status'] = $artifacts === [] && ! $hasControl ? 'unverified' : 'partial';
+        $payload['task_status'] = $completed ? 'completed' : 'failed';
         $payload = $this->decorateMetadata($payload, $user);
 
         $assistantMessage = $this->conversationManager->addMessage(
@@ -1577,7 +1599,7 @@ class AIAssistantService
 
         $artifact = $artifacts[0];
         if (($artifact['artifact_type'] ?? null) === 'core_report_task') {
-            return trans_message('ai_published_reports.queued');
+            return app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportPresentation::class)->artifacts($artifacts);
         }
         $url = trim((string) ($artifact['url'] ?? ''));
 
@@ -4336,7 +4358,12 @@ class AIAssistantService
 
     protected function humanizeToolName(string $toolName): string
     {
-        return ucfirst(str_replace('_', ' ', $toolName));
+        return match ($toolName) {
+            'check_published_report_readiness' => trans_message('ai_published_reports.check_label'),
+            'generate_published_report' => trans_message('ai_published_reports.generate_label'),
+            'describe_published_reports' => trans_message('ai_published_reports.catalog_label'),
+            default => ucfirst(str_replace('_', ' ', $toolName)),
+        };
     }
 
     protected function buildProposedToolAction(
