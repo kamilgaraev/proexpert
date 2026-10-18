@@ -51,9 +51,9 @@ final class EstimateAuditContextPlanner
             if (count($parts) === 1) {
                 return array_map(static fn (array $part): array => [...$part, 'input' => $root->withPart($part['draft'], $part['id'])], $parts);
             }
-            $contexts = array_map(static fn (array $part): array => [...$part, 'facts' => $root->facts,
+            $contexts = array_map(fn (array $part): array => [...$part, 'facts' => $root->facts,
                 'derived_quantities' => $root->derivedQuantities, 'evidence' => $root->evidence,
-                'entity_ids' => array_values(array_unique(array_filter(array_column($root->facts, 'entity_id'), 'is_string')))], $parts);
+                'entity_ids' => $this->workEntityIds($part['draft'])], $parts);
             $prepared = $this->prepareContexts($root, $contexts, $maximumBytes);
             if ($prepared !== null) {
                 return $prepared;
@@ -227,6 +227,23 @@ final class EstimateAuditContextPlanner
         }
 
         return $prepared;
+    }
+
+    private function workEntityIds(array $draft): array
+    {
+        $entities = [];
+        foreach ($this->items($draft) as $item) {
+            $basis = $item['quantity_evidence'] ?? $item['quantity_basis_details'] ?? [];
+            foreach ([$item['entity_id'] ?? null, $item['physical_entity_id'] ?? null,
+                $item['metadata']['scope_entity_id'] ?? null,
+                is_array($basis) ? ($basis['formula_inputs']['entity_id'] ?? null) : null] as $id) {
+                if (is_string($id) && $id !== '') {
+                    $entities[$id] = true;
+                }
+            }
+        }
+
+        return array_keys($entities);
     }
 
     private function fits(array $payload, int $maximumBytes): bool

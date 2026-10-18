@@ -29,7 +29,7 @@ final class EstimateAuditDraftRecordPlanner
         if (array_sum($counts) === 0) {
             return ['parts' => $parts, 'counts' => $counts];
         }
-        $lookups = ['entities' => [], 'facts' => [], 'quantities' => [], 'works' => [], 'packages' => [], 'candidates' => []];
+        $lookups = ['entities' => [], 'work_entities' => [], 'facts' => [], 'quantities' => [], 'works' => [], 'packages' => [], 'candidates' => []];
         $allFacts = $allEvidence = [];
         $loads = [];
         foreach ($parts as $index => $part) {
@@ -46,6 +46,7 @@ final class EstimateAuditDraftRecordPlanner
                 }
             }
             foreach ($part['entity_ids'] as $id) {
+                $lookups['work_entities'][$id][$index] = true;
                 $lookups['entities'][$id][$index] = true;
             }
             foreach ($part['work_keys'] as $id) {
@@ -147,6 +148,14 @@ final class EstimateAuditDraftRecordPlanner
     {
         $owners = [];
         if (! is_array($record)) {
+            return $owners;
+        }
+        foreach ([$record, $record['details'] ?? []] as $scope) {
+            if (is_array($scope) && is_string($scope['entity_id'] ?? null)) {
+                $owners += $lookups['work_entities'][$scope['entity_id']] ?? [];
+            }
+        }
+        if ($owners !== []) {
             return $owners;
         }
         foreach ([$record, $record['details'] ?? []] as $scope) {

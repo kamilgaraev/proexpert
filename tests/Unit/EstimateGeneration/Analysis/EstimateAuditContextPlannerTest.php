@@ -457,6 +457,38 @@ final class EstimateAuditContextPlannerTest extends TestCase
         self::assertSame($draft, $root->draft);
     }
 
+    public function test_compact_parts_keep_entity_diagnostics_with_the_work_even_without_entity_facts(): void
+    {
+        $items = [];
+        for ($i = 0; $i < 65; $i++) {
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Работа '.$i, 'entity_id' => 'entity:'.$i];
+        }
+        $diagnostic = ['code' => 'quantity_unresolved', 'details' => ['entity_id' => 'entity:0']];
+        $review = ['type' => 'quantity_blocking', 'entity_id' => 'entity:64'];
+        $draft = ['building_quantities' => ['diagnostics' => [$diagnostic]], 'stage6_review_items' => [$review],
+            'local_estimates' => [['key' => 'floors', 'sections' => [['key' => 'finish', 'work_items' => $items]]]]];
+        $facts = [['id' => 'fact:0', 'entity_id' => 'entity:0', 'value' => '40', 'unit' => 'm2']];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, [], 'estimate-auditor:v1');
+
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, 458752);
+
+        $diagnostics = $reviews = [];
+        foreach ($parts as $part) {
+            foreach ($part['input']->draft['building_quantities']['diagnostics'] as $record) {
+                self::assertContains('work:0', $part['work_keys']);
+                $diagnostics[] = $record;
+            }
+            foreach ($part['input']->draft['stage6_review_items'] as $record) {
+                self::assertContains('work:64', $part['work_keys']);
+                $reviews[] = $record;
+            }
+            self::assertSame($facts, $part['input']->facts);
+        }
+        self::assertSame([$diagnostic], $diagnostics);
+        self::assertSame([$review], $reviews);
+        self::assertSame($draft, $root->draft);
+    }
+
     private function root(): EstimateAuditInput
     {
         $facts = $evidence = $items = [];
