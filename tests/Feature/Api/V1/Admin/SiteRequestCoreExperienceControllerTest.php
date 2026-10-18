@@ -33,6 +33,51 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_template_cost_is_applied_without_losing_explicit_overrides(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $template = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/site-requests/templates', [
+                'name' => 'Training cost template',
+                'request_type' => 'other',
+                'template_data' => [
+                    'title' => 'Training request from template',
+                    'request_type' => 'other',
+                    'location' => 'Training office',
+                    'metadata' => ['estimated_cost' => 120.50, 'training' => true],
+                ],
+                'is_active' => true,
+            ])->assertCreated()->json('data.id');
+
+        foreach ([
+            [[], 120.5, 120.5],
+            [['estimated_cost' => 0], 0, 120.5],
+            [['estimated_cost' => null], null, 120.5],
+            [['metadata' => ['estimated_cost' => 0, 'training' => true]], 0, 0],
+        ] as [$overrides, $expectedCost, $expectedMetadataCost]) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/site-requests/templates/{$template}/create", [
+                    'project_id' => $project->id,
+                    ...$overrides,
+                ])->assertCreated()
+                ->assertJsonPath('data.estimated_cost', $expectedCost)
+                ->assertJsonPath('data.location', 'Training office');
+            $created = SiteRequest::query()->findOrFail($response->json('data.id'));
+            $this->assertSame($expectedMetadataCost, $created->metadata['estimated_cost']);
+            $this->assertTrue($created->metadata['training']);
+            $this->assertDatabaseHas('site_requests', [
+                'id' => $created->id,
+                'project_id' => $project->id,
+                'estimated_cost' => $expectedCost,
+            ]);
+        }
+        $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 4]);
+    }
+
     public function test_owner_can_create_material_request_group_and_list_only_own_requests(): void
     {
         Event::fake();

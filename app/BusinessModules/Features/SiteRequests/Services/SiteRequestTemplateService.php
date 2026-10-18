@@ -192,6 +192,12 @@ class SiteRequestTemplateService
             $overrides
         );
 
+        if (! array_key_exists('estimated_cost', $data)
+            && is_array($data['metadata'] ?? null)
+            && array_key_exists('estimated_cost', $data['metadata'])) {
+            $data['estimated_cost'] = $data['metadata']['estimated_cost'];
+        }
+
         // Создаем заявку
         $request = $this->requestService->create($organizationId, $userId, $data);
 
