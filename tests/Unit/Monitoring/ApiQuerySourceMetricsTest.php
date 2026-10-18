@@ -691,6 +691,59 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame(1, $metrics->summary()['sql_sources'][0]['unclassified_variants']);
     }
 
+    public function test_source_size_maxima_include_unclassified_queries_without_reading_binding_values(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $opaque = new class
+        {
+            public int $calls = 0;
+
+            public function __toString(): string
+            {
+                $this->calls++;
+
+                throw new \RuntimeException('private binding must not be inspected');
+            }
+        };
+        $privateSql = "select 'private literal' where token=?";
+        foreach ([[$privateSql, ['private token'], 1.25], [str_repeat('x', 40000), [], 2.5],
+            ['select ?', array_fill(0, 1025, $opaque), 4.5], ['select ?', [$opaque], 1.0], ['select ?', [], 0.0]] as [$sql, $bindings, $time]) {
+            $this->recordOne($request, new QueryExecuted($sql, $bindings, $time, new Connection(null)));
+        }
+        $summary = $metrics->summary();
+        self::assertCount(1, $summary['sql_sources']);
+        $source = $summary['sql_sources'][0];
+        self::assertArrayHasKey('sql_bytes_max', $source);
+        self::assertArrayHasKey('bindings_max', $source);
+        self::assertSame(40000, $source['sql_bytes_max']);
+        self::assertSame(1025, $source['bindings_max']);
+        self::assertSame(5, $source['count']);
+        self::assertSame(9.25, $source['total_ms']);
+        self::assertSame(4.5, $source['max_ms']);
+        self::assertSame(3, $source['unclassified_variants']);
+        self::assertSame(2, $source['distinct_variants']);
+        self::assertSame(0, $opaque->calls);
+        self::assertSame(0, $summary['sql_sources_dropped_count']);
+        $serialized = json_encode($summary, JSON_THROW_ON_ERROR);
+        foreach ([$privateSql, 'private literal', 'private token', '"bindings":', '"variants":'] as $sensitive) {
+            self::assertStringNotContainsString($sensitive, $serialized);
+        }
+    }
+
+    public function test_source_size_maxima_remain_local_to_each_source(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $sql = "select 'тест' as marker";
+        $this->recordOne($request, new QueryExecuted($sql, ['private', 'values'], 2, new Connection(null)));
+        $this->recordTwo($request, new QueryExecuted('select ?', array_fill(0, 7, 'private'), 3, new Connection(null)));
+        $sources = $metrics->summary()['sql_sources'];
+        self::assertCount(2, $sources);
+        self::assertSame([strlen($sql), 8], array_column($sources, 'sql_bytes_max'));
+        self::assertSame([2, 7], array_column($sources, 'bindings_max'));
+        self::assertSame([1, 1], array_column($sources, 'count'));
+        self::assertSame([2.0, 3.0], array_column($sources, 'total_ms'));
+    }
+
     public function test_source_group_overflow_preserves_complete_request_totals(): void
     {
         [$request, $metrics] = $this->metrics();

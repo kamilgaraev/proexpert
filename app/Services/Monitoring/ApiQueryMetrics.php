@@ -330,12 +330,15 @@ final class ApiQueryMetrics
                 return;
             }
             $this->sources[$key] = ['group' => $group, 'source' => $source, 'count' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0,
+                'sql_bytes_max' => 0, 'bindings_max' => 0,
                 'variants' => [], 'distinct_variants_capped' => false, 'unclassified_variants' => 0];
         }
         $record = &$this->sources[$key];
         $record['count']++;
         $record['total_ms'] += (float) $query->time;
         $record['max_ms'] = max($record['max_ms'], (float) $query->time);
+        $record['sql_bytes_max'] = max($record['sql_bytes_max'], strlen($query->sql));
+        $record['bindings_max'] = max($record['bindings_max'], count($query->bindings));
         $variant = self::variant($query);
         if ($variant === null) {
             $record['unclassified_variants']++;
