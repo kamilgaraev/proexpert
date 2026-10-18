@@ -32,7 +32,7 @@ final class AssistantProductionSchedulePeriod
                 return ['project_id' => $projectId, 'period_start' => $dates['period_start'], 'period_end' => $dates['period_end']];
             }
         }
-        $query = AssistantNamedProjectReadScope::periodQuery($plan);
+        $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         if (preg_match('/\b'.self::TIME_START.'/iu', $query) !== 1) {
             return $arguments;
         }
@@ -93,7 +93,7 @@ final class AssistantProductionSchedulePeriod
         }
 
         return ['message' => (string) ($plan['request']['message'] ?? ''), 'project_id' => $arguments['project_id'],
-            'period_query' => AssistantNamedProjectReadScope::periodQuery($plan)];
+            'period_query' => self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan))];
     }
 
     public static function clarification(string $reply, array $context): ?array
@@ -144,5 +144,17 @@ final class AssistantProductionSchedulePeriod
         $payload['context'] = $context;
 
         return $payload;
+    }
+
+    private static function normalizedQuery(string $query): string
+    {
+        $months = ['январе' => 'январь', 'феврале' => 'февраль', 'марте' => 'март', 'апреле' => 'апрель', 'мае' => 'май', 'июне' => 'июнь',
+            'июле' => 'июль', 'августе' => 'август', 'сентябре' => 'сентябрь', 'октябре' => 'октябрь', 'ноябре' => 'ноябрь', 'декабре' => 'декабрь'];
+
+        return preg_replace_callback('/\b(?:в|во)\s+('.self::MONTH.')\b/iu', static function (array $match) use ($months): string {
+            $month = mb_strtolower($match[1]);
+
+            return 'за '.($months[$month] ?? $month);
+        }, $query) ?? $query;
     }
 }

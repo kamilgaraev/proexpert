@@ -12,6 +12,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_locative_months_with_explicit_year_are_resolved_and_clarifications_keep_the_month(): void
+    {
+        $months = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
+        foreach ($months as $index => $month) {
+            $start = sprintf('2026-%02d-01', $index + 1);
+            $end = (new \DateTimeImmutable($start))->format('Y-m-t');
+            foreach (['в', 'во'] as $preposition) {
+                $message = 'Сверь выполненные работы с графиком '.$preposition.' '.$month.' 2026 года';
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $message]]), $message);
+            }
+        }
+        $message = 'Сверь выполненные работы с графиком в октябре';
+        $pending = AssistantProductionSchedulePeriod::pending(['request' => ['message' => $message]], [
+            'replaced' => true, 'needs_clarification' => true, 'source_refs' => [[
+                'entity_type' => AssistantProjectProductionScheduleReader::TYPE,
+                '_read_arguments' => ['project_id' => 102, 'period_start' => null, 'period_end' => null],
+            ]],
+        ]);
+        $clarification = AssistantProductionSchedulePeriod::clarification('2026', ['last_request' => ['message' => $message], 'pending_production_period' => $pending]);
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $clarification['query']]]));
+    }
+
     public function test_ranges_keep_boundaries_and_unknown_periods_never_become_all_time(): void
     {
         self::assertSame('ЖК на 8 Марта', AssistantProductionSchedulePeriod::withoutSuffix('ЖК на 8 Марта'));

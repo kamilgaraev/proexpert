@@ -13,6 +13,21 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_direct_project_names_keep_internal_punctuation_before_a_proven_command_boundary(): void
+    {
+        foreach (['Южный, корпус 2', 'Южный; корпус 2', 'Южный: корпус 2', 'Дома & сады', 'ЖК 1/2'] as $name) {
+            foreach (['', ' и скажи, что осталось.', ', покажи сроки.', '; уточни ответственного.', ': назови остаток.'] as $ending) {
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта '.$name.$ending), function (array $arguments) use ($name): array {
+                    self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 102]], false);
+                });
+                self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $name.$ending);
+            }
+        }
+        self::assertSame('Южный', \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::extract('По проекту Южный, корпус 2', 'project'));
+    }
+
     public function test_period_suffix_falls_back_after_full_exact_name_and_preserves_literal_names(): void
     {
         $query = 'Сверь выполненные работы с графиком проекта Северный дом за октябрь 2026';
