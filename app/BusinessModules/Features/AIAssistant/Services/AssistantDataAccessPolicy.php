@@ -914,8 +914,25 @@ final class AssistantDataAccessPolicy
 
     public function accessibleFiles(User $user, int $organizationId, bool $supportedStorageOnly = true): Builder
     {
+        $fileTypes = [];
+
+        return $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
+    }
+
+    public function accessibleFilesWithTypes(User $user, int $organizationId, bool $supportedStorageOnly = true): array
+    {
+        $fileTypes = [];
+        $query = $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
+
+        return ['query' => $query, 'types' => $fileTypes];
+    }
+
+    private function accessibleFilesQuery(User $user, int $organizationId, bool $supportedStorageOnly, array &$fileTypes): Builder
+    {
         if ($this->aclCompiler === null) {
-            return $this->compileAcl($user, $organizationId, fn (): Builder => $this->accessibleFiles($user, $organizationId, $supportedStorageOnly)) ?? File::query()->whereRaw('1 = 0');
+            return $this->compileAcl($user, $organizationId, function () use ($user, $organizationId, $supportedStorageOnly, &$fileTypes): Builder {
+                return $this->accessibleFilesQuery($user, $organizationId, $supportedStorageOnly, $fileTypes);
+            }) ?? File::query()->whereRaw('1 = 0');
         }
         $query = File::query()->where('files.organization_id', $organizationId);
         if ($supportedStorageOnly) { $query->where('files.disk', 's3'); }
