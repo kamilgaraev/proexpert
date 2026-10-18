@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 
-/** Remove only identical copies of quantity proofs; keep the business artifact untouched. */
+/** Remove only identical proof copies; keep the business artifact untouched. */
 final class EstimateAuditDraftWireProjection
 {
     public static function project(array $draft, array $quantities): array
@@ -35,10 +35,12 @@ final class EstimateAuditDraftWireProjection
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $local) {
             foreach ($local['sections'] ?? [] as $sectionIndex => $section) {
                 foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                    $originalItem = $item;
+                    $quantityProjected = false;
                     if (is_array($item['quantity_evidence'] ?? null)
                         && is_array($item['quantity_basis_details'] ?? null)
                         && self::same($item['quantity_evidence'], $item['quantity_basis_details'])) {
-                        $item['item_fingerprint'] = ApplyComposerCorrectionCycle::itemFingerprint($item);
+                        $quantityProjected = true;
                         unset($item['quantity_evidence']);
                         $encoded = CanonicalPipelineJson::encode($item['quantity_basis_details']);
                         $basisReference = $basisReferences[hash('sha256', $encoded)] ?? null;
@@ -49,7 +51,25 @@ final class EstimateAuditDraftWireProjection
                         } else {
                             $item['quantity_evidence_ref'] = 'quantity_basis_details';
                         }
-                        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
+                    }
+                    if (is_array($item['work_composition'] ?? null)) {
+                        $reference = 'audit_input.draft.local_estimates['.$localIndex.'].sections['.$sectionIndex.'].work_items['.$itemIndex.'].work_composition';
+                        foreach (['metadata', 'normative_match'] as $field) {
+                            if (is_array($item[$field] ?? null)) {
+                                $item[$field] = self::reuseComposition($item[$field], $item['work_composition'], $reference);
+                            }
+                        }
+                        foreach ($item['normative_candidates'] ?? [] as $candidateIndex => $candidate) {
+                            if (is_array($candidate)) {
+                                $item['normative_candidates'][$candidateIndex] = self::reuseComposition($candidate, $item['work_composition'], $reference);
+                            }
+                        }
+                    }
+                    if ($item !== $originalItem) {
+                        $item['item_fingerprint'] = ApplyComposerCorrectionCycle::itemFingerprint($originalItem);
+                        if ($quantityProjected || strlen(CanonicalPipelineJson::encode($item)) < strlen(CanonicalPipelineJson::encode($originalItem))) {
+                            $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $item;
+                        }
                     }
                 }
             }
@@ -77,5 +97,18 @@ final class EstimateAuditDraftWireProjection
     private static function same(array $left, array $right): bool
     {
         return CanonicalPipelineJson::encode($left) === CanonicalPipelineJson::encode($right);
+    }
+
+    private static function reuseComposition(array $record, array $composition, string $reference): array
+    {
+        if (is_array($record['work_composition'] ?? null)
+            && ! array_key_exists('work_composition_ref', $record)
+            && self::same($record['work_composition'], $composition)
+            && strlen(CanonicalPipelineJson::encode($composition)) > strlen(CanonicalPipelineJson::encode([$reference])) - 2 + strlen('_ref')) {
+            unset($record['work_composition']);
+            $record['work_composition_ref'] = $reference;
+        }
+
+        return $record;
     }
 }

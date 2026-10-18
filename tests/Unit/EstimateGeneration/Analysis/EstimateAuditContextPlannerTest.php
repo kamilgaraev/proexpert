@@ -14,6 +14,101 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_exact_selected_composition_copies_reuse_the_full_work_proof_without_changing_the_business_item(): void
+    {
+        $composition = [str_repeat('Prepare the concrete base; ', 10), str_repeat('Install reinforcing mesh; ', 8)];
+        $distinctComposition = array_reverse($composition);
+        $basis = ['amount' => '40', 'unit' => 'm2'];
+        $item = ['key' => 'foundation:1', 'work_composition' => $composition,
+            'metadata' => ['work_composition' => $composition, 'composition_source' => 'fsnb_norm'],
+            'normative_match' => ['norm_id' => 42, 'work_composition' => $composition],
+            'normative_candidates' => [['norm_id' => 42, 'work_composition' => $composition],
+                ['norm_id' => 43, 'work_composition' => $distinctComposition]],
+            'quantity_evidence' => $basis, 'quantity_basis_details' => $basis,
+            'materials' => [['resource_code' => 'concrete', 'quantity' => '3.2', 'unit_price' => '7120.50']],
+            'labor' => [['resource_code' => 'worker', 'quantity' => '8.4']],
+            'machinery' => [['resource_code' => 'pump', 'quantity' => '1.5']],
+            'price_snapshot' => ['unit_price' => '125.43', 'regional_price_version_id' => 491],
+            'source_refs' => [['fact_id' => 'fact:area']]];
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [$item]]]]]];
+
+        $wire = EstimateAuditDraftWireProjection::project($draft, []);
+
+        $row = $wire['local_estimates'][0]['sections'][0]['work_items'][0];
+        $reference = 'audit_input.draft.local_estimates[0].sections[0].work_items[0].work_composition';
+        self::assertSame($composition, $row['work_composition']);
+        foreach ([$row['metadata'], $row['normative_match'], $row['normative_candidates'][0]] as $record) {
+            self::assertArrayNotHasKey('work_composition', $record);
+            self::assertSame($reference, $record['work_composition_ref']);
+        }
+        self::assertSame($item['normative_candidates'][1], $row['normative_candidates'][1]);
+        foreach (['materials', 'labor', 'machinery', 'price_snapshot', 'source_refs'] as $field) {
+            self::assertSame($item[$field], $row[$field]);
+        }
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::itemFingerprint($item), $row['item_fingerprint']);
+        self::assertSame($item, $draft['local_estimates'][0]['sections'][0]['work_items'][0]);
+        self::assertSame($wire, EstimateAuditDraftWireProjection::project($wire, []));
+        self::assertLessThan(strlen(CanonicalPipelineJson::encode($draft)), strlen(CanonicalPipelineJson::encode($wire)));
+    }
+
+    public function test_short_composition_copies_remain_inline_when_a_reference_would_increase_the_wire_size(): void
+    {
+        foreach ([[], ['Install']] as $composition) {
+            $item = ['key' => 'work:1', 'work_composition' => $composition,
+                'metadata' => ['work_composition' => $composition],
+                'normative_match' => ['work_composition' => $composition],
+                'normative_candidates' => [['work_composition' => $composition]]];
+            $draft = ['local_estimates' => [['sections' => [['work_items' => [$item]]]]]];
+            self::assertSame($draft, EstimateAuditDraftWireProjection::project($draft, []));
+        }
+    }
+
+    public function test_a_priced_work_reuses_composition_proofs_within_the_unchanged_serialized_ceiling(): void
+    {
+        $composition = [str_repeat('Prepare concrete base; ', 10), str_repeat('Install reinforcing mesh; ', 8)];
+        $item = ['key' => 'foundation:1', 'work_composition' => $composition,
+            'metadata' => ['work_composition' => $composition],
+            'normative_match' => ['norm_id' => 42, 'work_composition' => $composition],
+            'normative_candidates' => [['norm_id' => 42, 'work_composition' => $composition]],
+            'materials' => [['resource_code' => 'concrete', 'quantity' => '3.2', 'unit_price' => '7120.50']],
+            'price_snapshot' => ['unit_price' => '125.43', 'regional_price_version_id' => 491],
+            'source_refs' => [['fact_id' => 'fact:area']], 'resource_proof' => ''];
+        $draft = ['local_estimates' => [['sections' => [['work_items' => [$item]]]]]];
+        $facts = [['id' => 'fact:area', 'value' => '40', 'unit' => 'm2']];
+        $evidence = [['fact_id' => 'fact:area', 'locator' => ['page' => 1]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, $evidence, 'estimate-auditor:v1');
+        $raw = $root->canonicalPayload();
+        $raw['draft'] = $draft;
+        $messages = static fn (array $payload): array => [
+            ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+            ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $payload])],
+        ];
+        $paddingBytes = 65620 - EstimatorTextWirePolicy::serializedInputUpper($messages($raw));
+        self::assertGreaterThan(0, $paddingBytes);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['resource_proof'] = str_repeat('proof; ', intdiv($paddingBytes, 7)).str_repeat('.', $paddingBytes % 7);
+        $raw['draft'] = $draft;
+        self::assertSame(65620, EstimatorTextWirePolicy::serializedInputUpper($messages($raw)));
+        $root = $root->withDraft($draft, 0);
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(1, $parts);
+        $input = $parts[0]['input'];
+        self::assertSame($draft, $input->draft);
+        self::assertSame($facts, $input->facts);
+        self::assertSame($evidence, $input->evidence);
+        self::assertSame($root->fingerprint(), $input->fingerprint());
+        $sourceItem = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $wireItem = $input->canonicalPayload()['draft']['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::itemFingerprint($sourceItem), $wireItem['item_fingerprint']);
+        self::assertSame($sourceItem['materials'], $wireItem['materials']);
+        self::assertSame($sourceItem['resource_proof'], $wireItem['resource_proof']);
+        self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper($messages($input->canonicalPayload())));
+    }
+
     public function test_a_large_snapshot_retains_all_sources_and_unused_facts_across_bounded_parts(): void
     {
         $root = $this->root();
