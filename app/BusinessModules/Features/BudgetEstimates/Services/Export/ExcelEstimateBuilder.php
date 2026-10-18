@@ -25,6 +25,7 @@ class ExcelEstimateBuilder
     public function build(Estimate $estimate, array $data, array $options): array
     {
         $spreadsheet = (new Spreadsheet())->setValueBinder(new ExportValueBinder());
+        $spreadsheet->getProperties()->setDescription('MOST_ESTIMATE_EXPORT_V1');
 
         // Create main estimate sheet
         $mainSheet = $spreadsheet->getActiveSheet();

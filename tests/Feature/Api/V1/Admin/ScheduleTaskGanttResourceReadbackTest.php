@@ -360,10 +360,12 @@ final class ScheduleTaskGanttResourceReadbackTest extends TestCase
             ->postJson("/api/v1/admin/projects/{$project->id}/schedules/from-estimate", [
                 'estimate_id' => $estimate->id,
                 'start_date' => $plannedStart,
+                'name' => 'Учебный график с заданным названием',
                 'options' => ['auto_calculate_dates' => true],
             ])
             ->assertCreated()
             ->assertJsonPath('success', true)
+            ->assertJsonPath('data.name', 'Учебный график с заданным названием')
             ->assertJsonPath('data.planned_start_date', $plannedStart);
         $scheduleId = $createResponse->json('data.id');
         $this->assertNotNull($scheduleId);
