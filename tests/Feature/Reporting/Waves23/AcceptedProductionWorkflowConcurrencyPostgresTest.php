@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting\Waves23;
 
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\DTOs\Contract\ContractPerformanceActDTO;
 use App\Exceptions\BusinessLogicException;
 use App\Models\ContractPerformanceAct;
 use App\Services\Acting\ActingPriceService;
 use App\Services\ActReport\ActReportNotificationService;
 use App\Services\ActReport\ActReportWorkflowService;
-use App\Services\Contract\ContractPerformanceActService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionQuantity;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
+use App\Services\Contract\ContractPerformanceActService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
@@ -28,6 +31,23 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
     private const TABLES = [
         'contract_performance_acts',
         'contracts',
+        'contract_organization_views',
+        'contract_settlement_owner_versions',
+        'organizations',
+        'users',
+        'project_organization',
+        'contract_project',
+        'supplementary_agreements',
+        'contract_specification',
+        'specifications',
+        'payment_documents',
+        'holding_accepted_work_event_versions',
+        'holding_reporting_context_coverage',
+        'holding_organization_hierarchy_events',
+        'holding_contract_dimension_events',
+        'holding_allocation_context_events',
+        'holding_allocation_projection_gaps',
+        'ai_rag_sources',
         'contractors',
         'projects',
         'performance_act_lines',
@@ -59,6 +79,10 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $indexing = $this->getMockBuilder(RagIndexingCoordinator::class)->disableOriginalConstructor()
+            ->onlyMethods(['queueEntity'])->getMock();
+        $indexing->method('queueEntity')->willReturn(new RagIndexRun);
+        $this->app->instance(RagIndexingCoordinator::class, $indexing);
 
         self::assertSame(
             'pgsql',
@@ -448,30 +472,17 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
         }
     }
 
-    public function test_explicit_empty_completed_works_patch_releases_all_draft_reservations(): void
+    public static function completedWorksPatchPresence(): array
     {
-        $this->fixture();
-        $this->reservationWorkFixture();
+        return ['explicit_empty' => [true, 0, '0.00', null], 'omitted' => [false, 1, '500.00', null],
+            'explicit_nonempty' => [true, 1, '250.00', '0.250']];
+    }
+
+    #[DataProvider('completedWorksPatchPresence')]
+    public function test_completed_works_patch_preserves_presence_semantics(bool $provided, int $expectedCount, string $expectedAmount, ?string $quantity): void
+    {
+        $act = $this->createDraftReservationAct();
         $service = app(ContractPerformanceActService::class);
-        $act = $service->createActForContract(
-            17,
-            3,
-            new ContractPerformanceActDTO(
-                project_id: 11,
-                act_document_number: 'DIRECT-EMPTY-PATCH',
-                act_date: now()->toDateString(),
-                description: null,
-                is_approved: false,
-                completed_works: [[
-                    'completed_work_id' => 32,
-                    'included_quantity' => '0.500',
-                    'included_amount' => '500.00',
-                ]],
-                currency: 'RUB',
-                completedWorksProvided: true,
-            ),
-            11,
-        );
         self::assertSame(1, DB::table('performance_act_completed_works')
             ->where('performance_act_id', $act->id)
             ->count());
@@ -486,18 +497,49 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
                 act_date: '',
                 description: null,
                 is_approved: false,
-                completed_works: [],
-                completedWorksProvided: true,
+                completed_works: $quantity === null ? [] : [['completed_work_id' => 32, 'included_quantity' => $quantity,
+                    'included_amount' => $expectedAmount]],
+                completedWorksProvided: $provided,
                 partialUpdate: true,
-                providedFields: ['completed_works'],
+                providedFields: $provided ? ['completed_works'] : ['description'],
             ),
             11,
         );
 
-        self::assertSame(0, DB::table('performance_act_completed_works')
+        self::assertSame($expectedCount, DB::table('performance_act_completed_works')
             ->where('performance_act_id', $act->id)
             ->count());
-        self::assertSame('0.00', number_format((float) $updated->amount, 2, '.', ''));
+        self::assertSame($expectedAmount, number_format((float) $updated->amount, 2, '.', ''));
+        self::assertSame('DIRECT-EMPTY-PATCH', $updated->act_document_number);
+    }
+
+    public static function rejectedCompletedWorksPatches(): array
+    {
+        return ['over_quantity' => [null, 32, '2.000'], 'unavailable_work' => [null, 999999, '0.250'],
+            'approved' => [ContractPerformanceAct::STATUS_APPROVED, 32, '0.250'],
+            'signed' => [ContractPerformanceAct::STATUS_SIGNED, 32, '0.250']];
+    }
+
+    #[DataProvider('rejectedCompletedWorksPatches')]
+    public function test_rejected_work_patches_preserve_the_document_and_reservations(?string $status, int $workId, string $quantity): void
+    {
+        $act = $this->createDraftReservationAct();
+        if ($status !== null) {
+            DB::table('contract_performance_acts')->where('id', $act->id)->update(['status' => $status, 'is_approved' => true]);
+        }
+        $before = $act->fresh()->getAttributes();
+        $pivots = DB::table('performance_act_completed_works')->where('performance_act_id', $act->id)->get()->all();
+        try {
+            app(ContractPerformanceActService::class)->updateAct((int) $act->id, 17, 3, new ContractPerformanceActDTO(
+                project_id: 11, act_document_number: 'SHOULD-ROLL-BACK', act_date: '', description: null,
+                completed_works: [['completed_work_id' => $workId, 'included_quantity' => $quantity, 'included_amount' => '250.00']],
+                completedWorksProvided: true, partialUpdate: true, providedFields: ['act_document_number', 'completed_works'],
+            ), 11);
+            self::fail('Expected rejected work patch');
+        } catch (BusinessLogicException) {
+            self::assertSame($before, $act->fresh()->getAttributes());
+            self::assertEquals($pivots, DB::table('performance_act_completed_works')->where('performance_act_id', $act->id)->get()->all());
+        }
     }
 
     public function test_accept_reverse_and_reaccept_conserve_one_work_basis(): void
@@ -769,6 +811,8 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
     private function fixture(): array
     {
         $now = now();
+        DB::table('organizations')->insert(['id' => 3, 'name' => 'Acceptance race organization',
+            'created_at' => $now, 'updated_at' => $now]);
         DB::table('projects')->insert([
             'id' => 11,
             'organization_id' => 3,
@@ -883,11 +927,21 @@ final class AcceptedProductionWorkflowConcurrencyPostgresTest extends TestCase
         ]);
     }
 
+    private function createDraftReservationAct(): ContractPerformanceAct
+    {
+        $this->fixture();
+        $this->reservationWorkFixture();
+
+        return app(ContractPerformanceActService::class)->createActForContract(17, 3, new ContractPerformanceActDTO(
+            project_id: 11, act_document_number: 'DIRECT-EMPTY-PATCH', act_date: now()->toDateString(), description: null,
+            completed_works: [['completed_work_id' => 32, 'included_quantity' => '0.500', 'included_amount' => '500.00']],
+            currency: 'RUB', completedWorksProvided: true,
+        ), 11);
+    }
+
     private function mockWorkflowCollaborators(): void
     {
-        $this->mock(ActingPriceService::class)
-            ->shouldReceive('resolveLineUnitPrice')
-            ->andReturn(1000.0);
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
         $this->mock(ActReportNotificationService::class)->shouldIgnoreMissing();
     }
 

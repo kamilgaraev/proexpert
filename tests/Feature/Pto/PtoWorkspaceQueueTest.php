@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Pto;
 
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentTransmittal;
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentRequirementsService;
@@ -105,6 +106,7 @@ final class PtoWorkspaceQueueTest extends TestCase
             'file_url' => 's3://t23/act-signed.pdf',
             'status' => 'approved',
             'content_hash' => hash('sha256', 'signed'),
+            'metadata' => $version->metadata,
             'profile_snapshot' => $version->profile_snapshot,
             'basis_snapshot' => array_replace_recursive($version->basis_snapshot ?? [], [
                 'document' => ['signatories' => $this->signatories([])],
@@ -123,6 +125,85 @@ final class PtoWorkspaceQueueTest extends TestCase
         $afterSign->assertOk();
         self::assertSame([], $afterSign->json('data'));
         self::assertSame(0, (int) $afterSign->json('summary.blocker'));
+    }
+
+    public function test_completeness_keeps_each_requirements_evidence_and_does_not_claim_unsigned_documents_are_signed(): void
+    {
+        [$context, $project, $set] = $this->assignedContext();
+        $this->allowAccess();
+        $first = $this->actRequirement($set, $context);
+        $second = $this->actRequirement($set, $context, 'aosr-second');
+        $missing = $this->actRequirement($set, $context, 'aosr-missing');
+        $firstVersion = $this->approvedAct($set, $context, $project);
+        $secondDocument = $firstVersion->document->replicate();
+        $secondDocument->title = 'Второй АОСР';
+        $secondDocument->save();
+        $secondVersion = $firstVersion->replicate();
+        $secondVersion->document_id = $secondDocument->id;
+        $secondVersion->version_number = '2.0';
+        $secondVersion->save();
+        foreach ([[$first, $firstVersion], [$second, $secondVersion]] as [$requirement, $version]) {
+            $requirement->forceFill([
+                'evidence' => [['version_id' => $version->id, 'coverage' => ['project_id' => (int) $project->id]]],
+            ])->save();
+            self::assertNull($version->signature_hash);
+            self::assertNull(data_get($version->metadata, 'signature_file_url'));
+        }
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/pto/completeness?project_id='.$project->id);
+        $response->assertOk();
+        $rows = collect($response->json('data'))->keyBy('requirement_id');
+        foreach ([[$first, $firstVersion], [$second, $secondVersion]] as [$requirement, $version]) {
+            $row = $rows->get($requirement->id);
+            self::assertSame((int) $version->document_id, $row['document_id']);
+            self::assertSame((int) $version->id, $row['version_id']);
+            self::assertSame($version->version_number, $row['version']);
+            self::assertTrue($row['ready']);
+            self::assertSame('Подписи не проверялись', $row['signatures_status']);
+        }
+        self::assertNull($rows->get($missing->id)['document_id']);
+        self::assertNull($rows->get($missing->id)['version_id']);
+        self::assertFalse($rows->get($missing->id)['ready']);
+        self::assertSame('prepare_document', $rows->get($missing->id)['next_action']['key']);
+    }
+
+    public function test_completeness_does_not_rebind_outdated_or_frozen_evidence_to_a_new_version(): void
+    {
+        [$context, $project, $set] = $this->assignedContext();
+        $this->allowAccess();
+        $requirement = $this->actRequirement($set, $context);
+        $version = $this->approvedAct($set, $context, $project);
+        $originalEvidence = ['version_id' => $version->id, 'coverage' => ['project_id' => (int) $project->id]];
+        $requirement->forceFill(['evidence' => [$originalEvidence]])->save();
+        $newer = $version->replicate();
+        $newer->version_number = '2.0';
+        $newer->save();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/pto/completeness?project_id='.$project->id);
+        $response->assertOk();
+        self::assertSame((int) $version->id, $response->json('data.0.version_id'));
+        self::assertFalse($response->json('data.0.ready'));
+        self::assertSame('review_version', $response->json('data.0.next_action.key'));
+
+        $set->forceFill(['status' => 'transmitted'])->save();
+        $frozen = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/pto/completeness?project_id='.$project->id);
+        $frozen->assertOk();
+        self::assertSame((int) $version->id, $frozen->json('data.0.version_id'));
+        self::assertSame('1.0', $frozen->json('data.0.version'));
+        self::assertTrue($frozen->json('data.0.ready'));
+
+        $set->forceFill(['status' => 'draft'])->save();
+        $requirement->forceFill(['evidence' => [$originalEvidence, [
+            'version_id' => $newer->id, 'coverage' => ['project_id' => (int) $project->id],
+        ]]])->save();
+        $updated = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/pto/completeness?project_id='.$project->id);
+        $updated->assertOk();
+        self::assertSame((int) $newer->id, $updated->json('data.0.version_id'));
+        self::assertTrue($updated->json('data.0.ready'));
     }
 
     public function test_upcoming_work_without_date_is_incomplete_not_risk_and_hidden_project_is_excluded(): void
@@ -205,6 +286,7 @@ final class PtoWorkspaceQueueTest extends TestCase
             0,
             't23-page'
         );
+        $this->approveList($set, $context);
         ExecutiveDocumentTransmittal::query()->create([
             'organization_id' => $context->organization->id,
             'document_set_id' => $set->id,
@@ -280,10 +362,10 @@ final class PtoWorkspaceQueueTest extends TestCase
         });
     }
 
-    private function actRequirement(ExecutiveDocumentSet $set, AdminApiTestContext $context): \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRequirement
+    private function actRequirement(ExecutiveDocumentSet $set, AdminApiTestContext $context, string $key = 'aosr'): \App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentRequirement
     {
-        return app(ExecutiveDocumentRequirementsService::class)->create($set, [
-            'requirement_key' => 'aosr',
+        $requirement = app(ExecutiveDocumentRequirementsService::class)->create($set, [
+            'requirement_key' => $key,
             'title' => 'АОСР',
             'profile_type' => 'hidden_work_act',
             'stage' => 'document_review',
@@ -292,6 +374,31 @@ final class PtoWorkspaceQueueTest extends TestCase
             'coverage_scope' => ['project_id' => (int) $set->project_id],
             'conditions' => ['designer_supervision' => false, 'separate_executor' => false],
         ], $context->user, app(AuthorizationService::class));
+        $this->approveList($set, $context);
+
+        return $requirement->fresh();
+    }
+
+    private function approveList(ExecutiveDocumentSet $set, AdminApiTestContext $context): void
+    {
+        $items = $set->requirements()->whereNull('superseded_at')->get()->map(static fn ($item): array => [
+            'key' => $item->requirement_key, 'profile_type' => $item->profile_type,
+            'title' => $item->title, 'stage' => $item->stage,
+        ])->all();
+        $list = $set->approvedList()->first();
+        if ($list === null) {
+            $list = ExecutiveDocumentApprovedList::query()->create([
+                'organization_id' => $set->organization_id, 'project_id' => $set->project_id,
+                'revision' => 1, 'approved_by_party' => 'Учебный заказчик', 'approved_at' => now()->toDateString(),
+                'file_url' => 'org-'.$set->organization_id.'/executive-documentation/approved-list.pdf',
+                'file_hash' => hash('sha256', 'approved-list'), 'original_name' => 'approved-list.pdf',
+                'items' => $items, 'uploaded_by' => $context->user->id,
+            ]);
+        } else {
+            $list->forceFill(['items' => $items])->save();
+        }
+        $set->forceFill(['approved_list_id' => $list->id])->save();
+        $set->requirements()->whereNull('superseded_at')->update(['source_revision' => 'approved-list-'.$list->id]);
     }
 
     /**
@@ -341,6 +448,28 @@ final class PtoWorkspaceQueueTest extends TestCase
             'signatories' => $this->signatories($omit),
         ]);
 
+        $relations = [[
+            'relation_type' => 'journal_entry', 'target_type' => 'journal_entry',
+            'target_id' => $entry->id, 'domain_snapshot' => ['id' => $entry->id],
+        ]];
+        foreach (['quality_documents' => 'incoming_control_document', 'executive_schemes' => 'geodetic_scheme'] as $relationType => $documentType) {
+            $supporting = ExecutiveDocument::query()->create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'document_set_id' => $set->id, 'created_by' => $context->user->id,
+                'document_type' => $documentType, 'title' => $documentType, 'status' => 'approved',
+            ]);
+            $supportingVersion = $supporting->versions()->create([
+                'organization_id' => $context->organization->id, 'uploaded_by' => $context->user->id,
+                'version_number' => '1.0', 'file_url' => 's3://t23/'.$documentType.'.pdf',
+                'status' => 'approved', 'content_hash' => hash('sha256', $documentType),
+            ]);
+            $relations[] = [
+                'relation_type' => $relationType, 'target_type' => $documentType, 'target_id' => $supporting->id,
+                'target_version' => ['document_id' => $supporting->id, 'version_id' => $supportingVersion->id,
+                    'content_hash' => $supportingVersion->content_hash, 'status' => 'approved'],
+            ];
+        }
+
         return $document->versions()->create([
             'organization_id' => $context->organization->id,
             'uploaded_by' => $context->user->id,
@@ -348,6 +477,7 @@ final class PtoWorkspaceQueueTest extends TestCase
             'file_url' => 's3://t23/act.pdf',
             'status' => 'approved',
             'content_hash' => hash('sha256', 'act'),
+            'metadata' => ['origin' => 'generated_preparation'],
             'profile_snapshot' => [
                 'act_number' => '1',
                 'presented_works' => 'Армирование плиты',
@@ -359,6 +489,7 @@ final class PtoWorkspaceQueueTest extends TestCase
                 'profile' => app(ExecutiveDocumentProfileRegistry::class)->require('hidden_work_act'),
                 'coverage' => ['project_id' => $project->id],
                 'journal_entry_id' => $entry->id,
+                'relations' => $relations,
                 'document' => [
                     'work_type_id' => $workType->id,
                     'signatories' => $this->signatories($omit),

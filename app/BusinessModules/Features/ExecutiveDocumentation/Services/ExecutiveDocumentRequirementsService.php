@@ -393,7 +393,7 @@ final class ExecutiveDocumentRequirementsService
         });
     }
 
-    private function evidenceFor(ExecutiveDocumentRequirement $requirement, ExecutiveDocumentSet $set, array $versions, array $latestVersionIds): array
+    public function evidenceFor(ExecutiveDocumentRequirement $requirement, ExecutiveDocumentSet $set, array $versions, array $latestVersionIds): array
     {
         $explicit = (array) ($requirement->evidence ?? []);
 

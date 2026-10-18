@@ -39,6 +39,7 @@ use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionA
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceOwnerVersionWriter;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceRecognitionGrain;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceReversalSource;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceUnitResolver;
 use App\Services\Contract\ContractPerformanceActService;
 use InvalidArgumentException;
 use ReflectionClass;
@@ -53,7 +54,7 @@ final readonly class AcceptedProductionCandidateContract
 
     public const FORMULA_HASH = '839ea0b2787a0d73872bf5f7a63292437abaae05abb108ae92731abe3264f06b';
 
-    public const SOURCE_HASH = 'd9c4e18673f41d2410012c3f3f785f93c6c4556b5e5de656cf60a835a95b340c';
+    public const SOURCE_HASH = '75c767d70b84f62a7094375c15ea7dd4ffd94e3b0cb65ec34125f9bb7b7d1ea9';
 
     public function filters(): array
     {
@@ -156,6 +157,7 @@ final readonly class AcceptedProductionCandidateContract
             ProductionAcceptanceOwnerVersionWriter::class,
             ProductionAcceptanceRecognitionGrain::class,
             ProductionAcceptanceReversalSource::class,
+            ProductionAcceptanceUnitResolver::class,
         ]))) {
             throw new InvalidArgumentException('accepted_production_candidate_contract_drift');
         }

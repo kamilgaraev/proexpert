@@ -239,6 +239,140 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertSame((int) $named->id, AssistantCoreReportTask::query()->findOrFail($result['report_task_id'])->parameters['project_id']);
     }
 
+    public function test_native_portfolio_filters_create_an_authorized_organization_task(): void
+    {
+        $actor = $this->fixture->owner;
+        $organizationId = (int) $this->fixture->organization->id;
+        $this->root($actor, message: 'Сформируй Excel о состоянии всех проектов нашей организации');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $created = $tasks->create(['report_code' => 'project_portfolio_health', 'scope' => 'organization', 'project_id' => null,
+            'timezone' => 'Europe/Moscow', 'format' => 'xlsx', 'period_mode' => 'fixed_filters',
+            'columns' => ['project', 'risk'], 'filters_json' => '{}'], $actor, $organizationId);
+        $task = AssistantCoreReportTask::query()->findOrFail($created['report_task_id']);
+        self::assertNull($task->parameters['project_id']);
+        self::assertSame([], $task->parameters['filters']);
+        $this->assertCanonicalArtifact($tasks, $task, $actor, $organizationId);
+    }
+
+    public function test_native_inventory_filters_preserve_the_source_period_and_risk_selection(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor, message: 'Сформируй Excel по рискам склада текущего проекта');
+        $filters = ['period_start' => '2026-10-01', 'period_end' => '2026-10-18', 'statuses' => ['reorder']];
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $created = $tasks->create(array_replace($this->arguments(), ['report_code' => 'inventory_risk',
+            'columns' => ['risk_status', 'closing_on_hand'], 'filters_json' => json_encode($filters, JSON_THROW_ON_ERROR)]), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($created['report_task_id']);
+        self::assertEquals($filters, $task->parameters['filters']);
+        self::assertSame((int) $this->project->id, $task->parameters['project_id']);
+        $this->assertCanonicalArtifact($tasks, $task, $actor, $org);
+    }
+
+    public function test_native_labor_report_uses_fresh_scope_and_rejects_authority_overrides(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor, message: 'Сформируй Excel по трудозатратам текущего проекта');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        $filters = ['period_from' => '2026-10-01', 'period_to' => '2026-10-18'];
+        $arguments = array_replace($this->arguments(), ['report_code' => 'project_labor_cost', 'columns' => ['work_date', 'hours']]);
+        foreach (['organization_id' => $org + 1000000, 'project_id' => (int) $this->project->id + 1000000] as $field => $foreignId) {
+            $this->denied(fn () => $tasks->create(array_replace($arguments, [
+                'filters_json' => json_encode($filters + [$field => $foreignId], JSON_THROW_ON_ERROR),
+            ]), $actor, $org));
+        }
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+        $created = $tasks->create(array_replace($arguments, ['filters_json' => json_encode($filters, JSON_THROW_ON_ERROR)]), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($created['report_task_id']);
+        self::assertEquals($filters + ['organization_id' => $org, 'project_id' => (int) $this->project->id], $task->parameters['filters']);
+        $this->assertCanonicalArtifact($tasks, $task, $actor, $org);
+    }
+
+    public function test_native_filters_reject_scope_expansion_nested_values_and_unknown_fields_before_creating_work(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create());
+        $this->root($actor, message: 'Сформируй Excel о состоянии всех проектов нашей организации');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        foreach ([
+            [['project_ids' => [(int) $foreign->id]], ReportErrorCode::REPORT_SCOPE_FORBIDDEN],
+            [['project_ids' => ['99999999999999999999999']], ReportErrorCode::REPORT_REQUEST_INVALID],
+            [['project_ids' => [[(int) $this->project->id]]], ReportErrorCode::REPORT_REQUEST_INVALID],
+            [['project_ids' => ['operator' => 'eq', 'value' => $this->project->id]], ReportErrorCode::REPORT_REQUEST_INVALID],
+            [['organization_id' => $org + 1], ReportErrorCode::REPORT_FILTER_UNSUPPORTED],
+            [['risk_levels' => [str_repeat('x', 1001)]], ReportErrorCode::REPORT_REQUEST_INVALID],
+        ] as [$filters, $expected]) {
+            try {
+                $tasks->create(['report_code' => 'project_portfolio_health', 'scope' => 'organization', 'project_id' => null,
+                    'timezone' => 'Europe/Moscow', 'format' => 'xlsx', 'columns' => ['project', 'risk'],
+                    'filters_json' => json_encode($filters, JSON_THROW_ON_ERROR)], $actor, $org);
+                self::fail('Expected invalid native filter rejection');
+            } catch (ReportContractException $error) {
+                self::assertSame($expected, $error->errorCode);
+            }
+        }
+        self::assertSame(0, AssistantCoreReportTask::query()->where('organization_id', $org)->count());
+    }
+
+    public function test_native_filter_shape_is_not_trusted_for_a_changed_published_definition(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $definition = app(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry::class)
+            ->published('project_portfolio_health')->payload();
+        $context = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportAuthorization::class)
+            ->createRun((int) $actor->id, $org, ['report_code' => $definition->code, 'definition_sha256' => $definition->definitionHash->value,
+                'project_id' => null, 'timezone' => 'Europe/Moscow']);
+        $changed = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition(...array_replace(get_object_vars($definition), [
+            'definitionHash' => new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash(str_repeat('f', 64)),
+        ]));
+        try {
+            app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportFilterInput::class)
+                ->normalize($context, $changed, ['risk_levels' => ['red']], new DateTimeImmutable);
+            self::fail('Expected typed filter validation for a changed definition');
+        } catch (ReportContractException $error) {
+            self::assertSame(ReportErrorCode::REPORT_FILTER_UNSUPPORTED, $error->errorCode);
+        }
+    }
+
+    public function test_native_source_filters_reject_invalid_enums_and_identifier_types_before_queueing(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $root = $this->root($actor, message: 'Сформируй Excel по данным текущего проекта');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        foreach ([
+            ['inventory_risk', ['risk_status', 'closing_on_hand'], ['period_start' => '2026-10-01', 'period_end' => '2026-10-18', 'statuses' => ['unknown']]],
+            ['inventory_risk', ['risk_status', 'closing_on_hand'], ['period_start' => '2026-10-01', 'period_end' => '2026-10-18', 'statuses' => []]],
+            ['project_labor_cost', ['work_date', 'hours'], ['period_from' => '2026-10-01', 'period_to' => '2026-10-18', 'employee_ids' => ['1']]],
+        ] as [$code, $columns, $filters]) {
+            try {
+                $tasks->create(array_replace($this->arguments(), ['report_code' => $code, 'columns' => $columns,
+                    'filters_json' => json_encode($filters, JSON_THROW_ON_ERROR)]), $actor, $org);
+                self::fail('Expected native source filter validation before queueing');
+            } catch (ReportContractException) {
+                self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
+            }
+        }
+    }
+
+    public function test_native_catalog_describes_supported_input_shapes_for_every_builtin_filter(): void
+    {
+        $registry = app(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry::class);
+        $validator = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportNativeFilters::class);
+        foreach ($registry->publishedCodes() as $code) {
+            $filters = $validator->describe($code, $registry->published($code)->payload()->filters);
+            self::assertNotContains('unsupported', array_column($filters, 'input_type'), $code);
+        }
+        $catalog = app(AssistantPublishedReportCatalog::class)->read($this->fixture->owner, (int) $this->fixture->organization->id, 'inventory_risk');
+        $statuses = array_column($catalog['items'][0]['filters'], null, 'id')['statuses'];
+        self::assertSame('strings', $statuses['input_type']);
+        self::assertSame(['healthy', 'reorder', 'excess'], $statuses['allowed_values']);
+        self::assertFalse($statuses['empty_list_allowed']);
+    }
+
     public function test_cancellation_deadline_lease_and_recovery_do_not_create_extra_work(): void
     {
         $actor = $this->fixture->owner;

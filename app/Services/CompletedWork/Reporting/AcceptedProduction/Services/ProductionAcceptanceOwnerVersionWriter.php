@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActLine;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceOwnerVersion;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -14,12 +16,14 @@ use InvalidArgumentException;
 
 final readonly class ProductionAcceptanceOwnerVersionWriter
 {
+    public function __construct(private ProductionAcceptanceUnitResolver $units, private ProductionAcceptanceReversalSource $reversals) {}
+
     public function record(
         ContractPerformanceAct $act,
         string $eventType,
         CarbonImmutable $effectiveAt,
     ): ProductionAcceptanceOwnerVersion {
-        $members = $this->members($act);
+        $members = $this->members($act, $eventType);
         if ($members === []) {
             throw new InvalidArgumentException('production_acceptance_owner_membership_empty');
         }
@@ -99,7 +103,7 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
         }, 5);
     }
 
-    private function members(ContractPerformanceAct $act): array
+    private function members(ContractPerformanceAct $act, string $eventType): array
     {
         $completedWorkLines = $act->lines->filter(
             static fn (PerformanceActLine $line): bool => $line->line_type === PerformanceActLine::TYPE_COMPLETED_WORK,
@@ -112,26 +116,30 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
                 ->all(),
             true,
         );
-        $members = $completedWorkLines->map(function (PerformanceActLine $line): array {
+        $members = $completedWorkLines->map(function (PerformanceActLine $line) use ($act, $eventType): array {
             $work = $line->completedWork;
+            if ($eventType === 'reversed') {
+                return $this->reversedMember($act, 'performance_act_line', (int) $line->id, $work);
+            }
 
             return $this->member(
                 'performance_act_line',
                 (int) $line->id,
                 $work,
-                trim((string) $line->unit) !== ''
-                    ? (string) $line->unit
-                    : (string) ($work?->workType?->measurementUnit?->short_name ?? ''),
+                $work === null ? '' : (string) $this->units->resolve($work, (int) $act->contract->organization_id,
+                    (int) $act->project_id, $line->unit)->short_name,
             );
         })->all();
         $pivotMembers = $act->completedWorks
             ->filter(static fn ($work): bool => ! isset($canonicalWorkIds[(int) $work->id]))
-            ->map(fn ($work): array => $this->member(
-                'completed_work',
-                (int) $work->id,
-                $work,
-                (string) ($work->workType?->measurementUnit?->short_name ?? ''),
-            ))
+            ->map(fn (CompletedWork $work): array => $eventType === 'reversed'
+                ? $this->reversedMember($act, 'completed_work', (int) $work->id, $work) : $this->member(
+                    'completed_work',
+                    (int) $work->id,
+                    $work,
+                    (string) $this->units->resolve($work, (int) $act->contract->organization_id,
+                        (int) $act->project_id, PerformanceActLine::capturedUnitFromCompletedWork($work))->short_name,
+                ))
             ->all();
         $members = array_merge($members, $pivotMembers);
         usort($members, static fn (array $left, array $right): int => [
@@ -143,6 +151,27 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
         ]);
 
         return $members;
+    }
+
+    private function reversedMember(ContractPerformanceAct $act, string $sourceLineType, int $sourceLineId, ?CompletedWork $work): array
+    {
+        if ($work === null || (int) $work->organization_id !== (int) $act->contract->organization_id
+            || (int) $work->project_id !== (int) $act->project_id) {
+            throw new InvalidArgumentException('production_acceptance_scope_mismatch');
+        }
+        $accepted = ProductionAcceptanceEvent::query()->where('organization_id', $act->contract->organization_id)
+            ->where('project_id', $act->project_id)->where('contract_id', $act->contract_id)
+            ->where('performance_act_id', $act->id)->where('source_line_type', $sourceLineType)
+            ->where('source_line_id', $sourceLineId)->where('event_type', 'accepted')
+            ->orderByDesc('transition_version')->first();
+        if ($accepted === null || (int) $accepted->work_id !== (int) $work->id) {
+            throw new InvalidArgumentException('production_acceptance_reversal_without_acceptance');
+        }
+        $snapshot = $this->reversals->fromAccepted($accepted);
+
+        return ['source_line_type' => $sourceLineType, 'source_line_id' => $sourceLineId,
+            'work_id' => $snapshot['work_id'], 'contractor_id' => $snapshot['contractor_id'],
+            'unit_code' => $snapshot['unit_code'], 'zone' => $snapshot['zone']];
     }
 
     private function member(

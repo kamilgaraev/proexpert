@@ -66,6 +66,12 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
                     $query->where('status', $value);
                     break;
 
+                case 'confirmation_required':
+                    if (filter_var($value, FILTER_VALIDATE_BOOLEAN)) {
+                        $query->whereIn('status', [CompletedWork::STATUS_PENDING, CompletedWork::STATUS_IN_REVIEW]);
+                    }
+                    break;
+
                 case 'planning_status':
                     $query->where('planning_status', $value);
                     break;

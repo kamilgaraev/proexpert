@@ -9,6 +9,7 @@ use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\IndexCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkBulkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
@@ -58,7 +59,7 @@ class CompletedWorkController extends Controller
         return AdminResponse::success($this->completedWorkFormOptionsService->forProject($project, $actor, $context));
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(IndexCompletedWorkRequest $request): JsonResponse
     {
         try {
             $projectId = $request->route('project');
@@ -71,6 +72,7 @@ class CompletedWorkController extends Controller
                 'work_type_id',
                 'user_id',
                 'status',
+                'confirmation_required',
                 'completion_date_from',
                 'completion_date_to',
                 'amount_from',

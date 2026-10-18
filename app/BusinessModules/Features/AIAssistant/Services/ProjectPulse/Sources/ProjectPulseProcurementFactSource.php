@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Contracts\ProjectPulse\ProjectPulse
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseFact;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -222,18 +223,43 @@ class ProjectPulseProcurementFactSource implements ProjectPulseFactSourceInterfa
             return $this->empty();
         }
 
-        return $this->table($context, 'purchase_orders')
-            ->whereNotIn('purchase_orders.status', ['completed', 'cancelled', 'closed'])
+        if ($context->projectId !== null && (
+            !$this->hasTable('site_requests')
+            || !$this->hasColumn('purchase_orders', 'purchase_request_id')
+            || !$this->hasColumn('purchase_requests', 'site_request_id')
+            || !$this->hasColumn('site_requests', 'project_id')
+        )) {
+            return $this->empty();
+        }
+
+        $query = $this->table($context, 'purchase_orders')
+            ->whereNotIn('purchase_orders.status', [PurchaseOrderStatusEnum::DELIVERED->value, 'completed', 'cancelled', 'closed'])
             ->whereNotNull('purchase_orders.delivery_date')
             ->whereDate('purchase_orders.delivery_date', '<', $context->date->toDateString())
-            ->limit($this->limit())
-            ->get(['purchase_orders.id', 'purchase_orders.order_number', 'purchase_orders.status', 'purchase_orders.total_amount', 'purchase_orders.delivery_date'])
+            ->limit($this->limit());
+
+        if ($context->projectId !== null) {
+            $query->whereExists(function (Builder $linkedRequest) use ($context): void {
+                $linkedRequest->select(DB::raw(1))
+                    ->from('purchase_requests as pulse_purchase_requests')
+                    ->join('site_requests as pulse_site_requests', 'pulse_site_requests.id', '=', 'pulse_purchase_requests.site_request_id')
+                    ->whereColumn('pulse_purchase_requests.id', 'purchase_orders.purchase_request_id')
+                    ->where('pulse_purchase_requests.organization_id', $context->organizationId)
+                    ->where('pulse_site_requests.organization_id', $context->organizationId)
+                    ->where('pulse_site_requests.project_id', $context->projectId)
+                    ->when($this->hasColumn('purchase_requests', 'deleted_at'), fn (Builder $related) => $related->whereNull('pulse_purchase_requests.deleted_at'))
+                    ->when($this->hasColumn('site_requests', 'deleted_at'), fn (Builder $related) => $related->whereNull('pulse_site_requests.deleted_at'));
+            });
+        }
+
+        return $query->get(['purchase_orders.id', 'purchase_orders.order_number', 'purchase_orders.status', 'purchase_orders.total_amount', 'purchase_orders.delivery_date'])
             ->map(fn ($row) => new ProjectPulseFact(
                 id: 'purchase_order:' . $row->id . ':delivery_overdue',
                 type: 'purchase_order',
                 priority: 'critical',
                 title: 'Поставка по заказу просрочена',
                 text: 'Заказ поставщику ' . $row->order_number . ' не закрыт после плановой даты поставки.',
+                projectId: $context->projectId,
                 relatedEntity: [
                     'type' => 'purchase_order',
                     'id' => (int) $row->id,

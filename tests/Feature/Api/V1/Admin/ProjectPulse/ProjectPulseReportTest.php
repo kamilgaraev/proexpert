@@ -6,6 +6,9 @@ namespace Tests\Feature\Api\V1\Admin\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\Enums\ProjectOrganizationRole;
+use App\Models\Contract;
+use App\Models\ContractOrganizationView;
+use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
@@ -281,6 +284,150 @@ class ProjectPulseReportTest extends TestCase
             ->firstWhere('id', 'purchase_request:' . $purchaseRequestId . ':no_order');
 
         self::assertNull($fact);
+    }
+
+    public function test_project_pulse_contract_risks_include_only_active_unarchived_contracts(): void
+    {
+        $context = $this->context(roleSlug: 'organization_owner');
+        $organizationId = $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]);
+        $contractor = Contractor::withoutEvents(fn () => Contractor::query()->create([
+            'organization_id' => $organizationId,
+            'name' => 'Pulse contract supplier',
+        ]));
+        $contracts = [];
+        foreach ([
+            'legacy_active' => ['active', null],
+            'visible_active' => ['active', 'active'],
+            'archived_placement' => ['active', 'archived'],
+            'trashed_placement' => ['active', 'trashed'],
+            'draft' => ['draft', null],
+            'archived_status' => ['archived', null],
+            'terminated' => ['terminated', null],
+            'completed' => ['completed', null],
+        ] as $key => [$status, $visibility]) {
+            $contract = Contract::withoutEvents(fn () => Contract::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => $project->id,
+                'contractor_id' => $contractor->id,
+                'contract_side_type' => 'contract',
+                'number' => 'PULSE-CONTRACT-' . $key,
+                'date' => now()->subDays(10)->toDateString(),
+                'subject' => 'Pulse contract ' . $key,
+                'work_type_category' => 'smr',
+                'base_amount' => 100,
+                'total_amount' => 100,
+                'gp_percentage' => 0,
+                'planned_advance_amount' => 0,
+                'actual_advance_amount' => 0,
+                'status' => $status,
+                'start_date' => now()->subDays(10)->toDateString(),
+                'end_date' => now()->subDays(2)->toDateString(),
+                'is_fixed_amount' => true,
+                'is_multi_project' => false,
+                'is_self_execution' => false,
+            ]));
+            if ($visibility !== null) {
+                ContractOrganizationView::query()->create([
+                    'contract_id' => $contract->id,
+                    'organization_id' => $organizationId,
+                    'visibility' => $visibility,
+                    'version' => 1,
+                ]);
+            }
+            $contracts[$key] = $contract->id;
+        }
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'project_id' => $project->id,
+                'period' => 'today',
+                'use_ai' => false,
+            ])->assertOk();
+        $contractIds = collect($response->json('data.facts'))
+            ->where('type', 'contract')->pluck('related_entity.id')->all();
+
+        self::assertEqualsCanonicalizing([
+            $contracts['legacy_active'],
+            $contracts['visible_active'],
+        ], $contractIds);
+    }
+
+    public function test_project_pulse_delivery_risks_exclude_delivered_and_other_project_orders(): void
+    {
+        $context = $this->context(roleSlug: 'organization_owner');
+        $organizationId = $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]);
+        $otherProject = Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]);
+        $supplierId = DB::table('suppliers')->insertGetId([
+            'organization_id' => $organizationId,
+            'name' => 'Pulse delivery supplier',
+            'code' => 'PULSE-DELIVERY-' . $organizationId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $orders = [];
+        foreach ([
+            'selected_open' => [$project->id, 'confirmed'],
+            'selected_delivered' => [$project->id, 'delivered'],
+            'other_open' => [$otherProject->id, 'confirmed'],
+            'unlinked_open' => [null, 'confirmed'],
+        ] as $key => [$projectId, $status]) {
+            $siteRequestId = $projectId === null ? null : DB::table('site_requests')->insertGetId([
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'user_id' => $context->user->id,
+                'title' => 'Pulse delivery ' . $key,
+                'request_type' => 'material',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $requestId = DB::table('purchase_requests')->insertGetId([
+                'organization_id' => $organizationId,
+                'site_request_id' => $siteRequestId,
+                'request_number' => 'PULSE-REQUEST-' . $key,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $orders[$key] = DB::table('purchase_orders')->insertGetId([
+                'organization_id' => $organizationId,
+                'purchase_request_id' => $requestId,
+                'supplier_id' => $supplierId,
+                'order_number' => 'PULSE-ORDER-' . $key,
+                'order_date' => now()->subDays(5)->toDateString(),
+                'delivery_date' => now()->subDays(2)->toDateString(),
+                'status' => $status,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'project_id' => $project->id,
+                'period' => 'today',
+                'use_ai' => false,
+            ])->assertOk();
+        $orderIds = collect($response->json('data.facts'))
+            ->where('type', 'purchase_order')->pluck('related_entity.id')->all();
+
+        self::assertContains($orders['selected_open'], $orderIds);
+        self::assertNotContains($orders['selected_delivered'], $orderIds);
+        self::assertNotContains($orders['other_open'], $orderIds);
+        self::assertNotContains($orders['unlinked_open'], $orderIds);
+
+        $organizationResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
+                'period' => 'today',
+                'use_ai' => false,
+            ])->assertOk();
+        $organizationOrderIds = collect($organizationResponse->json('data.facts'))
+            ->where('type', 'purchase_order')->pluck('related_entity.id')->all();
+
+        self::assertContains($orders['selected_open'], $organizationOrderIds);
+        self::assertContains($orders['other_open'], $organizationOrderIds);
+        self::assertContains($orders['unlinked_open'], $organizationOrderIds);
+        self::assertNotContains($orders['selected_delivered'], $organizationOrderIds);
     }
 
     public function test_project_pulse_contains_overdue_open_work_constraint_in_project_scope(): void

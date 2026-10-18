@@ -11,8 +11,8 @@ use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunkReader;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
@@ -30,12 +30,13 @@ use App\Services\ActReport\ActReportWorkflowService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Providers\AcceptedProductionReportProvider;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Queries\AcceptedProductionRowQuery;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionFormula;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionHistoryBoundaryResolver;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLineageFilter;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLineageFilter;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionSnapshotMaterializer;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceRecognitionGrain;
 use App\Services\Contract\ContractPerformanceActService;
 use Carbon\CarbonImmutable;
@@ -43,9 +44,12 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\DB;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use ReflectionMethod;
+use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 use Tests\TestCase;
@@ -55,6 +59,63 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
 {
     use RefreshDatabase;
 
+    private ?array $previousDatabaseEnvironment = null;
+
+    private bool $previousMigrationState = false;
+
+    protected function setUp(): void
+    {
+        if (in_array($this->name(), [
+            'test_frozen_as_of_replays_nonempty_result_after_later_reversal_and_reacceptance',
+            'test_period_filter_keeps_acceptance_and_reversal_on_their_own_days_and_isolates_tenant',
+            'test_history_checkpoint_captures_existing_source_sets_and_separates_late_backdated_rows',
+            'test_signature_after_as_of_keeps_the_earlier_approval_in_runtime_gap_detection',
+        ], true)) {
+            $this->previousDatabaseEnvironment = [getenv('DB_DATABASE'), $_ENV['DB_DATABASE'] ?? null, $_SERVER['DB_DATABASE'] ?? null];
+            $this->previousMigrationState = RefreshDatabaseState::$migrated;
+            $configuration = IsolatedPostgresTestDatabase::databaseConfiguration();
+            putenv('DB_DATABASE='.$configuration['database']);
+            $_ENV['DB_DATABASE'] = $_SERVER['DB_DATABASE'] = $configuration['database'];
+            RefreshDatabaseState::$migrated = false;
+        }
+        try {
+            parent::setUp();
+        } catch (\Throwable $exception) {
+            $this->restoreDatabaseEnvironment();
+            throw $exception;
+        }
+    }
+
+    protected function tearDown(): void
+    {
+        try {
+            parent::tearDown();
+        } finally {
+            $this->restoreDatabaseEnvironment();
+        }
+    }
+
+    private function restoreDatabaseEnvironment(): void
+    {
+        if ($this->previousDatabaseEnvironment === null) {
+            return;
+        }
+        [$value, $environment, $server] = $this->previousDatabaseEnvironment;
+        $value === false ? putenv('DB_DATABASE') : putenv('DB_DATABASE='.$value);
+        if ($environment === null) {
+            unset($_ENV['DB_DATABASE']);
+        } else {
+            $_ENV['DB_DATABASE'] = $environment;
+        }
+        if ($server === null) {
+            unset($_SERVER['DB_DATABASE']);
+        } else {
+            $_SERVER['DB_DATABASE'] = $server;
+        }
+        RefreshDatabaseState::$migrated = $this->previousMigrationState;
+        $this->previousDatabaseEnvironment = null;
+    }
+
     protected function beforeRefreshingDatabase(): void
     {
         self::assertSame(
@@ -62,6 +123,11 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             DB::connection()->getDriverName(),
             'Accepted production materialization requires isolated PostgreSQL.',
         );
+        if ($this->previousDatabaseEnvironment !== null) {
+            IsolatedPostgresTestDatabase::assertSafeConfiguration((array) config('database.connections.pgsql'));
+            DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+            DB::statement('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+        }
     }
 
     public function test_frozen_as_of_replays_nonempty_result_after_later_reversal_and_reacceptance(): void
@@ -233,10 +299,10 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'ru-RU',
         );
 
-        $snapshot = (new AcceptedProductionSnapshotMaterializer(
+        $snapshot = $this->outsideTestTransaction(fn () => (new AcceptedProductionSnapshotMaterializer(
             new AcceptedProductionFormula,
             new ProductionAcceptanceRecognitionGrain,
-        ))->materialize($scope, $query, new ReportProgress(0));
+        ))->materialize($scope, $query, new ReportProgress(0)));
 
         $rows = DB::table('accepted_production_rows')
             ->where('organization_id', $organization->id)
@@ -480,7 +546,26 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
     }
 
-    public function test_real_act_approval_records_acceptance_without_invalidating_the_checkpoint(): void
+    public static function acceptanceUnitSources(): array
+    {
+        return ['work_type_unit' => ['work_type'], 'scoped_estimate_unit' => ['estimate'],
+            'scoped_schedule_unit' => ['schedule'], 'scoped_schedule_estimate_unit' => ['schedule_estimate'],
+            'matching_estimate_and_schedule_units' => ['estimate_and_schedule'],
+            'soft_deleted_schedule_unit' => ['schedule', 'task'],
+            'soft_deleted_schedule_and_work_estimate_unit' => ['estimate_and_schedule', 'task'],
+            'soft_deleted_schedule_parent' => ['schedule', 'schedule'],
+            'soft_deleted_work_estimate_item' => ['estimate', 'estimate_item'],
+            'soft_deleted_task_estimate_item' => ['schedule_estimate', 'estimate_item'],
+            'soft_deleted_work_estimate' => ['estimate', 'estimate'],
+            'soft_deleted_task_estimate' => ['schedule_estimate', 'estimate'],
+            'soft_deleted_estimate_unit' => ['estimate', 'unit'],
+            'soft_deleted_task_unit' => ['schedule', 'unit'],
+            'soft_deleted_work_type' => ['work_type', 'work_type'],
+            'soft_deleted_work_type_unit' => ['work_type', 'unit']];
+    }
+
+    #[DataProvider('acceptanceUnitSources')]
+    public function test_real_act_approval_records_acceptance_without_invalidating_the_checkpoint(string $unitSource, ?string $deletedSource = null): void
     {
         [$scope, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
             approvalDate: null,
@@ -488,7 +573,10 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
         );
         $user = User::factory()->create(['current_organization_id' => $organizationId]);
-        $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id);
+        $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, $unitSource);
+        if ($deletedSource !== null) {
+            $this->deleteAcceptanceUnitSource($source['work_id'], $deletedSource);
+        }
 
         $this->rerunHistoryCheckpointMigration();
         $checkpoint = DB::table('production_acceptance_history_checkpoints')
@@ -497,10 +585,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         self::assertSame(0, (int) $checkpoint->excluded_legacy_act_count);
         self::assertGreaterThanOrEqual($actId, (int) $checkpoint->performance_act_watermark_id);
 
-        $this->mock(ActingPriceService::class)
-            ->shouldReceive('resolveLineUnitPrice')
-            ->once()
-            ->andReturn(1000.0);
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
         $this->mock(ActReportNotificationService::class)
             ->shouldReceive('notifyStatusChanged')
             ->once();
@@ -526,6 +611,11 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             ->where('performance_act_id', $actId)
             ->where('event_type', 'accepted')
             ->count());
+        $event = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sole();
+        self::assertSame($source['unit_code'], $event->unit_code);
+        self::assertSame('unit_'.$source['unit_id'], $event->conversion_version);
+        self::assertSame($source['unit_code'], DB::table('production_acceptance_owner_members')
+            ->where('performance_act_id', $actId)->value('unit_code'));
 
         $coverageDay = (new DateTimeImmutable((string) $checkpoint->completed_at))
             ->setTimezone(new DateTimeZone('UTC'))
@@ -554,6 +644,173 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         self::assertSame((string) $checkpoint->source_hash, $resolved->sourceHash);
     }
 
+    #[DataProvider('acceptanceUnitSources')]
+    public function test_pivot_only_work_records_the_same_master_unit_without_duplicates(string $unitSource, ?string $deletedSource = null): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null, rejectedAt: null, currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, $unitSource);
+        if ($deletedSource !== null) {
+            $this->deleteAcceptanceUnitSource($source['work_id'], $deletedSource);
+        }
+        DB::table('performance_act_lines')->where('id', $lineId)->delete();
+        DB::table('performance_act_completed_works')->insert([
+            'performance_act_id' => $actId, 'completed_work_id' => $source['work_id'],
+            'included_quantity' => '1.000', 'included_amount' => '1000.00', 'currency' => 'RUB',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $recorder = app(ProductionAcceptanceEventRecorder::class);
+        $act = ContractPerformanceAct::query()->findOrFail($actId);
+        $at = CarbonImmutable::parse('2026-08-01T12:00:00Z');
+        $recorder->recordTransition($act, 'pending', 'approved', $at, (int) $user->id);
+        $recorder->recordTransition($act, 'pending', 'approved', $at, (int) $user->id);
+
+        $event = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sole();
+        self::assertSame('completed_work', $event->source_line_type);
+        self::assertSame($source['work_id'], $event->work_id);
+        self::assertSame($source['unit_code'], $event->unit_code);
+        self::assertSame('unit_'.$source['unit_id'], $event->conversion_version);
+        self::assertSame(1, DB::table('production_acceptance_owner_members')->where('performance_act_id', $actId)->count());
+        self::assertSame($source['unit_code'], DB::table('production_acceptance_owner_members')
+            ->where('performance_act_id', $actId)->value('unit_code'));
+    }
+
+    public static function changedReversalSources(): array
+    {
+        return ['canonical_unit_changed' => [false, 'unit'], 'canonical_quantity_cleared' => [false, 'quantity'],
+            'pivot_unit_changed' => [true, 'unit'], 'pivot_quantity_cleared' => [true, 'quantity']];
+    }
+
+    #[DataProvider('changedReversalSources')]
+    public function test_annulment_reverses_frozen_units_and_quantities_after_source_changes(bool $pivot, string $change): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null, rejectedAt: null, currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, 'schedule');
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
+        $notification = $this->mock(ActReportNotificationService::class)->shouldReceive('notifyStatusChanged');
+        $pivot ? $notification->never() : $notification->once();
+        if ($pivot) {
+            DB::table('performance_act_lines')->where('id', $lineId)->delete();
+            DB::table('performance_act_completed_works')->insert([
+                'performance_act_id' => $actId, 'completed_work_id' => $source['work_id'],
+                'included_quantity' => '1.000', 'included_amount' => '1000.00', 'currency' => 'RUB',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            app(ProductionAcceptanceEventRecorder::class)->recordTransition(
+                ContractPerformanceAct::query()->findOrFail($actId), 'pending', 'approved', CarbonImmutable::now(), (int) $user->id,
+            );
+            DB::table('contract_performance_acts')->where('id', $actId)->update(['status' => 'approved', 'is_approved' => true]);
+        } else {
+            app(ActReportWorkflowService::class)->approve(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id);
+        }
+        $accepted = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sole();
+        $originalMember = DB::table('production_acceptance_owner_members')->where('performance_act_id', $actId)->sole();
+        if ($change === 'unit') {
+            DB::table('measurement_units')->where('id', $source['unit_id'])->update(['short_name' => 'changed-'.$source['unit_id']]);
+        } else {
+            DB::table('completed_works')->where('id', $source['work_id'])->update(['quantity' => '0', 'completed_quantity' => '0']);
+            $table = $pivot ? 'performance_act_completed_works' : 'performance_act_lines';
+            DB::table($table)->where($pivot ? 'performance_act_id' : 'id', $pivot ? $actId : $lineId)
+                ->update([$pivot ? 'included_quantity' : 'quantity' => '0.2500']);
+        }
+        $key = (string) \Illuminate\Support\Str::uuid();
+        $workflow = app(ActReportWorkflowService::class);
+        $annulled = $workflow->annul(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id, 'Ошибка приёмки', $key);
+        self::assertSame(ContractPerformanceAct::STATUS_ANNULLED, (string) $annulled->status);
+        $reversed = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->where('event_type', 'reversed')->sole();
+        self::assertSame((int) $accepted->id, (int) $reversed->reverses_event_id);
+        self::assertSame(-(float) $accepted->accepted_quantity_delta, (float) $reversed->accepted_quantity_delta);
+        foreach (['unit_code', 'unit_dimension', 'conversion_version', 'approved_rate_minor', 'currency',
+            'work_id', 'source_line_type', 'source_line_id', 'organization_id', 'project_id', 'contract_id'] as $field) {
+            self::assertSame($accepted->getAttribute($field), $reversed->getAttribute($field), $field);
+        }
+        $member = DB::table('production_acceptance_owner_members')->where('performance_act_id', $actId)->orderByDesc('id')->firstOrFail();
+        foreach (['source_line_type', 'source_line_id', 'work_id', 'contractor_id', 'unit_code', 'zone'] as $field) {
+            self::assertSame($originalMember->{$field}, $member->{$field}, $field);
+        }
+        foreach (['accepted_quantity_delta', 'planned_quantity', 'reported_quantity'] as $field) {
+            self::assertSame(0.0, (float) ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sum($field), $field);
+        }
+        $workflow->annul(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id, 'Ошибка приёмки', $key);
+        self::assertSame(2, ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->count());
+        self::assertSame(2, DB::table('production_acceptance_owner_versions')->where('performance_act_id', $actId)->count());
+        self::assertSame(0, DB::table('production_acceptance_backfill_ledger')->where('performance_act_id', $actId)->count());
+    }
+
+    public static function unprovenAcceptanceUnits(): array
+    {
+        return [
+            'text_without_master_identity' => ['missing_unit', 'unit_unavailable'],
+            'foreign_estimate_project' => ['foreign_estimate_project', 'scope_unavailable'],
+            'foreign_estimate_organization' => ['foreign_estimate_organization', 'scope_unavailable'],
+            'foreign_deleted_estimate_organization' => ['foreign_deleted_estimate_organization', 'scope_unavailable'],
+            'foreign_schedule_project' => ['foreign_schedule_project', 'scope_unavailable'],
+            'foreign_soft_deleted_schedule_project' => ['foreign_deleted_schedule_project', 'scope_unavailable'],
+            'foreign_unit_organization' => ['foreign_unit_organization', 'scope_unavailable'],
+            'foreign_deleted_unit_organization' => ['foreign_deleted_unit_organization', 'scope_unavailable'],
+            'conflicting_schedule_and_estimate_units' => ['conflicting_units', 'unit_unavailable'],
+            'conflicting_captured_code' => ['captured_mismatch', 'unit_unavailable'],
+        ];
+    }
+
+    #[DataProvider('unprovenAcceptanceUnits')]
+    public function test_unproven_unit_links_record_a_gap_without_fabricating_acceptance(string $fault, string $reason): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null, rejectedAt: null, currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id,
+            $fault === 'missing_unit' ? 'work_type' : 'estimate_and_schedule');
+        $work = CompletedWork::query()->findOrFail($source['work_id']);
+        if ($fault === 'missing_unit') {
+            DB::table('work_types')->where('id', $work->work_type_id)->update(['measurement_unit_id' => null]);
+        } elseif ($fault === 'captured_mismatch') {
+            DB::table('performance_act_lines')->where('id', $lineId)->update(['unit' => 'kg']);
+        } elseif ($fault === 'conflicting_units') {
+            $otherUnitId = DB::table('measurement_units')->insertGetId(['organization_id' => $organizationId,
+                'name' => 'Другая единица', 'short_name' => 'unit-'.$work->id, 'type' => 'work', 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('schedule_tasks')->where('id', $work->schedule_task_id)->update(['measurement_unit_id' => $otherUnitId]);
+        } elseif (in_array($fault, ['foreign_estimate_project', 'foreign_schedule_project', 'foreign_deleted_schedule_project'], true)) {
+            $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId]));
+            if ($fault === 'foreign_estimate_project') {
+                DB::table('estimates')->where('id', $work->estimateItem->estimate_id)->update(['project_id' => $other->id]);
+            } else {
+                DB::table('project_schedules')->where('id', $work->scheduleTask->schedule_id)->update(['project_id' => $other->id]);
+                if ($fault === 'foreign_deleted_schedule_project') {
+                    DB::table('schedule_tasks')->where('id', $work->schedule_task_id)->update(['deleted_at' => now()]);
+                }
+            }
+        } else {
+            $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+            if (in_array($fault, ['foreign_estimate_organization', 'foreign_deleted_estimate_organization'], true)) {
+                DB::table('estimates')->where('id', $work->estimateItem->estimate_id)->update(['organization_id' => $foreign->id]);
+                if ($fault === 'foreign_deleted_estimate_organization') {
+                    DB::table('estimates')->where('id', $work->estimateItem->estimate_id)->update(['deleted_at' => now()]);
+                }
+            } else {
+                DB::table('measurement_units')->where('id', $source['unit_id'])->update(['organization_id' => $foreign->id, 'is_system' => false]);
+                if ($fault === 'foreign_deleted_unit_organization') {
+                    DB::table('measurement_units')->where('id', $source['unit_id'])->update(['deleted_at' => now()]);
+                }
+            }
+        }
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
+        $this->mock(ActReportNotificationService::class)->shouldReceive('notifyStatusChanged')->once();
+        $approved = app(ActReportWorkflowService::class)->approve(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id);
+
+        self::assertSame(ContractPerformanceAct::STATUS_APPROVED, (string) $approved->status);
+        self::assertSame(0, ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->count());
+        self::assertSame(0, DB::table('production_acceptance_owner_versions')->where('performance_act_id', $actId)->count());
+        self::assertSame('runtime_acceptance_'.$reason, DB::table('production_acceptance_backfill_ledger')
+            ->where('performance_act_id', $actId)->value('reason'));
+    }
+
     public function test_manual_act_approval_records_a_runtime_gap_without_blocking_the_workflow(): void
     {
         [, $actId, , , $organizationId] = $this->insertLifecycleOwner(
@@ -567,10 +824,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             ->where('organization_id', $organizationId)
             ->firstOrFail();
 
-        $this->mock(ActingPriceService::class)
-            ->shouldReceive('resolveLineUnitPrice')
-            ->once()
-            ->andReturn(1000.0);
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
         $this->mock(ActReportNotificationService::class)
             ->shouldReceive('notifyStatusChanged')
             ->once();
@@ -613,10 +867,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'project_id' => (int) $otherProject->id,
         ]);
 
-        $this->mock(ActingPriceService::class)
-            ->shouldReceive('resolveLineUnitPrice')
-            ->once()
-            ->andReturn(1000.0);
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
         $this->mock(ActReportNotificationService::class)
             ->shouldReceive('notifyStatusChanged')
             ->once();
@@ -709,10 +960,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'amount' => '246.90',
         ]);
 
-        $this->mock(ActingPriceService::class)
-            ->shouldReceive('resolveLineUnitPrice')
-            ->once()
-            ->andReturn(200.0);
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
         $this->mock(ActReportNotificationService::class)
             ->shouldReceive('notifyStatusChanged')
             ->once();
@@ -737,7 +985,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
             approvalDate: '2026-07-20',
             rejectedAt: null,
-            currentStatus: 'draft',
+            currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
             isApproved: true,
         );
         $user = User::factory()->create(['current_organization_id' => $organizationId]);
@@ -922,7 +1170,7 @@ SQL)
             $coverageDay->setTime(23, 59, 59),
             'ru-RU',
         );
-        $stream = (new AcceptedProductionEventUniverse)->stream($scope, $query);
+        $stream = $this->outsideTestTransaction(fn () => (new AcceptedProductionEventUniverse)->stream($scope, $query));
 
         self::assertSame(0, $stream->eligibleCount());
         self::assertSame(0, $stream->gapCount());
@@ -986,7 +1234,7 @@ SQL)
             'ru-RU',
         );
 
-        $gaps = iterator_to_array((new AcceptedProductionEventUniverse)->stream($scope, $query)->gaps());
+        $gaps = $this->outsideTestTransaction(fn () => iterator_to_array((new AcceptedProductionEventUniverse)->stream($scope, $query)->gaps()));
 
         self::assertCount(1, $gaps);
         self::assertSame('legacy_owner_unprovable', $gaps[0]['kind']);
@@ -1116,6 +1364,17 @@ SQL)
         self::assertSame('accepted_production_owner_history_unproven', $gaps[0]['reason']);
     }
 
+    private function outsideTestTransaction(callable $capture): mixed
+    {
+        self::assertSame(1, DB::transactionLevel());
+        DB::commit();
+        try {
+            return $capture();
+        } finally {
+            DB::beginTransaction();
+        }
+    }
+
     private function insertEvent(
         int $organizationId,
         int $projectId,
@@ -1233,26 +1492,46 @@ SQL)
         ];
     }
 
+    private function deleteAcceptanceUnitSource(int $workId, string $source): void
+    {
+        $work = CompletedWork::query()->findOrFail($workId);
+        $target = match ($source) {
+            'task' => $work->scheduleTask,
+            'schedule' => $work->scheduleTask?->schedule,
+            'estimate_item' => $work->estimateItem ?? $work->scheduleTask?->estimateItem,
+            'estimate' => $work->estimateItem?->estimate ?? $work->scheduleTask?->estimateItem?->estimate,
+            'unit' => $work->workType?->measurementUnit ?? $work->estimateItem?->measurementUnit
+                ?? $work->scheduleTask?->measurementUnit ?? $work->scheduleTask?->estimateItem?->measurementUnit,
+            'work_type' => $work->workType,
+        };
+        self::assertInstanceOf(\Illuminate\Database\Eloquent\Model::class, $target);
+        DB::table($target->getTable())->where('id', $target->getKey())->update(['deleted_at' => now()]);
+    }
+
     private function makeLifecycleLineProjectable(
         int $actId,
         int $lineId,
         int $projectId,
         int $organizationId,
         int $userId,
-    ): void {
-        $unitId = (int) DB::table('measurement_units')->insertGetId([
+        string $unitSource = 'work_type',
+    ): array {
+        $unitCode = $unitSource === 'work_type' ? 'm3' : 'м²';
+        $unitId = DB::table('measurement_units')->where('organization_id', $organizationId)
+            ->where('short_name', $unitCode)->whereNull('deleted_at')->value('id');
+        $unitId = $unitId === null ? (int) DB::table('measurement_units')->insertGetId([
             'organization_id' => $organizationId,
-            'name' => 'Cubic meter',
-            'short_name' => 'm3',
-            'type' => 'work',
+            'name' => $unitSource === 'work_type' ? 'Cubic meter' : 'Квадратный метр',
+            'short_name' => $unitCode,
+            'type' => $unitSource === 'work_type' ? 'work' : 'material',
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ]) : (int) $unitId;
         $workTypeId = (int) DB::table('work_types')->insertGetId([
             'organization_id' => $organizationId,
             'name' => 'Concrete',
             'code' => 'CONCRETE-'.$projectId,
-            'measurement_unit_id' => $unitId,
+            'measurement_unit_id' => $unitSource === 'work_type' ? $unitId : null,
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -1270,10 +1549,43 @@ SQL)
             'completion_date' => '2026-08-01',
             'status' => 'confirmed',
         ]);
+        $estimateItem = null;
+        if (in_array($unitSource, ['estimate', 'schedule_estimate', 'estimate_and_schedule'], true)) {
+            $estimate = \App\Models\Estimate::withoutEvents(fn () => \App\Models\Estimate::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'number' => 'ACCEPTANCE-UNIT-'.$work->id,
+                'name' => 'Смета работы', 'type' => 'local', 'status' => 'draft', 'estimate_date' => '2026-08-01',
+                'total_amount' => 1000, 'total_amount_with_vat' => 1000, 'vat_rate' => 0,
+            ]));
+            $section = \App\Models\EstimateSection::withoutEvents(fn () => \App\Models\EstimateSection::query()->create([
+                'estimate_id' => $estimate->id, 'section_number' => '1', 'full_section_number' => '1',
+                'name' => 'Работы', 'sort_order' => 1, 'section_total_amount' => 1000,
+            ]));
+            $estimateItem = \App\Models\EstimateItem::withoutEvents(fn () => \App\Models\EstimateItem::query()->create([
+                'estimate_id' => $estimate->id, 'estimate_section_id' => $section->id, 'position_number' => '1.1',
+                'name' => 'Работа по смете', 'item_type' => 'work', 'measurement_unit_id' => $unitId,
+                'quantity' => 1, 'quantity_total' => 1, 'unit_price' => 1000, 'total_amount' => 1000,
+            ]));
+            if ($unitSource !== 'schedule_estimate') {
+                DB::table('completed_works')->where('id', $work->id)->update(['estimate_item_id' => $estimateItem->id]);
+            }
+        }
+        if (in_array($unitSource, ['schedule', 'schedule_estimate', 'estimate_and_schedule'], true)) {
+            $schedule = \App\Models\ProjectSchedule::withoutEvents(fn () => \App\Models\ProjectSchedule::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'created_by_user_id' => $userId,
+                'name' => 'График работы', 'planned_start_date' => '2026-08-01', 'planned_end_date' => '2026-08-02',
+            ]));
+            $task = \App\Models\ScheduleTask::withoutEvents(fn () => \App\Models\ScheduleTask::query()->create([
+                'schedule_id' => $schedule->id, 'organization_id' => $organizationId, 'created_by_user_id' => $userId,
+                'estimate_item_id' => $estimateItem?->id, 'measurement_unit_id' => $unitSource === 'schedule_estimate' ? null : $unitId,
+                'name' => 'Работа графика', 'task_type' => 'task', 'planned_start_date' => '2026-08-01',
+                'planned_end_date' => '2026-08-02', 'planned_duration_days' => 1, 'status' => 'completed', 'progress_percent' => 100,
+            ]));
+            DB::table('completed_works')->where('id', $work->id)->update(['schedule_task_id' => $task->id]);
+        }
         DB::table('performance_act_lines')->where('id', $lineId)->update([
             'completed_work_id' => (int) $work->id,
             'line_type' => 'completed_work',
-            'unit' => 'm3',
+            'unit' => $unitCode,
             'unit_price' => '1000.00',
             'amount' => '1000.00',
             'currency' => 'RUB',
@@ -1282,6 +1594,8 @@ SQL)
             'amount' => '1000.00',
             'currency' => 'RUB',
         ]);
+
+        return ['work_id' => (int) $work->id, 'unit_id' => $unitId, 'unit_code' => $unitCode];
     }
 
     private function ownerUniverse(int $actId, int $lineId, string $eventType): array
