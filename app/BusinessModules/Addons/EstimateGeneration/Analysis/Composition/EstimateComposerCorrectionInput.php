@@ -22,6 +22,7 @@ final readonly class EstimateComposerCorrectionInput
     public function fingerprint(): string
     {
         $payload = $this->canonicalPayload();
+        $payload['audit_input']['derived_quantities'] = $this->audit->derivedQuantities;
         if ($this->audit->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->audit->wireScope->creditOperationId;
         }

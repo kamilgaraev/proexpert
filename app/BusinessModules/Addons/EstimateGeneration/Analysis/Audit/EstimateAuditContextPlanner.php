@@ -38,13 +38,14 @@ final class EstimateAuditContextPlanner
     private function quantityIndex(array $quantities): array
     {
         $index = ['ids' => [], 'bases' => [], 'bytes' => []];
-        foreach ($quantities as $quantity) {
+        $wireQuantities = EstimateAuditQuantityWireProjection::project($quantities);
+        foreach ($quantities as $position => $quantity) {
             $id = $quantity['id'] ?? null;
             if (! is_string($id)) {
                 continue;
             }
             $index['ids'][$id] = true;
-            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($quantity));
+            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($wireQuantities[$position]));
             if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
                 $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
             }
@@ -257,7 +258,7 @@ final class EstimateAuditContextPlanner
         $manifest['draft_record_counts'] = $distribution['counts'];
         $prepared = [];
         foreach ($distribution['parts'] as $part) {
-            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => $part['derived_quantities'], 'evidence' => $part['evidence'],
+            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
                 'part_id' => $part['id'], 'context_manifest' => $manifest];
             if (! $this->fits($payload, $maximumBytes)) {
