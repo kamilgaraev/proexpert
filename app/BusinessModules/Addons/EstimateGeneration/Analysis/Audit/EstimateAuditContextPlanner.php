@@ -15,6 +15,10 @@ final class EstimateAuditContextPlanner
 {
     private array $lastFailedPartSizes = [];
 
+    private array $failedWorkKeys = [];
+
+    private bool $failedSingleton = false;
+
     public function __construct(private ?array $wirePolicy = null) {}
 
     public function prepare(EstimateAuditInput $root, int $maximumBytes): array
@@ -22,6 +26,28 @@ final class EstimateAuditContextPlanner
         $this->lastFailedPartSizes = [];
         $quantityIndex = $this->quantityIndex($root->derivedQuantities);
         $quantityIndex['records'] = (new EstimateAuditDraftRecordPlanner)->quantityRecordIndex($root->draft);
+        if ($root->contractVersion === 'estimate-auditor:v3') {
+            $parts = (new EstimateAuditBatchPlanner)->plan($root->draft);
+            for ($attempt = 0; $attempt < 6; $attempt++) {
+                $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
+                if ($inputs !== null) {
+                    return $inputs;
+                }
+                $next = [];
+                foreach ($parts as $part) {
+                    $count = count($part['work_keys']);
+                    if ($count > 1 && ($this->failedSingleton || array_intersect($part['work_keys'], array_keys($this->failedWorkKeys)) !== [])) {
+                        array_push($next, ...(new EstimateAuditBatchPlanner)->plan($part['draft'], (int) ceil($count / 2)));
+                    } else {
+                        $next[] = $part;
+                    }
+                }
+                if (count($next) === count($parts) || count($next) > EstimateAuditBatchPlanner::MAX_PARTS) {
+                    break;
+                }
+                $parts = $next;
+            }
+        }
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft, $size);
             $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
@@ -247,6 +273,8 @@ final class EstimateAuditContextPlanner
 
     private function prepareContexts(EstimateAuditInput $root, array $contexts, int $maximumBytes): ?array
     {
+        $this->failedWorkKeys = [];
+        $this->failedSingleton = false;
         $full = $root->canonicalPayload(false);
         $manifest = ['contract' => 'estimate-audit-context:v1', 'parent_fingerprint' => $root->fingerprint(),
             'total_facts' => count($root->facts), 'total_evidence' => count($root->evidence),
@@ -261,8 +289,12 @@ final class EstimateAuditContextPlanner
             $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
                 'part_id' => $part['id'], 'context_manifest' => $manifest];
+            $sourceFits = strlen(CanonicalPipelineJson::encode([...$payload,
+                'draft' => $part['draft'], 'derived_quantities' => $part['derived_quantities']])) <= 2097152;
             $payload = EstimateAuditExactValueWireProjection::forAudit($payload);
-            if (! $this->fits($payload, $maximumBytes)) {
+            if (! $sourceFits || ! $this->fits($payload, $maximumBytes)) {
+                $this->failedWorkKeys += array_fill_keys($part['work_keys'], true);
+                $this->failedSingleton = $this->failedSingleton || count($part['work_keys']) === 1;
                 $bytes = static fn (mixed $value): int => strlen(CanonicalPipelineJson::encode([$value])) - 2;
                 $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
                 $this->lastFailedPartSizes = ['payload_bytes' => strlen($encoded),
@@ -272,13 +304,13 @@ final class EstimateAuditContextPlanner
                     ]),
                     'field_bytes' => array_map($bytes, $payload), 'draft_field_bytes' => array_map($bytes, $payload['draft'])];
 
-                return null;
+                continue;
             }
             $input = $root->withContextPart($part['draft'], $part['id'], $part['facts'], $part['derived_quantities'], $part['evidence'], $manifest);
             $prepared[] = ['id' => $part['id'], 'work_keys' => $part['work_keys'], 'draft' => $part['draft'], 'input' => $input];
         }
 
-        return $prepared;
+        return $this->failedWorkKeys === [] ? $prepared : null;
     }
 
     private function quantityRecords(array $quantity, array $index): array
