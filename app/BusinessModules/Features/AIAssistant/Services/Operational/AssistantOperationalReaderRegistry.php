@@ -21,6 +21,7 @@ final class AssistantOperationalReaderRegistry
         '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
+        'get_project_production_schedule_summary' => AssistantProjectProductionScheduleReader::class,
         'get_project_report_delivery_summary' => AssistantReportDeliverySummaryReader::class,
         'get_project_camera_roster' => AssistantProjectCameraReader::class,
         'get_project_journal_readiness' => AssistantProjectJournalReader::class,
@@ -83,6 +84,10 @@ final class AssistantOperationalReaderRegistry
 
     public static function intent(string $query): ?array
     {
+        if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
+            return AssistantProjectProductionScheduleReader::matches($query)
+                ? ['name' => 'get_project_production_schedule_summary', 'reader' => AssistantProjectProductionScheduleReader::class] : null;
+        }
         if (AssistantProjectMaterialRequestReader::hasIntent($query) && ! AssistantProjectMaterialRequestReader::matches($query)) { return null; }
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
             return null;
@@ -195,6 +200,9 @@ final class AssistantOperationalReaderRegistry
 
     public static function hasIntent(string $query): bool
     {
+        if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
+            return true;
+        }
         foreach (self::ORGANIZATION_TOOLS as $class) {
             if ($class::hasIntent($query)) {
                 return true;

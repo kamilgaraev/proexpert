@@ -1888,6 +1888,35 @@ final class AssistantRequestLifecycleTest extends TestCase
             'tokens_used' => ($usage['input_tokens'] ?? 0) + ($usage['output_tokens'] ?? 0)];
     }
 
+    public function test_unresolved_named_operational_project_stops_before_provider_or_background_project_read(): void
+    {
+        $query = 'Сверь выполненные работы с графиком проекта №102.';
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects(self::never())->method('responses');
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->method('plan')->willReturn(['request' => ['message' => $query,
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], 'task_type' => 'summary',
+            'access_context_public' => [], 'capability' => []]);
+        $orchestrator->method('buildPayload')->willReturn(['next_actions' => []]);
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->projectSearchResultOverride = ['status' => 'success', 'results' => [], 'result_window' => ['has_more' => false]];
+        $service->failOnRagBuild = true;
+        $payload = $this->quote(['message' => $query]);
+        $response = $service->ask($query, $this->organization->id, $this->actor, null, $payload);
+        self::assertSame([['query' => '№102', 'limit' => 2, 'project_id' => 102]], $service->projectSearchArguments);
+        self::assertSame(trans_message('ai_assistant_production_schedule.project_clarification'), $response['message']['content']);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+        self::assertSame([], $response['message']['metadata']['artifacts']);
+        self::assertSame(0, AICreditProviderUsage::query()->count());
+        self::assertSame(0, $response['credit_usage']['charged_minor']);
+        self::assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        self::assertSame(1, Message::query()->where('role', 'user')->count());
+        self::assertSame(1, Message::query()->where('role', 'assistant')->count());
+    }
+
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
     {
         $registry ??= new AIToolRegistry;
@@ -1932,6 +1961,19 @@ final class LifecycleProviderAIAssistantService extends AIAssistantService
     public bool $probeProviderDuringAsk = false;
     public bool $failOnRagBuild = false;
     public ?array $ragContextOverride = null;
+    public ?array $projectSearchResultOverride = null;
+    public array $projectSearchArguments = [];
+
+    protected function readFreshProjectSearchArguments(array $arguments, User $actor, int $organizationId): array|string|null
+    {
+        if ($this->projectSearchResultOverride !== null) {
+            $this->projectSearchArguments[] = $arguments;
+
+            return $this->projectSearchResultOverride;
+        }
+
+        return parent::readFreshProjectSearchArguments($arguments, $actor, $organizationId);
+    }
 
     protected function buildRagContext(string $query, int $organizationId, User $user, array $taskPlan, array $requestPayload): array
     {

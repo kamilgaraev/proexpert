@@ -505,6 +505,10 @@ class AIAssistantService
             ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
             : $query;
         $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($routingQuery, $requestPayload, $accessContext));
+        if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
+            $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
+                fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
+        }
         $taskPlan['image_discussion'] = $imageDiscussion;
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
@@ -555,6 +559,19 @@ class AIAssistantService
 
         $conversation->context = $conversationContext;
         $conversation->save();
+
+        if (array_key_exists('named_project_scope', $taskPlan) && AssistantRequestProjectScope::fromPlan($taskPlan)->projectId === null) {
+            $this->stage('verifying');
+            $this->executionCheckpoint();
+            $this->recordRequestOutcome('insufficient_data');
+            $answer = trans_message('ai_assistant_production_schedule.project_clarification');
+            $payload = $this->decorateMetadata(array_replace($this->taskOrchestrator->buildPayload($taskPlan, $answer), [
+                'validation_status' => 'unverified', 'needs_clarification' => true, 'source_refs' => [], 'artifacts' => [],
+            ]), $user);
+            $message = $this->conversationManager->addMessage($conversation, 'assistant', $answer, 0, 'system', $payload);
+
+            return $this->agentAskResult($conversation, $message, $answer, $payload, $organizationId, $user);
+        }
 
         if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
             && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
@@ -2114,6 +2131,7 @@ class AIAssistantService
     private function isTerminalReadOnlyTool(string $toolName): bool
     {
         return in_array($toolName, [
+            'get_project_production_schedule_summary',
             'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
             'resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
             'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
@@ -2425,6 +2443,7 @@ class AIAssistantService
             }
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
+                'get_project_production_schedule_summary',
                 'describe_custom_report_source',
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
@@ -4118,12 +4137,16 @@ class AIAssistantService
 
     protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
     {
+        return $this->readFreshProjectSearchArguments(['query' => $name, 'limit' => 1], $actor, $organizationId);
+    }
+
+    protected function readFreshProjectSearchArguments(array $arguments, User $actor, int $organizationId): array|string|null
+    {
         if ($this->dataAccess === null) {
             return null;
         }
         try {
-            return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($name, $actor, $organizationId): array|string|null {
-                $arguments = ['query' => $name, 'limit' => 1];
+            return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($arguments, $actor, $organizationId): array|string|null {
                 $tool = $this->toolRegistry->getTool('search_projects');
                 if (! $tool instanceof \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool
                     || ! $this->permissionChecker->canExecuteTool($actor, 'search_projects', $arguments)) {
@@ -4359,6 +4382,7 @@ class AIAssistantService
     protected function humanizeToolName(string $toolName): string
     {
         return match ($toolName) {
+            'get_project_production_schedule_summary' => trans_message('ai_assistant_production_schedule.label'),
             'check_published_report_readiness' => trans_message('ai_published_reports.check_label'),
             'generate_published_report' => trans_message('ai_published_reports.generate_label'),
             'describe_published_reports' => trans_message('ai_published_reports.catalog_label'),

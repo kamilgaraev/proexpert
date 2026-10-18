@@ -18,6 +18,7 @@ final class AssistantToolEligibilityPolicy
         'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
         'get_project_material_stock',
         'get_project_attention',
+        'get_project_production_schedule_summary',
         'analyze_project_schedule_impact', 'get_project_finance_overview',
         'get_project_workforce_summary',
         'get_project_payment_readiness',

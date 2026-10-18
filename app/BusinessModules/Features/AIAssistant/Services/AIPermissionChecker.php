@@ -52,6 +52,7 @@ class AIPermissionChecker
         'get_project_proposal_readiness' => ['projects.view', 'commercial_proposals.view'],
         'get_project_executive_readiness' => ['projects.view', 'executive-documentation.view'],
         'get_project_production_readiness' => ['projects.view', 'production-labor.view'],
+        'get_project_production_schedule_summary' => ['projects.view', 'contracts.completed_works.view', 'schedule.view'],
         'get_project_crm_readiness' => ['projects.view', 'crm.deals.view'],
         'get_project_export_history' => ['ai_assistant.chat'],
         'get_project_report_delivery_summary' => ['ai_assistant.chat'],
