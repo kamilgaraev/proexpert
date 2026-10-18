@@ -8,14 +8,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditCo
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditAdaptiveContextPlannerTest extends TestCase
 {
-    public function test_compressible_large_snapshot_still_obeys_the_raw_part_bound_and_preserves_unused_sources(): void
+    #[TestWith([32])]
+    #[TestWith([65])]
+    public function test_compressible_large_snapshot_still_obeys_the_raw_part_bound_and_preserves_unused_sources(int $workCount): void
     {
         $facts = array_map(static fn (int $i): array => ['id' => 'fact:'.$i, 'value' => str_repeat('source proof ', 1000)], range(1, 210));
-        $items = array_map(static fn (int $i): array => ['key' => 'work:'.$i, 'name' => 'Работа '.$i], range(1, 65));
+        $items = array_map(static fn (int $i): array => ['key' => 'work:'.$i, 'name' => 'Работа '.$i], range(1, $workCount));
         $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [],
             ['local_estimates' => [['sections' => [['work_items' => $items]]]]], [], 'estimate-auditor:v3');
         self::assertGreaterThan(2097152, strlen(CanonicalPipelineJson::encode($root->canonicalPayload(false))));

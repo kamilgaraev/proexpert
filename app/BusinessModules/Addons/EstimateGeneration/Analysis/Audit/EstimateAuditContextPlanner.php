@@ -89,7 +89,10 @@ final class EstimateAuditContextPlanner
             if ($part['id'] !== 'whole') {
                 $payload['part_id'] = $part['id'];
             }
-            if (! $this->fits($payload, $maximumBytes)) {
+            $sourceFits = $root->contractVersion !== 'estimate-auditor:v3'
+                || strlen(CanonicalPipelineJson::encode([...$payload,
+                    'draft' => $part['draft'], 'derived_quantities' => $root->derivedQuantities])) <= 2097152;
+            if (! $sourceFits || ! $this->fits($payload, $maximumBytes)) {
                 $allFit = false;
                 break;
             }
