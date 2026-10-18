@@ -16,7 +16,7 @@ class AIPermissionChecker
 
     private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
 
-    private const PUBLISHED_REPORT_TOOLS = ['describe_published_reports', 'generate_published_report'];
+    private const PUBLISHED_REPORT_TOOLS = ['describe_published_reports', 'generate_published_report', 'check_published_report_readiness'];
 
     private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
 

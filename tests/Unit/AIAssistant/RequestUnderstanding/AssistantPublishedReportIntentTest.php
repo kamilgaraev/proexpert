@@ -60,4 +60,30 @@ final class AssistantPublishedReportIntentTest extends TestCase
             self::assertFalse((new AssistantToolEligibilityPolicy)->canExposeTool('generate_published_report', $understanding)->allowed);
         }
     }
+
+    public function test_readiness_questions_expose_a_read_without_starting_file_generation(): void
+    {
+        foreach (['Проверь готовность отчёта «Здоровье портфеля проектов» по всей организации',
+            'Почему не сформировался отчёт о принятой выработке?', 'Проверь готовность отчёта по бюджету без файла',
+            'Проверь источники отчёта о принятой выработке без создания файла'] as $query) {
+            $understanding = (new AssistantRequestUnderstandingResolver)->resolve($query, []);
+            self::assertTrue(AssistantPublishedReportIntent::readinessMatches($query, $understanding), $query);
+            $tools = AssistantToolSurface::names(['check_published_report_readiness', 'describe_published_reports', 'generate_published_report', 'generate_profitability_report', 'generate_operational_pdf_report'],
+                ['request' => ['message' => $query], 'request_understanding' => $understanding->toArray()]);
+            self::assertContains('check_published_report_readiness', $tools);
+            self::assertContains('describe_published_reports', $tools);
+            self::assertNotContains('generate_published_report', $tools);
+            self::assertNotContains('generate_profitability_report', $tools);
+            self::assertNotContains('generate_operational_pdf_report', $tools);
+            self::assertTrue((new AssistantToolEligibilityPolicy)->isReadOnlyTool('check_published_report_readiness'));
+            self::assertTrue((new AssistantToolEligibilityPolicy)->canExposeTool('check_published_report_readiness', $understanding)->allowed);
+        }
+    }
+
+    public function test_a_file_about_project_readiness_keeps_the_file_generation_intent(): void
+    {
+        $query = 'Сформируй Excel отчёт о готовности проектов';
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve($query, []);
+        self::assertFalse(AssistantPublishedReportIntent::readinessMatches($query, $understanding));
+    }
 }

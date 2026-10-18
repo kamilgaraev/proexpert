@@ -91,9 +91,9 @@ final class AssistantAgentExecutor
         if ($this->isReportTool($toolName)) {
             if ($status === 'error') {
                 $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, 'tool_error_status');
-            } elseif ($artifacts === []) {
+            } elseif ($artifacts === [] && ! ($toolName === 'generate_published_report' && $status === 'source_not_ready')) {
                 $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, 'missing_artifact_evidence');
-            } else {
+            } elseif ($artifacts !== []) {
                 $this->logReportGenerationCompleted($toolName, $organization, $user, $startedAt, $artifacts);
             }
         }

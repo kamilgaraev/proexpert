@@ -98,9 +98,14 @@ final class AssistantToolSurface
             $published = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportIntent::matches($query,
                 \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding::fromArray($plan['request_understanding'] ?? []));
             if ($published) {
-                $reports = ['describe_published_reports', 'generate_published_report'];
+                $reports = ['describe_published_reports', 'generate_published_report', 'check_published_report_readiness'];
             } elseif ($custom) {
-                array_push($reports, 'describe_published_reports', 'generate_published_report');
+                array_push($reports, 'describe_published_reports', 'generate_published_report', 'check_published_report_readiness');
+            }
+            $readiness = \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportIntent::readinessMatches($query,
+                \App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding::fromArray($plan['request_understanding'] ?? []));
+            if ($readiness) {
+                $reports = ['describe_published_reports', 'check_published_report_readiness'];
             }
             foreach ([
                 '/прибыл|profit|рентабел|бюджет/iu' => ['generate_profitability_report'],
@@ -113,7 +118,7 @@ final class AssistantToolSurface
                 '/график|срок|timeline|schedule/iu' => ['generate_project_timelines_report'],
                 '/документ|document|rag|норматив/iu' => ['generate_rag_pdf_report'],
             ] as $pattern => $tools) {
-                if (! $custom && ! $published && preg_match($pattern, $signals)) {
+                if (! $custom && ! $published && ! $readiness && preg_match($pattern, $signals)) {
                     array_push($reports, ...$tools);
                 }
             }
