@@ -73,4 +73,49 @@ final class EstimateAuditDraftRecordPlannerTest extends TestCase
         self::assertSame($parts, $result['parts']);
         self::assertSame([], $result['counts']);
     }
+
+    public function test_composer_requests_keep_all_source_proofs_in_one_context_and_packages_follow_their_work(): void
+    {
+        $requests = [
+            ['index' => 7, 'reason' => 'source_required', 'source_fact_ids' => ['fact:0', 'fact:1']],
+            ['index' => 7, 'reason' => 'other_batch', 'source_fact_ids' => ['fact:0']],
+            ['index' => -1, 'reason' => 'scope_unresolved', 'source_fact_ids' => []],
+        ];
+        $packages = [['key' => 'floors', 'title' => 'Полы'], ['key' => 'roof', 'title' => 'Кровля'], ['key' => 'uncovered']];
+        $draft = ['package_plan' => ['packages' => $packages, 'target_items_min_total' => 20],
+            'estimate_composition' => ['request_info' => $requests]];
+        $parts = [];
+        for ($i = 0; $i < 2; $i++) {
+            $parts[] = ['draft' => [...$draft, 'local_estimates' => [['key' => $i === 0 ? 'floors' : 'roof']]],
+                'entity_ids' => ['entity:'.$i], 'work_keys' => ['work:'.$i],
+                'facts' => [['id' => 'fact:'.$i, 'entity_id' => 'entity:'.$i, 'value' => (string) ($i + 1)]],
+                'evidence' => [['fact_id' => 'fact:'.$i, 'locator' => ['evidence_id' => 'evidence:'.$i]]],
+                'derived_quantities' => []];
+        }
+        $planner = new EstimateAuditDraftRecordPlanner;
+        $result = $planner->distribute($draft, $parts);
+        $seen = $seenPackages = [];
+        foreach ($result['parts'] as $part) {
+            $facts = array_column($part['facts'], null, 'id');
+            $evidence = array_column($part['evidence'], null, 'fact_id');
+            foreach ($part['draft']['estimate_composition']['request_info'] as $request) {
+                $seen[] = $request;
+                foreach ($request['source_fact_ids'] as $id) {
+                    self::assertSame($id === 'fact:0' ? '1' : '2', $facts[$id]['value']);
+                    self::assertArrayHasKey($id, $evidence);
+                }
+            }
+            array_push($seenPackages, ...$part['draft']['package_plan']['packages']);
+            self::assertSame(20, $part['draft']['package_plan']['target_items_min_total']);
+        }
+        self::assertEqualsCanonicalizing($requests, $seen);
+        self::assertEqualsCanonicalizing($packages, $seenPackages);
+        self::assertContains($packages[0], $result['parts'][0]['draft']['package_plan']['packages']);
+        self::assertContains($packages[1], $result['parts'][1]['draft']['package_plan']['packages']);
+        self::assertSame(['estimate_composition.request_info' => 3, 'package_plan.packages' => 3], $result['counts']);
+        self::assertSame($result, $planner->distribute($draft, $parts));
+        self::assertSame($requests, $draft['estimate_composition']['request_info']);
+        self::assertCount(1, $parts[0]['facts']);
+        self::assertCount(1, $parts[1]['facts']);
+    }
 }
