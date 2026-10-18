@@ -10,7 +10,7 @@ use Illuminate\Support\Arr;
 final class EstimateAuditDraftRecordPlanner
 {
     private const PATHS = ['building_quantities.diagnostics', 'stage6_review_items',
-        'estimate_composition.request_info', 'package_plan.packages'];
+        'package_plan.packages', 'estimate_composition.request_info'];
 
     public function distribute(array $draft, array $parts): array
     {

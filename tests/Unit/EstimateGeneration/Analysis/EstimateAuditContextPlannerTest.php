@@ -397,7 +397,7 @@ final class EstimateAuditContextPlannerTest extends TestCase
                 ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
             ]));
             self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
-            self::assertSame(['estimate_composition.request_info' => 40, 'package_plan.packages' => 20], $input->contextManifest['draft_record_counts']);
+            self::assertSame(['package_plan.packages' => 20, 'estimate_composition.request_info' => 40], $input->contextManifest['draft_record_counts']);
             self::assertSame($draft['traceability'], $input->draft['traceability']);
             array_push($seenFacts, ...array_column($input->facts, 'id'));
             array_push($seenEvidence, ...array_column(array_column($input->evidence, 'locator'), 'evidence_id'));
@@ -414,6 +414,46 @@ final class EstimateAuditContextPlannerTest extends TestCase
         self::assertEqualsCanonicalizing(array_map(static fn (int $index): string => 'work:'.$index, range(0, 39)), $seenWorks);
         self::assertEqualsCanonicalizing($requests, $seenRequests);
         self::assertEqualsCanonicalizing($packages, array_values($seenPackages));
+        self::assertSame($draft, $root->draft);
+    }
+
+    public function test_compact_work_parts_distribute_requests_even_when_all_source_context_already_fits(): void
+    {
+        $items = [];
+        for ($i = 0; $i < 65; $i++) {
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Работа '.$i, 'source_refs' => [['fact_id' => 'fact:shared']]];
+        }
+        $requests = [
+            ['index' => 0, 'reason' => 'source_required', 'source_fact_ids' => ['fact:shared']],
+            ['index' => 1, 'reason' => 'estimate_composer_physical_duplicate_covered', 'next_action' => 'keep_existing_work',
+                'covered_by_position_key' => 'work:64', 'source_fact_ids' => ['fact:shared']],
+        ];
+        $draft = ['estimate_composition' => ['request_info' => $requests],
+            'package_plan' => ['packages' => [['key' => 'floors', 'title' => 'Полы']]],
+            'local_estimates' => [['key' => 'floors', 'sections' => [['key' => 'finish', 'work_items' => $items]]]]];
+        $facts = [['id' => 'fact:shared', 'value' => '40', 'unit' => 'm2']];
+        $evidence = [['fact_id' => 'fact:shared', 'locator' => ['evidence_id' => 'evidence:shared']]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, $evidence, 'estimate-auditor:v1');
+
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, 458752);
+
+        self::assertCount(3, $parts);
+        $seen = $works = [];
+        foreach ($parts as $part) {
+            array_push($seen, ...$part['input']->draft['estimate_composition']['request_info']);
+            array_push($works, ...$part['work_keys']);
+            foreach ($part['input']->draft['estimate_composition']['request_info'] as $request) {
+                if (isset($request['covered_by_position_key'])) {
+                    self::assertContains($request['covered_by_position_key'], $part['work_keys']);
+                }
+            }
+            self::assertSame($facts, $part['input']->facts);
+            self::assertSame($evidence, $part['input']->evidence);
+            self::assertSame(2, $part['input']->contextManifest['draft_record_counts']['estimate_composition.request_info']);
+            self::assertSame($root->fingerprint(), $part['input']->contextManifest['parent_fingerprint']);
+        }
+        self::assertEqualsCanonicalizing($requests, $seen);
+        self::assertEqualsCanonicalizing(array_column($items, 'key'), $works);
         self::assertSame($draft, $root->draft);
     }
 
