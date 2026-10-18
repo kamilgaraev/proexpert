@@ -16,6 +16,17 @@ final class EstimateAuditExactValueWireProjection
 
     public static function forAudit(array $payload): array
     {
+        if (($payload['contract_version'] ?? null) === 'estimate-auditor:v4') {
+            if (array_key_exists('_wire', $payload) || array_key_exists('_tables', $payload) || array_key_exists('_key_wire', $payload)) {
+                return $payload;
+            }
+            $original = self::project(EstimateAuditTableWireProjection::forAudit($payload));
+            $aliased = self::project(EstimateAuditTableWireProjection::forAudit(EstimateAuditFieldWireProjection::forAudit($payload)));
+
+            return strlen(CanonicalPipelineJson::encode($aliased)) < strlen(CanonicalPipelineJson::encode($original))
+                ? $aliased : $original;
+        }
+
         return in_array($payload['contract_version'] ?? null, ['estimate-auditor:v2', 'estimate-auditor:v3'], true)
             ? self::project(EstimateAuditTableWireProjection::forAudit($payload)) : $payload;
     }

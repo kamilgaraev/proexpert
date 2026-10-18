@@ -17,7 +17,7 @@ use Throwable;
 
 final readonly class RunEstimateComposerCorrection
 {
-    public const PROMPT_CONTRACT = 'estimate-composer-correction:v4';
+    public const PROMPT_CONTRACT = 'estimate-composer-correction:v5';
 
     public function __construct(
         private AiRoleRunRepository $runs,

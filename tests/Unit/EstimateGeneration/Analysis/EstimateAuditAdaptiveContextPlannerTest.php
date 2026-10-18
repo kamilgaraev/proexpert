@@ -13,14 +13,16 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditAdaptiveContextPlannerTest extends TestCase
 {
-    #[TestWith([32])]
-    #[TestWith([65])]
-    public function test_compressible_large_snapshot_still_obeys_the_raw_part_bound_and_preserves_unused_sources(int $workCount): void
+    #[TestWith([32, 'estimate-auditor:v3'])]
+    #[TestWith([65, 'estimate-auditor:v3'])]
+    #[TestWith([32, 'estimate-auditor:v4'])]
+    #[TestWith([65, 'estimate-auditor:v4'])]
+    public function test_compressible_large_snapshot_still_obeys_the_raw_part_bound_and_preserves_unused_sources(int $workCount, string $contract): void
     {
         $facts = array_map(static fn (int $i): array => ['id' => 'fact:'.$i, 'value' => str_repeat('source proof ', 1000)], range(1, 210));
         $items = array_map(static fn (int $i): array => ['key' => 'work:'.$i, 'name' => 'Работа '.$i], range(1, $workCount));
         $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [],
-            ['local_estimates' => [['sections' => [['work_items' => $items]]]]], [], 'estimate-auditor:v3');
+            ['local_estimates' => [['sections' => [['work_items' => $items]]]]], [], $contract);
         self::assertGreaterThan(2097152, strlen(CanonicalPipelineJson::encode($root->canonicalPayload(false))));
         $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
             'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
@@ -39,7 +41,9 @@ final class EstimateAuditAdaptiveContextPlannerTest extends TestCase
         self::assertSame($facts, $root->facts);
     }
 
-    public function test_two_heavy_works_do_not_force_all_light_works_into_singleton_parts(): void
+    #[TestWith(['estimate-auditor:v3'])]
+    #[TestWith(['estimate-auditor:v4'])]
+    public function test_two_heavy_works_do_not_force_all_light_works_into_singleton_parts(string $contract): void
     {
         $items = [];
         for ($i = 0; $i < 33; $i++) {
@@ -51,7 +55,7 @@ final class EstimateAuditAdaptiveContextPlannerTest extends TestCase
         $evidence = [['fact_id' => 'fact:unused', 'locator' => ['page' => 1]]];
         $draft = ['global_proof' => str_repeat('retained global source; ', 800),
             'local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]];
-        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v3');
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, $contract);
         $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
             'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
             'maximum_serialized_input_bytes' => 65536];
@@ -64,7 +68,7 @@ final class EstimateAuditAdaptiveContextPlannerTest extends TestCase
         foreach ($parts as $part) {
             $input = $part['input'];
             $wire = $input->canonicalPayload();
-            self::assertSame(CanonicalPipelineJson::encode($input->canonicalPayload(false)), CanonicalPipelineJson::encode(EstimateAuditTableWireProjectionTest::expand($wire)));
+            self::assertSame(CanonicalPipelineJson::encode($input->canonicalPayload(false)), CanonicalPipelineJson::encode(EstimateAuditFieldWireProjectionTest::expand($wire)));
             self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
                 ['role' => 'system', 'content' => str_repeat('context ', 1024)],
                 ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $wire])],
