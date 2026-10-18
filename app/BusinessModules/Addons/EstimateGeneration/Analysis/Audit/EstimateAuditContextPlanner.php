@@ -20,9 +20,10 @@ final class EstimateAuditContextPlanner
     public function prepare(EstimateAuditInput $root, int $maximumBytes): array
     {
         $this->lastFailedPartSizes = [];
+        $quantityIndex = $this->quantityIndex($root->derivedQuantities);
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft, $size);
-            $inputs = $this->prepareParts($root, $parts, $maximumBytes);
+            $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
             if ($inputs !== null) {
                 return $inputs;
             }
@@ -33,7 +34,24 @@ final class EstimateAuditContextPlanner
         throw new InvalidArgumentException('estimate_audit_context_requires_source_split');
     }
 
-    private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes): ?array
+    private function quantityIndex(array $quantities): array
+    {
+        $index = ['ids' => [], 'bases' => []];
+        foreach ($quantities as $quantity) {
+            $id = $quantity['id'] ?? null;
+            if (! is_string($id)) {
+                continue;
+            }
+            $index['ids'][$id] = true;
+            if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
+                $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
+            }
+        }
+
+        return $index;
+    }
+
+    private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes, array $quantityIndex): ?array
     {
         $full = $root->canonicalPayload();
         $allFit = true;
@@ -101,12 +119,14 @@ final class EstimateAuditContextPlanner
                         }
                     }
                 }
-                foreach ($root->derivedQuantities as $quantity) {
-                    if (($quantity['id'] ?? null) === ($item['quantity_formula'] ?? null)
-                        || (is_array($basis) && $basis !== [] && is_array($quantity['quantity_basis'] ?? null)
-                            && CanonicalPipelineJson::encode($basis) === CanonicalPipelineJson::encode($quantity['quantity_basis']))) {
-                        $quantityIds[$index][$quantity['id']] = true;
-                    }
+                $quantityId = $item['quantity_formula'] ?? null;
+                if (is_string($quantityId) && isset($quantityIndex['ids'][$quantityId])) {
+                    $quantityIds[$index][$quantityId] = true;
+                }
+                $basisQuantityIds = is_array($basis) && $basis !== []
+                    ? ($quantityIndex['bases'][CanonicalPipelineJson::encode($basis)] ?? []) : [];
+                foreach ($basisQuantityIds as $id) {
+                    $quantityIds[$index][$id] = true;
                 }
             }
         }
