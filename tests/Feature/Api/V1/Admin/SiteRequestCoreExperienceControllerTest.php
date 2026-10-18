@@ -125,7 +125,14 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ->putJson("/api/v1/admin/site-requests/groups/{$group->id}", [
                 'estimated_cost' => 0, 'location' => 'Office, second floor', 'requester_comment' => 'Updated context',
             ])->assertOk()->assertJsonPath('data.estimated_cost', 0)
-            ->assertJsonPath('data.location', 'Office, second floor');
+            ->assertJsonPath('data.location', 'Office, second floor')
+            ->assertJsonPath('data.project.id', $project->id)
+            ->assertJsonPath('data.project.name', $project->name)
+            ->assertJsonPath('data.requests.0.project.id', $project->id)
+            ->assertJsonPath('data.requests.0.project.name', $project->name)
+            ->assertJsonPath('data.requests.0.user.id', $context->user->id)
+            ->assertJsonPath('data.requests.1.project.id', $project->id)
+            ->assertJsonPath('data.requests.1.project.name', $project->name);
         foreach ($requests as $request) {
             $request->refresh();
             $this->assertSame('Office, second floor', $request->location);
@@ -150,7 +157,8 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         Event::fake();
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
-        $this->allowAdminAccess();
+        $project->users()->attach($context->user->id, ['is_active' => true]);
+        $this->allowAdminAccess(modulePermissions: ['site_requests.assign']);
         $this->allowModuleAccess();
         $response = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests', [
             'project_id' => $project->id, 'title' => 'Training request', 'request_type' => 'other',
@@ -161,8 +169,32 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/site-requests/{$id}", [
             'required_date' => '2020-01-01', 'estimated_cost' => 42.50, 'location' => 'Floor 2', 'requester_comment' => null,
         ])->assertOk()->assertJsonPath('data.required_date', '2020-01-01')->assertJsonPath('data.estimated_cost', 42.5);
-        $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/site-requests/{$id}")
-            ->assertOk()->assertJsonPath('data.location', 'Floor 2')->assertJsonPath('data.requester_comment', null);
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/site-requests/{$id}/assign", [
+            'user_id' => $context->user->id,
+        ])->assertOk();
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/site-requests/{$id}/status", [
+            'status' => 'pending', 'notes' => 'Training review comment',
+        ])->assertOk();
+        $detail = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/site-requests/{$id}")
+            ->assertOk()->assertJsonPath('data.location', 'Floor 2')->assertJsonPath('data.requester_comment', null)
+            ->assertJsonCount(4, 'data.history')
+            ->assertJsonStructure(['data' => ['history' => [['id', 'site_request_id', 'user_id', 'action', 'old_values', 'new_values', 'comment', 'created_at', 'user' => ['id', 'name']]]]]);
+        $history = collect($detail->json('data.history'))->keyBy('action');
+        $this->assertSame('Training request', $history['created']['new_values']['title']);
+        $this->assertNull($history['created']['old_values']);
+        $this->assertSame('Office', $history['updated']['old_values']['location']);
+        $this->assertSame('Floor 2', $history['updated']['new_values']['location']);
+        $this->assertNull($history['assigned']['old_values']['assigned_to']);
+        $this->assertSame($context->user->id, $history['assigned']['new_values']['assigned_to']);
+        $this->assertSame('draft', $history['status_changed']['old_values']['status']);
+        $this->assertSame('pending', $history['status_changed']['new_values']['status']);
+        $this->assertSame('Training review comment', $history['status_changed']['comment']);
+        foreach ($history as $entry) {
+            $this->assertSame($context->user->id, $entry['user']['id']);
+            $this->assertSame($context->user->name, $entry['user']['name']);
+            $this->assertNotEmpty($entry['created_at']);
+            $this->assertArrayNotHasKey('email', $entry['user']);
+        }
     }
 
     public function test_invalid_costs_and_past_creation_date_are_rejected_without_mutation(): void
@@ -440,6 +472,20 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             'status' => SiteRequestStatusEnum::PENDING->value,
         ]);
 
+        foreach ([$requestA, $requestB] as $submittedRequest) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/site-requests/{$submittedRequest->id}")
+                ->assertOk()
+                ->assertJsonCount(1, 'data.history')
+                ->assertJsonPath('data.history.0.action', 'status_changed')
+                ->assertJsonPath('data.history.0.site_request_id', $submittedRequest->id)
+                ->assertJsonPath('data.history.0.old_values.status', 'draft')
+                ->assertJsonPath('data.history.0.new_values.status', 'pending')
+                ->assertJsonPath('data.history.0.comment', null)
+                ->assertJsonPath('data.history.0.user.id', $context->user->id)
+                ->assertJsonPath('data.history.0.user.name', $context->user->name);
+        }
+
         $resubmitResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/site-requests/groups/{$group->id}/submit");
 
@@ -679,10 +725,11 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         });
     }
 
-    private function allowAdminAccess(?callable $permissionCheck = null): void
+    private function allowAdminAccess(?callable $permissionCheck = null, array $modulePermissions = []): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissionCheck): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissionCheck, $modulePermissions): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('getUserPermissionsStructured')->andReturn(['modules' => ['site-requests' => $modulePermissions]]);
             $mock->shouldReceive('can')->andReturnUsing(
                 static fn (User $user, string $permission): bool => $permissionCheck === null || $permissionCheck($permission)
             );
