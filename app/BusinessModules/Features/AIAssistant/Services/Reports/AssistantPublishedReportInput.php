@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
-use App\BusinessModules\Core\Reporting\Application\Input\ReportFilterNormalizer;
 use App\BusinessModules\Core\Reporting\Application\Subscriptions\ReportSubscriptionPeriodResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportCatalogMetadataRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
@@ -22,7 +21,7 @@ final readonly class AssistantPublishedReportInput
         private ReportDefinitionRegistry $definitions,
         private ReportCatalogMetadataRegistry $metadata,
         private AssistantPublishedReportAuthorization $authorization,
-        private ReportFilterNormalizer $filters,
+        private AssistantPublishedReportFilterInput $filters,
         private ReportSubscriptionPeriodResolver $periods,
     ) {}
 
@@ -74,7 +73,7 @@ final readonly class AssistantPublishedReportInput
         if (! in_array($mode, ReportSubscriptionPeriodResolver::MODES, true)) {
             $this->invalid();
         }
-        $filters = AssistantReportSubscriptionFilters::resolve(['filters_json' => $arguments['filters_json'] ?? '{}'], []);
+        $filters = $this->filters->parse($arguments['filters_json'] ?? '{}');
         $filters = $this->periods->initialFilters($definition, $filters, ['mode' => $mode], $asOf, new DateTimeZone($timezone));
         $filters = $this->filters->normalize($context, $definition, $filters);
 
