@@ -138,7 +138,9 @@ final class EstimateExportReadbackTest extends TestCase
         }
     }
 
-    public function test_excel_keeps_long_codes_and_text_readable_when_printing(): void
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_excel_keeps_long_codes_and_text_readable_when_printing(bool $showPrices): void
     {
         $estimate = $this->fixture();
         $item = $estimate->sections->first()->items[0];
@@ -146,26 +148,30 @@ final class EstimateExportReadbackTest extends TestCase
         $item->is_not_accounted = true;
         $item->name = str_repeat('Подготовка и обработка стен учебного помещения. ', 5);
         $item->description = str_repeat('Условное примечание для проверки печати. ', 5);
-        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['show_prices' => $showPrices]);
         $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
         $path = tempnam(sys_get_temp_dir(), 'pto-long-text-');
         try {
             file_put_contents($path, $result['content']);
             $book = IOFactory::load($path);
             $sheet = $book->getSheetByName('Смета');
-            foreach (['B', 'C', 'H'] as $column) {
+            $notesColumn = $showPrices ? 'H' : 'F';
+            foreach (['B', 'C', $notesColumn] as $column) {
                 self::assertLessThanOrEqual(70, $sheet->getColumnDimension($column)->getWidth());
             }
+            self::assertEquals(35, $sheet->getColumnDimension($notesColumn)->getWidth());
+            self::assertSame($showPrices, $sheet->getColumnDimension('G')->getVisible());
+            self::assertSame($showPrices, $sheet->getColumnDimension('H')->getVisible());
             self::assertSame('ГЭСН08-02-002-05 (Н)', $sheet->getCell('B17')->getValue());
             self::assertSame($item->name, $sheet->getCell('C17')->getValue());
-            self::assertSame($item->description, $sheet->getCell('H17')->getValue());
-            foreach (['B17', 'C17', 'H17'] as $coordinate) {
+            self::assertSame($item->description, $sheet->getCell($notesColumn.'17')->getValue());
+            foreach (['B17', 'C17', $notesColumn.'17'] as $coordinate) {
                 self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
             }
             self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
             self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
             if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
-                file_put_contents($directory.'/estimate-long-text.xlsx', $result['content']);
+                file_put_contents($directory.'/estimate-long-text'.($showPrices ? '' : '-without-prices').'.xlsx', $result['content']);
             }
         } finally {
             unlink($path);

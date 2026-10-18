@@ -82,7 +82,7 @@ class ExcelEstimateBuilder
         $row = $this->buildSignatures($sheet, $row, $options);
 
         // Apply column widths
-        $this->applyColumnWidths($sheet);
+        $this->applyColumnWidths($sheet, $options['show_prices']);
         $sheet->getPageSetup()
             ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
             ->setPaperSize(PageSetup::PAPERSIZE_A4)
@@ -711,7 +711,7 @@ class ExcelEstimateBuilder
     /**
      * Применить ширину колонок
      */
-    protected function applyColumnWidths(Worksheet $sheet): void
+    protected function applyColumnWidths(Worksheet $sheet, bool $showPrices = true): void
     {
         // Устанавливаем минимальную ширину для основных колонок
         $sheet->getColumnDimension('A')->setWidth(8);  // №
@@ -722,7 +722,11 @@ class ExcelEstimateBuilder
         $sheet->getColumnDimension('F')->setWidth(18); // Цена
         $sheet->getColumnDimension('G')->setWidth(18); // Сумма
         $sheet->getColumnDimension('H')->setWidth(35); // Примечание
-        
+        if (!$showPrices) {
+            $sheet->getColumnDimension('F')->setWidth(35);
+            $sheet->getColumnDimension('G')->setVisible(false);
+            $sheet->getColumnDimension('H')->setVisible(false);
+        }
     }
 
     private function fitsShortPrintPage(Worksheet $sheet): bool
