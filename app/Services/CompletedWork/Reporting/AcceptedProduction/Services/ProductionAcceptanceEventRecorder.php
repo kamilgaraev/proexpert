@@ -82,10 +82,8 @@ final readonly class ProductionAcceptanceEventRecorder
         $eventType = $isAccepted ? 'accepted' : 'reversed';
         $act->loadMissing([
             'contract',
-            'lines.completedWork.workType.measurementUnit',
-            'lines.completedWork.scheduleTask',
-            'completedWorks.workType.measurementUnit',
-            'completedWorks.scheduleTask',
+            ...$this->units->historicalRelations('lines.completedWork.'),
+            ...$this->units->historicalRelations('completedWorks.'),
         ]);
         $completedWorkLines = $act->lines->filter(
             static fn (PerformanceActLine $line): bool => $line->line_type === PerformanceActLine::TYPE_COMPLETED_WORK,

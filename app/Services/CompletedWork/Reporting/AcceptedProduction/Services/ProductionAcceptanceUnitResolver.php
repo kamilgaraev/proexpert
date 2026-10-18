@@ -7,6 +7,7 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 use App\Models\CompletedWork;
 use App\Models\EstimateItem;
 use App\Models\MeasurementUnit;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use InvalidArgumentException;
 
@@ -18,15 +19,25 @@ final class ProductionAcceptanceUnitResolver
             || (int) $work->organization_id !== $organizationId || (int) $work->project_id !== $projectId) {
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
-        if ($work->schedule_task_id !== null && $work->relationLoaded('scheduleTask') && $work->getRelation('scheduleTask') === null) {
-            $work->unsetRelation('scheduleTask');
+        $relations = $this->historicalRelations();
+        foreach (array_keys($relations) as $path) {
+            $parent = $work;
+            foreach (explode('.', $path) as $relation) {
+                if (! $parent->relationLoaded($relation)) {
+                    break;
+                }
+                $related = $parent->getRelation($relation);
+                if ($related === null) {
+                    $parent->unsetRelation($relation);
+                    break;
+                }
+                if (! $related instanceof Model) {
+                    break;
+                }
+                $parent = $related;
+            }
         }
-        $work->loadMissing(['scheduleTask' => static function (BelongsTo $relation): void {
-            $relation->withTrashed();
-        },
-            'scheduleTask.schedule', 'scheduleTask.measurementUnit',
-            'scheduleTask.estimateItem.estimate', 'scheduleTask.estimateItem.measurementUnit',
-            'estimateItem.estimate', 'estimateItem.measurementUnit', 'workType.measurementUnit']);
+        $work->loadMissing($relations);
         $units = [];
         $task = $work->scheduleTask;
         if ($work->schedule_task_id !== null) {
@@ -62,6 +73,18 @@ final class ProductionAcceptanceUnitResolver
         }
 
         return $unit;
+    }
+
+    public function historicalRelations(string $prefix = ''): array
+    {
+        $historical = static function (BelongsTo $relation): void {
+            $relation->withTrashed();
+        };
+        $paths = ['scheduleTask', 'scheduleTask.schedule', 'scheduleTask.measurementUnit',
+            'scheduleTask.estimateItem', 'scheduleTask.estimateItem.estimate', 'scheduleTask.estimateItem.measurementUnit',
+            'estimateItem', 'estimateItem.estimate', 'estimateItem.measurementUnit', 'workType', 'workType.measurementUnit'];
+
+        return array_fill_keys(array_map(static fn (string $path): string => $prefix.$path, $paths), $historical);
     }
 
     private function estimate(array &$units, ?EstimateItem $item, int $organizationId, int $projectId): void
