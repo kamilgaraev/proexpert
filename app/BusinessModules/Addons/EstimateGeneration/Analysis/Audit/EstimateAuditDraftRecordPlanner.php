@@ -135,7 +135,7 @@ final class EstimateAuditDraftRecordPlanner
             }
             $loads[$index] = strlen(CanonicalPipelineJson::encode([
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
-                'facts' => $part['facts'], 'derived_quantities' => $part['derived_quantities'], 'evidence' => $part['evidence'],
+                'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
             ]));
         }
         foreach ($collections as $path => $records) {
