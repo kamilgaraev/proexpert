@@ -12,11 +12,19 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
 
-    private const TIME_START = '(?:(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:недел|месяц|квартал|год|день|дня|дней|сут|'.self::MONTH.')|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const QUARTER_WORD = 'квартал(?:[ауеы]|ом|ов|ам|ами|ах)?';
+
+    private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*)(?:\s+(?:и\s+)?\d+)?\s+';
+
+    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
+
+    private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток)';
+
+    private const TIME_START = '(?:(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:(?:за|в|во)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:недел|месяц|квартал|год)|\d+\s+(?:недел|месяц|квартал|год|дней))'
+        $time = '(?:(?:за|в|во)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d))';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -37,7 +45,7 @@ final class AssistantProductionSchedulePeriod
             }
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
-        if (preg_match('/\bквартал[а-яё]*\b/iu', $query) === 1) {
+        if (preg_match('/\b'.self::QUARTER_PERIOD.'/iu', $query) === 1) {
             return $arguments + self::quarterDates($query);
         }
         if (preg_match('/\b(?:за|в|во|на)\s+((?:19|20)\d{2})(?:\s+год[ау]?)?\b(?![-.\/]\d)/iu', $query, $year) === 1) {
@@ -161,7 +169,7 @@ final class AssistantProductionSchedulePeriod
     private static function quarterDates(string $query): array
     {
         $unresolved = ['period_start' => null, 'period_end' => null];
-        if (preg_match_all('/\bквартал[а-яё]*\b/iu', $query) !== 1 || preg_match('/\b'.self::MONTH.'\b/iu', $query) === 1) {
+        if (preg_match_all('/\b'.self::QUARTER_PERIOD.'/iu', $query) !== 1 || preg_match('/\b'.self::MONTH.'\b/iu', $query) === 1) {
             return $unresolved;
         }
         $years = preg_match_all('/\b(?:19|20)\d{2}\b/u', $query);

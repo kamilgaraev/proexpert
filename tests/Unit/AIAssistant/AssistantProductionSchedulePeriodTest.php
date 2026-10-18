@@ -12,6 +12,31 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_period_adjectives_do_not_create_a_filter_or_hide_a_real_period(): void
+    {
+        foreach (['с квартальным графиком', 'с текущим квартальным графиком', 'с последним недельным графиком',
+            'с текущим годовым графиком', 'с текущим месячным графиком', 'с графиком жилого квартала'] as $phrase) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы '.$phrase]]), $phrase);
+            self::assertSame('Дом '.$phrase, AssistantProductionSchedulePeriod::withoutSuffix('Дом '.$phrase));
+        }
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-07-01', 'period_end' => '2026-09-30'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с квартальным графиком за 3 квартал 2026']]));
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-07-01', 'period_end' => '2026-09-30'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком жилого квартала за 3 квартал 2026']]));
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком жилого квартала за октябрь 2026']]));
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за последние 2 месяца' => '2026-08-19', 'за последние 2 недели' => '2026-10-05', 'за текущий год' => '2026-01-01'] as $phrase => $start) {
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-19'],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                self::assertSame('Дом', AssistantProductionSchedulePeriod::withoutSuffix('Дом '.$phrase));
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_a_quarter_does_not_hide_another_requested_period(): void
     {
         foreach (['за 3 квартал 2026 и за прошлый год', 'в III квартале 2026 и сегодня',
