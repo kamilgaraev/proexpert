@@ -88,7 +88,8 @@ final class AssistantDocumentCoverageService
         $documents = $documents->getModel()->newQueryWithoutScopes()->from('assistant_coverage_documents as ai_assistant_documents');
         $types = [];
         if ($checkpoint !== null) { $checkpoint(); }
-        $fileTypes = $this->canReuseFileTypes($files, $fileCandidates['types'])
+        $reuseSnapshot = $this->canReuseFileTypes($files, $fileCandidates['types']);
+        $fileTypes = $reuseSnapshot
             ? $fileCandidates['types']
             : (clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type')->all();
         foreach ($fileTypes as $fileType) {
@@ -155,6 +156,28 @@ final class AssistantDocumentCoverageService
         }
         $unmappedNativeCount = 0;
         $nativeMappedCount = 0;
+        $nativeAggregates = [];
+        $nativeExpectedCounts = [];
+        $addNativeCoverage = static function (string $type, int $expectedCount, iterable $rows) use (&$coverage, &$nativeCoverage, &$unmappedNativeCount, &$nativeMappedCount): void {
+            $mapped = 0;
+            foreach ($rows as $stateCount) {
+                $state = $stateCount->native_coverage_state;
+                $count = (int) $stateCount->file_count;
+                $mapped += $count;
+                $coverage[$state] = ($coverage[$state] ?? 0) + $count;
+                $coverage['processed_units'] += (int) $stateCount->processed_units;
+                $coverage['ocr_completed_pages'] += (int) $stateCount->ocr_completed_pages;
+                $coverage['total_pages'] += (int) $stateCount->total_pages;
+            }
+            $nativeMappedCount += $mapped;
+            $missing = max(0, $expectedCount - $mapped);
+            $unmappedNativeCount += $missing;
+            $coverage['total'] += $expectedCount;
+            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
+            $nativeCoverage[$type] = ['expected_file_count' => $expectedCount, 'indexed_file_count' => $mapped,
+                'unmapped_file_count' => $missing, 'status' => $missing > 0 ? 'needs_access_review' : 'mapped',
+                'manual_ingestion_available' => $missing > 0];
+        };
         foreach (AssistantSalesNativeFileMetadata::definitions() + AssistantOperationsNativeFileMetadata::definitions() as $type => $definition) {
             if ($guard !== null) { $guard(); }
             if (! isset($nativeCandidates[$type])) { continue; }
@@ -210,25 +233,22 @@ final class AssistantDocumentCoverageService
                 ->selectRaw('COALESCE(pg_catalog.SUM(ocr_completed_pages), 0) AS ocr_completed_pages')
                 ->selectRaw('COALESCE(pg_catalog.SUM(total_pages), 0) AS total_pages')
                 ->groupBy('native_coverage_state');
-            $nativeAggregate = $this->withVisibleDocuments($nativeAggregate, $visibleDocuments)->get();
-            $mapped = 0;
-            foreach ($nativeAggregate as $stateCount) {
-                $state = $stateCount->native_coverage_state;
-                $count = (int) $stateCount->file_count;
-                $mapped += $count;
-                $coverage[$state] = ($coverage[$state] ?? 0) + $count;
-                $coverage['processed_units'] += (int) $stateCount->processed_units;
-                $coverage['ocr_completed_pages'] += (int) $stateCount->ocr_completed_pages;
-                $coverage['total_pages'] += (int) $stateCount->total_pages;
+            if ($reuseSnapshot && $visibleDocuments->getConnection() === DB::connection()) {
+                $nativeAggregates[] = $nativeAggregate->selectRaw('? AS native_type', [$type]);
+                $nativeExpectedCounts[$type] = $expectedCount;
+                continue;
             }
-            $nativeMappedCount += $mapped;
-            $missing = max(0, $expectedCount - $mapped);
-            $unmappedNativeCount += $missing;
-            $coverage['total'] += $expectedCount;
-            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
-            $nativeCoverage[$type] = ['expected_file_count' => $expectedCount, 'indexed_file_count' => $mapped,
-                'unmapped_file_count' => $missing, 'status' => $missing > 0 ? 'needs_access_review' : 'mapped',
-                'manual_ingestion_available' => $missing > 0];
+            $addNativeCoverage($type, $expectedCount, $this->withVisibleDocuments($nativeAggregate, $visibleDocuments)->get());
+        }
+        if ($nativeAggregates !== []) {
+            $nativeUnion = array_shift($nativeAggregates);
+            foreach ($nativeAggregates as $nativeAggregate) { $nativeUnion->unionAll($nativeAggregate); }
+            if ($guard !== null) { $guard(); }
+            if ($checkpoint !== null) { $checkpoint(); }
+            $nativeResults = $this->withVisibleDocuments($nativeUnion, $visibleDocuments)->get()->groupBy('native_type');
+            foreach ($nativeExpectedCounts as $type => $expectedCount) {
+                $addNativeCoverage($type, $expectedCount, $nativeResults->get($type, []));
+            }
         }
         foreach (['design_artifact_version', ...AssistantNativeFileMetadata::types(), ...AssistantLegalNativeFileMetadata::types()] as $type) {
             if ($guard !== null) { $guard(); }

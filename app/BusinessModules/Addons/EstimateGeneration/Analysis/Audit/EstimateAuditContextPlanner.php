@@ -21,6 +21,7 @@ final class EstimateAuditContextPlanner
     {
         $this->lastFailedPartSizes = [];
         $quantityIndex = $this->quantityIndex($root->derivedQuantities);
+        $quantityIndex['records'] = (new EstimateAuditDraftRecordPlanner)->quantityRecordIndex($root->draft);
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
             $parts = (new EstimateAuditBatchPlanner)->plan($root->draft, $size);
             $inputs = $this->prepareParts($root, $parts, $maximumBytes, $quantityIndex);
@@ -36,13 +37,15 @@ final class EstimateAuditContextPlanner
 
     private function quantityIndex(array $quantities): array
     {
-        $index = ['ids' => [], 'bases' => []];
-        foreach ($quantities as $quantity) {
+        $index = ['ids' => [], 'bases' => [], 'bytes' => []];
+        $wireQuantities = EstimateAuditQuantityWireProjection::project($quantities);
+        foreach ($quantities as $position => $quantity) {
             $id = $quantity['id'] ?? null;
             if (! is_string($id)) {
                 continue;
             }
             $index['ids'][$id] = true;
+            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($wireQuantities[$position]));
             if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
                 $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
             }
@@ -53,7 +56,7 @@ final class EstimateAuditContextPlanner
 
     private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes, array $quantityIndex): ?array
     {
-        $full = $root->canonicalPayload();
+        $full = $root->canonicalPayload(false);
         $allFit = true;
         foreach ($parts as $part) {
             $payload = [...$full, 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $root->derivedQuantities)];
@@ -136,6 +139,7 @@ final class EstimateAuditContextPlanner
         foreach ($parts as $index => $part) {
             $loads[$index] = strlen(CanonicalPipelineJson::encode(EstimateAuditDraftWireProjection::project($part['draft'], $root->derivedQuantities)));
         }
+        $assignedQuantityRecords = array_fill(0, count($parts), []);
         foreach ($root->derivedQuantities as $quantity) {
             $id = $quantity['id'] ?? null;
             if (! is_string($id)) {
@@ -148,7 +152,13 @@ final class EstimateAuditContextPlanner
             }
             foreach ($parts as $index => $_) {
                 if (isset($quantityIds[$index][$id])) {
-                    $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
+                    $loads[$index] += $quantityIndex['bytes'][$id];
+                    foreach ($this->quantityRecords($quantity, $quantityIndex) as $record => $bytes) {
+                        if (! isset($assignedQuantityRecords[$index][$record])) {
+                            $loads[$index] += $bytes;
+                            $assignedQuantityRecords[$index][$record] = true;
+                        }
+                    }
                     foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
                         $wanted[$index][$factId] = true;
                     }
@@ -188,51 +198,37 @@ final class EstimateAuditContextPlanner
                 $wanted[$index][$fact['id']] = true;
             }
         }
-        foreach ($root->derivedQuantities as $quantity) {
+        $assignedQuantityIds = [];
+        foreach ($quantityIds as $ids) {
+            $assignedQuantityIds += $ids;
+        }
+        $unusedQuantities = array_values(array_filter($root->derivedQuantities,
+            static fn (array $quantity): bool => ! isset($assignedQuantityIds[$quantity['id']])));
+        $quantityWeights = [];
+        foreach ($unusedQuantities as $quantity) {
+            $records = $this->quantityRecords($quantity, $quantityIndex);
+            $increments = [];
+            foreach (array_keys($loads) as $index) {
+                $increments[] = $this->quantityIncrement($quantity, $records, $quantityIndex, $wanted[$index], $assignedQuantityRecords[$index], $factBytes);
+            }
+            $quantityWeights[$quantity['id']] = max($increments);
+        }
+        usort($unusedQuantities, static fn (array $left, array $right): int => $quantityWeights[$right['id']] <=> $quantityWeights[$left['id']]);
+        foreach ($unusedQuantities as $quantity) {
             $id = $quantity['id'];
-            $owners = [];
-            foreach ($parts as $index => $_) {
-                if (isset($quantityIds[$index][$id])) {
-                    $owners[] = $index;
-                }
-            }
-            if ($owners !== []) {
-                continue;
-            }
-            $entity = $quantity['entity_id'] ?? null;
-            if (is_string($entity) && isset($assignedEntities[$entity])) {
-                $owners = $assignedEntities[$entity];
-            } else {
-                foreach ($parts as $index => $_) {
-                    foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                        if (isset($wanted[$index][$factId])) {
-                            $owners[] = $index;
-                            break;
-                        }
-                    }
-                }
-            }
-            if ($owners === []) {
-                $owners = array_keys($parts);
-            }
-            $candidateLoads = array_intersect_key($loads, array_fill_keys($owners, true));
+            $records = $this->quantityRecords($quantity, $quantityIndex);
+            $candidateLoads = $loads;
             foreach (array_keys($candidateLoads) as $index) {
-                foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                    if (! isset($wanted[$index][$factId])) {
-                        $candidateLoads[$index] += $factBytes[$factId];
-                    }
-                }
+                $candidateLoads[$index] += $this->quantityIncrement($quantity, $records, $quantityIndex, $wanted[$index], $assignedQuantityRecords[$index], $factBytes);
             }
-            $owners = [array_keys($candidateLoads, min($candidateLoads), true)[0]];
-            foreach ($owners as $index) {
-                $quantityIds[$index][$id] = true;
-                $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
-                foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                    if (! isset($wanted[$index][$factId])) {
-                        $loads[$index] += $factBytes[$factId];
-                    }
-                    $wanted[$index][$factId] = true;
-                }
+            $owner = array_keys($candidateLoads, min($candidateLoads), true)[0];
+            $quantityIds[$owner][$id] = true;
+            $loads[$owner] = $candidateLoads[$owner];
+            foreach (array_keys($records) as $record) {
+                $assignedQuantityRecords[$owner][$record] = true;
+            }
+            foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                $wanted[$owner][$factId] = true;
             }
         }
         $contexts = [];
@@ -251,7 +247,7 @@ final class EstimateAuditContextPlanner
 
     private function prepareContexts(EstimateAuditInput $root, array $contexts, int $maximumBytes): ?array
     {
-        $full = $root->canonicalPayload();
+        $full = $root->canonicalPayload(false);
         $manifest = ['contract' => 'estimate-audit-context:v1', 'parent_fingerprint' => $root->fingerprint(),
             'total_facts' => count($root->facts), 'total_evidence' => count($root->evidence),
             'total_derived_quantities' => count($root->derivedQuantities),
@@ -262,9 +258,10 @@ final class EstimateAuditContextPlanner
         $manifest['draft_record_counts'] = $distribution['counts'];
         $prepared = [];
         foreach ($distribution['parts'] as $part) {
-            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => $part['derived_quantities'], 'evidence' => $part['evidence'],
+            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
                 'part_id' => $part['id'], 'context_manifest' => $manifest];
+            $payload = EstimateAuditExactValueWireProjection::forAudit($payload);
             if (! $this->fits($payload, $maximumBytes)) {
                 $bytes = static fn (mixed $value): int => strlen(CanonicalPipelineJson::encode([$value])) - 2;
                 $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
@@ -282,6 +279,34 @@ final class EstimateAuditContextPlanner
         }
 
         return $prepared;
+    }
+
+    private function quantityRecords(array $quantity, array $index): array
+    {
+        $records = $index['records'][$quantity['id']] ?? [];
+        $key = $quantity['quantity_basis']['key'] ?? null;
+        if (is_string($key)) {
+            $records += $index['records'][$key] ?? [];
+        }
+
+        return $records;
+    }
+
+    private function quantityIncrement(array $quantity, array $records, array $index, array $facts, array $assignedRecords, array $factBytes): int
+    {
+        $bytes = $index['bytes'][$quantity['id']];
+        foreach ($records as $record => $size) {
+            if (! isset($assignedRecords[$record])) {
+                $bytes += $size;
+            }
+        }
+        foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+            if (! isset($facts[$factId])) {
+                $bytes += $factBytes[$factId];
+            }
+        }
+
+        return $bytes;
     }
 
     private function workEntityIds(array $draft): array
@@ -303,7 +328,7 @@ final class EstimateAuditContextPlanner
 
     private function fits(array $payload, int $maximumBytes): bool
     {
-        $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
+        $encoded = CanonicalPipelineJson::encode(['audit_input' => EstimateAuditExactValueWireProjection::forAudit($payload)]);
 
         return strlen($encoded) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($encoded, $this->wirePolicy);
     }

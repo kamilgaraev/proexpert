@@ -36,6 +36,7 @@ final class PipelineRunner
         callable $clock,
         private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
         ?PipelineFailureObserver $failureObserver = null,
+        private readonly ?RetainedPipelinePrefix $retainedPrefix = null,
     ) {
         if ($leaseSeconds <= 0) {
             throw new InvalidArgumentException('Pipeline checkpoint lease must be positive.');
@@ -75,9 +76,9 @@ final class PipelineRunner
         CheckpointClaim $claim,
     ): PipelineStageResult {
         try {
-            $result = $stage instanceof LeaseAwarePipelineStage
+            $result = $this->retainedPrefix?->reuse($context) ?? ($stage instanceof LeaseAwarePipelineStage
                 ? $stage->executeWithHeartbeat($context, $this->heartbeat($claim))
-                : $stage->execute($context);
+                : $stage->execute($context));
 
             if ($result->stage !== $stage->stage()) {
                 throw new PipelineStageException(FailureCategory::Terminal, 'pipeline_result_stage_mismatch');

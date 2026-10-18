@@ -1762,7 +1762,7 @@ XML;
     {
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($deniedPermission): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturnUsing(
+            $mock->shouldReceive('can', 'canCurrent')->andReturnUsing(
                 static fn (User $user, string $permission, ?array $context = null): bool => $permission !== $deniedPermission
             );
             $mock->shouldReceive('hasRole')->andReturn(true);

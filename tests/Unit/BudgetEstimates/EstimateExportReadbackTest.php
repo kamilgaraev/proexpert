@@ -7,15 +7,18 @@ namespace Tests\Unit\BudgetEstimates;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\PDFEstimateBuilder;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Most\MostTemplateHandler;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
+use App\Models\ImportSession;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Eloquent\Collection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 use Smalot\PdfParser\Parser;
@@ -81,6 +84,204 @@ final class EstimateExportReadbackTest extends TestCase
             self::assertEquals($expected, $found);
             $metadata = json_decode((string) $book->getSheetByName('_METADATA_')->getCell('A1')->getValue(), true);
             self::assertEquals([20, 900, 25], array_column($metadata['items'], 'quantity_total'));
+            self::assertEquals(30300, $metadata['sections'][0]['section_total_amount']);
+            self::assertEquals(180, $metadata['items'][0]['unit_price']);
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-with-prices.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_excel_without_prices_omits_totals_and_financial_import_metadata(): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->custom_resources = [['name' => 'Учебный ресурс', 'unit_price' => 9876]];
+        $item->metadata = ['supplier_quote' => ['total_amount' => 9876]];
+        $child = clone $item;
+        $child->id = 999;
+        $child->name = 'Вложенный учебный ресурс';
+        $child->setRelation('childItems', new Collection);
+        $item->setRelation('childItems', new Collection([$child]));
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, [
+            'show_prices' => false,
+            'include_resources' => true,
+        ]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-unpriced-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            $values = array_merge(...$sheet->toArray());
+            self::assertNotContains('Цена', $values);
+            self::assertNotContains('Сумма', $values);
+            self::assertNotContains('ИТОГОВАЯ СВОДКА', $values);
+            self::assertNotContains('ВСЕГО С НДС:', $values);
+            self::assertContains(20.0, array_map('floatval', array_filter($values, 'is_numeric')));
+            $metadata = json_decode((string) $book->getSheetByName('_METADATA_')->getCell('A1')->getValue(), true);
+            self::assertSame([], $metadata['calculation_settings']);
+            self::assertEquals(0, $metadata['sections'][0]['section_total_amount']);
+            self::assertEquals([20, 20, 900, 25], array_column($metadata['items'], 'quantity_total'));
+            foreach ($metadata['items'] as $exportedItem) {
+                self::assertEquals(0, $exportedItem['unit_price']);
+                self::assertEquals(0, $exportedItem['total_amount']);
+                self::assertNull($exportedItem['custom_resources']);
+                self::assertNull($exportedItem['metadata']);
+            }
+            self::assertStringNotContainsString('30300', json_encode($metadata));
+            self::assertStringNotContainsString('9876', json_encode($metadata));
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-without-prices.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_own_excel_roundtrip_uses_visible_edits_and_excludes_signature_footer(bool $showPrices): void
+    {
+        $estimate = $this->fixture();
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['show_prices' => $showPrices]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-roundtrip-');
+        try {
+            file_put_contents($path, $result['content']);
+            $handler = $this->app->make(MostTemplateHandler::class);
+            $session = new ImportSession(['options' => []]);
+            self::assertSame(1.0, $handler->detect($session, $path)->confidence);
+            $structure = $handler->detectStructure($session, $path);
+            self::assertTrue($structure->metadata['most_export'] ?? false);
+
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                if (str_contains((string) $sheet->getCell("C{$row}")->getValue(), 'учебная ведомость')) {
+                    $sheet->setCellValue("E{$row}", 23);
+                    if ($showPrices) {
+                        $sheet->setCellValue("G{$row}", 23 * (float) $sheet->getCell("F{$row}")->getValue());
+                    }
+                    break;
+                }
+            }
+            (new Xlsx($book))->save($path);
+            $book->disconnectWorksheets();
+
+            foreach ([$structure, $handler->detectStructureFromHeaderRow($session, $path, $structure->headerRow)] as $detectedStructure) {
+                $preview = $handler->preview($session, $path, $detectedStructure);
+                self::assertCount(1, $preview->sections);
+                self::assertCount(3, $preview->items);
+                self::assertEquals(23, $preview->items[0]['quantity']);
+                self::assertNotContains('ПОДПИСИ ОТВЕТСТВЕННЫХ ЛИЦ', array_column($preview->sections, 'item_name'));
+                $streamed = iterator_to_array($handler->streamRows($session, $path, $detectedStructure), false);
+                self::assertCount(4, $streamed);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith(['MOST_TEMPLATE_V1', 1.0])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['PROHELPER_TEMPLATE_V1', 1.0])]
+    #[\PHPUnit\Framework\Attributes\TestWith(['MOST_ESTIMATE_EXPORT_V1 edited', 0.4])]
+    public function test_other_template_markers_do_not_change_section_detection(string $description, float $confidence): void
+    {
+        $estimate = $this->fixture();
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-template-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $book->getProperties()->setDescription($description);
+            (new Xlsx($book))->save($path);
+            $book->disconnectWorksheets();
+            $handler = $this->app->make(MostTemplateHandler::class);
+            $session = new ImportSession(['options' => []]);
+            self::assertSame($confidence, $handler->detect($session, $path)->confidence);
+            $structure = $handler->detectStructure($session, $path);
+            self::assertFalse($structure->metadata['most_export'] ?? false);
+            $preview = $handler->preview($session, $path, $structure);
+            self::assertContains('ПОДПИСИ ОТВЕТСТВЕННЫХ ЛИЦ', array_column($preview->sections, 'item_name'));
+            self::assertCount(3, $preview->items);
+        } finally {
+            unlink($path);
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_excel_keeps_long_codes_and_text_readable_when_printing(bool $showPrices): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->normative_rate_code = 'ГЭСН08-02-002-05';
+        $item->is_not_accounted = true;
+        $item->name = str_repeat('Подготовка и обработка стен учебного помещения. ', 5);
+        $item->description = str_repeat('Условное примечание для проверки печати. ', 5);
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['show_prices' => $showPrices]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-long-text-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            $notesColumn = $showPrices ? 'H' : 'F';
+            foreach (['B', 'C', $notesColumn] as $column) {
+                self::assertLessThanOrEqual(70, $sheet->getColumnDimension($column)->getWidth());
+            }
+            self::assertEquals(35, $sheet->getColumnDimension($notesColumn)->getWidth());
+            self::assertSame($showPrices, $sheet->getColumnDimension('G')->getVisible());
+            self::assertSame($showPrices, $sheet->getColumnDimension('H')->getVisible());
+            self::assertSame('ГЭСН08-02-002-05 (Н)', $sheet->getCell('B17')->getValue());
+            self::assertSame($item->name, $sheet->getCell('C17')->getValue());
+            self::assertSame($item->description, $sheet->getCell($notesColumn.'17')->getValue());
+            foreach (['B17', 'C17', $notesColumn.'17'] as $coordinate) {
+                self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
+            }
+            self::assertSame(1, $sheet->getPageSetup()->getFitToWidth());
+            self::assertSame(0, $sheet->getPageSetup()->getFitToHeight());
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-long-text'.($showPrices ? '' : '-without-prices').'.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_excel_keeps_large_numeric_values_visible_without_changing_them(): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->quantity = 999999999;
+        $item->total_amount = 179999999820;
+        $item->direct_costs = 179999999820;
+        $section = $estimate->sections->first();
+        $section->setRelation('items', new Collection([$item]));
+        $section->section_total_amount = 179999999820;
+        $estimate->total_direct_costs = 179999999820;
+        $estimate->total_amount = 179999999820;
+        $estimate->total_amount_with_vat = 179999999820;
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-large-numbers-');
+        try {
+            file_put_contents($path, $result['content']);
+            $sheet = IOFactory::load($path)->getSheetByName('Смета');
+            self::assertEquals(999999999, $sheet->getCell('E17')->getValue());
+            self::assertEquals(179999999820, $sheet->getCell('G17')->getValue());
+            foreach (['E17', 'F17', 'G17'] as $coordinate) {
+                self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getShrinkToFit());
+                self::assertFalse($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
+            }
+            self::assertTrue($sheet->getStyle('G18')->getAlignment()->getShrinkToFit());
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-large-numbers.xlsx', $result['content']);
+            }
         } finally {
             unlink($path);
         }

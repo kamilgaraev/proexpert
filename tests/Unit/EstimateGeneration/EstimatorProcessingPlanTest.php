@@ -247,6 +247,28 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(0, $plan['synthesis_part_limit']);
     }
 
+    public function test_retained_prefix_reserves_only_auditor_and_corrector_and_preserves_context_policy(): void
+    {
+        $plans = new EstimatorProcessingPlan;
+        $full = $plans->build('generation', 2, 32, true, $this->tariff(), true);
+        $continued = $plans->forRetainedPrefix($full);
+
+        self::assertSame(['estimate_audit', 'estimate_composer_correction'], array_keys($continued['roles']));
+        self::assertTrue($continued['complex']);
+        self::assertSame($full['text_payload_policy'], $continued['text_payload_policy']);
+        self::assertSame($full['audit_part_limit'], $continued['audit_part_limit']);
+        self::assertSame($full['roles']['estimate_audit'], $continued['roles']['estimate_audit']);
+        self::assertSame($full['roles']['estimate_composer_correction'], $continued['roles']['estimate_composer_correction']);
+        self::assertSame(0, $continued['composer_part_limit']);
+        self::assertSame(0, $continued['synthesis_part_limit']);
+        self::assertSame(0, $continued['raster_units']);
+        self::assertFalse($continued['rerank']);
+        self::assertSame(480, $continued['maximum_calls']);
+        $expected = array_sum(array_map(static fn (array $role): int => $role['max_calls'] * $role['maximum_cost_micro_rub'], $continued['roles']));
+        self::assertSame($expected, $continued['maximum_provider_cost_micro_rub']);
+        self::assertLessThan($full['maximum_provider_cost_micro_rub'], $continued['maximum_provider_cost_micro_rub']);
+    }
+
     public function test_future_audit_proofs_are_reserved_at_one_part_per_permitted_work_before_the_draft_exists(): void
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, false, $this->tariff());

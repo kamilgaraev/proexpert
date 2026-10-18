@@ -92,6 +92,22 @@ final class EstimatorProcessingPlan
             'synthesis_part_limit' => isset($roles['project_synthesis']) ? $synthesisParts : 0];
     }
 
+    public function forRetainedPrefix(array $plan): array
+    {
+        $roles = array_intersect_key($plan['roles'], array_flip(['estimate_audit', 'estimate_composer_correction']));
+        if (count($roles) !== 2) {
+            throw new DomainException('estimator_retained_pipeline_roles_invalid');
+        }
+        $maximum = BigDecimal::zero();
+        foreach ($roles as $role) {
+            $maximum = $maximum->plus(BigDecimal::of((string) $role['maximum_cost_micro_rub'])->multipliedBy($role['max_calls']));
+        }
+
+        return [...$plan, 'roles' => $roles, 'maximum_calls' => array_sum(array_column($roles, 'max_calls')),
+            'maximum_provider_cost_micro_rub' => $maximum->toInt(), 'raster_units' => 0,
+            'composer_part_limit' => 0, 'synthesis_part_limit' => 0, 'rerank' => false];
+    }
+
     public function capForQaBudget(array $plan, array $budget): array
     {
         $maximum = $budget['maximum_provider_cost_micro_rub'] ?? null;

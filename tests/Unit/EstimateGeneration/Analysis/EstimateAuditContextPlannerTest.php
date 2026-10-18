@@ -14,6 +14,108 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_large_quantity_bundles_are_placed_before_smaller_payloads_with_large_diagnostics(): void
+    {
+        $quantities = $diagnostics = [];
+        foreach ([6, 6, 10] as $i => $weight) {
+            $quantities[] = ['id' => 'quantity:'.$i, 'operand_fact_ids' => [], 'quantity_basis' => ['key' => 'quantity:'.$i]];
+            $diagnostics[] = ['derived_quantity_id' => 'quantity:'.$i, 'proof' => str_repeat('source; ', $weight * 512)];
+        }
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'local_estimates' => [['sections' => [['work_items' => array_map(
+                static fn (int $i): array => ['key' => 'work:'.$i], range(0, 2)),
+            ]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, [], $quantities, $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        $groups = array_map(static fn (array $part): array => array_column($part['input']->derivedQuantities, 'id'), $parts);
+        self::assertContains(['quantity:0', 'quantity:1'], $groups);
+        self::assertContains(['quantity:2'], $groups);
+        foreach ($parts as $part) {
+            self::assertSame(array_column($part['input']->derivedQuantities, 'id'),
+                array_column($part['input']->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
+        }
+    }
+
+    public function test_unused_quantities_balance_their_large_diagnostics_before_requiring_more_parts(): void
+    {
+        $quantities = $diagnostics = [];
+        for ($i = 0; $i < 4; $i++) {
+            $quantities[] = ['id' => 'quantity:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => [],
+                'quantity_basis' => ['key' => 'quantity:'.$i]];
+            $diagnostics[] = ['derived_quantity_id' => 'quantity:'.$i, 'entity_id' => 'house:1',
+                'proof' => str_repeat('diagnostic source; ', $i % 2 === 0 ? 1700 : 1)];
+        }
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'local_estimates' => [['sections' => [['work_items' => array_map(
+                static fn (int $i): array => ['key' => 'work:'.$i, 'entity_id' => 'room:'.$i], range(0, 3)),
+            ]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, [], $quantities, $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        foreach ($parts as $part) {
+            self::assertCount(2, $part['input']->derivedQuantities);
+            self::assertCount(2, $part['input']->draft['building_quantities']['diagnostics']);
+            self::assertSame(array_column($part['input']->derivedQuantities, 'id'),
+                array_column($part['input']->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
+        }
+    }
+
+    public function test_unused_quantities_can_move_outside_their_entity_part_with_all_operand_evidence(): void
+    {
+        $facts = [['id' => 'fact:house', 'entity_id' => 'house:1', 'value' => '40']];
+        $evidence = [['fact_id' => 'fact:house', 'locator' => ['page' => 1]]];
+        $quantities = [];
+        for ($i = 0; $i < 3; $i++) {
+            $quantities[] = ['id' => 'unused:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => ['fact:house'],
+                'quantity_basis' => ['key' => 'unused:'.$i, 'decision_reason' => str_repeat('confirmed dimension; ', 1000)]];
+        }
+        $diagnostics = array_map(static fn (array $quantity): array => ['entity_id' => 'house:1', 'derived_quantity_id' => $quantity['id'], 'code' => 'unused_quantity_review'], $quantities);
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'traceability' => ['source_proof' => str_repeat('trace proof; ', 1400)],
+            'local_estimates' => [['sections' => [['work_items' => [
+                ['key' => 'work:house', 'entity_id' => 'house:1'],
+                ['key' => 'work:room', 'entity_id' => 'room:1'],
+                ['key' => 'work:roof', 'entity_id' => 'roof:1'],
+            ]]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(3, $parts);
+        $seen = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            self::assertCount(1, $input->derivedQuantities);
+            self::assertSame([$input->derivedQuantities[0]['id']], array_column($input->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
+            self::assertSame($facts, $input->facts);
+            self::assertSame($evidence, $input->evidence);
+            self::assertSame($draft['traceability'], $input->draft['traceability']);
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
+            ]));
+            array_push($seen, ...$input->derivedQuantities);
+        }
+        self::assertEqualsCanonicalizing($quantities, $seen);
+        self::assertSame($draft, $root->draft);
+        self::assertSame(array_column($parts, 'id'), array_column((new EstimateAuditContextPlanner($policy))->prepare($root, 458752), 'id'));
+    }
+
     public function test_unused_quantity_placement_accounts_for_required_proofs_that_appear_later_in_the_input(): void
     {
         $facts = [['id' => 'fact:area', 'entity_id' => 'house:1', 'value' => '40']];

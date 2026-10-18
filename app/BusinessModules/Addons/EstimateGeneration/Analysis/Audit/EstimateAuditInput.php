@@ -58,17 +58,18 @@ final readonly class EstimateAuditInput
         }
         // The full server snapshot can exceed a single wire request. It is never
         // sent before section/context partitioning and admission checks.
-        $serverPayload = $this->canonicalPayload();
+        $serverPayload = $this->canonicalPayload(false);
         $serverPayload['draft'] = $this->draft;
+        $serverPayload['derived_quantities'] = $this->derivedQuantities;
         if (strlen($this->canonicalJson($serverPayload)) > ($partId === 'whole' ? 33_554_432 : 2_097_152)) {
             throw new InvalidArgumentException('estimate_audit_input_too_large');
         }
     }
 
     /** @return array<string, mixed> */
-    public function canonicalPayload(): array
+    public function canonicalPayload(bool $exactValueReferences = true): array
     {
-        return [
+        $payload = [
             'schema_version' => 1,
             'organization_id' => $this->organizationId,
             'project_id' => $this->projectId,
@@ -76,20 +77,23 @@ final readonly class EstimateAuditInput
             'snapshot_token' => $this->snapshotToken,
             'cycle' => $this->cycle,
             'facts' => $this->facts,
-            'derived_quantities' => $this->derivedQuantities,
+            'derived_quantities' => EstimateAuditQuantityWireProjection::project($this->derivedQuantities),
             'draft' => EstimateAuditDraftWireProjection::project($this->draft, $this->derivedQuantities),
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
             ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
             ...($this->contextManifest === [] ? [] : ['context_manifest' => $this->contextManifest]),
         ];
+
+        return $exactValueReferences ? EstimateAuditExactValueWireProjection::forAudit($payload) : $payload;
     }
 
     public function fingerprint(): string
     {
-        $payload = $this->canonicalPayload();
+        $payload = $this->canonicalPayload(false);
         // Replay binds the complete server artifact, including fields deduplicated on wire.
         $payload['draft'] = $this->draft;
+        $payload['derived_quantities'] = $this->derivedQuantities;
         if ($this->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
         }

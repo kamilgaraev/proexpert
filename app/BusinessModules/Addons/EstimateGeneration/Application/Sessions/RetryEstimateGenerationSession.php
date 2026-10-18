@@ -44,6 +44,7 @@ final class RetryEstimateGenerationSession
             $command->organizationId,
             $command->projectId,
             function (EstimateGenerationSession $session) use ($command, &$reconcileImmediately): EstimateGenerationSession {
+                $preserveRegionalContext = false;
                 ($this->authorizer ?? app(EstimateGenerationActionAuthorization::class))
                     ->authorize($command->actor, $session, 'estimate_generation.generate');
                 $creditEnabled = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id);
@@ -79,6 +80,8 @@ final class RetryEstimateGenerationSession
                     } catch (\DomainException $exception) {
                         throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Предложение стоимости недействительно либо баланса недостаточно.']);
                     }
+                    $plan = $previous === null ? [] : json_decode($previous->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+                    $preserveRegionalContext = isset($plan['retained_pipeline_prefix']);
                     $session->input_payload = [...($session->input_payload ?? []), 'generation_credit_operation_id' => $operationId];
                     \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)
                         ->update(['receipt' => \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
@@ -103,7 +106,7 @@ final class RetryEstimateGenerationSession
 
                 return match ($session->resume_status) {
                     EstimateGenerationStatus::ProcessingDocuments => $this->retryDocuments($session),
-                    EstimateGenerationStatus::Generating => $this->retryGeneration($session),
+                    EstimateGenerationStatus::Generating => $this->retryGeneration($session, $preserveRegionalContext),
                     EstimateGenerationStatus::Applying => $this->retryApply($session),
                     default => throw new InvalidEstimateGenerationState($session->status, 'retry'),
                 };
@@ -227,7 +230,7 @@ final class RetryEstimateGenerationSession
         return $session;
     }
 
-    private function retryGeneration(EstimateGenerationSession $session): EstimateGenerationSession
+    private function retryGeneration(EstimateGenerationSession $session, bool $preserveRegionalContext = false): EstimateGenerationSession
     {
         $analysisPayload = null;
         if ((string) $session->failure_code === 'session_cost_limit_reached') {
@@ -248,7 +251,7 @@ final class RetryEstimateGenerationSession
         $session = $this->advance->generationRetried(
             $session,
             $attemptId,
-            $this->refreshedRegionalContext($session),
+            $preserveRegionalContext ? [] : $this->refreshedRegionalContext($session),
             $analysisPayload,
         );
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
@@ -280,21 +283,7 @@ final class RetryEstimateGenerationSession
 
     private function refreshedRegionalContext(EstimateGenerationSession $session): array
     {
-        $regionalContext = $session->input_payload['regional_context'] ?? null;
-
-        if (! is_array($regionalContext)) {
-            return [];
-        }
-
-        return [
-            'regional_context' => [
-                ...$regionalContext,
-                ...$this->regionalContextResolver->resolve([
-                    ...($session->input_payload ?? []),
-                    ...$regionalContext,
-                ]),
-            ],
-        ];
+        return $this->regionalContextResolver->retryChanges($session->input_payload ?? []);
     }
 
     private function retryApply(EstimateGenerationSession $session): EstimateGenerationSession
