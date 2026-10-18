@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry;
+use DateTimeImmutable;
 use JsonException;
 
 final readonly class AssistantPublishedReportFilterInput
@@ -20,6 +21,7 @@ final readonly class AssistantPublishedReportFilterInput
         private ReportFilterInputNormalizer $specific,
         private ReportFilterNormalizer $typed,
         private BuiltinPublishedReportDefinitionRegistry $builtins,
+        private AssistantPublishedReportNativeFilters $native,
     ) {}
 
     public function parse(mixed $json): array
@@ -40,7 +42,7 @@ final readonly class AssistantPublishedReportFilterInput
         return $filters;
     }
 
-    public function normalize(ReportExecutionContext $context, ReportDefinition $definition, array $input): ReportFilterSet
+    public function normalize(ReportExecutionContext $context, ReportDefinition $definition, array $input, DateTimeImmutable $asOf): ReportFilterSet
     {
         $specific = $this->specific->normalize($context, $definition, $input);
         if ($specific !== null) {
@@ -112,7 +114,7 @@ final readonly class AssistantPublishedReportFilterInput
             $this->invalid();
         }
 
-        return new ReportFilterSet($input);
+        return new ReportFilterSet($this->native->validate($context, $definition, $input, $asOf));
     }
 
     private function scalar(mixed $value): void

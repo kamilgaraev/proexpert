@@ -330,11 +330,47 @@ final class AssistantPublishedReportTasksTest extends TestCase
         ]));
         try {
             app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportFilterInput::class)
-                ->normalize($context, $changed, ['risk_levels' => ['red']]);
+                ->normalize($context, $changed, ['risk_levels' => ['red']], new DateTimeImmutable);
             self::fail('Expected typed filter validation for a changed definition');
         } catch (ReportContractException $error) {
             self::assertSame(ReportErrorCode::REPORT_FILTER_UNSUPPORTED, $error->errorCode);
         }
+    }
+
+    public function test_native_source_filters_reject_invalid_enums_and_identifier_types_before_queueing(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $root = $this->root($actor, message: 'Сформируй Excel по данным текущего проекта');
+        $tasks = app(AssistantPublishedReportTasks::class);
+        foreach ([
+            ['inventory_risk', ['risk_status', 'closing_on_hand'], ['period_start' => '2026-10-01', 'period_end' => '2026-10-18', 'statuses' => ['unknown']]],
+            ['inventory_risk', ['risk_status', 'closing_on_hand'], ['period_start' => '2026-10-01', 'period_end' => '2026-10-18', 'statuses' => []]],
+            ['project_labor_cost', ['work_date', 'hours'], ['period_from' => '2026-10-01', 'period_to' => '2026-10-18', 'employee_ids' => ['1']]],
+        ] as [$code, $columns, $filters]) {
+            try {
+                $tasks->create(array_replace($this->arguments(), ['report_code' => $code, 'columns' => $columns,
+                    'filters_json' => json_encode($filters, JSON_THROW_ON_ERROR)]), $actor, $org);
+                self::fail('Expected native source filter validation before queueing');
+            } catch (ReportContractException) {
+                self::assertSame(0, AssistantCoreReportTask::query()->where('assistant_request_id', $root->id)->count());
+            }
+        }
+    }
+
+    public function test_native_catalog_describes_supported_input_shapes_for_every_builtin_filter(): void
+    {
+        $registry = app(\App\BusinessModules\Core\Reporting\Infrastructure\Catalog\BuiltinPublishedReportDefinitionRegistry::class);
+        $validator = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportNativeFilters::class);
+        foreach ($registry->publishedCodes() as $code) {
+            $filters = $validator->describe($code, $registry->published($code)->payload()->filters);
+            self::assertNotContains('unsupported', array_column($filters, 'input_type'), $code);
+        }
+        $catalog = app(AssistantPublishedReportCatalog::class)->read($this->fixture->owner, (int) $this->fixture->organization->id, 'inventory_risk');
+        $statuses = array_column($catalog['items'][0]['filters'], null, 'id')['statuses'];
+        self::assertSame('strings', $statuses['input_type']);
+        self::assertSame(['healthy', 'reorder', 'excess'], $statuses['allowed_values']);
+        self::assertFalse($statuses['empty_list_allowed']);
     }
 
     public function test_cancellation_deadline_lease_and_recovery_do_not_create_extra_work(): void
