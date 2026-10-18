@@ -117,6 +117,30 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         }
     }
 
+    public function test_unquoted_project_names_keep_prepositions_without_changing_report_extraction(): void
+    {
+        foreach (['ЖК на Ленина', 'Школа для детей', 'Дом у озера', 'Центр по работе с детьми'] as $name) {
+            foreach (['', ' и скажи, что осталось.', '. Покажи сроки.'] as $suffix) {
+                $query = 'Сверь выполненные работы с графиком проекта '.$name.$suffix;
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+                    self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 102]], false);
+                });
+                self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $query);
+            }
+        }
+        self::assertSame('ЖК', \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::extract('Отчёт проекта ЖК на Ленина', 'project'));
+        foreach (['№102 за октябрь', '102 за октябрь', '№102 и скажи, что осталось'] as $number) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта '.$number), function (array $arguments): array {
+                self::assertSame(102, $arguments['project_id']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        }
+    }
+
     public function test_project_name_words_do_not_become_commands_or_financial_topics(): void
     {
         foreach (['Сметный дом', 'Договорный парк', 'Бюджетный квартал', 'работы'] as $name) {
@@ -250,6 +274,21 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         }
         $resolved['named_project_scope'] = ['project_id' => 102, 'message_sha256' => hash('sha256', 'old question')];
         self::assertNull(AssistantRequestProjectScope::fromPlan(['request' => $save->invoke($service, $plan['request']['message'], $resolved)['last_request']])->projectId);
+    }
+
+    public function test_pending_name_reply_keeps_original_period_and_filters_before_fresh_project_lookup(): void
+    {
+        $message = 'Сверь выполненные работы с графиком проекта «Старый дом».';
+        $context = ['last_capability' => 'knowledge', 'pending_named_project_clarification' => ['message' => $message],
+            'last_request' => ['message' => $message, 'context' => ['period' => 'октябрь 2026', 'filters' => ['status' => 'confirmed']]]];
+        $current = ['message' => 'Северный дом', 'context' => ['source_module' => 'ai-assistant',
+            'period' => 'ноябрь 2026', 'filters' => [], 'entity_refs' => [['type' => 'project', 'id' => 104]]]];
+        $service = (new \ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
+        $merged = (new \ReflectionMethod(AIAssistantService::class, 'mergeContinuationRequestPayload'))->invoke($service, 'Северный дом', $current, $context);
+        self::assertSame('октябрь 2026', $merged['context']['period']);
+        self::assertSame(['status' => 'confirmed'], $merged['context']['filters']);
+        self::assertSame($current['context']['entity_refs'], $merged['context']['entity_refs']);
+        self::assertSame('Северный дом', $merged['message']);
     }
 
     private function plan(string $message): array

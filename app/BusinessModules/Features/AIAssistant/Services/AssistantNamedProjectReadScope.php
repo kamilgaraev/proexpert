@@ -19,10 +19,10 @@ final class AssistantNamedProjectReadScope
             return $plan;
         }
         $name = self::name($plan);
-        $ambiguous = AssistantReportEntityQuery::hasAmbiguousName($query, 'project');
+        $ambiguous = AssistantReportEntityQuery::hasAmbiguousName($query, 'project', preservePrepositions: true);
         $implicitQuestion = false;
         if ($name === null && ! $ambiguous && self::hasLowercaseQuestionClause($query)) {
-            $name = AssistantReportEntityQuery::extract($query, 'project');
+            $name = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
             $name = $name === null ? null : preg_replace('/[.!?]+$/u', '', $name);
             $implicitQuestion = $name !== null;
         }
@@ -76,11 +76,14 @@ final class AssistantNamedProjectReadScope
         if (! $quoted && self::hasLowercaseQuestionClause($query)) {
             return null;
         }
-        $name = AssistantReportEntityQuery::extract($query, 'project');
+        $name = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
         if (! $quoted && $name !== null) {
             $continuation = '(?:скажи(?:те)?|расскажи(?:те)?|покажи(?:те)?|проверь(?:те)?|сверь(?:те)?|укажи(?:те)?|назови(?:те)?|уточни(?:те)?|сформируй(?:те)?|создай(?:те)?|удали(?:те)?|измени(?:те)?|закрой(?:те)?|отправь(?:те)?|подпиши(?:те)?|назначь(?:те)?|назначит[а-яё]*|перенес[а-яё]*|перенос[а-яё]*|сдвин[а-яё]*|обнови[а-яё]*|добавь(?:те)?|добавит[а-яё]*|поменяй(?:те)?|исправь(?:те)?|заплат[а-яё]*|оплати[а-яё]*|нужно|надо|можно|что|кто|где|когда|как|какие|какой|какая|какое|каков[а-яё]*|сколько)(?![\pL\pN])';
             $parts = preg_split('/(?:\s+(?:(?:и|а|но)\s+)?|[.!?]\s*)(?='.$continuation.')|[!?]/iu', $name, 2);
             $name = trim((string) ($parts[0] ?? ''));
+            if (preg_match('/^(?:(?:id|№|#)\s*)?[1-9]\d*(?=\s+(?:за|с|по|на|для|от)\b|[.!?]*$)/iu', $name, $numeric) === 1) {
+                $name = $numeric[0];
+            }
         }
         if (! $quoted && $name !== null && AssistantRequestProjectScope::fromPlan($plan)->requested
             && preg_match('/^(?:открыт|закрыт|просроченн|незаверш[её]нн|действующ|активн|планов|неподписанн|подписанн|несогласованн|согласованн|неоплаченн)[а-яё]*\s+(?:нарушен|замечан|задач|работ|договор|сч[её]т|комплект|изменен|запис|журнал|CRM-сделк)[а-яё]*(?![\pL\pN])/iu', $name) === 1) {
@@ -92,10 +95,49 @@ final class AssistantNamedProjectReadScope
 
     private static function hasLowercaseQuestionClause(string $query): bool
     {
-        $candidate = AssistantReportEntityQuery::extract($query, 'project');
+        $candidate = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
 
         return $candidate !== null
             && (preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1 || preg_match('/\?\s*$/u', $query) === 1)
             && preg_match('/^\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано)(?=\s|[.!?]|$))/u', $candidate) === 1;
+    }
+
+    public static function clarifiedQuery(string $query, string $name): ?string
+    {
+        preg_match_all('/\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)/iu', $query, $matches, PREG_OFFSET_CAPTURE);
+        preg_match_all('/«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"/u', $query, $quotes, PREG_OFFSET_CAPTURE);
+        $mentions = array_values(array_filter($matches[0], static function (array $mention) use ($quotes): bool {
+            foreach ($quotes[0] as [$quote, $offset]) {
+                if ($mention[1] > $offset && $mention[1] < $offset + strlen($quote)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }));
+        $spans = [];
+        foreach ($mentions as $index => [$prefix, $offset]) {
+            $slice = substr($query, $offset, isset($mentions[$index + 1]) ? $mentions[$index + 1][1] - $offset : null);
+            $tail = substr($slice, strlen($prefix));
+            if (preg_match('/^(?:«[^»]+»|“[^”]+”|„[^“]+“|"[^"]+")/u', $tail, $quoted) === 1) {
+                $spans[] = [$offset + strlen($prefix), strlen($quoted[0])];
+
+                continue;
+            }
+            $old = self::name(['request' => ['message' => $slice]]);
+            $old = $old === null ? null : preg_replace('/\s+(?:и|а|но)$/iu', '', $old);
+            $start = $old === null || $old === '' ? false : strpos($slice, $old, strlen($prefix));
+            if ($start !== false) {
+                $spans[] = [$offset + $start, strlen($old)];
+            }
+        }
+        if ($spans === []) {
+            return null;
+        }
+        foreach (array_reverse($spans) as [$offset, $length]) {
+            $query = substr_replace($query, '«'.$name.'»', $offset, $length);
+        }
+
+        return $query;
     }
 }

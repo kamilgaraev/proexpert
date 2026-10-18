@@ -1896,7 +1896,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $provider->expects(self::never())->method('chat');
         $provider->expects(self::never())->method('responses');
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
-        $orchestrator->method('plan')->willReturn(['request' => ['message' => $query,
+        $orchestrator->method('plan')->willReturnCallback(static fn (string $routingQuery): array => ['request' => ['message' => $routingQuery,
             'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], 'task_type' => 'summary',
             'access_context_public' => [], 'capability' => []]);
         $orchestrator->method('buildPayload')->willReturn(['next_actions' => []]);
@@ -1915,6 +1915,19 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
         self::assertSame(1, Message::query()->where('role', 'user')->count());
         self::assertSame(1, Message::query()->where('role', 'assistant')->count());
+        $pending = Conversation::query()->findOrFail($response['conversation_id'])->context['pending_named_project_clarification'] ?? null;
+        self::assertSame(['message' => $query], $pending);
+        $followup = $this->quote(['message' => 'Северный дом'], conversationId: $response['conversation_id']);
+        $second = $service->ask('Северный дом', $this->organization->id, $this->actor, $response['conversation_id'], $followup);
+        self::assertTrue($second['message']['metadata']['needs_clarification']);
+        self::assertSame([
+            ['query' => '№102', 'limit' => 2, 'project_id' => 102],
+            ['query' => 'Северный дом', 'limit' => 2, 'name_match' => 'exact'],
+            ['query' => 'Северный дом', 'limit' => 2],
+        ], $service->projectSearchArguments);
+        self::assertSame(['message' => 'Сверь выполненные работы с графиком проекта «Северный дом».'], Conversation::query()->findOrFail($response['conversation_id'])->context['pending_named_project_clarification']);
+        self::assertSame('Северный дом', Message::query()->where('role', 'user')->latest('id')->firstOrFail()->content);
+        self::assertSame(0, AICreditProviderUsage::query()->count());
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

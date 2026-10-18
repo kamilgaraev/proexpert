@@ -543,6 +543,11 @@ class AIAssistantService
         $executedAction = null;
 
         $conversationContext = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
+        unset($conversationContext['pending_named_project_clarification']);
+        $needsProjectClarification = array_key_exists('named_project_scope', $taskPlan) && AssistantRequestProjectScope::fromPlan($taskPlan)->projectId === null;
+        if ($needsProjectClarification) {
+            $conversationContext['pending_named_project_clarification'] = ['message' => $query];
+        }
 
         if ($currentIntent) {
             $conversationContext['last_intent'] = $currentIntent;
@@ -560,7 +565,7 @@ class AIAssistantService
         $conversation->context = $conversationContext;
         $conversation->save();
 
-        if (array_key_exists('named_project_scope', $taskPlan) && AssistantRequestProjectScope::fromPlan($taskPlan)->projectId === null) {
+        if ($needsProjectClarification) {
             $this->stage('verifying');
             $this->executionCheckpoint();
             $this->recordRequestOutcome('insufficient_data');
@@ -2864,8 +2869,10 @@ class AIAssistantService
         $previousRequest = is_array($conversationContext['last_request'] ?? null)
             ? $conversationContext['last_request']
             : [];
+        $isNamedProjectClarification = isset($conversationContext['pending_named_project_clarification'])
+            && AssistantProjectClarificationIntent::query($query, $requestPayload, $conversationContext) !== $query;
 
-        if (! $this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
+        if (! $isNamedProjectClarification && ! $this->shouldContinuePreviousRequest($query, $requestPayload, $previousCapability, $previousRequest)) {
             return $requestPayload;
         }
 
@@ -2873,6 +2880,11 @@ class AIAssistantService
         $isDetailContinuation = $this->isDetailContinuation($query);
         $currentContext = is_array($payload['context'] ?? null) ? $payload['context'] : [];
         $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
+        if ($isNamedProjectClarification) {
+            foreach (['period', 'filters'] as $key) {
+                if (array_key_exists($key, $previousContext)) { $currentContext[$key] = $previousContext[$key]; }
+            }
+        }
 
         if ($this->isGenericAssistantSource($currentContext['source_module'] ?? null)) {
             $currentContext['source_module'] = $previousContext['source_module'] ?? $previousCapability;
