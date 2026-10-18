@@ -203,36 +203,30 @@ final class EstimateAuditContextPlanner
         }
         $unusedQuantities = array_values(array_filter($root->derivedQuantities,
             static fn (array $quantity): bool => ! isset($assignedQuantityIds[$quantity['id']])));
-        usort($unusedQuantities, static fn (array $left, array $right): int => $quantityIndex['bytes'][$right['id']] <=> $quantityIndex['bytes'][$left['id']]);
+        $quantityWeights = [];
+        foreach ($unusedQuantities as $quantity) {
+            $records = $this->quantityRecords($quantity, $quantityIndex);
+            $increments = [];
+            foreach (array_keys($loads) as $index) {
+                $increments[] = $this->quantityIncrement($quantity, $records, $quantityIndex, $wanted[$index], $assignedQuantityRecords[$index], $factBytes);
+            }
+            $quantityWeights[$quantity['id']] = max($increments);
+        }
+        usort($unusedQuantities, static fn (array $left, array $right): int => $quantityWeights[$right['id']] <=> $quantityWeights[$left['id']]);
         foreach ($unusedQuantities as $quantity) {
             $id = $quantity['id'];
             $records = $this->quantityRecords($quantity, $quantityIndex);
             $candidateLoads = $loads;
             foreach (array_keys($candidateLoads) as $index) {
-                foreach ($records as $record => $bytes) {
-                    if (! isset($assignedQuantityRecords[$index][$record])) {
-                        $candidateLoads[$index] += $bytes;
-                    }
-                }
-                foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                    if (! isset($wanted[$index][$factId])) {
-                        $candidateLoads[$index] += $factBytes[$factId];
-                    }
-                }
+                $candidateLoads[$index] += $this->quantityIncrement($quantity, $records, $quantityIndex, $wanted[$index], $assignedQuantityRecords[$index], $factBytes);
             }
             $owner = array_keys($candidateLoads, min($candidateLoads), true)[0];
             $quantityIds[$owner][$id] = true;
-            $loads[$owner] += $quantityIndex['bytes'][$id];
-            foreach ($records as $record => $bytes) {
-                if (! isset($assignedQuantityRecords[$owner][$record])) {
-                    $loads[$owner] += $bytes;
-                    $assignedQuantityRecords[$owner][$record] = true;
-                }
+            $loads[$owner] = $candidateLoads[$owner];
+            foreach (array_keys($records) as $record) {
+                $assignedQuantityRecords[$owner][$record] = true;
             }
             foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                if (! isset($wanted[$owner][$factId])) {
-                    $loads[$owner] += $factBytes[$factId];
-                }
                 $wanted[$owner][$factId] = true;
             }
         }
@@ -294,6 +288,23 @@ final class EstimateAuditContextPlanner
         }
 
         return $records;
+    }
+
+    private function quantityIncrement(array $quantity, array $records, array $index, array $facts, array $assignedRecords, array $factBytes): int
+    {
+        $bytes = $index['bytes'][$quantity['id']];
+        foreach ($records as $record => $size) {
+            if (! isset($assignedRecords[$record])) {
+                $bytes += $size;
+            }
+        }
+        foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+            if (! isset($facts[$factId])) {
+                $bytes += $factBytes[$factId];
+            }
+        }
+
+        return $bytes;
     }
 
     private function workEntityIds(array $draft): array

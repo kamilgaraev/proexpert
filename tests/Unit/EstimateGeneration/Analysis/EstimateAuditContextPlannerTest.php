@@ -14,6 +14,34 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_large_quantity_bundles_are_placed_before_smaller_payloads_with_large_diagnostics(): void
+    {
+        $quantities = $diagnostics = [];
+        foreach ([6, 6, 10] as $i => $weight) {
+            $quantities[] = ['id' => 'quantity:'.$i, 'operand_fact_ids' => [], 'quantity_basis' => ['key' => 'quantity:'.$i]];
+            $diagnostics[] = ['derived_quantity_id' => 'quantity:'.$i, 'proof' => str_repeat('source; ', $weight * 512)];
+        }
+        $draft = ['building_quantities' => ['diagnostics' => $diagnostics],
+            'local_estimates' => [['sections' => [['work_items' => array_map(
+                static fn (int $i): array => ['key' => 'work:'.$i], range(0, 2)),
+            ]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, [], $quantities, $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        $groups = array_map(static fn (array $part): array => array_column($part['input']->derivedQuantities, 'id'), $parts);
+        self::assertContains(['quantity:0', 'quantity:1'], $groups);
+        self::assertContains(['quantity:2'], $groups);
+        foreach ($parts as $part) {
+            self::assertSame(array_column($part['input']->derivedQuantities, 'id'),
+                array_column($part['input']->draft['building_quantities']['diagnostics'], 'derived_quantity_id'));
+        }
+    }
+
     public function test_unused_quantities_balance_their_large_diagnostics_before_requiring_more_parts(): void
     {
         $quantities = $diagnostics = [];
