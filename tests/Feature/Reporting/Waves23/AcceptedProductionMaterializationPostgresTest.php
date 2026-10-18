@@ -550,11 +550,13 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
     {
         return ['work_type_unit' => ['work_type'], 'scoped_estimate_unit' => ['estimate'],
             'scoped_schedule_unit' => ['schedule'], 'scoped_schedule_estimate_unit' => ['schedule_estimate'],
-            'matching_estimate_and_schedule_units' => ['estimate_and_schedule']];
+            'matching_estimate_and_schedule_units' => ['estimate_and_schedule'],
+            'soft_deleted_schedule_unit' => ['schedule', true],
+            'soft_deleted_schedule_and_work_estimate_unit' => ['estimate_and_schedule', true]];
     }
 
     #[DataProvider('acceptanceUnitSources')]
-    public function test_real_act_approval_records_acceptance_without_invalidating_the_checkpoint(string $unitSource): void
+    public function test_real_act_approval_records_acceptance_without_invalidating_the_checkpoint(string $unitSource, bool $deletedTask = false): void
     {
         [$scope, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
             approvalDate: null,
@@ -563,6 +565,9 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
         );
         $user = User::factory()->create(['current_organization_id' => $organizationId]);
         $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, $unitSource);
+        if ($deletedTask) {
+            DB::table('schedule_tasks')->where('id', CompletedWork::query()->findOrFail($source['work_id'])->schedule_task_id)->update(['deleted_at' => now()]);
+        }
 
         $this->rerunHistoryCheckpointMigration();
         $checkpoint = DB::table('production_acceptance_history_checkpoints')
@@ -631,13 +636,16 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
     }
 
     #[DataProvider('acceptanceUnitSources')]
-    public function test_pivot_only_work_records_the_same_master_unit_without_duplicates(string $unitSource): void
+    public function test_pivot_only_work_records_the_same_master_unit_without_duplicates(string $unitSource, bool $deletedTask = false): void
     {
         [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
             approvalDate: null, rejectedAt: null, currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
         );
         $user = User::factory()->create(['current_organization_id' => $organizationId]);
         $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, $unitSource);
+        if ($deletedTask) {
+            DB::table('schedule_tasks')->where('id', CompletedWork::query()->findOrFail($source['work_id'])->schedule_task_id)->update(['deleted_at' => now()]);
+        }
         DB::table('performance_act_lines')->where('id', $lineId)->delete();
         DB::table('performance_act_completed_works')->insert([
             'performance_act_id' => $actId, 'completed_work_id' => $source['work_id'],
@@ -667,6 +675,7 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             'foreign_estimate_project' => ['foreign_estimate_project', 'scope_unavailable'],
             'foreign_estimate_organization' => ['foreign_estimate_organization', 'scope_unavailable'],
             'foreign_schedule_project' => ['foreign_schedule_project', 'scope_unavailable'],
+            'foreign_soft_deleted_schedule_project' => ['foreign_deleted_schedule_project', 'scope_unavailable'],
             'foreign_unit_organization' => ['foreign_unit_organization', 'scope_unavailable'],
             'conflicting_schedule_and_estimate_units' => ['conflicting_units', 'unit_unavailable'],
             'conflicting_captured_code' => ['captured_mismatch', 'unit_unavailable'],
@@ -691,12 +700,15 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             $otherUnitId = DB::table('measurement_units')->insertGetId(['organization_id' => $organizationId,
                 'name' => 'Другая единица', 'short_name' => 'unit-'.$work->id, 'type' => 'work', 'created_at' => now(), 'updated_at' => now()]);
             DB::table('schedule_tasks')->where('id', $work->schedule_task_id)->update(['measurement_unit_id' => $otherUnitId]);
-        } elseif ($fault === 'foreign_estimate_project' || $fault === 'foreign_schedule_project') {
+        } elseif (in_array($fault, ['foreign_estimate_project', 'foreign_schedule_project', 'foreign_deleted_schedule_project'], true)) {
             $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId]));
             if ($fault === 'foreign_estimate_project') {
                 DB::table('estimates')->where('id', $work->estimateItem->estimate_id)->update(['project_id' => $other->id]);
             } else {
                 DB::table('project_schedules')->where('id', $work->scheduleTask->schedule_id)->update(['project_id' => $other->id]);
+                if ($fault === 'foreign_deleted_schedule_project') {
+                    DB::table('schedule_tasks')->where('id', $work->schedule_task_id)->update(['deleted_at' => now()]);
+                }
             }
         } else {
             $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());

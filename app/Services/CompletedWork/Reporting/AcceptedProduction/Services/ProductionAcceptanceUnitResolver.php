@@ -7,6 +7,7 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 use App\Models\CompletedWork;
 use App\Models\EstimateItem;
 use App\Models\MeasurementUnit;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use InvalidArgumentException;
 
 final class ProductionAcceptanceUnitResolver
@@ -17,7 +18,13 @@ final class ProductionAcceptanceUnitResolver
             || (int) $work->organization_id !== $organizationId || (int) $work->project_id !== $projectId) {
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
-        $work->loadMissing(['scheduleTask.schedule', 'scheduleTask.measurementUnit',
+        if ($work->schedule_task_id !== null && $work->relationLoaded('scheduleTask') && $work->getRelation('scheduleTask') === null) {
+            $work->unsetRelation('scheduleTask');
+        }
+        $work->loadMissing(['scheduleTask' => static function (BelongsTo $relation): void {
+            $relation->withTrashed();
+        },
+            'scheduleTask.schedule', 'scheduleTask.measurementUnit',
             'scheduleTask.estimateItem.estimate', 'scheduleTask.estimateItem.measurementUnit',
             'estimateItem.estimate', 'estimateItem.measurementUnit', 'workType.measurementUnit']);
         $units = [];
