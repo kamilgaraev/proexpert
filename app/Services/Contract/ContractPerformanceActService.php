@@ -270,7 +270,7 @@ class ContractPerformanceActService
             'act_date',
             'description',
         ]));
-        $updated = DB::transaction(function () use (&$oldData, $actId, $contractId, $organizationId, $updateData): bool {
+        $updated = DB::transaction(function () use (&$oldData, $actId, $contractId, $organizationId, $updateData, $actDTO): bool {
             $contract = Contract::query()->whereKey($contractId)->where('organization_id', $organizationId)
                 ->lockForUpdate()->firstOrFail();
             $act = ContractPerformanceAct::query()
@@ -297,6 +297,11 @@ class ContractPerformanceActService
             $updated = $updateData === [] || $this->actRepository->update($actId, $updateData);
             if (! $updated) {
                 return false;
+            }
+
+            if ($actDTO->completedWorksProvided) {
+                $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
+                $act->recalculateAmount();
             }
 
             $current = $this->actRepository->find($actId);
