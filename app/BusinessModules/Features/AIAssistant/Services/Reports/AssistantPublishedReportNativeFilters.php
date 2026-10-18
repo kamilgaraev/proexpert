@@ -79,11 +79,15 @@ final readonly class AssistantPublishedReportNativeFilters
                     $this->invalid($from);
                 }
             }
-            if (in_array($definition->code, ['project_labor_cost', 'attendance_execution', 'customer_sla', 'safety_incident_actions', 'quality_defect_flow'], true)) {
+            if (in_array($definition->code, ['project_labor_cost', 'attendance_execution', 'customer_sla'], true)) {
                 $end = $input['period_to'] ?? $input['day_to'] ?? null;
                 if ($end !== null && $end > $asOf->format('Y-m-d')) {
                     $this->invalid('period');
                 }
+            }
+            if (in_array($definition->code, ['safety_incident_actions', 'quality_defect_flow'], true)
+                && isset($input['period_from']) && $input['period_from'] > $asOf->format('Y-m-d')) {
+                $this->invalid('period_from');
             }
             if ($definition->code === 'workforce_capacity' && $input['month_to'] > $asOf->format('Y-m')) {
                 $this->invalid('month_to');
