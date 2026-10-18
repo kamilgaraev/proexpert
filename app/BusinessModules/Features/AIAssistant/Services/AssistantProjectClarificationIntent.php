@@ -20,6 +20,9 @@ final class AssistantProjectClarificationIntent
             return $query;
         }
         $normalized = trim(preg_replace('/\s+/u', ' ', $query) ?? $query);
+        if (($period = AssistantProductionSchedulePeriod::clarification($normalized, $conversationContext)) !== null) {
+            return $period['query'];
+        }
         $pending = $conversationContext['pending_named_project_clarification'] ?? null;
         if (is_array($pending) && ($pending['message'] ?? null) === $message) {
             $name = preg_replace('/^(?:(?:по|для|в)\s+)?(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)\s+/iu', '', $normalized) ?? $normalized;

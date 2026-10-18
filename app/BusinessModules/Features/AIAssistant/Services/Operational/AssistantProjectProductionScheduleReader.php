@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportSource;
 use App\Models\User;
@@ -47,9 +48,37 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
         return 'projects';
     }
 
-    protected function collect(User $actor, int $organizationId, int $projectId): array
+    protected function validArguments(array $arguments): bool
+    {
+        return AssistantProductionSchedulePeriod::validArguments($arguments);
+    }
+
+    protected function collectForArguments(User $actor, int $organizationId, array $arguments): array
+    {
+        if (array_key_exists('period_start', $arguments) && $arguments['period_start'] === null) {
+            return ['period_unresolved' => true];
+        }
+
+        return $this->collect($actor, $organizationId, $arguments['project_id'], $arguments);
+    }
+
+    public function verifiedAnswer(array $result, User $actor, int $organizationId): ?array
+    {
+        $answer = parent::verifiedAnswer($result, $actor, $organizationId);
+        $arguments = $result['source_refs'][0]['_read_arguments'] ?? [];
+        if ($answer !== null && array_key_exists('period_start', $arguments) && $arguments['period_start'] === null) {
+            $answer['needs_clarification'] = true;
+        }
+
+        return $answer;
+    }
+
+    protected function collect(User $actor, int $organizationId, int $projectId, array $arguments = []): array
     {
         $works = $this->reports->resolve($actor, $organizationId, 'works', 'completed_work', $projectId)['query']->confirmed();
+        if (isset($arguments['period_start'], $arguments['period_end'])) {
+            $works->whereBetween('completed_works.completion_date', [$arguments['period_start'], $arguments['period_end']]);
+        }
         $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId)['query'];
         $schedules = $this->projectQuery($actor, $organizationId, $projectId, 'schedule');
         $project = $this->projectQuery($actor, $organizationId, $projectId, 'project')?->whereKey($projectId)->first(['id', 'end_date']);
@@ -79,7 +108,8 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
                 'is_overdue' => (bool) $row->getAttribute('is_overdue'),
             ])->all();
 
-        return ['confirmed_works' => (int) (clone $works)->count(), 'accepted_volumes' => $volumes, 'volume_groups_limited' => $volumeRows->count() > 20,
+        return ['period_start' => $arguments['period_start'] ?? null, 'period_end' => $arguments['period_end'] ?? null,
+            'confirmed_works' => (int) (clone $works)->count(), 'accepted_volumes' => $volumes, 'volume_groups_limited' => $volumeRows->count() > 20,
             'schedule_counts' => $scheduleCounts, 'total_schedules' => array_sum($scheduleCounts), 'active_schedules' => $scheduleCounts['active'] ?? 0,
             'task_counts' => $taskCounts, 'total_tasks' => array_sum($taskCounts), 'active_work_tasks' => (int) (clone $activeTasks)->count(),
             'open_tasks' => (int) (clone $open)->count(), 'overdue_tasks' => (int) (clone $open)->where('is_overdue', true)->count(),
@@ -90,9 +120,15 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     protected function format(array $data): string
     {
+        if (($data['period_unresolved'] ?? false) === true) {
+            return trans_message('ai_assistant_production_schedule.period_clarification');
+        }
         $unknownDate = trans_message('ai_assistant_operational.not_recorded');
         $lines = [trans_message('ai_assistant_production_schedule.scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']]),
             trans_message('ai_assistant_production_schedule.works', ['count' => $data['confirmed_works']])];
+        if ($data['period_start'] !== null) {
+            array_splice($lines, 1, 0, [trans_message('ai_assistant_production_schedule.period', ['from' => $data['period_start'], 'to' => $data['period_end']])]);
+        }
         foreach ($data['accepted_volumes'] as $volume) {
             $lines[] = $volume['quantity'] === null
                 ? trans_message('ai_assistant_production_schedule.unknown_unit', ['count' => $volume['records']])

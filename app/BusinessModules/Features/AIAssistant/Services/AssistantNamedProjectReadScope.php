@@ -30,6 +30,7 @@ final class AssistantNamedProjectReadScope
             return $plan;
         }
         $id = null;
+        $nameQuery = $name;
         $implicitNotName = false;
         if ($name !== null && ! $ambiguous) {
             $arguments = ['query' => $name, 'limit' => 2];
@@ -42,6 +43,14 @@ final class AssistantNamedProjectReadScope
             try {
                 $result = $search($arguments);
                 $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                if (! isset($arguments['project_id']) && ! self::hasQuotedName($query) && ! $implicitQuestion
+                    && is_array($result) && ($result['status'] ?? null) === 'success' && $rows === []
+                    && ($result['result_window']['has_more'] ?? null) === false
+                    && ($shortName = AssistantProductionSchedulePeriod::withoutSuffix($name)) !== $name && $shortName !== '') {
+                    $arguments['query'] = $nameQuery = $shortName;
+                    $result = $search($arguments);
+                    $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                }
                 if (! isset($arguments['project_id']) && ! $implicitQuestion && is_array($result)
                     && ($result['status'] ?? null) === 'success' && is_array($rows)
                     && $rows === [] && ($result['result_window']['has_more'] ?? null) === false) {
@@ -62,7 +71,7 @@ final class AssistantNamedProjectReadScope
         if ($implicitQuestion && $implicitNotName) {
             return $plan;
         }
-        $plan['named_project_scope'] = ['project_id' => $id, 'message_sha256' => hash('sha256', $query)];
+        $plan['named_project_scope'] = ['project_id' => $id, 'message_sha256' => hash('sha256', $query), 'name_query' => $nameQuery];
 
         return $plan;
     }
@@ -155,6 +164,20 @@ final class AssistantNamedProjectReadScope
     public static function withoutQuotedNames(string $query): string
     {
         return preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))(?:«[^»]+»|“[^”]+”|„[^“]+“|"[^"]+")/iu', '$1текущий', $query) ?? $query;
+    }
+
+    public static function periodQuery(array $plan): string
+    {
+        $query = (string) ($plan['request']['message'] ?? '');
+        $masked = self::withoutQuotedNames($query);
+        if ($masked !== $query) {
+            return $masked;
+        }
+        $scope = $plan['named_project_scope'] ?? null;
+        $name = is_array($scope) && ($scope['message_sha256'] ?? null) === hash('sha256', $query) ? ($scope['name_query'] ?? null) : null;
+
+        return is_string($name) && $name !== ''
+            ? (preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))'.preg_quote($name, '/').'/iu', '$1текущий', $query, 1) ?? $query) : $query;
     }
 
     public static function semanticQuery(string $query): string

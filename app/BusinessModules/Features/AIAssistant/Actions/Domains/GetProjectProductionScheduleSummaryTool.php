@@ -16,4 +16,15 @@ final readonly class GetProjectProductionScheduleSummaryTool extends AssistantPr
     {
         parent::__construct($reader);
     }
+
+    public function getParametersSchema(): array
+    {
+        $schema = parent::getParametersSchema();
+        $schema['properties']['period_start'] = $schema['properties']['period_end'] = [
+            'type' => ['string', 'null'], 'pattern' => '^\d{4}-\d{2}-\d{2}$',
+            'description' => trans_message('ai_assistant_production_schedule.period_parameter'),
+        ];
+
+        return $schema;
+    }
 }

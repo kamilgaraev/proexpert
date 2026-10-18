@@ -1930,6 +1930,59 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame(0, AICreditProviderUsage::query()->count());
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('periodClarificationReplies')]
+    public function test_period_year_reply_restores_the_verified_project_before_planning_and_keeps_raw_bubble(string $reply, bool $continuation): void
+    {
+        $original = 'Сверь выполненные работы с графиком проекта «Северный дом» за октябрь';
+        $semantic = 'Сверь выполненные работы с графиком проекта текущий за октябрь';
+        $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Период сводки');
+        $context = [
+            'last_task_type' => 'schedules',
+            'last_request' => ['message' => $original, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 102]]]],
+            'pending_production_period' => ['message' => $original, 'project_id' => 102,
+                'period_query' => $semantic],
+        ];
+        if ($continuation) {
+            unset($context['pending_production_period']);
+            $context['last_request']['message'] = $semantic;
+            $context['last_request']['production_period_override'] = ['project_id' => 102,
+                'period_start' => '2026-10-01', 'period_end' => '2026-10-15', 'message_sha256' => hash('sha256', $semantic)];
+        }
+        $conversation->update(['context' => $context]);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects(self::once())->method('responses')->willReturn($this->nativeResponse('Период уточнён.', [
+            'input_tokens' => 100, 'output_tokens' => 7, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true,
+        ]));
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->expects(self::once())->method('plan')->willReturnCallback(static function (string $query, array $payload) use ($reply): array {
+            self::assertStringContainsString($reply === '2026' ? 'за октябрь 2026' : 'за октябрь', $query);
+            self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_refs']);
+            self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_references']);
+
+            return ['request' => ['message' => $query] + $payload, 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []];
+        });
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->probeProviderDuringAsk = true;
+        $payload = $this->quote(['message' => $reply, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], conversationId: $conversation->id);
+        $service->ask($reply, $this->organization->id, $this->actor, $conversation->id, $payload);
+        self::assertSame($reply, Message::query()->where('role', 'user')->sole()->content);
+        $context = $conversation->fresh()->context;
+        self::assertArrayNotHasKey('pending_production_period', $context);
+        self::assertSame([102], array_column($context['last_request']['context']['entity_refs'], 'id'));
+        self::assertSame(['project'], array_column($context['last_request']['context']['entity_refs'], 'type'));
+        $read = \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan([
+            'request' => $context['last_request'], 'production_period_override' => $context['last_request']['production_period_override'] ?? null,
+        ]);
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => $reply === '2026' ? '2026-10-31' : '2026-10-15'], $read['arguments']);
+    }
+
+    public static function periodClarificationReplies(): array
+    {
+        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true]];
+    }
+
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
     {
         $registry ??= new AIToolRegistry;

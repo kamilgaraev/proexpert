@@ -504,10 +504,19 @@ class AIAssistantService
         $routingQuery = ! $imageDiscussion && ! $conversationNumberRequest
             ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
             : $query;
+        $periodClarification = AssistantProductionSchedulePeriod::clarification($query, $continuationContext);
+        if ($periodClarification !== null && $routingQuery === $periodClarification['query']) {
+            $requestPayload = AssistantProductionSchedulePeriod::resumePayload($requestPayload, $periodClarification);
+        }
         $planningQuery = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === []
             ? AssistantNamedProjectReadScope::planningQuery($routingQuery) : $routingQuery;
         $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($planningQuery, $requestPayload, $accessContext));
         $taskPlan['request']['message'] = $routingQuery;
+        unset($taskPlan['production_period_override'], $taskPlan['request']['production_period_override']);
+        if ($periodClarification !== null && $routingQuery === $periodClarification['query'] && isset($periodClarification['period_start'], $periodClarification['period_end'])) {
+            $taskPlan['production_period_override'] = $periodClarification + ['message_sha256' => hash('sha256', $routingQuery)];
+            $taskPlan['request']['production_period_override'] = $taskPlan['production_period_override'];
+        }
         if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
             $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
                 fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
@@ -546,7 +555,7 @@ class AIAssistantService
         $executedAction = null;
 
         $conversationContext = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
-        unset($conversationContext['pending_named_project_clarification']);
+        unset($conversationContext['pending_named_project_clarification'], $conversationContext['pending_production_period']);
         $needsProjectClarification = array_key_exists('named_project_scope', $taskPlan) && AssistantRequestProjectScope::fromPlan($taskPlan)->projectId === null;
         if ($needsProjectClarification) {
             $conversationContext['pending_named_project_clarification'] = ['message' => $query];
@@ -1053,7 +1062,15 @@ class AIAssistantService
                 $reader = AssistantRequiredProjectRead::decisionReader((string) ($toolResult['_tool_name'] ?? ''), $query);
                 if ($reader !== null && $proposedActions === []) {
                     $verifiedDecision = $this->readPhase(fn (): ?array => app($reader)->verifiedAnswer($toolResult, $user, $organizationId), $user, $organizationId);
-                    if ($verifiedDecision !== null) { $assistantContent = $verifiedDecision['text']; $structuredCheck = $verifiedDecision; }
+                    if ($verifiedDecision !== null) {
+                        $assistantContent = $verifiedDecision['text']; $structuredCheck = $verifiedDecision;
+                        if (($pendingPeriod = AssistantProductionSchedulePeriod::pending($taskPlan, $verifiedDecision)) !== null) {
+                            $context = $conversation->context ?? [];
+                            $context['pending_production_period'] = $pendingPeriod;
+                            $conversation->context = $context;
+                            $conversation->save();
+                        }
+                    }
                     break;
                 }
                 if (($toolResult['_tool_name'] ?? null) === 'get_project_attention' && $proposedActions === [] && AssistantProjectAttentionIntent::matches($query)) {

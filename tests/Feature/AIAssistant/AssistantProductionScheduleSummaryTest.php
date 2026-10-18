@@ -119,6 +119,46 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->owner, $this->fixture->organization->id, $fresh['source_refs']));
     }
 
+    public function test_period_filters_physical_work_dates_and_survives_reference_recheck(): void
+    {
+        $this->work('0.1000', 'м²', ['completion_date' => '2026-10-01']);
+        $this->work('0.2000', 'м²', ['completion_date' => '2026-10-31']);
+        $outside = $this->work('100.0000', 'м²', ['completion_date' => '2026-09-30']);
+        $this->work('200.0000', 'м²', ['completion_date' => '2026-11-01']);
+        $this->task($this->schedule(), 'Текущая контрольная веха', ['task_type' => 'milestone']);
+        $arguments = ['project_id' => $this->project->id, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'];
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $arguments);
+        self::assertSame(2, $read['data']['confirmed_works']);
+        self::assertSame('0.3000', $read['data']['accepted_volumes'][0]['quantity']);
+        self::assertSame(1, $read['data']['open_tasks']);
+        self::assertStringContainsString('2026-10-01', $read['server_formatted_answer']);
+        self::assertStringContainsString('2026-10-31', $read['server_formatted_answer']);
+        self::assertStringContainsString('текущем состоянии всего проекта', $read['server_formatted_answer']);
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
+        self::assertNotNull($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id));
+        $tampered = $read['source_refs'][0];
+        $tampered['_read_arguments']['period_start'] = '2026-09-01';
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $tampered));
+        $outside->updateQuietly(['completion_date' => '2026-10-15']);
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
+    }
+
+    public function test_unresolved_period_requests_dates_without_showing_all_time_totals(): void
+    {
+        $this->work('999.0000', 'м²');
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, [
+            'project_id' => $this->project->id, 'period_start' => null, 'period_end' => null,
+        ]);
+        self::assertArrayNotHasKey('confirmed_works', $read['data']);
+        self::assertStringContainsString('Уточните год', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('999', $read['server_formatted_answer']);
+        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        $read['data']['period_unresolved'] = false;
+        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+    }
+
     public function test_missing_active_schedule_is_not_completion_and_volume_groups_are_bounded(): void
     {
         for ($index = 0; $index < 23; $index++) {

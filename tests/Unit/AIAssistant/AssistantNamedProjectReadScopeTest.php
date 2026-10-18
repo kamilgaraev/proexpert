@@ -13,6 +13,24 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_period_suffix_falls_back_after_full_exact_name_and_preserves_literal_names(): void
+    {
+        $query = 'Сверь выполненные работы с графиком проекта Северный дом за октябрь 2026';
+        $seen = [];
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$seen): array {
+            $seen[] = $arguments;
+
+            return $this->projectSearchResult($arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], false);
+        });
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        self::assertSame(['Северный дом за октябрь 2026', 'Северный дом'], array_column($seen, 'query'));
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+        $literal = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта Дом за октябрь'), fn (): array => $this->projectSearchResult([['id' => 95]], false));
+        self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+        $ambiguousYear = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «Северный дом» за октябрь'), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+        self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantRequiredProjectRead::fromPlan($ambiguousYear)['arguments']);
+    }
+
     public function test_unique_named_project_overrides_background_scope_and_tool_arguments(): void
     {
         $plan = $this->plan('В проекте «Учебный ПТО» ремонт уже сделан? По выполненным работам всё выглядит готовым. Сверь с графиком: что осталось незавершённым, какой плановый срок и кто отвечает?');
