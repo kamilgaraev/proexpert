@@ -10,11 +10,13 @@ final class AssistantProductionSchedulePeriod
 {
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
+    private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3})';
+
     private const TIME_START = '(?:(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:недел|месяц|квартал|год|день|дня|дней|сут|'.self::MONTH.')|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:(?:за|в|во)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:недел|месяц|квартал|год)|\d+\s+(?:недел|месяц|квартал|год|дней))'
+        $time = '(?:(?:за|в|во)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:недел|месяц|квартал|год)|\d+\s+(?:недел|месяц|квартал|год|дней))'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|на\s+\d{4}\s+год)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -33,6 +35,9 @@ final class AssistantProductionSchedulePeriod
             }
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
+        if (preg_match('/\bквартал[а-яё]*\b/iu', $query) === 1) {
+            return $arguments + self::quarterDates($query);
+        }
         if (preg_match('/\b'.self::TIME_START.'/iu', $query) !== 1) {
             return $arguments;
         }
@@ -120,7 +125,7 @@ final class AssistantProductionSchedulePeriod
             && self::validArguments(['project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]])) {
             return ['query' => $query, 'project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]];
         }
-        $pattern = '/\bза\s+'.self::MONTH.'(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
+        $pattern = '/\b(?:за\s+'.self::MONTH.'|(?:за|в|во)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
         if (preg_match_all($pattern, $query) !== 1) {
             return null;
         }
@@ -144,6 +149,21 @@ final class AssistantProductionSchedulePeriod
         $payload['context'] = $context;
 
         return $payload;
+    }
+
+    private static function quarterDates(string $query): array
+    {
+        $unresolved = ['period_start' => null, 'period_end' => null];
+        if (preg_match_all('/\bквартал[а-яё]*\b/iu', $query) !== 1
+            || preg_match_all('/\b(?:19|20)\d{2}\b/u', $query) !== 1
+            || preg_match('/\b'.self::MONTH.'\b/iu', $query) === 1
+            || preg_match('/\b(?:за|в|во)\s+('.self::QUARTER_NUMBER.')\s+квартал[ае]?\s+((?:19|20)\d{2})\b/iu', $query, $quarter) !== 1) {
+            return $unresolved;
+        }
+        $number = ['i' => 1, 'ii' => 2, 'iii' => 3, 'iv' => 4][mb_strtolower($quarter[1])] ?? (int) $quarter[1];
+        $start = new \DateTimeImmutable(sprintf('%d-%02d-01', (int) $quarter[2], ($number - 1) * 3 + 1));
+
+        return ['period_start' => $start->format('Y-m-d'), 'period_end' => $start->modify('+2 months')->format('Y-m-t')];
     }
 
     private static function normalizedQuery(string $query): string

@@ -13,6 +13,31 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_short_adjective_predicates_preserve_ui_scope_unless_a_literal_project_exists(): void
+    {
+        foreach (['доступны', 'исправны', 'критичны', 'свободны', 'видны', 'доступен', 'доступна', 'доступно'] as $predicate) {
+            foreach (['?', ''] as $ending) {
+                $query = 'Какие камеры проекта '.$predicate.$ending;
+                self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($predicate): array {
+                    self::assertSame(['query' => $predicate, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([], false);
+                });
+                self::assertArrayNotHasKey('named_project_scope', $resolved);
+                self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+                $named = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102, 'name' => $predicate]], false));
+                self::assertSame(102, AssistantRequestProjectScope::fromPlan($named)->projectId);
+                foreach ([$this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                    $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
+                    self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId);
+                }
+            }
+            $quoted = AssistantNamedProjectReadScope::bind($this->plan('Какие камеры проекта «'.$predicate.'»?'), fn (): array => $this->projectSearchResult([], false));
+            self::assertNull(AssistantRequestProjectScope::fromPlan($quoted)->projectId);
+        }
+    }
+
     public function test_direct_project_names_keep_internal_punctuation_before_a_proven_command_boundary(): void
     {
         foreach (['Южный, корпус 2', 'Южный; корпус 2', 'Южный: корпус 2', 'Дома & сады', 'ЖК 1/2'] as $name) {

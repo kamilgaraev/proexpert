@@ -12,6 +12,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_numbered_quarters_use_calendar_boundaries_and_unknown_quarters_require_dates(): void
+    {
+        foreach ([1 => ['I', '2026-01-01', '2026-03-31'], 2 => ['II', '2026-04-01', '2026-06-30'],
+            3 => ['III', '2026-07-01', '2026-09-30'], 4 => ['IV', '2026-10-01', '2026-12-31']] as $number => [$roman, $start, $end]) {
+            foreach (['за '.$number.' квартал 2026 года', 'за '.$number.'-й квартал 2026 года', 'в '.$roman.' квартале 2026 года'] as $period) {
+                $query = 'Сверь выполненные работы с графиком '.$period;
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $query]]), $query);
+                self::assertSame('Дом', AssistantProductionSchedulePeriod::withoutSuffix('Дом '.$period));
+            }
+        }
+        foreach (['за 3 квартал', 'за 5 квартал 2026', 'за 2 и 3 кварталы 2026', 'за третий квартал 2026',
+            'за 3 квартал 2026 и за октябрь 2026', 'за 3 квартал 2025 и 2026 годов'] as $period) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь работы с графиком '.$period]]), $period);
+        }
+        $message = 'Сверь выполненные работы с графиком за 3 квартал';
+        $pending = AssistantProductionSchedulePeriod::pending(['request' => ['message' => $message]], [
+            'replaced' => true, 'needs_clarification' => true, 'source_refs' => [[
+                'entity_type' => AssistantProjectProductionScheduleReader::TYPE,
+                '_read_arguments' => ['project_id' => 102, 'period_start' => null, 'period_end' => null],
+            ]],
+        ]);
+        $clarification = AssistantProductionSchedulePeriod::clarification('2026', ['last_request' => ['message' => $message], 'pending_production_period' => $pending]);
+        self::assertNotNull($clarification);
+        self::assertSame(['project_id' => 102, 'period_start' => '2026-07-01', 'period_end' => '2026-09-30'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $clarification['query']]]));
+    }
+
     public function test_locative_months_with_explicit_year_are_resolved_and_clarifications_keep_the_month(): void
     {
         $months = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
