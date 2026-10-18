@@ -7,11 +7,13 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use DomainException;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 final readonly class RetainedPipelinePrefix
 {
@@ -80,7 +82,7 @@ final readonly class RetainedPipelinePrefix
             throw new DomainException('estimator_retained_pipeline_prefix_changed');
         }
         $current = $this->source($session, $prefix['source_attempt_id'] ?? null,
-            $prefix['source_operation_id'] ?? null, $plan['known_context']['fingerprint'] ?? null);
+            $prefix['source_operation_id'] ?? null, $plan['known_context']['fingerprint'] ?? null, validatePayloads: false);
         if ($current === null || CanonicalPipelineJson::encode($current) !== CanonicalPipelineJson::encode($prefix)
             || $context->baseInputVersion !== $prefix['base_input_version']) {
             throw new DomainException('estimator_retained_pipeline_prefix_changed');
@@ -108,7 +110,7 @@ final readonly class RetainedPipelinePrefix
                 'source_output_version' => $stage['output_version']], warnings: $stage['warnings']);
     }
 
-    private function source(EstimateGenerationSession $session, mixed $attempt, mixed $operationId, mixed $knownFingerprint): ?array
+    private function source(EstimateGenerationSession $session, mixed $attempt, mixed $operationId, mixed $knownFingerprint, bool $validatePayloads = true): ?array
     {
         if (! is_string($attempt) || ! Str::isUuid($attempt) || ! is_string($operationId)
             || ! Str::isUuid($operationId) || $attempt !== $operationId || ! is_string($knownFingerprint)) {
@@ -152,6 +154,19 @@ final readonly class RetainedPipelinePrefix
                 || CanonicalPipelineJson::encode($dependencies) !== CanonicalPipelineJson::encode($output->dependencyVersions)
                 || CanonicalPipelineJson::encode($dependencies) !== CanonicalPipelineJson::encode($checkpoint->dependency_versions)) {
                 return null;
+            }
+            if ($validatePayloads) {
+                try {
+                    $prior->payload($definition->stage);
+                } catch (TypedFailureException $error) {
+                    if ($error->safeCode !== 'pipeline_artifact_integrity_failed') {
+                        throw $error;
+                    }
+
+                    return null;
+                } catch (DomainException|InvalidArgumentException) {
+                    return null;
+                }
             }
             $stages[$definition->stage->value] = ['output_version' => $output->version,
                 'content_version' => $output->artifact->contentVersion, 'warnings' => $checkpoint->warnings ?? []];

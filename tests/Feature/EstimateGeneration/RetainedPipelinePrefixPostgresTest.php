@@ -10,10 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEsti
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EvidenceAwarePipelineBaseInputVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactReference;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -180,6 +183,63 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         }
         self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
         Http::assertNothingSent();
+    }
+
+    #[DataProvider('unreadableArtifacts')]
+    public function test_unreadable_payload_is_not_offered_for_continuation(string $failure): void
+    {
+        [$actor, $session] = $this->fixture();
+        $this->blockBuildDraftArtifact($failure);
+        [$id, $quote] = $this->quote($actor, $session);
+
+        self::assertArrayNotHasKey('continuation', $quote);
+        self::assertArrayNotHasKey('retained_pipeline_prefix', $this->plan($id));
+        self::assertArrayHasKey('estimate_composition', $this->plan($id)['roles']);
+        self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('unreadableArtifacts')]
+    public function test_payload_unavailable_after_quote_is_rejected_before_reservation(string $failure): void
+    {
+        [$actor, $session] = $this->fixture();
+        [$id, $quote] = $this->quote($actor, $session);
+        self::assertArrayHasKey('continuation', $quote);
+        $this->blockBuildDraftArtifact($failure);
+
+        try {
+            DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation'));
+            self::fail('Unavailable artifact must not be reserved.');
+        } catch (DomainException $error) {
+            self::assertSame('estimator_retained_pipeline_prefix_changed', $error->getMessage());
+        }
+        self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        self::assertSame('failed', $session->fresh()->status->value);
+        self::assertSame(4, (int) $session->fresh()->state_version);
+        Http::assertNothingSent();
+    }
+
+    public static function unreadableArtifacts(): array
+    {
+        return [['missing'], ['integrity'], ['schema']];
+    }
+
+    private function blockBuildDraftArtifact(string $failure): void
+    {
+        $original = app(PipelineArtifactStore::class);
+        $artifacts = \Mockery::mock(PipelineArtifactStore::class);
+        $artifacts->shouldReceive('read')->andReturnUsing(static function (PipelineContext $context, PipelineArtifactReference $reference) use ($original, $failure): array {
+            if (! str_contains($reference->objectKey, '/build_draft/')) {
+                return $original->read($context, $reference);
+            }
+
+            return match ($failure) {
+                'missing' => throw new DomainException('Pipeline artifact is unavailable.'),
+                'integrity' => throw new TypedFailureException(FailureCategory::Terminal, 'pipeline_artifact_integrity_failed'),
+                'schema' => ['invalid' => 'payload'],
+            };
+        });
+        $this->app->instance(PipelineOutputRepository::class, new EloquentPipelineOutputRepository($artifacts));
     }
 
     private function quote(User $actor, EstimateGenerationSession $session): array
