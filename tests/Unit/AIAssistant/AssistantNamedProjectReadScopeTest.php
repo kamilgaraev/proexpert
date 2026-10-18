@@ -191,6 +191,21 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertArrayNotHasKey('name_match', $calls[1]);
     }
 
+    public function test_single_word_predicate_before_question_mark_or_end_uses_current_project(): void
+    {
+        foreach (['Какие камеры проекта работают?', 'Какие камеры проекта работают', 'Камеры проекта работают?'] as $query) {
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([], false));
+            self::assertArrayNotHasKey('named_project_scope', $resolved);
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+        }
+        $named = AssistantNamedProjectReadScope::bind($this->plan('Какие камеры проекта работают?'), fn (): array => $this->projectSearchResult([['id' => 102, 'name' => 'работают']], false));
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($named)->projectId);
+        $missing = AssistantNamedProjectReadScope::bind($this->plan('Какие камеры проекта «работают»?'), fn (): array => $this->projectSearchResult([], false));
+        self::assertTrue(AssistantRequestProjectScope::fromPlan($missing)->requested);
+        self::assertNull(AssistantRequestProjectScope::fromPlan($missing)->projectId);
+    }
+
     public function test_unquoted_name_after_our_project_is_resolved_instead_of_background_project(): void
     {
         foreach (['Сверь выполненные работы с графиком в нашем проекте Северный дом',
