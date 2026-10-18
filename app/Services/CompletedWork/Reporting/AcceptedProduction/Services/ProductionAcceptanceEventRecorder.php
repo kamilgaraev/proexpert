@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
+use App\Models\MeasurementUnit;
 use App\Models\PerformanceActCompletedWork;
 use App\Models\PerformanceActLine;
 use App\Services\Acting\ActingQuantityReservationService;
@@ -214,8 +215,8 @@ final readonly class ProductionAcceptanceEventRecorder
         ?int $actorId,
         array &$acceptedSourceQuantities,
     ): ProductionAcceptanceEvent {
-        $unit = $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id,
-            PerformanceActLine::capturedUnitFromCompletedWork($work));
+        $unit = $eventType === 'accepted' ? $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id,
+            PerformanceActLine::capturedUnitFromCompletedWork($work)) : null;
         $pivot = $work->pivot;
         if (! $pivot instanceof PerformanceActCompletedWork) {
             throw new InvalidArgumentException('production_acceptance_pivot_unavailable');
@@ -229,9 +230,7 @@ final readonly class ProductionAcceptanceEventRecorder
             sourceLineType: 'completed_work',
             sourceLineId: (int) $work->id,
             acceptedQuantity: (string) ($work->pivot->included_quantity ?? '0'),
-            unitDimension: (string) ($unit->type ?? 'work'),
-            unitCode: (string) $unit->short_name,
-            conversionVersion: 'unit_'.(int) $unit->id,
+            unit: $unit,
             approvedRate: $eventType === 'accepted'
                 ? $this->rates->fromPivot($pivot, $act->currency)
                 : null,
@@ -254,7 +253,7 @@ final readonly class ProductionAcceptanceEventRecorder
         if ($line->line_type !== PerformanceActLine::TYPE_COMPLETED_WORK || $work === null) {
             throw new InvalidArgumentException('production_acceptance_line_identity_unavailable');
         }
-        $unit = $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id, $line->unit);
+        $unit = $eventType === 'accepted' ? $this->units->resolve($work, (int) $act->contract->organization_id, (int) $act->project_id, $line->unit) : null;
         $workId = (int) $work->id;
         $acceptedSourceQuantities[$workId] ??= 0;
 
@@ -264,9 +263,7 @@ final readonly class ProductionAcceptanceEventRecorder
             sourceLineType: 'performance_act_line',
             sourceLineId: (int) $line->id,
             acceptedQuantity: (string) $line->quantity,
-            unitDimension: (string) ($unit->type ?? 'work'),
-            unitCode: (string) $unit->short_name,
-            conversionVersion: 'unit_'.(int) $unit->id,
+            unit: $unit,
             approvedRate: $eventType === 'accepted'
                 ? $this->rates->fromLine($line, $act->currency)
                 : null,
@@ -283,9 +280,7 @@ final readonly class ProductionAcceptanceEventRecorder
         string $sourceLineType,
         int $sourceLineId,
         string $acceptedQuantity,
-        string $unitDimension,
-        string $unitCode,
-        string $conversionVersion,
+        ?MeasurementUnit $unit,
         ?ApprovedAcceptanceRate $approvedRate,
         string $eventType,
         CarbonImmutable $occurredAt,
@@ -299,41 +294,63 @@ final readonly class ProductionAcceptanceEventRecorder
         ) {
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
-        $acceptedQuantity = $this->decimal($acceptedQuantity);
-        $acceptedQuantityScaled = AcceptedProductionQuantity::scaled(
-            $acceptedQuantity,
-            'production_acceptance_quantity_invalid',
-        );
-        if ($acceptedQuantityScaled <= 0) {
-            throw new InvalidArgumentException('production_acceptance_quantity_zero');
-        }
-        $delta = $eventType === 'reversed' ? '-'.$acceptedQuantity : $acceptedQuantity;
-        $sourcePlannedQuantity = $this->decimal((string) ($work->quantity ?? '0'));
-        $sourceReportedQuantity = $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0'));
-        $plannedQuantity = $sourcePlannedQuantity;
-        $reportedQuantity = $sourceReportedQuantity;
-        $workId = (int) $work->id;
-        $taskId = $work->schedule_task_id === null ? null : (int) $work->schedule_task_id;
-        $wbsCode = $work->scheduleTask?->wbs_code;
-        $additionalInfo = is_array($work->additional_info) ? $work->additional_info : [];
-        $zone = isset($additionalInfo['zone']) && is_scalar($additionalInfo['zone'])
-            ? trim((string) $additionalInfo['zone'])
-            : null;
-        $contractorId = $work->contractor_id === null ? null : (int) $work->contractor_id;
-        if ($eventType === 'accepted' && $approvedRate === null) {
-            throw new InvalidArgumentException('production_acceptance_rate_unavailable');
-        }
         $latestEvent = ProductionAcceptanceEvent::query()
             ->where('organization_id', $organizationId)
+            ->where('project_id', $act->project_id)
+            ->where('contract_id', $act->contract_id)
             ->where('performance_act_id', $act->id)
             ->where('source_line_type', $sourceLineType)
             ->where('source_line_id', $sourceLineId)
             ->orderByDesc('transition_version')
             ->first();
-        if ($latestEvent?->event_type === $eventType) {
-            if ($eventType === 'reversed') {
+        $acceptedEvent = null;
+        if ($eventType === 'reversed') {
+            if ($latestEvent?->event_type === 'reversed') {
                 return $latestEvent;
             }
+            if ($latestEvent?->event_type !== 'accepted' || (int) $latestEvent->work_id !== (int) $work->id) {
+                throw new InvalidArgumentException('production_acceptance_reversal_without_acceptance');
+            }
+            $acceptedEvent = $latestEvent;
+            $reversal = $this->reversals->fromAccepted($acceptedEvent);
+            $delta = $reversal['accepted_quantity_delta'];
+            $unitDimension = $reversal['unit_dimension'];
+            $unitCode = $reversal['unit_code'];
+            $conversionVersion = $reversal['conversion_version'];
+            $approvedRate = $reversal['approved_rate'];
+            $workId = $reversal['work_id'];
+            $taskId = $reversal['task_id'];
+            $wbsCode = $reversal['wbs_code'];
+            $zone = $reversal['zone'];
+            $contractorId = $reversal['contractor_id'];
+            $plannedQuantity = $reversal['planned_quantity'];
+            $reportedQuantity = $reversal['reported_quantity'];
+        } else {
+            if ($unit === null) {
+                throw new InvalidArgumentException('production_acceptance_unit_unavailable');
+            }
+            if ($approvedRate === null) {
+                throw new InvalidArgumentException('production_acceptance_rate_unavailable');
+            }
+            $unitDimension = (string) ($unit->type ?? 'work');
+            $unitCode = (string) $unit->short_name;
+            $conversionVersion = 'unit_'.(int) $unit->id;
+            $acceptedQuantity = $this->decimal($acceptedQuantity);
+            if (AcceptedProductionQuantity::scaled($acceptedQuantity, 'production_acceptance_quantity_invalid') <= 0) {
+                throw new InvalidArgumentException('production_acceptance_quantity_zero');
+            }
+            $delta = $acceptedQuantity;
+            $plannedQuantity = $this->decimal((string) ($work->quantity ?? '0'));
+            $reportedQuantity = $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0'));
+            $workId = (int) $work->id;
+            $taskId = $work->schedule_task_id === null ? null : (int) $work->schedule_task_id;
+            $wbsCode = $work->scheduleTask?->wbs_code;
+            $additionalInfo = is_array($work->additional_info) ? $work->additional_info : [];
+            $zone = isset($additionalInfo['zone']) && is_scalar($additionalInfo['zone']) ? trim((string) $additionalInfo['zone']) : null;
+            $contractorId = $work->contractor_id === null ? null : (int) $work->contractor_id;
+        }
+        $acceptedQuantityScaled = AcceptedProductionQuantity::scaled($delta, 'production_acceptance_quantity_invalid');
+        if ($latestEvent?->event_type === $eventType) {
             $this->assertRepeatedEventMatches(
                 $latestEvent,
                 $act,
@@ -355,7 +372,7 @@ final readonly class ProductionAcceptanceEventRecorder
                 throw new InvalidArgumentException('production_acceptance_active_quantity_invalid');
             }
             $reportedQuantityScaled = AcceptedProductionQuantity::scaled(
-                $sourceReportedQuantity,
+                $reportedQuantity,
                 'production_acceptance_quantity_invalid',
             );
             if ($acceptedQuantityBefore < 0
@@ -371,27 +388,7 @@ final readonly class ProductionAcceptanceEventRecorder
                 $reportedQuantity = '0.000';
             }
         }
-        $acceptedEvent = null;
         if ($eventType === 'reversed') {
-            $acceptedEvent = $latestEvent?->event_type === 'reversed'
-                ? ProductionAcceptanceEvent::query()->find($latestEvent->reverses_event_id)
-                : $latestEvent;
-        }
-        if ($eventType === 'reversed' && $acceptedEvent?->event_type !== 'accepted') {
-            throw new InvalidArgumentException('production_acceptance_reversal_without_acceptance');
-        }
-        if ($eventType === 'reversed') {
-            $reversal = $this->reversals->fromAccepted($acceptedEvent);
-            $delta = $reversal['accepted_quantity_delta'];
-            $unitDimension = $reversal['unit_dimension'];
-            $unitCode = $reversal['unit_code'];
-            $conversionVersion = $reversal['conversion_version'];
-            $approvedRate = $reversal['approved_rate'];
-            $workId = $reversal['work_id'];
-            $taskId = $reversal['task_id'];
-            $wbsCode = $reversal['wbs_code'];
-            $zone = $reversal['zone'];
-            $contractorId = $reversal['contractor_id'];
             $remainingAcceptedQuantity = $this->activeAcceptedQuantity($organizationId, $workId)
                 + AcceptedProductionQuantity::scaled(
                     $delta,

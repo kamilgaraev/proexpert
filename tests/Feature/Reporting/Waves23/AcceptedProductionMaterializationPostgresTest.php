@@ -677,6 +677,71 @@ final class AcceptedProductionMaterializationPostgresTest extends TestCase
             ->where('performance_act_id', $actId)->value('unit_code'));
     }
 
+    public static function changedReversalSources(): array
+    {
+        return ['canonical_unit_changed' => [false, 'unit'], 'canonical_quantity_cleared' => [false, 'quantity'],
+            'pivot_unit_changed' => [true, 'unit'], 'pivot_quantity_cleared' => [true, 'quantity']];
+    }
+
+    #[DataProvider('changedReversalSources')]
+    public function test_annulment_reverses_frozen_units_and_quantities_after_source_changes(bool $pivot, string $change): void
+    {
+        [, $actId, $lineId, $projectId, $organizationId] = $this->insertLifecycleOwner(
+            approvalDate: null, rejectedAt: null, currentStatus: ContractPerformanceAct::STATUS_PENDING_APPROVAL,
+        );
+        $user = User::factory()->create(['current_organization_id' => $organizationId]);
+        $source = $this->makeLifecycleLineProjectable($actId, $lineId, $projectId, $organizationId, (int) $user->id, 'schedule');
+        $this->mock(ActingPriceService::class)->shouldNotReceive('resolveLineUnitPrice');
+        $notification = $this->mock(ActReportNotificationService::class)->shouldReceive('notifyStatusChanged');
+        $pivot ? $notification->never() : $notification->once();
+        if ($pivot) {
+            DB::table('performance_act_lines')->where('id', $lineId)->delete();
+            DB::table('performance_act_completed_works')->insert([
+                'performance_act_id' => $actId, 'completed_work_id' => $source['work_id'],
+                'included_quantity' => '1.000', 'included_amount' => '1000.00', 'currency' => 'RUB',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            app(ProductionAcceptanceEventRecorder::class)->recordTransition(
+                ContractPerformanceAct::query()->findOrFail($actId), 'pending', 'approved', CarbonImmutable::now(), (int) $user->id,
+            );
+            DB::table('contract_performance_acts')->where('id', $actId)->update(['status' => 'approved', 'is_approved' => true]);
+        } else {
+            app(ActReportWorkflowService::class)->approve(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id);
+        }
+        $accepted = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sole();
+        $originalMember = DB::table('production_acceptance_owner_members')->where('performance_act_id', $actId)->sole();
+        if ($change === 'unit') {
+            DB::table('measurement_units')->where('id', $source['unit_id'])->update(['short_name' => 'changed-'.$source['unit_id']]);
+        } else {
+            DB::table('completed_works')->where('id', $source['work_id'])->update(['quantity' => '0', 'completed_quantity' => '0']);
+            $table = $pivot ? 'performance_act_completed_works' : 'performance_act_lines';
+            DB::table($table)->where($pivot ? 'performance_act_id' : 'id', $pivot ? $actId : $lineId)
+                ->update([$pivot ? 'included_quantity' : 'quantity' => '0.2500']);
+        }
+        $key = (string) \Illuminate\Support\Str::uuid();
+        $workflow = app(ActReportWorkflowService::class);
+        $annulled = $workflow->annul(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id, 'Ошибка приёмки', $key);
+        self::assertSame(ContractPerformanceAct::STATUS_ANNULLED, (string) $annulled->status);
+        $reversed = ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->where('event_type', 'reversed')->sole();
+        self::assertSame((int) $accepted->id, (int) $reversed->reverses_event_id);
+        self::assertSame(-(float) $accepted->accepted_quantity_delta, (float) $reversed->accepted_quantity_delta);
+        foreach (['unit_code', 'unit_dimension', 'conversion_version', 'approved_rate_minor', 'currency',
+            'work_id', 'source_line_type', 'source_line_id', 'organization_id', 'project_id', 'contract_id'] as $field) {
+            self::assertSame($accepted->getAttribute($field), $reversed->getAttribute($field), $field);
+        }
+        $member = DB::table('production_acceptance_owner_members')->where('performance_act_id', $actId)->orderByDesc('id')->firstOrFail();
+        foreach (['source_line_type', 'source_line_id', 'work_id', 'contractor_id', 'unit_code', 'zone'] as $field) {
+            self::assertSame($originalMember->{$field}, $member->{$field}, $field);
+        }
+        foreach (['accepted_quantity_delta', 'planned_quantity', 'reported_quantity'] as $field) {
+            self::assertSame(0.0, (float) ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->sum($field), $field);
+        }
+        $workflow->annul(ContractPerformanceAct::query()->findOrFail($actId), (int) $user->id, 'Ошибка приёмки', $key);
+        self::assertSame(2, ProductionAcceptanceEvent::query()->where('performance_act_id', $actId)->count());
+        self::assertSame(2, DB::table('production_acceptance_owner_versions')->where('performance_act_id', $actId)->count());
+        self::assertSame(0, DB::table('production_acceptance_backfill_ledger')->where('performance_act_id', $actId)->count());
+    }
+
     public static function unprovenAcceptanceUnits(): array
     {
         return [
