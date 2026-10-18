@@ -76,6 +76,10 @@ final readonly class AssistantPublishedReportInput
         $filters = $this->filters->parse($arguments['filters_json'] ?? '{}');
         $filters = $this->periods->initialFilters($definition, $filters, ['mode' => $mode], $asOf, new DateTimeZone($timezone));
         $filters = $this->filters->normalize($context, $definition, $filters, $asOf);
+        if ($code === 'accepted_production_progress'
+            && $filters->values['period_to'] > $asOf->setTimezone($context->scope->timezone)->format('Y-m-d')) {
+            $this->invalid();
+        }
 
         return $parameters + ['columns' => $columns, 'filters' => $filters->values,
             'sort' => ['field' => $sort['field'], 'direction' => $sort['direction']], 'comparison' => []];

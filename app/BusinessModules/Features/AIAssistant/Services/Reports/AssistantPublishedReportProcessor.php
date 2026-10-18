@@ -36,6 +36,7 @@ final readonly class AssistantPublishedReportProcessor
         private GetReportRunAction $runs,
         private CreateReportExportAction $createExports,
         private AssistantPublishedReportCancellation $cancellation,
+        private AssistantPublishedReportSourceReadiness $readiness,
     ) {}
 
     public function process(string $id): void
@@ -96,11 +97,30 @@ final readonly class AssistantPublishedReportProcessor
             $this->finish($task, ['export_id' => $export->id, 'status' => 'building_export',
                 'expires_at' => min($task->expires_at->toDateTimeImmutable(), $export->expiresAt)]);
         } catch (Throwable $exception) {
+            $sourceError = null;
+            if ($exception instanceof ReportContractException && in_array($exception->errorCode, [ReportErrorCode::REPORT_SOURCE_UNAVAILABLE, ReportErrorCode::REPORT_FILTER_RANGE_INVALID], true)
+                && $task->run_id === null && $task->parameters['report_code'] === 'accepted_production_progress') {
+                try {
+                    $sourceError = $this->readiness->check(
+                        $this->authorization->createRun((int) $task->user_id, (int) $task->organization_id, $task->parameters),
+                        $task->parameters,
+                    );
+                } catch (Throwable $reasonException) {
+                    if ($reasonException instanceof AuthorizationException || $reasonException instanceof InvalidArgumentException
+                        || $reasonException instanceof ModelNotFoundException
+                        || ($reasonException instanceof ReportContractException && $reasonException->errorCode === ReportErrorCode::REPORT_SCOPE_FORBIDDEN)) {
+                        $exception = $reasonException;
+                    } else {
+                        Log::warning('assistant_published_report_source_reason_unavailable', ['task_id' => $id, 'exception_type' => $reasonException::class]);
+                    }
+                }
+            }
             $permanent = $exception instanceof AuthorizationException || $exception instanceof InvalidArgumentException
-                || $exception instanceof ModelNotFoundException;
+                || $exception instanceof ModelNotFoundException || ($sourceError !== null && $sourceError !== 'REPORT_SOURCE_UNAVAILABLE')
+                || ($exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             $failures = (int) $task->failure_count + 1;
-            $errorCode = $exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SOURCE_UNAVAILABLE
-                ? ReportErrorCode::REPORT_SOURCE_UNAVAILABLE->value : ($permanent ? 'ACCESS_OR_INPUT_CHANGED' : 'REPORT_UNAVAILABLE');
+            $errorCode = $sourceError ?? ($exception instanceof ReportContractException && $exception->errorCode === ReportErrorCode::REPORT_SOURCE_UNAVAILABLE
+                ? ReportErrorCode::REPORT_SOURCE_UNAVAILABLE->value : ($permanent ? 'ACCESS_OR_INPUT_CHANGED' : 'REPORT_UNAVAILABLE'));
             Log::warning('assistant_published_report_attempt_failed', ['task_id' => $id, 'exception_type' => $exception::class, 'attempt' => $failures]);
             $this->finish($task, ['status' => $permanent || $failures >= 5 ? 'failed' : $task->status,
                 'failure_count' => $failures, 'error_code' => $errorCode], min(60, 5 * $failures));

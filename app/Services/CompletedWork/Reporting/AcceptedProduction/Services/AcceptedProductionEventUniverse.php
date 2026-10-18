@@ -6,6 +6,7 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\Enums\CurrencyCode;
 use App\Models\ContractPerformanceAct;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionHistoryBoundary;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseEntry;
@@ -23,8 +24,11 @@ use InvalidArgumentException;
 final readonly class AcceptedProductionEventUniverse
 {
     private StableReportingSourceView $stableView;
+
     private AcceptedProductionHistoryBoundaryResolver $boundaries;
+
     private ProductionAcceptanceRecognitionGrain $grain;
+
     private AcceptedProductionFilterValidator $filterValidator;
 
     public function __construct(
@@ -313,6 +317,22 @@ final readonly class AcceptedProductionEventUniverse
                 continue;
             }
             $candidate = $candidates[$key];
+            if ($event->approved_rate_minor === null
+                || CurrencyCode::tryFrom((string) $event->currency) === null
+                || trim((string) $event->currency_source) === ''
+            ) {
+                $this->appendGap($gaps, [
+                    'kind' => 'acceptance_event_financial_identity_incomplete',
+                    'event_id' => (int) $event->id,
+                    'owner_version_id' => (int) $candidate['owner_version_id'],
+                    'performance_act_id' => (int) $event->performance_act_id,
+                    'source_line_id' => (int) $event->source_line_id,
+                    'source_line_type' => (string) $event->source_line_type,
+                ]);
+                unset($candidates[$key]);
+
+                continue;
+            }
             $dailyKey = $this->grain->key($event, $scope->timezone);
             $dailyReducers[$dailyKey] ??= new AcceptedProductionEventReducer($candidate);
             $dailyReducers[$dailyKey]->append($event, $candidate);
@@ -536,8 +556,7 @@ SQL;
         ProductionAcceptanceEvent $event,
         ReportScope $scope,
         ReportQuery $query,
-    ): bool
-    {
+    ): bool {
         [$from, $to] = $this->period($query->filters->values);
         $date = $event->recognized_at->setTimezone($scope->timezone)->format('Y-m-d');
 
