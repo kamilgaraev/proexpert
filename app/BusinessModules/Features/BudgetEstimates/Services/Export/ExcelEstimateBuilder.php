@@ -357,6 +357,7 @@ class ExcelEstimateBuilder
             ]);
             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
             $sheet->getRowDimension($row)->setRowHeight(20);
             $row++;
         }
@@ -444,6 +445,10 @@ class ExcelEstimateBuilder
             ],
         ]);
 
+        $numericLastColumn = $options['show_prices'] ? 'G' : 'E';
+        $sheet->getStyle("E{$row}:{$numericLastColumn}{$row}")->getAlignment()
+            ->setWrapText(false)
+            ->setShrinkToFit(true);
         $row++;
 
         // Add child items (materials, machinery, labor)
@@ -538,6 +543,7 @@ class ExcelEstimateBuilder
             $sheet->getStyle("F{$row}:H{$row}")->applyFromArray($style);
             $sheet->getStyle("F{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
             
             if ($isLast) {
                 $sheet->getRowDimension($row)->setRowHeight(25);

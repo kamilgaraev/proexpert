@@ -178,6 +178,40 @@ final class EstimateExportReadbackTest extends TestCase
         }
     }
 
+    public function test_excel_keeps_large_numeric_values_visible_without_changing_them(): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->quantity = 999999999;
+        $item->total_amount = 179999999820;
+        $item->direct_costs = 179999999820;
+        $section = $estimate->sections->first();
+        $section->setRelation('items', new Collection([$item]));
+        $section->section_total_amount = 179999999820;
+        $estimate->total_direct_costs = 179999999820;
+        $estimate->total_amount = 179999999820;
+        $estimate->total_amount_with_vat = 179999999820;
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-large-numbers-');
+        try {
+            file_put_contents($path, $result['content']);
+            $sheet = IOFactory::load($path)->getSheetByName('Смета');
+            self::assertEquals(999999999, $sheet->getCell('E17')->getValue());
+            self::assertEquals(179999999820, $sheet->getCell('G17')->getValue());
+            foreach (['E17', 'F17', 'G17'] as $coordinate) {
+                self::assertTrue($sheet->getStyle($coordinate)->getAlignment()->getShrinkToFit());
+                self::assertFalse($sheet->getStyle($coordinate)->getAlignment()->getWrapText());
+            }
+            self::assertTrue($sheet->getStyle('G18')->getAlignment()->getShrinkToFit());
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-large-numbers.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
     #[WithoutErrorHandler]
     public function test_short_pdf_keeps_totals_quantities_and_all_signatures_on_one_page(): void
     {
