@@ -68,6 +68,47 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             ->assertOk()->assertJsonPath('success', true);
     }
 
+    public function test_approved_entries_keep_denied_mutation_actions_and_gate_hooks_in_journal_details(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $journal = $this->createJournal($context->organization, $project, $context->user);
+        $this->allowAdminAccess();
+        for ($number = 1; $number <= 3; $number++) {
+            $this->createEntry($journal, $context->user, [
+                'entry_number' => $number,
+                'status' => JournalEntryStatusEnum::APPROVED,
+            ]);
+        }
+        $before = [];
+        $after = [];
+        Gate::before(static function (User $user, string $ability, array $arguments) use (&$before): void {
+            $entry = $arguments[0] ?? null;
+            if ($entry instanceof ConstructionJournalEntry && in_array($ability, ['update', 'delete'], true)) {
+                $before[$entry->id][$ability] = ($before[$entry->id][$ability] ?? 0) + 1;
+            }
+        });
+        Gate::after(static function (User $user, string $ability, ?bool $result, array $arguments) use (&$after): void {
+            $entry = $arguments[0] ?? null;
+            if ($entry instanceof ConstructionJournalEntry && in_array($ability, ['update', 'delete'], true)) {
+                $after[$entry->id][$ability] = $result;
+            }
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/construction-journals/{$journal->id}")
+            ->assertOk()->assertJsonCount(3, 'data.entries');
+
+        foreach ($response->json('data.entries') as $entry) {
+            $this->assertContains('view', $entry['available_actions']);
+            $this->assertNotContains('update', $entry['available_actions']);
+            $this->assertNotContains('delete', $entry['available_actions']);
+            $this->assertSame(['update' => 1, 'delete' => 1], $before[$entry['id']]);
+            $this->assertSame(['update' => false, 'delete' => false], $after[$entry['id']]);
+        }
+    }
+
     public function test_api_forbidden_renderer_localizes_defaults_and_preserves_custom_reasons_and_headers(): void
     {
         foreach ([
