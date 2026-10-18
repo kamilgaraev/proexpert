@@ -9,6 +9,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class ExcelEstimateBuilder
@@ -33,7 +34,7 @@ class ExcelEstimateBuilder
         // Create hidden metadata sheet
         $metadataSheet = $spreadsheet->createSheet();
         $metadataSheet->setTitle('_METADATA_');
-        $this->buildMetadataSheet($metadataSheet, $data);
+        $this->buildMetadataSheet($metadataSheet, $data, (bool) $options['show_prices']);
         $metadataSheet->setSheetState(Worksheet::SHEETSTATE_HIDDEN);
 
         // ВАЖНО: Устанавливаем активным первый лист (Смета), а не метаданные
@@ -73,13 +74,21 @@ class ExcelEstimateBuilder
         $row = $this->buildItemsTable($sheet, $row, $data, $options);
 
         // Totals section
-        $row = $this->buildTotals($sheet, $row, $data);
+        if ($options['show_prices']) {
+            $row = $this->buildTotals($sheet, $row, $data);
+        }
 
         // Signature fields
         $row = $this->buildSignatures($sheet, $row, $options);
 
         // Apply column widths
-        $this->applyColumnWidths($sheet);
+        $this->applyColumnWidths($sheet, $options['show_prices']);
+        $sheet->getPageSetup()
+            ->setOrientation(PageSetup::ORIENTATION_LANDSCAPE)
+            ->setPaperSize(PageSetup::PAPERSIZE_A4)
+            ->setFitToWidth(1)
+            ->setFitToHeight($this->fitsShortPrintPage($sheet) ? 1 : 0)
+            ->setPrintArea('A1:H'.$sheet->getHighestRow());
     }
 
     /**
@@ -187,8 +196,9 @@ class ExcelEstimateBuilder
         $startRow = $row;
         foreach ($info as $index => $line) {
             $sheet->setCellValue("A{$row}", $line[0]);
-            $sheet->setCellValue("B{$row}", $line[1]);
-            $sheet->mergeCells("B{$row}:H{$row}");
+            $sheet->mergeCells("A{$row}:B{$row}");
+            $sheet->setCellValue("C{$row}", $line[1]);
+            $sheet->mergeCells("C{$row}:H{$row}");
             
             $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
                 'fill' => [
@@ -210,7 +220,7 @@ class ExcelEstimateBuilder
                 ],
             ]);
             
-            $sheet->getStyle("B{$row}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('2D3748'));
+            $sheet->getStyle("C{$row}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('2D3748'));
             
             $sheet->getRowDimension($row)->setRowHeight(20);
             $row++;
@@ -347,6 +357,7 @@ class ExcelEstimateBuilder
             ]);
             $sheet->getStyle("A{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
             $sheet->getRowDimension($row)->setRowHeight(20);
             $row++;
         }
@@ -422,6 +433,10 @@ class ExcelEstimateBuilder
         // Apply borders - determine last column
         $lastCol = $col;
         $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+            'alignment' => [
+                'wrapText' => true,
+                'vertical' => Alignment::VERTICAL_TOP,
+            ],
             'borders' => [
                 'allBorders' => [
                     'borderStyle' => Border::BORDER_THIN,
@@ -430,6 +445,10 @@ class ExcelEstimateBuilder
             ],
         ]);
 
+        $numericLastColumn = $options['show_prices'] ? 'G' : 'E';
+        $sheet->getStyle("E{$row}:{$numericLastColumn}{$row}")->getAlignment()
+            ->setWrapText(false)
+            ->setShrinkToFit(true);
         $row++;
 
         // Add child items (materials, machinery, labor)
@@ -524,6 +543,7 @@ class ExcelEstimateBuilder
             $sheet->getStyle("F{$row}:H{$row}")->applyFromArray($style);
             $sheet->getStyle("F{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $sheet->getStyle("G{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->getStyle("G{$row}")->getAlignment()->setShrinkToFit(true);
             
             if ($isLast) {
                 $sheet->getRowDimension($row)->setRowHeight(25);
@@ -572,6 +592,8 @@ class ExcelEstimateBuilder
 
         foreach ($options['signature_fields'] as $field) {
             $sheet->setCellValue("A{$row}", $field . ':');
+            $sheet->mergeCells("A{$row}:B{$row}");
+            $sheet->getStyle("A{$row}")->getAlignment()->setWrapText(true);
             $sheet->setCellValue("C{$row}", '_____________________________ (ФИО) "____"_____________ 20___ г.');
             $sheet->mergeCells("C{$row}:H{$row}");
             $sheet->getStyle("A{$row}")->applyFromArray([
@@ -588,7 +610,7 @@ class ExcelEstimateBuilder
                     ],
                 ],
             ]);
-            $sheet->getRowDimension($row)->setRowHeight(22);
+            $sheet->getRowDimension($row)->setRowHeight(max(22, (int) ceil(mb_strlen($field.':') / 22) * 14));
             $row++;
         }
 
@@ -598,7 +620,7 @@ class ExcelEstimateBuilder
     /**
      * Построить скрытый лист с метаданными
      */
-    protected function buildMetadataSheet(Worksheet $sheet, array $data): void
+    protected function buildMetadataSheet(Worksheet $sheet, array $data, bool $showPrices = true): void
     {
         // Prepare full metadata with all sections and items
         $metadata = [
@@ -607,7 +629,7 @@ class ExcelEstimateBuilder
             'estimate_id' => $data['estimate']['id'],
             'organization_id' => $data['metadata']['organization_id'],
             'export_date' => $data['metadata']['export_date'],
-            'calculation_settings' => $data['metadata']['calculation_settings'],
+            'calculation_settings' => $showPrices ? $data['metadata']['calculation_settings'] : [],
             'sections' => [],
             'items' => [],
         ];
@@ -622,11 +644,11 @@ class ExcelEstimateBuilder
                 'name' => $section['name'],
                 'description' => $section['description'],
                 'is_summary' => $section['is_summary'],
-                'section_total_amount' => $section['section_total_amount'],
+                'section_total_amount' => $showPrices ? $section['section_total_amount'] : 0,
             ];
 
             // Collect items recursively
-            $this->collectItemsForMetadata($section['items'], $metadata['items']);
+            $this->collectItemsForMetadata($section['items'], $metadata['items'], $showPrices);
         }
 
         // Write JSON to cell A1
@@ -639,7 +661,7 @@ class ExcelEstimateBuilder
     /**
      * Собрать позиции для метаданных рекурсивно
      */
-    protected function collectItemsForMetadata(array $items, array &$metadataItems): void
+    protected function collectItemsForMetadata(array $items, array &$metadataItems, bool $showPrices = true): void
     {
         foreach ($items as $item) {
             $itemMeta = [
@@ -674,11 +696,20 @@ class ExcelEstimateBuilder
                 'is_not_accounted' => $item['is_not_accounted'],
             ];
 
+            if (! $showPrices) {
+                foreach (['unit_price', 'base_unit_price', 'current_unit_price', 'direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'overhead_amount', 'profit_amount', 'total_amount'] as $field) {
+                    $itemMeta[$field] = 0;
+                }
+                foreach (['applied_coefficients', 'coefficient_total', 'custom_resources', 'metadata'] as $field) {
+                    $itemMeta[$field] = null;
+                }
+            }
+
             $metadataItems[] = $itemMeta;
 
             // Recursively add child items
             if (!empty($item['child_items'])) {
-                $this->collectItemsForMetadata($item['child_items'], $metadataItems);
+                $this->collectItemsForMetadata($item['child_items'], $metadataItems, $showPrices);
             }
         }
     }
@@ -686,22 +717,40 @@ class ExcelEstimateBuilder
     /**
      * Применить ширину колонок
      */
-    protected function applyColumnWidths(Worksheet $sheet): void
+    protected function applyColumnWidths(Worksheet $sheet, bool $showPrices = true): void
     {
         // Устанавливаем минимальную ширину для основных колонок
         $sheet->getColumnDimension('A')->setWidth(8);  // №
-        $sheet->getColumnDimension('B')->setWidth(15); // Код
+        $sheet->getColumnDimension('B')->setWidth(22); // Код
         $sheet->getColumnDimension('C')->setWidth(60); // Наименование - увеличено
         $sheet->getColumnDimension('D')->setWidth(12); // Ед.изм.
         $sheet->getColumnDimension('E')->setWidth(14); // Кол-во
         $sheet->getColumnDimension('F')->setWidth(18); // Цена
         $sheet->getColumnDimension('G')->setWidth(18); // Сумма
         $sheet->getColumnDimension('H')->setWidth(35); // Примечание
-        
-        // Включаем автоподбор ширины для колонок с динамическим контентом
-        foreach (['B', 'C', 'D', 'E', 'F', 'G', 'H'] as $col) {
-            $sheet->getColumnDimension($col)->setAutoSize(true);
+        if (!$showPrices) {
+            $sheet->getColumnDimension('F')->setWidth(35);
+            $sheet->getColumnDimension('G')->setVisible(false);
+            $sheet->getColumnDimension('H')->setVisible(false);
         }
+    }
+
+    private function fitsShortPrintPage(Worksheet $sheet): bool
+    {
+        $lastRow = $sheet->getHighestRow();
+        if ($lastRow > 45) {
+            return false;
+        }
+        for ($row = 1; $row <= $lastRow; $row++) {
+            foreach (['B', 'C', 'D', 'F', 'H'] as $column) {
+                $value = (string) $sheet->getCell($column.$row)->getValue();
+                if (mb_strwidth($value, 'UTF-8') > $sheet->getColumnDimension($column)->getWidth() * 2) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /**
