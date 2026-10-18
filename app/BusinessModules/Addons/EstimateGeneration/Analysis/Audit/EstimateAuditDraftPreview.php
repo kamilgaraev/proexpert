@@ -115,6 +115,9 @@ final readonly class EstimateAuditDraftPreview
                         ]), 'quantity_ids' => array_column($part['input']->derivedQuantities, 'id')];
                 }, $prepared['parts'])];
         } catch (InvalidArgumentException $exception) {
+            if ($exception->getMessage() === 'estimate_audit_snapshot_changed') {
+                return [...$unavailable, 'reason' => 'current_build_draft_stale'];
+            }
             if (! in_array($exception->getMessage(), ['estimate_audit_context_requires_source_split',
                 'estimate_audit_parts_exceed_approved_plan', 'estimate_audit_fact_limit_exceeded',
                 'estimate_audit_evidence_requires_section_split', 'estimate_audit_input_too_large'], true)) {

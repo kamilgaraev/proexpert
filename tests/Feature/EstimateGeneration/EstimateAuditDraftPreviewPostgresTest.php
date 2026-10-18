@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditIn
 use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
@@ -120,6 +122,31 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
     {
         return ['facts' => ['facts', 'estimate_audit_fact_limit_exceeded'],
             'evidence' => ['evidence', 'estimate_audit_evidence_requires_section_split']];
+    }
+
+    public function test_a_snapshot_change_during_capture_returns_a_repeatable_stale_preview(): void
+    {
+        [$actor, $project, $session] = $this->fixture();
+        $models = $this->createMock(ProjectModelRepository::class);
+        $models->expects(self::exactly(2))->method('snapshotForPlanning')
+            ->with((int) $session->organization_id, (int) $project->id, (int) $session->id, 2)
+            ->willReturnOnConsecutiveCalls(
+                ['snapshot' => new ProjectModelSnapshot([], [], [], []), 'token' => str_repeat('a', 64)],
+                ['snapshot' => new ProjectModelSnapshot([], [], [], []), 'token' => str_repeat('b', 64)],
+            );
+        $this->app->instance(EstimateAuditInputFactory::class, new EstimateAuditInputFactory($models,
+            $this->createMock(EvidenceRepository::class), 1));
+        $before = $this->databaseState($session);
+
+        $preview = $this->read($actor, $project, $session)['data'];
+
+        self::assertFalse($preview['available']);
+        self::assertFalse($preview['validated']);
+        self::assertSame('current_build_draft_stale', $preview['reason']);
+        self::assertArrayNotHasKey('audit_preview', $preview);
+        self::assertSame(0, $preview['cost_units']);
+        self::assertSame($before, $this->databaseState($session));
+        Http::assertNothingSent();
     }
 
     #[DataProvider('deniedScopes')]
