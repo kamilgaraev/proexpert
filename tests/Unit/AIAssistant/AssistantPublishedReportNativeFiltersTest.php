@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantPublishedReportNativeFilters;
 use App\BusinessModules\Features\Budgeting\Contracts\BudgetingReportSourceCloseStore;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetingReportSourceClose;
@@ -75,7 +76,15 @@ final class AssistantPublishedReportNativeFiltersTest extends TestCase
             static fn (string $id): array => ['id' => $id, 'required' => $id === 'payroll_period_ids'], array_keys($input),
         ))->payload();
         if (! $valid) {
-            $this->expectException(ReportContractException::class);
+            try {
+                $validator->validate((new ReportExecutionContextBuilder)->build(), $definition, $input, new DateTimeImmutable('2026-10-18T12:00:00Z'));
+                self::fail('Expected invalid native filters');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+                self::assertSame(['fields' => 'filters'], $exception->safeFields);
+            }
+
+            return;
         }
         $actual = $validator->validate((new ReportExecutionContextBuilder)->build(), $definition, $input, new DateTimeImmutable('2026-10-18T12:00:00Z'));
         ksort($actual);

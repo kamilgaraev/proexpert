@@ -61,59 +61,59 @@ final readonly class AssistantPublishedReportNativeFilters
                     default => false,
                 };
                 if (! $valid) {
-                    $this->invalid($key);
+                    $this->invalid();
                 }
             }
             foreach ($definition->filters as $filter) {
                 if (($filter['required'] ?? false) && ($input[$filter['id']] ?? null) === []) {
-                    $this->invalid($filter['id']);
+                    $this->invalid();
                 }
             }
             foreach ($this->enums($definition->code) as $key => $values) {
                 if (isset($input[$key]) && array_diff(is_array($input[$key]) ? $input[$key] : [$input[$key]], $values) !== []) {
-                    $this->invalid($key);
+                    $this->invalid();
                 }
             }
             foreach (['period_from' => 'period_to', 'period_start' => 'period_end', 'day_from' => 'day_to', 'due_from' => 'due_to', 'horizon_from' => 'horizon_to', 'month_from' => 'month_to'] as $from => $to) {
                 if (isset($input[$from], $input[$to]) && $input[$from] > $input[$to]) {
-                    $this->invalid($from);
+                    $this->invalid();
                 }
             }
             if (in_array($definition->code, ['project_labor_cost', 'attendance_execution', 'customer_sla'], true)) {
                 $end = $input['period_to'] ?? $input['day_to'] ?? null;
                 if ($end !== null && $end > $asOf->format('Y-m-d')) {
-                    $this->invalid('period');
+                    $this->invalid();
                 }
             }
             if (in_array($definition->code, ['safety_incident_actions', 'quality_defect_flow'], true)
                 && isset($input['period_from']) && $input['period_from'] > $asOf->format('Y-m-d')) {
-                $this->invalid('period_from');
+                $this->invalid();
             }
             if ($definition->code === 'workforce_capacity' && $input['month_to'] > $asOf->format('Y-m')) {
-                $this->invalid('month_to');
+                $this->invalid();
             }
             if (in_array($definition->code, ['baseline_schedule_variance', 'handover_readiness', 'contractor_scorecard'], true)
                 && $input['as_of'] !== $asOf->format('Y-m-d')) {
-                $this->invalid('as_of');
+                $this->invalid();
             }
             if ($definition->code === 'lookahead_readiness' && isset($input['horizon_days']) && $input['horizon_days'] > 366) {
-                $this->invalid('horizon_days');
+                $this->invalid();
             }
             if (($definition->code === 'inventory_risk' && ($input['statuses'] ?? null) === [])
                 || ($definition->code === 'customer_sla' && ($input['workflow_types'] ?? null) === [])) {
-                $this->invalid('statuses');
+                $this->invalid();
             }
             if (isset($input['currencies']) && ! $this->list($input['currencies'], static fn ($item): bool => is_string($item) && preg_match('/^[A-Z]{3}$/D', $item) === 1)) {
-                $this->invalid('currencies');
+                $this->invalid();
             }
             if (isset($input['currency']) && preg_match('/^[A-Z]{3}$/D', $input['currency']) !== 1) {
-                $this->invalid('currency');
+                $this->invalid();
             }
             if (in_array($definition->code, ['project_margin', 'budget_plan_fact'], true)) {
                 $this->assertClose($context, $definition->code, $input, $asOf);
             }
         } catch (InvalidArgumentException|DomainException) {
-            $this->invalid('filters');
+            $this->invalid();
         }
 
         return $input;
@@ -221,8 +221,8 @@ final readonly class AssistantPublishedReportNativeFilters
         return true;
     }
 
-    private function invalid(string $field): never
+    private function invalid(): never
     {
-        throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => $field]);
+        throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => 'filters']);
     }
 }
