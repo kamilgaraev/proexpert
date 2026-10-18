@@ -56,7 +56,7 @@ final class EstimateAuditContextPlanner
 
     private function prepareParts(EstimateAuditInput $root, array $parts, int $maximumBytes, array $quantityIndex): ?array
     {
-        $full = $root->canonicalPayload();
+        $full = $root->canonicalPayload(false);
         $allFit = true;
         foreach ($parts as $part) {
             $payload = [...$full, 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $root->derivedQuantities)];
@@ -247,7 +247,7 @@ final class EstimateAuditContextPlanner
 
     private function prepareContexts(EstimateAuditInput $root, array $contexts, int $maximumBytes): ?array
     {
-        $full = $root->canonicalPayload();
+        $full = $root->canonicalPayload(false);
         $manifest = ['contract' => 'estimate-audit-context:v1', 'parent_fingerprint' => $root->fingerprint(),
             'total_facts' => count($root->facts), 'total_evidence' => count($root->evidence),
             'total_derived_quantities' => count($root->derivedQuantities),
@@ -261,6 +261,7 @@ final class EstimateAuditContextPlanner
             $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
                 'part_id' => $part['id'], 'context_manifest' => $manifest];
+            $payload = EstimateAuditExactValueWireProjection::forAudit($payload);
             if (! $this->fits($payload, $maximumBytes)) {
                 $bytes = static fn (mixed $value): int => strlen(CanonicalPipelineJson::encode([$value])) - 2;
                 $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
@@ -327,7 +328,7 @@ final class EstimateAuditContextPlanner
 
     private function fits(array $payload, int $maximumBytes): bool
     {
-        $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
+        $encoded = CanonicalPipelineJson::encode(['audit_input' => EstimateAuditExactValueWireProjection::forAudit($payload)]);
 
         return strlen($encoded) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($encoded, $this->wirePolicy);
     }

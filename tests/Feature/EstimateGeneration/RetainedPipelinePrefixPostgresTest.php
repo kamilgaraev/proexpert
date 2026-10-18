@@ -60,6 +60,11 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         self::assertSame($sourceId, $quote['continuation']['source_operation_id']);
         self::assertSame('validate_draft', $quote['continuation']['resume_stage']);
         $plan = $this->plan($operationId);
+        self::assertSame($plan['maximum_provider_cost_micro_rub'], $quote['provider_budget']['maximum_cost_micro_rub']);
+        self::assertSame($plan['document_costs']['cost_micro_rub'] ?? 0, $quote['provider_budget']['included_document_cost_micro_rub']);
+        self::assertSame($plan['roles']['estimate_audit']['output_ceiling'], $quote['provider_budget']['audit_output_tokens']);
+        self::assertSame('RUB', $quote['provider_budget']['supplier_tariff']['currency']);
+        self::assertArrayHasKey('input_per_million', $quote['provider_budget']['supplier_tariff']);
         self::assertSame(['estimate_audit', 'estimate_composer_correction'], array_keys($plan['roles']));
         self::assertLessThan($sourceBefore->maximum_calls, $plan['maximum_calls']);
         self::assertLessThan($sourceBefore->maximum_provider_cost_micro_rub, $plan['maximum_provider_cost_micro_rub']);

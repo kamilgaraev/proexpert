@@ -85,6 +85,12 @@ final readonly class EstimatorCreditOperations
                 'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
                 'available_units_minor' => $balance['available_minor'],
                 'reconciliation_held_units_minor' => $balance['reconciliation_held_minor'],
+                'provider_budget' => [
+                    'maximum_cost_micro_rub' => $request->maximumProviderCostMicroRub,
+                    'included_document_cost_micro_rub' => $plan['document_costs']['cost_micro_rub'] ?? 0,
+                    'supplier_tariff' => $request->identity()['supplier_tariff'],
+                    'audit_output_tokens' => $plan['roles']['estimate_audit']['output_ceiling'] ?? null,
+                ],
                 ...(isset($plan['retained_pipeline_prefix']) ? ['continuation' => [
                     'source_operation_id' => $plan['retained_pipeline_prefix']['source_operation_id'],
                     'completed_stages' => array_keys($plan['retained_pipeline_prefix']['stages']),

@@ -247,6 +247,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
     private function correctionPrompt(): string
     {
         return 'Ты составитель строительной сметы, выполняющий только точечные исправления замечаний аудитора. '
+            .\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditExactValueWireProjection::prompt()
             .'В audit_input поля с суффиксом _ref заменяют одноимённое поле без суффикса полным значением по указанному пути в том же audit_input, включая доказательства operands. '
             .'Верни corrections только для исправимых замечаний и используй лишь переданные fact id, derived quantity id и item key. '
             .'Допустимы операции add_work, replace_quantity и replace_unit. Значение и единицу бери только через derived_quantity_id; цены, суммы, нормативы и уверенность не возвращай. '

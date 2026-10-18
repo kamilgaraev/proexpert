@@ -104,6 +104,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
     private function prompt(): string
     {
         return 'Ты независимый аудитор строительной сметы. Проверяй готовый черновик по канонической модели и источникам, не составляй его заново. '
+            .EstimateAuditExactValueWireProjection::prompt()
             .'Поля с суффиксом _ref указывают на полное основание в этом же запросе; повторные копии одинаковых доказательств не передаются. '
             .'В formula_inputs.operands поля snapshot_identity_ref, geometry_relations_ref и другие _ref заменяют одноимённое поле без суффикса: используй его полное значение по абсолютному пути внутри audit_input. '
             .'Поле work_composition_ref содержит путь к полному массиву work_composition внутри audit_input; при проверке позиции используй данные по этому пути как её состав работ. '
