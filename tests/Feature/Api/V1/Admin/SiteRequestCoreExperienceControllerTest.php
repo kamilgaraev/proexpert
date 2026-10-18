@@ -14,6 +14,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestTemplate;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -32,6 +33,70 @@ use Tests\TestCase;
 class SiteRequestCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_template_location_fallback_preserves_explicit_generic_and_typed_addresses(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        foreach ([['material_request', 'delivery_address'], ['personnel_request', 'work_location'], ['equipment_request', 'equipment_location']] as [$type, $field]) {
+            $data = [
+                'title' => 'Training location template', 'request_type' => $type,
+                $field => 'Training typed address', 'personnel_type' => 'engineer', 'personnel_count' => 3,
+                'equipment_type' => 'generator', 'equipment_count' => 1,
+                'equipment_start_at' => now()->addDay()->setTime(9, 0)->toIso8601String(),
+                'equipment_end_at' => now()->addDay()->setTime(17, 0)->toIso8601String(),
+            ];
+            $template = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests/templates', [
+                'name' => 'Training addresses', 'request_type' => $type, 'template_data' => $data,
+            ])->assertCreated()->json('data.id');
+            foreach ([[[], 'Training typed address'], [['location' => 'Explicit general address'], 'Explicit general address'], [['location' => null], null]] as [$overrides, $expected]) {
+                $response = $this->withHeaders($context->authHeaders())
+                    ->postJson("/api/v1/admin/site-requests/templates/{$template}/create", ['project_id' => $project->id, ...$overrides])
+                    ->assertCreated()->assertJsonPath('data.location', $expected);
+                $created = SiteRequest::findOrFail($response->json('data.id'));
+                $this->assertSame('Training typed address', $created->getAttribute($field));
+            }
+            $this->postJson("/api/v1/admin/site-requests/templates/{$template}/create", [
+                'project_id' => $project->id, $field => str_repeat('a', 2001),
+            ])->assertUnprocessable()->assertJsonValidationErrors('location');
+            $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 3]);
+        }
+    }
+
+    public function test_personnel_template_count_is_limited_on_save_update_and_legacy_application(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $data = ['title' => 'Training count', 'request_type' => 'personnel_request', 'personnel_type' => 'engineer', 'personnel_count' => 51];
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests/templates', [
+            'name' => 'Training count', 'request_type' => 'personnel_request', 'template_data' => $data,
+        ])->assertUnprocessable()->assertJsonValidationErrors('template_data.personnel_count');
+        $data['personnel_count'] = 50;
+        $templateId = $this->postJson('/api/v1/admin/site-requests/templates', [
+            'name' => 'Training valid count', 'request_type' => 'personnel_request', 'template_data' => $data,
+        ])->assertCreated()->json('data.id');
+        $invalid = [...$data, 'personnel_count' => 51];
+        $this->putJson("/api/v1/admin/site-requests/templates/{$templateId}", ['template_data' => $invalid])
+            ->assertUnprocessable()->assertJsonValidationErrors('template_data.personnel_count');
+        $template = SiteRequestTemplate::findOrFail($templateId);
+        $this->assertSame(50, $template->template_data['personnel_count']);
+        foreach ([51, 0, -1, 1.5] as $count) {
+            $template->update(['template_data' => [...$data, 'personnel_count' => $count]]);
+            $this->postJson("/api/v1/admin/site-requests/templates/{$templateId}/create", ['project_id' => $project->id])
+                ->assertUnprocessable()->assertJsonValidationErrors('personnel_count');
+            $this->assertDatabaseCount('site_requests', 0);
+            $this->assertSame(0, $template->fresh()->usage_count);
+        }
+        $template->update(['template_data' => $data]);
+        $this->postJson("/api/v1/admin/site-requests/templates/{$templateId}/create", ['project_id' => $project->id])
+            ->assertCreated()->assertJsonPath('data.personnel_count', 50);
+    }
 
     public function test_template_cost_is_applied_without_losing_explicit_overrides(): void
     {

@@ -108,6 +108,7 @@ class SiteRequestTemplateService
      */
     public function create(int $organizationId, int $userId, array $data): SiteRequestTemplate
     {
+        $this->validateTemplateCounts($data);
         // Проверяем лимит шаблонов
         $this->checkTemplateLimit($organizationId);
 
@@ -127,6 +128,7 @@ class SiteRequestTemplateService
      */
     public function update(SiteRequestTemplate $template, array $data): SiteRequestTemplate
     {
+        $this->validateTemplateCounts($data);
         $template->update($data);
         return $template->fresh();
     }
@@ -205,9 +207,24 @@ class SiteRequestTemplateService
             $data['personnel_type'] = PersonnelTypeEnum::GENERAL_WORKER->value;
         }
 
+        if (! array_key_exists('location', $data)) {
+            $locationField = match ($data['request_type'] ?? $template->request_type->value) {
+                SiteRequestTypeEnum::MATERIAL_REQUEST->value => 'delivery_address',
+                SiteRequestTypeEnum::PERSONNEL_REQUEST->value => 'work_location',
+                SiteRequestTypeEnum::EQUIPMENT_REQUEST->value => 'equipment_location',
+                default => null,
+            };
+            if ($locationField !== null && array_key_exists($locationField, $data)) {
+                $data['location'] = $data[$locationField];
+            }
+        }
+
         Validator::make($data, [
             'estimated_cost' => ['nullable', 'numeric', 'min:0', 'max:999999999999.99', 'decimal:0,2'],
             'personnel_type' => ['nullable', new Enum(PersonnelTypeEnum::class)],
+            'personnel_count' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'equipment_count' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'location' => ['nullable', 'string', 'max:2000'],
         ])->validate();
 
         // Создаем заявку
@@ -291,6 +308,14 @@ class SiteRequestTemplateService
         }
 
         return $data;
+    }
+
+    private function validateTemplateCounts(array $data): void
+    {
+        Validator::make($data, [
+            'template_data.personnel_count' => ['nullable', 'integer', 'min:1', 'max:50'],
+            'template_data.equipment_count' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ])->validate();
     }
 
     /**
