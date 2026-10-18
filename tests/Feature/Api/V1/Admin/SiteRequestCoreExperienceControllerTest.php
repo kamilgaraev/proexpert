@@ -114,6 +114,39 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         }
     }
 
+    public function test_personnel_template_accepts_legacy_worker_and_rejects_unknown_types_before_creation(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        foreach ([['worker', 'general_worker'], ['general_worker', 'general_worker'], ['engineer', 'engineer'], ['concrete_worker', null], ['crane_operator', null]] as [$type, $expected]) {
+            $template = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/site-requests/templates', [
+                'name' => 'Training personnel template',
+                'request_type' => 'personnel_request',
+                'template_data' => [
+                    'title' => 'Training personnel need', 'request_type' => 'personnel_request',
+                    'personnel_type' => $type, 'personnel_count' => 3, 'personnel_requirements' => 'none',
+                    'work_location' => 'Training office', 'metadata' => ['estimated_cost' => 0],
+                ],
+            ])->assertCreated()->json('data.id');
+            $before = SiteRequest::query()->count();
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/site-requests/templates/{$template}/create", ['project_id' => $project->id]);
+            if ($expected === null) {
+                $response->assertUnprocessable();
+                $this->assertDatabaseCount('site_requests', $before);
+                $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 0]);
+            } else {
+                $response->assertCreated()->assertJsonPath('data.personnel_type', $expected)
+                    ->assertJsonPath('data.personnel_count', 3)->assertJsonPath('data.work_location', 'Training office')
+                    ->assertJsonPath('data.estimated_cost', 0);
+                $this->assertDatabaseHas('site_request_templates', ['id' => $template, 'usage_count' => 1]);
+            }
+        }
+    }
+
     public function test_owner_can_create_material_request_group_and_list_only_own_requests(): void
     {
         Event::fake();
