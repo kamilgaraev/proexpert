@@ -23,6 +23,42 @@ use PHPUnit\Framework\TestCase;
 
 final class SlowQueryContextTest extends TestCase
 {
+    public function test_slow_query_release_is_validated_without_database_access_or_private_fallback(): void
+    {
+        $previous = Container::getInstance();
+        $previousRelease = getenv('MOST_RELEASE_SHA');
+        $application = new Application(dirname(__DIR__, 3));
+        $config = new Repository(['ai-assistant' => ['status_snapshot_release' => str_repeat('a', 40)]]);
+        $application->instance('config', $config);
+        try {
+            putenv('MOST_RELEASE_SHA='.str_repeat('b', 40));
+            $factory = new SlowQueryContext(new TracingService(null));
+            $event = new QueryExecuted('select 1', [], 600, new Connection(null));
+            $context = $factory->forQuery($event);
+            self::assertSame(str_repeat('a', 40), $context['release_sha']);
+            $handler = new TestHandler;
+            $handler->setFormatter(new JsonFormatter);
+            $logger = new IlluminateLogger(new MonologLogger('slow_queries', [$handler]));
+            (new EnsureLogFailuresAreNonFatal)($logger);
+            $logger->warning('slow_query', $context);
+            $logged = json_decode($handler->getRecords()[0]->formatted, true, 512, JSON_THROW_ON_ERROR)['context'];
+            self::assertSame(str_repeat('a', 40), $logged['release_sha']);
+            foreach (['private-invalid-release', str_repeat('A', 40), str_repeat('a', 39), str_repeat('a', 41), ['private']] as $invalid) {
+                $config->set('ai-assistant.status_snapshot_release', $invalid);
+                $context = $factory->forQuery($event);
+                self::assertNull($context['release_sha']);
+                self::assertStringNotContainsString('private', json_encode($context, JSON_THROW_ON_ERROR));
+            }
+            $config->set('ai-assistant.status_snapshot_release', null);
+            self::assertSame(str_repeat('b', 40), $factory->forQuery($event)['release_sha']);
+            putenv('MOST_RELEASE_SHA');
+            self::assertNull($factory->forQuery($event)['release_sha']);
+        } finally {
+            $previousRelease === false ? putenv('MOST_RELEASE_SHA') : putenv('MOST_RELEASE_SHA='.$previousRelease);
+            Container::setInstance($previous);
+        }
+    }
+
     public function test_connection_observation_is_a_fixed_boolean_allowlist_after_redaction(): void
     {
         $previous = Container::getInstance();
