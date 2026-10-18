@@ -16,7 +16,8 @@ final class EstimateAuditExactValueWireProjection
 
     public static function forAudit(array $payload): array
     {
-        return ($payload['contract_version'] ?? null) === 'estimate-auditor:v2' ? self::project($payload) : $payload;
+        return in_array($payload['contract_version'] ?? null, ['estimate-auditor:v2', 'estimate-auditor:v3'], true)
+            ? self::project(EstimateAuditTableWireProjection::forAudit($payload)) : $payload;
     }
 
     public static function project(array $payload): array
