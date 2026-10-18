@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_resolver_supported_durations_never_become_all_time_or_part_of_the_project_name(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за день' => '2026-10-18', 'за сутки' => '2026-10-18', 'за неделю' => '2026-10-12',
+                'за месяц' => '2026-09-19', 'за год' => '2025-10-19', 'за полгода' => '2026-04-19',
+                'полгода' => '2026-04-19', 'за последние полгода' => '2026-04-19',
+                'за два месяца' => '2026-08-19', 'за последние две недели' => '2026-10-05'] as $phrase => $start) {
+                $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-19'];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, [
+                    'request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase],
+                ]), $phrase);
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => [
+                    'status' => 'success', 'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false],
+                ]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            }
+            foreach (['за неделю и за месяц', 'за последние две недели и за 2026 год', 'полгода и вчера'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_relative_days_and_project_start_keep_named_scope_and_resolve_without_clarification(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 00:30:00', 'Europe/Moscow'));
