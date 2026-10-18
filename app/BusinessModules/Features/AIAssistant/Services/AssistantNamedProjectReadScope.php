@@ -20,25 +20,46 @@ final class AssistantNamedProjectReadScope
         }
         $name = self::name($plan);
         $ambiguous = AssistantReportEntityQuery::hasAmbiguousName($query, 'project');
+        $implicitQuestion = false;
+        if ($name === null && ! $ambiguous && self::hasLowercaseQuestionClause($query)) {
+            $name = AssistantReportEntityQuery::extract($query, 'project');
+            $name = $name === null ? null : preg_replace('/[.!?]+$/u', '', $name);
+            $implicitQuestion = $name !== null;
+        }
         if ($name === null && ! $ambiguous) {
             return $plan;
         }
         $id = null;
+        $implicitNotName = false;
         if ($name !== null && ! $ambiguous) {
             $arguments = ['query' => $name, 'limit' => 2];
             if (preg_match('/^(?:id\s*|№\s*|#\s*)?([1-9]\d*)$/iu', $name, $matches) === 1) {
                 $arguments['project_id'] = (int) $matches[1];
+            } else {
+                $arguments['name_match'] = 'exact';
             }
             try {
                 $result = $search($arguments);
                 $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                if (! isset($arguments['project_id']) && ! $implicitQuestion && is_array($result)
+                    && ($result['status'] ?? null) === 'success' && is_array($rows)
+                    && $rows === [] && ($result['result_window']['has_more'] ?? null) === false) {
+                    unset($arguments['name_match']);
+                    $result = $search($arguments);
+                    $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                }
                 if (is_array($result) && ($result['status'] ?? null) === 'success' && is_array($rows) && count($rows) === 1
                     && ($result['result_window']['has_more'] ?? null) === false && is_int($rows[0]['id'] ?? null) && $rows[0]['id'] > 0) {
                     $id = $rows[0]['id'];
                 }
+                $implicitNotName = is_array($result) && ($result['status'] ?? null) === 'success'
+                    && $rows === [] && ($result['result_window']['has_more'] ?? null) === false;
             } catch (Throwable) {
                 $id = null;
             }
+        }
+        if ($implicitQuestion && $implicitNotName) {
+            return $plan;
         }
         $plan['named_project_scope'] = ['project_id' => $id, 'message_sha256' => hash('sha256', $query)];
 
@@ -52,6 +73,9 @@ final class AssistantNamedProjectReadScope
             return null;
         }
         $quoted = preg_match('/(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)[«“„"]/iu', $query) === 1;
+        if (! $quoted && self::hasLowercaseQuestionClause($query)) {
+            return null;
+        }
         $name = AssistantReportEntityQuery::extract($query, 'project');
         if (! $quoted && $name !== null) {
             $continuation = '(?:скажи(?:те)?|расскажи(?:те)?|покажи(?:те)?|проверь(?:те)?|сверь(?:те)?|укажи(?:те)?|назови(?:те)?|уточни(?:те)?|сформируй(?:те)?|создай(?:те)?|удали(?:те)?|измени(?:те)?|закрой(?:те)?|отправь(?:те)?|подпиши(?:те)?|назначь(?:те)?|назначит[а-яё]*|перенес[а-яё]*|перенос[а-яё]*|сдвин[а-яё]*|обнови[а-яё]*|добавь(?:те)?|добавит[а-яё]*|поменяй(?:те)?|исправь(?:те)?|заплат[а-яё]*|оплати[а-яё]*|нужно|надо|можно|что|кто|где|когда|как|какие|какой|какая|какое|каков[а-яё]*|сколько)(?![\pL\pN])';
@@ -64,5 +88,14 @@ final class AssistantNamedProjectReadScope
         }
 
         return $name === '' || (! $quoted && $name !== null && preg_match('/^(?:есть|нет|ещ[её]|уже|сейчас|остал[а-яё]*|задержива[а-яё]*|просрочены|готовы|назначены|приняты|закрыты|завершены|ждут|имеют|действуют|что|кто|где|когда|как|какие|какой|какая|какое|сколько|нужно|надо|можно|не|и|или|но|а|при|без|перед|после|в|во|к|у|под|над|между|о|об|со|через)(?![\pL\pN])/iu', $name) === 1) ? null : $name;
+    }
+
+    private static function hasLowercaseQuestionClause(string $query): bool
+    {
+        $candidate = AssistantReportEntityQuery::extract($query, 'project');
+
+        return $candidate !== null
+            && preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1
+            && preg_match('/^\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?\s+\p{Ll}|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано)(?=\s|[.!?]|$))/u', $candidate) === 1;
     }
 }

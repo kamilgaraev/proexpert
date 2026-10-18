@@ -19,7 +19,7 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertNull(AssistantRequiredProjectRead::fromPlan($plan));
         $plan['named_project_scope'] = ['project_id' => 999, 'message_sha256' => hash('sha256', $plan['request']['message'])];
         $resolved = AssistantNamedProjectReadScope::bind($plan, function (array $arguments): array {
-            self::assertSame(['query' => 'Учебный ПТО', 'limit' => 2], $arguments);
+            self::assertSame(['query' => 'Учебный ПТО', 'limit' => 2, 'name_match' => 'exact'], $arguments);
 
             return $this->projectSearchResult([['id' => 102]], false);
         });
@@ -89,7 +89,7 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
             'Сверь выполненные работы с графиком проекта Северный дом? Кто отвечает?',
             'Сверь выполненные работы с графиком проекта Северный дом какой срок завершения?'] as $query) {
             $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
-                self::assertSame(['query' => 'Северный дом', 'limit' => 2], $arguments);
+                self::assertSame(['query' => 'Северный дом', 'limit' => 2, 'name_match' => 'exact'], $arguments);
 
                 return $this->projectSearchResult([['id' => 102]], false);
             });
@@ -133,6 +133,62 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
                 self::assertFalse(AssistantProjectProductionScheduleReader::matches($query.$suffix), $query.$suffix);
             }
         }
+    }
+
+    public function test_lowercase_clause_in_an_ordinary_question_is_not_an_unquoted_project_name(): void
+    {
+        foreach (['Какие нарушения проекта требуют устранения?', 'Какие нарушения нашего объекта нуждаются в устранении?',
+            'Какие нарушения проекта мешают сдаче?', 'Сколько происшествий проекта зарегистрировано?',
+            'Какие нарушения в нашем проекте препятствуют сдаче?'] as $query) {
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+        }
+        self::assertSame('Северный дом', AssistantNamedProjectReadScope::name($this->plan('Какие нарушения проекта Северный дом?')));
+        self::assertSame('северный дом', AssistantNamedProjectReadScope::name($this->plan('Какие нарушения проекта северный дом?')));
+        self::assertSame('требуют устранения', AssistantNamedProjectReadScope::name($this->plan('Какие нарушения проекта «требуют устранения»?')));
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan('Какие нарушения проекта зенит парк?'), function (array $arguments): array {
+            self::assertSame(['query' => 'зенит парк', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+            return $this->projectSearchResult([['id' => 102]], false);
+        });
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        foreach ([['status' => 'error'], $this->projectSearchResult([['id' => 102], ['id' => 103]], false)] as $result) {
+            $unresolved = AssistantNamedProjectReadScope::bind($this->plan('Какие нарушения проекта зенит парк?'), fn (): array => $result);
+            self::assertNull(AssistantRequestProjectScope::fromPlan($unresolved)->projectId);
+        }
+        $implicit = AssistantNamedProjectReadScope::bind($this->plan('Какие нарушения проекта требуют устранения?'), fn (): array => $this->projectSearchResult([], false));
+        self::assertArrayNotHasKey('named_project_scope', $implicit);
+        self::assertSame(['name' => 'get_project_safety_summary', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($implicit));
+    }
+
+    public function test_exact_name_is_preferred_without_fuzzy_window_or_ui_fallback(): void
+    {
+        $calls = [];
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «Дом».'), function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments;
+
+            return ($arguments['name_match'] ?? null) === 'exact'
+                ? $this->projectSearchResult([['id' => 102, 'name' => 'Дом']], false)
+                : $this->projectSearchResult([['id' => 101, 'name' => 'Дом 1'], ['id' => 103, 'name' => 'Дом 2']], true);
+        });
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        self::assertSame([['query' => 'Дом', 'limit' => 2, 'name_match' => 'exact']], $calls);
+        $duplicate = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «Дом».'), fn (): array => $this->projectSearchResult([['id' => 101, 'name' => 'Дом'], ['id' => 102, 'name' => ' доМ ']], false));
+        self::assertNull(AssistantRequestProjectScope::fromPlan($duplicate)->projectId);
+    }
+
+    public function test_unique_partial_name_is_kept_only_after_no_exact_matches(): void
+    {
+        $calls = [];
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «Север».'), function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments;
+
+            return ($arguments['name_match'] ?? null) === 'exact' ? $this->projectSearchResult([], false)
+                : $this->projectSearchResult([['id' => 102, 'name' => 'Северный дом']], false);
+        });
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        self::assertCount(2, $calls);
+        self::assertSame('exact', $calls[0]['name_match']);
+        self::assertArrayNotHasKey('name_match', $calls[1]);
     }
 
     public function test_unquoted_name_after_our_project_is_resolved_instead_of_background_project(): void

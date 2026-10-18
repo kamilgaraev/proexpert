@@ -34,6 +34,11 @@ class SearchProjectsTool implements AIToolInterface
                     'minimum' => 1,
                     'description' => 'ID выбранного проекта из проверенного рабочего контекста. При наличии поиск выполняется по этому ID вместо текстовой фразы.',
                 ],
+                'name_match' => [
+                    'type' => 'string',
+                    'enum' => ['contains', 'exact'],
+                    'description' => trans_message('ai_assistant_production_schedule.name_match_description'),
+                ],
                 'limit' => [
                     'type' => 'integer',
                     'description' => 'Максимальное количество результатов (по умолчанию 5)',
@@ -52,10 +57,16 @@ class SearchProjectsTool implements AIToolInterface
         }
         $query = $arguments['query'] ?? '';
         $limit = max(1, min(30, (int) ($arguments['limit'] ?? 5)));
+        $nameMatch = $arguments['name_match'] ?? 'contains';
+        if (! in_array($nameMatch, ['contains', 'exact'], true)) {
+            throw new \InvalidArgumentException('invalid_project_name_match');
+        }
 
         $projects = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->entityQuery($user, (int) $organization->id, 'project');
         if (isset($arguments['project_id'])) {
             $projects->whereKey((int) $arguments['project_id']);
+        } elseif ($nameMatch === 'exact') {
+            $projects->whereRaw("lower(btrim(regexp_replace(name, '[[:space:]]+', ' ', 'g'))) = lower(btrim(regexp_replace(?, '[[:space:]]+', ' ', 'g')))", [$query]);
         } else {
             $projects->where(function ($q) use ($query) {
                 $q->where('name', 'ilike', "%{$query}%")

@@ -182,6 +182,37 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         app(AssistantProjectProductionScheduleReader::class)->read($member, $this->fixture->organization->id, ['project_id' => $this->project->id]);
     }
 
+    public function test_exact_named_project_is_resolved_beyond_fuzzy_window_and_normalized_duplicates_stay_ambiguous(): void
+    {
+        foreach (['Дом 1', 'Дом 2', 'Дом 3'] as $name) {
+            Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => $name]));
+        }
+        $exact = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => 'Дом']));
+        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id, 'name' => 'Дом']));
+        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта «Дом».',
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => $this->project->id]]]]];
+        $calls = [];
+        $search = function (array $arguments) use (&$calls): array {
+            $calls[] = $arguments;
+
+            return app(AssistantDataAccessPolicy::class)->withCurrentChecks($this->fixture->owner, $this->fixture->organization->id,
+                fn () => app(SearchProjectsTool::class)->execute($arguments, $this->fixture->owner, $this->fixture->organization), true);
+        };
+        $fuzzy = $search(['query' => 'Дом', 'limit' => 2]);
+        self::assertTrue($fuzzy['result_window']['has_more']);
+        self::assertNotContains($exact->id, array_column($fuzzy['results'], 'id'));
+        $calls = [];
+        $resolved = AssistantNamedProjectReadScope::bind($plan, $search);
+        self::assertSame($exact->id, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        self::assertSame([['query' => 'Дом', 'limit' => 2, 'name_match' => 'exact']], $calls);
+        $exact->update(['name' => "  СЕВЕРНЫЙ\t дом  "]);
+        $normalized = $search(['query' => 'северный   ДОМ', 'limit' => 2, 'name_match' => 'exact']);
+        self::assertSame([$exact->id], array_column($normalized['results'], 'id'));
+        $exact->update(['name' => 'Дом']);
+        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => '  доМ  ']));
+        self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($plan, $search))->projectId);
+    }
+
     public function test_registered_tool_is_exposed_and_executable_only_with_current_domains_and_project_access(): void
     {
         $checker = app(AIPermissionChecker::class);
