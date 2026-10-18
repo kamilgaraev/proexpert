@@ -81,6 +81,58 @@ final class EstimateExportReadbackTest extends TestCase
             self::assertEquals($expected, $found);
             $metadata = json_decode((string) $book->getSheetByName('_METADATA_')->getCell('A1')->getValue(), true);
             self::assertEquals([20, 900, 25], array_column($metadata['items'], 'quantity_total'));
+            self::assertEquals(30300, $metadata['sections'][0]['section_total_amount']);
+            self::assertEquals(180, $metadata['items'][0]['unit_price']);
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-with-prices.xlsx', $result['content']);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_excel_without_prices_omits_totals_and_financial_import_metadata(): void
+    {
+        $estimate = $this->fixture();
+        $item = $estimate->sections->first()->items[0];
+        $item->custom_resources = [['name' => 'Учебный ресурс', 'unit_price' => 9876]];
+        $item->metadata = ['supplier_quote' => ['total_amount' => 9876]];
+        $child = clone $item;
+        $child->id = 999;
+        $child->name = 'Вложенный учебный ресурс';
+        $child->setRelation('childItems', new Collection);
+        $item->setRelation('childItems', new Collection([$child]));
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, [
+            'show_prices' => false,
+            'include_resources' => true,
+        ]);
+        $result = (new ExcelEstimateBuilder)->build($estimate, $data, $data['options']);
+        $path = tempnam(sys_get_temp_dir(), 'pto-unpriced-');
+        try {
+            file_put_contents($path, $result['content']);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            $values = array_merge(...$sheet->toArray());
+            self::assertNotContains('Цена', $values);
+            self::assertNotContains('Сумма', $values);
+            self::assertNotContains('ИТОГОВАЯ СВОДКА', $values);
+            self::assertNotContains('ВСЕГО С НДС:', $values);
+            self::assertContains(20.0, array_map('floatval', array_filter($values, 'is_numeric')));
+            $metadata = json_decode((string) $book->getSheetByName('_METADATA_')->getCell('A1')->getValue(), true);
+            self::assertSame([], $metadata['calculation_settings']);
+            self::assertEquals(0, $metadata['sections'][0]['section_total_amount']);
+            self::assertEquals([20, 20, 900, 25], array_column($metadata['items'], 'quantity_total'));
+            foreach ($metadata['items'] as $exportedItem) {
+                self::assertEquals(0, $exportedItem['unit_price']);
+                self::assertEquals(0, $exportedItem['total_amount']);
+                self::assertNull($exportedItem['custom_resources']);
+                self::assertNull($exportedItem['metadata']);
+            }
+            self::assertStringNotContainsString('30300', json_encode($metadata));
+            self::assertStringNotContainsString('9876', json_encode($metadata));
+            if ($directory = getenv('PTO_EXPORT_FIXTURE_DIR')) {
+                file_put_contents($directory.'/estimate-without-prices.xlsx', $result['content']);
+            }
         } finally {
             unlink($path);
         }
