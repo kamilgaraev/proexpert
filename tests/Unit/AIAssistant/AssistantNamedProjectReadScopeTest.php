@@ -81,6 +81,31 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertNull(AssistantRequestProjectScope::fromPlan($resolved)->projectId);
     }
 
+    public function test_unquoted_project_name_excludes_following_question_and_preserves_name_words(): void
+    {
+        foreach (['Сверь выполненные работы с графиком проекта Северный дом и скажи, что осталось.',
+            'Сверь выполненные работы с графиком проекта Северный дом. Покажи сроки.',
+            'Сверь выполненные работы с графиком проекта Северный дом? Кто отвечает?',
+            'Сверь выполненные работы с графиком проекта Северный дом какой срок завершения?'] as $query) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+                self::assertSame(['query' => 'Северный дом', 'limit' => 2], $arguments);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $query);
+        }
+        foreach (['Сверь выполненные работы с графиком проекта Дом и сад и скажи, что осталось.' => 'Дом и сад',
+            'Сверь выполненные работы с графиком проекта Дом им. Ленина. Покажи сроки.' => 'Дом им. Ленина',
+            'Сверь выполненные работы с графиком проекта «Северный дом и скажи». Покажи сроки.' => 'Северный дом и скажи'] as $query => $name) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $query);
+        }
+    }
+
     public function test_file_and_write_requests_do_not_force_the_comparison_reader(): void
     {
         foreach (['Сформируй Excel: сверка выполненных работ с графиком проекта «ПТО».',
