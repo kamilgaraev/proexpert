@@ -735,7 +735,9 @@ final class AssistantPublishedReportTasksTest extends TestCase
         $actor = $this->fixture->owner;
         $org = (int) $this->fixture->organization->id;
         $this->root($actor);
-        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $result = app(AssistantPublishedReportTasks::class)->create(array_replace($this->arguments(), [
+            'report_code' => 'project_labor_cost', 'columns' => ['work_date'],
+        ]), $actor, $org);
         $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
         $action = $this->createMock(CreateReportRunAction::class);
         $action->expects(self::exactly(5))->method('handle')->willThrowException(
@@ -751,6 +753,85 @@ final class AssistantPublishedReportTasksTest extends TestCase
         self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
         $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)
             ->assertOk()->assertJsonPath('data.failure_reason', 'source_unavailable')->assertJsonPath('data.export_id', null);
+    }
+
+    public static function sourceReadinessFailures(): array
+    {
+        return [['source_incomplete'], ['source_history_incomplete'], ['source_reference_missing'], ['source_unavailable']];
+    }
+
+    #[DataProvider('sourceReadinessFailures')]
+    public function test_native_source_readiness_explains_the_source_failure_with_an_exact_safe_reason(string $reason): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $root = $this->root($actor);
+        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $attempts = $reason === 'source_unavailable' ? 5 : 1;
+        $source = $this->createMock(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class);
+        $source->expects(self::exactly($attempts))->method('snapshot')->willReturnCallback(function ($scope, $query) use ($reason, $org, $root, $task) {
+            self::assertSame($org, $scope->organizationId);
+            self::assertSame([(int) $this->project->id], $scope->projectIds);
+            self::assertSame($task->parameters['filters']['period_from'], $query->filters->values['period_from']);
+            self::assertSame($task->parameters['filters']['period_to'], $query->filters->values['period_to']);
+            self::assertSame($root->created_at->format('U.u'), $query->asOf->format('U.u'));
+            if ($reason === 'source_history_incomplete') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
+            }
+            if ($reason === 'source_reference_missing') {
+                return \App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSourceSnapshot::available(
+                    workIds: [PHP_INT_MAX], actIds: [], contractorIds: [], unitCodes: [], zones: [], statuses: [],
+                );
+            }
+
+            return \App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSourceSnapshot::unavailable($reason);
+        });
+        app()->instance(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class, $source);
+        $action = $this->createMock(CreateReportRunAction::class);
+        $action->expects(self::exactly($attempts))->method('handle')->willThrowException(
+            ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE));
+        app()->instance(CreateReportRunAction::class, $action);
+        for ($attempt = 0; $attempt < $attempts; $attempt++) {
+            $this->process(app(AssistantPublishedReportProcessor::class), $task);
+        }
+        self::assertSame('failed', $task->fresh()->status);
+        self::assertSame($attempts, $task->fresh()->failure_count);
+        self::assertNull($task->fresh()->run_id);
+        self::assertNull($task->fresh()->export_id);
+        self::assertSame(0, DB::table('report_runs')->where('organization_id', $org)->count());
+        $before = $task->fresh()->getAttributes();
+        $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)
+            ->assertOk()->assertJsonPath('data.failure_reason', $reason)->assertJsonPath('data.export_id', null)
+            ->assertJsonPath('data.report_code', 'accepted_production_progress')->assertJsonPath('data.project_id', (int) $this->project->id)
+            ->assertJsonMissingPath('data.parameters')->assertJsonMissingPath('data.filters');
+        self::assertSame($before, $task->fresh()->getAttributes());
+        $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
+        $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)->assertForbidden();
+    }
+
+    public function test_source_failure_diagnostics_recheck_access_before_reading_the_source(): void
+    {
+        $actor = $this->fixture->owner;
+        $org = (int) $this->fixture->organization->id;
+        $this->root($actor);
+        $result = app(AssistantPublishedReportTasks::class)->create($this->arguments(), $actor, $org);
+        $task = AssistantCoreReportTask::query()->findOrFail($result['report_task_id']);
+        $source = $this->createMock(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class);
+        $source->expects(self::never())->method('snapshot');
+        app()->instance(\App\Services\CompletedWork\Reporting\AcceptedProduction\Options\AcceptedProductionOptionsSource::class, $source);
+        $action = $this->createMock(CreateReportRunAction::class);
+        $action->expects(self::once())->method('handle')->willReturnCallback(function (): never {
+            $this->fixture->ownerAssignment->updateQuietly(['is_active' => false]);
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        });
+        app()->instance(CreateReportRunAction::class, $action);
+        $this->process(app(AssistantPublishedReportProcessor::class), $task);
+        self::assertSame('failed', $task->fresh()->status);
+        self::assertSame('ACCESS_OR_INPUT_CHANGED', $task->fresh()->error_code);
+        self::assertNull($task->fresh()->run_id);
+        self::assertNull($task->fresh()->export_id);
+        $this->withHeaders($this->headers($actor, $org))->getJson('/api/v1/admin/ai-assistant/report-tasks/'.$task->id)->assertForbidden();
     }
 
     private function replaceCurrentPublishedDefinition(): void

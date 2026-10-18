@@ -19,15 +19,25 @@ use InvalidArgumentException;
 final class AssistantRealAuthorizationFixture
 {
     public Organization $organization;
+
     public Organization $foreignOrganization;
+
     public User $owner;
+
     public User $administrator;
+
     public User $member;
+
     public User $foreignOwner;
+
     public OrganizationCustomRole $memberRole;
+
     public UserRoleAssignment $memberAssignment;
+
     public UserRoleAssignment $ownerAssignment;
+
     public OrganizationPackageSubscription $subscription;
+
     private OrganizationCommercialAccount $account;
 
     public static function create(array $packages = ['working-entry']): self
@@ -99,7 +109,8 @@ final class AssistantRealAuthorizationFixture
 
     private function newActor(Organization $organization, bool $owner = false): User
     {
-        $user = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
+        $user = User::factory()->create(['email' => 'assistant-auth-'.Str::uuid().'@example.test',
+            'current_organization_id' => $organization->id, 'is_active' => true]);
         $organization->users()->attach($user->id, [
             'is_owner' => $owner, 'is_active' => true, 'settings' => null,
             'project_access_mode' => $owner ? 'all_projects' : 'assigned_projects',

@@ -139,8 +139,9 @@ final readonly class AssistantPublishedReportTasks
         }
 
         return ['id' => (string) $task->id, 'status' => $status, 'title' => $task->parameters['title'],
+            'report_code' => $task->parameters['report_code'], 'project_id' => $task->parameters['project_id'],
             'format' => $task->parameters['format'], 'export_id' => $status === 'ready' ? $task->export_id : null,
-            'failure_reason' => $status === 'failed' && $task->error_code === 'REPORT_SOURCE_UNAVAILABLE' ? 'source_unavailable' : null,
+            'failure_reason' => $status === 'failed' ? (AssistantPublishedReportSourceReadiness::REASONS[$task->error_code] ?? null) : null,
             'expires_at' => $task->expires_at->toIso8601String(),
             'poll_after_ms' => 1000 * min(30, AssistantPublishedReportPolling::seconds(now()->getTimestamp() - $task->created_at->getTimestamp()))];
     }
