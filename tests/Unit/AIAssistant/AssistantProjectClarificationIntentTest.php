@@ -73,6 +73,23 @@ final class AssistantProjectClarificationIntentTest extends TestCase
         self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
     }
 
+    public function test_pending_project_name_allows_punctuation_and_preserves_nested_quotes(): void
+    {
+        $message = 'Сверь выполненные работы с графиком проекта «Старый дом».';
+        $previous = ['last_request' => ['message' => $message], 'pending_named_project_clarification' => ['message' => $message]];
+        foreach (['ЖК 1/2', 'Южный, корпус 2', 'Дома & сады', 'ЖК «Южный»'] as $name) {
+            $query = AssistantProjectClarificationIntent::query($name, [], $previous);
+            self::assertSame($name, AssistantNamedProjectReadScope::name(['request' => ['message' => $query]]), $name);
+            self::assertStringNotContainsString('Старый дом', $query);
+        }
+        foreach (['102' => 102, '«102»' => 95] as $reply => $expected) {
+            $query = AssistantProjectClarificationIntent::query((string) $reply, [], $previous);
+            $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => $query]], static fn (array $arguments): array => [
+                'status' => 'success', 'results' => [['id' => isset($arguments['project_id']) ? 102 : 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        }
+    }
+
     public function test_standalone_requests_ambiguous_or_missing_scope_and_writes_are_not_replayed(): void
     {
         $payload = ['context' => ['entity_refs' => [['type' => 'project', 'id' => 103]]]];

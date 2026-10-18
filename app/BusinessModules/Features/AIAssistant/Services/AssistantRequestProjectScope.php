@@ -39,6 +39,7 @@ final readonly class AssistantRequestProjectScope
 
     public static function organizationWide(string $question): bool
     {
+        $question = AssistantNamedProjectReadScope::withoutQuotedNames($question);
         $scope = '(?:(?:во?\s+)?всех\s+(?:наших\s+)?(?:проект|объект)|по\s+всем\s+(?:нашим\s+)?(?:проект|объект)|люб[а-яё]*\s+(?:из\s+(?:наших|всех)|наш[а-яё]*)\s+(?:проект|объект)|всей\s+(?:нашей\s+)?организац|в\s+целом\s+по\s+(?:нашей\s+)?организац)';
 
         return preg_match('/(?<![\pL\pN])'.$scope.'/iu', $question) === 1

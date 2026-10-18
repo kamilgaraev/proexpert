@@ -33,7 +33,8 @@ final class AssistantNamedProjectReadScope
         $implicitNotName = false;
         if ($name !== null && ! $ambiguous) {
             $arguments = ['query' => $name, 'limit' => 2];
-            if (preg_match('/^(?:id\s*|№\s*|#\s*)?([1-9]\d*)$/iu', $name, $matches) === 1) {
+            if (preg_match('/^(?:id\s*|№\s*|#\s*)?([1-9]\d*)$/iu', $name, $matches) === 1
+                && (! self::hasQuotedName($query) || preg_match('/^(?:id|№|#)/iu', $name) === 1)) {
                 $arguments['project_id'] = (int) $matches[1];
             } else {
                 $arguments['name_match'] = 'exact';
@@ -72,7 +73,7 @@ final class AssistantNamedProjectReadScope
         if (AssistantRequestProjectScope::organizationWide($query)) {
             return null;
         }
-        $quoted = preg_match('/(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)[«“„"]/iu', $query) === 1;
+        $quoted = self::hasQuotedName($query);
         if (! $quoted && self::hasLowercaseQuestionClause($query)) {
             return null;
         }
@@ -104,6 +105,16 @@ final class AssistantNamedProjectReadScope
 
     public static function clarifiedQuery(string $query, string $name): ?string
     {
+        $replacement = null;
+        foreach ([['«', '»'], ['“', '”'], ['„', '“'], ['"', '"']] as [$open, $close]) {
+            if (! str_contains($name, $open) && ! str_contains($name, $close)) {
+                $replacement = $open.$name.$close;
+                break;
+            }
+        }
+        if ($replacement === null) {
+            return null;
+        }
         preg_match_all('/\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)/iu', $query, $matches, PREG_OFFSET_CAPTURE);
         preg_match_all('/«[^»]*»|“[^”]*”|„[^“]*“|"[^"]*"/u', $query, $quotes, PREG_OFFSET_CAPTURE);
         $mentions = array_values(array_filter($matches[0], static function (array $mention) use ($quotes): bool {
@@ -135,9 +146,37 @@ final class AssistantNamedProjectReadScope
             return null;
         }
         foreach (array_reverse($spans) as [$offset, $length]) {
-            $query = substr_replace($query, '«'.$name.'»', $offset, $length);
+            $query = substr_replace($query, $replacement, $offset, $length);
         }
 
         return $query;
+    }
+
+    public static function withoutQuotedNames(string $query): string
+    {
+        return preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))(?:«[^»]+»|“[^”]+”|„[^“]+“|"[^"]+")/iu', '$1текущий', $query) ?? $query;
+    }
+
+    public static function semanticQuery(string $query): string
+    {
+        $withoutQuotes = self::withoutQuotedNames($query);
+        if ($withoutQuotes !== $query) {
+            return $withoutQuotes;
+        }
+        $name = self::name(['request' => ['message' => $query]]);
+
+        return $name === null ? $query : (preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))'.preg_quote($name, '/').'/iu', '$1текущий', $query, 1) ?? $query);
+    }
+
+    public static function planningQuery(string $query): string
+    {
+        $intent = AssistantOperationalReaderRegistry::intent($query);
+
+        return isset(AssistantOperationalReaderRegistry::TOOLS[$intent['name'] ?? '']) ? self::semanticQuery($query) : $query;
+    }
+
+    private static function hasQuotedName(string $query): bool
+    {
+        return preg_match('/(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+)[«“„"]/iu', $query) === 1;
     }
 }

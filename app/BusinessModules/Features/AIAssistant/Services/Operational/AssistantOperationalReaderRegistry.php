@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRe
 final class AssistantOperationalReaderRegistry
 {
     private const STAFF_TOPIC = '/отсутст|отпуск|больнич|командиров|сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu';
+
     private const TOPICS = ['/журнал(?![а-яё]*\s+(?:событи|действи))/iu', '/безопасност|охран[а-яё]*\s+труд|происшеств|нарушен/iu',
         '/rfi|вопрос[а-яё]*\s+проектировщик|изменен[а-яё]*.*(?:согласован|решени|влияни)/iu',
         AssistantProjectDesignReader::INTENT_PATTERN,
@@ -84,29 +85,45 @@ final class AssistantOperationalReaderRegistry
 
     public static function intent(string $query): ?array
     {
+        $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
         if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
             return AssistantProjectProductionScheduleReader::matches($query)
                 ? ['name' => 'get_project_production_schedule_summary', 'reader' => AssistantProjectProductionScheduleReader::class] : null;
         }
-        if (AssistantProjectMaterialRequestReader::hasIntent($query) && ! AssistantProjectMaterialRequestReader::matches($query)) { return null; }
+        if (AssistantProjectMaterialRequestReader::hasIntent($query) && ! AssistantProjectMaterialRequestReader::matches($query)) {
+            return null;
+        }
         if (preg_match('/что\s+написано|выдержк|цитат|содержани|текст[а-яё]*\s+(?:документ|предложен)|объясни[а-яё]*\s+правил/iu', $query) === 1) {
             return null;
         }
         if (AssistantReportDeliverySummaryReader::matches($query)) {
             foreach (AssistantRequiredProjectRead::READERS as $reader) {
-                if (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : $reader::matches($query)) { return null; }
+                if (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : $reader::matches($query)) {
+                    return null;
+                }
             }
             foreach (self::TOPICS as $pattern) {
-                if (in_array($pattern, [AssistantProjectExportHistoryReader::INTENT_PATTERN, AssistantProjectReportCatalogReader::INTENT_PATTERN], true)) { continue; }
-                if (preg_match($pattern, $query) === 1) { return null; }
+                if (in_array($pattern, [AssistantProjectExportHistoryReader::INTENT_PATTERN, AssistantProjectReportCatalogReader::INTENT_PATTERN], true)) {
+                    continue;
+                }
+                if (preg_match($pattern, $query) === 1) {
+                    return null;
+                }
             }
             foreach (self::ORGANIZATION_TOOLS as $reader) {
-                if ($reader !== AssistantReportSubscriptionsReader::class && $reader::hasIntent($query)) { return null; }
+                if ($reader !== AssistantReportSubscriptionsReader::class && $reader::hasIntent($query)) {
+                    return null;
+                }
             }
             foreach (self::NAMED_TOOLS as $reader) {
-                if ($reader::hasIntent($query)) { return null; }
+                if ($reader::hasIntent($query)) {
+                    return null;
+                }
             }
-            if (preg_match('/каталог|шаблон/iu', $query) === 1) { return null; }
+            if (preg_match('/каталог|шаблон/iu', $query) === 1) {
+                return null;
+            }
+
             return ['name' => 'get_project_report_delivery_summary', 'reader' => AssistantReportDeliverySummaryReader::class];
         }
         foreach (self::NAMED_TOOLS as $name => $class) {
@@ -132,7 +149,9 @@ final class AssistantOperationalReaderRegistry
         $financeQuery = AssistantProjectReportCatalogReader::matches($query)
             ? preg_replace('/для\s+проверки\s+оплат(?:,?\s+работ(?:\s+и\s+остатков)?)?/iu', '', $query) ?? $query
             : $query;
-        if ($subscriptionCatalog) { $financeQuery = AssistantReportSubscriptionCatalogReader::intentQuery($financeQuery); }
+        if ($subscriptionCatalog) {
+            $financeQuery = AssistantReportSubscriptionCatalogReader::intentQuery($financeQuery);
+        }
         if (AssistantOrganizationModulesReader::matches($query)) {
             $financeQuery = preg_replace('/без\s+плат[её]ж[а-яё]*\s+(?:подробност|детал)[а-яё]*/iu', '', $financeQuery) ?? $financeQuery;
         }
@@ -154,7 +173,9 @@ final class AssistantOperationalReaderRegistry
             : $query;
         $topicQuery = AssistantAdvanceSettingsReader::intentQuery($topicQuery);
         foreach (self::TOPICS as $pattern) {
-            if ($pattern === AssistantProjectReportCatalogReader::INTENT_PATTERN && $subscriptionCatalog) { continue; }
+            if ($pattern === AssistantProjectReportCatalogReader::INTENT_PATTERN && $subscriptionCatalog) {
+                continue;
+            }
             if ($pattern === self::STAFF_TOPIC && AssistantAssignableRolesReader::matches($query)) {
                 continue;
             }
@@ -164,13 +185,25 @@ final class AssistantOperationalReaderRegistry
         }
         $organizationMatches = [];
         foreach (self::ORGANIZATION_TOOLS as $name => $class) {
-            if ($class === AssistantReportSubscriptionsReader::class && $subscriptionCatalog) { continue; }
+            if ($class === AssistantReportSubscriptionsReader::class && $subscriptionCatalog) {
+                continue;
+            }
             if ($class === AssistantOrganizationPackagesReader::class && ($subscriptionCatalog || (AssistantReportSubscriptionsReader::matches($query)
-                && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1))) { continue; }
-            if (AssistantAdvanceSettingsReader::matches($query) && in_array($class, [AssistantNotificationPreferencesReader::class, AssistantOrganizationNotificationsReader::class], true)) { continue; }
-            if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) { continue; }
-            if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) { continue; }
-            if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) { continue; }
+                && preg_match('/пакет|тариф|биллинг|оплат|продлен|стоим|цен[аы]|баланс|единиц/iu', $query) !== 1))) {
+                continue;
+            }
+            if (AssistantAdvanceSettingsReader::matches($query) && in_array($class, [AssistantNotificationPreferencesReader::class, AssistantOrganizationNotificationsReader::class], true)) {
+                continue;
+            }
+            if (AssistantOwnRolesReader::matches($query) && $class === AssistantAssignableRolesReader::class) {
+                continue;
+            }
+            if ($ownPermissions && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantNotificationPreferencesReader::class], true)) {
+                continue;
+            }
+            if (AssistantNotificationPreferencesReader::matches($query) && in_array($class, [AssistantOrganizationNotificationsReader::class, AssistantOrganizationActivityReader::class], true)) {
+                continue;
+            }
             if ($purchaseOrders && $class === AssistantOrganizationSuppliersReader::class) {
                 continue;
             }
@@ -186,7 +219,9 @@ final class AssistantOperationalReaderRegistry
         }
         $matches = [];
         foreach (self::TOOLS as $name => $class) {
-            if ($class === AssistantProjectSiteRequestReader::class && AssistantProjectMaterialRequestReader::matches($query)) { continue; }
+            if ($class === AssistantProjectSiteRequestReader::class && AssistantProjectMaterialRequestReader::matches($query)) {
+                continue;
+            }
             if ($class::matches($query)) {
                 $matches[] = ['name' => $name, 'reader' => $class];
             }
@@ -200,6 +235,7 @@ final class AssistantOperationalReaderRegistry
 
     public static function hasIntent(string $query): bool
     {
+        $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
         if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
             return true;
         }

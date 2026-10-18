@@ -291,6 +291,59 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertSame('Северный дом', $merged['message']);
     }
 
+    public function test_named_project_semantics_do_not_change_other_operational_reader_routes(): void
+    {
+        foreach (['Какие нарушения проекта «Сметный дом»?' => ['get_project_safety_summary', 'Сметный дом'],
+            'Проверь журналы работ проекта «Договорный парк».' => ['get_project_journal_readiness', 'Договорный парк'],
+            'Какие камеры проекта «Бюджетный квартал»?' => ['get_project_camera_roster', 'Бюджетный квартал']] as $query => [$tool, $name]) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($resolved), $query);
+            self::assertNotNull(AssistantRequiredProjectRead::decisionReader($tool, $query));
+            self::assertContains($tool, \App\BusinessModules\Features\AIAssistant\Services\AssistantToolSurface::names([$tool], $resolved));
+            self::assertStringNotContainsString($name, AssistantNamedProjectReadScope::planningQuery($query));
+            self::assertSame(AssistantNamedProjectReadScope::semanticQuery($query), AssistantNamedProjectReadScope::semanticQuery(AssistantNamedProjectReadScope::semanticQuery($query)));
+            self::assertSame($query, $resolved['request']['message']);
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query.' И сколько потрачено?'));
+            self::assertSame($query.' И сколько потрачено?', AssistantNamedProjectReadScope::planningQuery($query.' И сколько потрачено?'));
+        }
+    }
+
+    public function test_numeric_quoted_name_stays_a_name_while_explicit_ids_keep_identity(): void
+    {
+        $query = 'Сверь выполненные работы с графиком проекта «102».';
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+            self::assertSame(['query' => '102', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+            return $this->projectSearchResult([['id' => 95]], false);
+        });
+        self::assertSame(95, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        foreach (['102', '№102', '«№102»', 'ID 102', '#102'] as $id) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта '.$id), function (array $arguments): array {
+                self::assertSame(102, $arguments['project_id']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        }
+    }
+
+    public function test_scope_words_inside_a_quoted_project_name_do_not_request_organization_aggregates(): void
+    {
+        $query = 'Какие камеры проекта «Вся наша организация»?';
+        self::assertFalse(AssistantRequestProjectScope::organizationWide($query));
+        $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+            self::assertSame('Вся наша организация', $arguments['query']);
+
+            return $this->projectSearchResult([['id' => 102]], false);
+        });
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+        self::assertTrue(AssistantRequestProjectScope::organizationWide('Какие камеры проекта «Вся наша организация» и по всем нашим проектам?'));
+    }
+
     private function plan(string $message): array
     {
         return ['request' => ['message' => $message, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];

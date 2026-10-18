@@ -504,7 +504,10 @@ class AIAssistantService
         $routingQuery = ! $imageDiscussion && ! $conversationNumberRequest
             ? AssistantProjectClarificationIntent::query($query, $requestPayload, $continuationContext)
             : $query;
-        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($routingQuery, $requestPayload, $accessContext));
+        $planningQuery = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === []
+            ? AssistantNamedProjectReadScope::planningQuery($routingQuery) : $routingQuery;
+        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($planningQuery, $requestPayload, $accessContext));
+        $taskPlan['request']['message'] = $routingQuery;
         if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && ! ($taskPlan['section_navigation'] ?? false)) {
             $taskPlan = AssistantNamedProjectReadScope::bind($taskPlan,
                 fn (array $arguments): array|string|null => $this->readFreshProjectSearchArguments($arguments, $user, $organizationId));
