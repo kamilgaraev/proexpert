@@ -950,18 +950,40 @@ final class AssistantCustomReportsTest extends TestCase
         $colleague = User::factory()->create(['name' => 'Ответственный коллега', 'is_active' => true]);
         $colleague->organizations()->attach($org->id, ['is_active' => true]);
         $foreign = User::factory()->create(['name' => 'Чужое имя', 'is_active' => true]);
+        $inactive = User::factory()->create(['name' => 'Неактивный коллега', 'is_active' => false]);
+        $inactive->organizations()->attach($org->id, ['is_active' => true]);
         $schedule = \App\Models\ProjectSchedule::query()->create(['organization_id' => $org->id, 'project_id' => $project->id,
             'name' => 'График', 'created_by_user_id' => $actor->id, 'planned_start_date' => '2026-01-01', 'planned_end_date' => '2026-12-31']);
-        foreach ([$colleague, $foreign] as $assignee) {
+        foreach ([$colleague, $foreign, $inactive, null] as $assignee) {
             \App\Models\ScheduleTask::query()->create(['schedule_id' => $schedule->id, 'organization_id' => $org->id,
-                'created_by_user_id' => $actor->id, 'assigned_user_id' => $assignee->id, 'name' => 'Задача '.$assignee->id,
+                'created_by_user_id' => $actor->id, 'assigned_user_id' => $assignee?->id, 'name' => 'Задача '.($assignee?->id ?? 'без ответственного'),
                 'task_type' => 'task', 'planned_start_date' => now()->subDays(2)->toDateString(), 'planned_end_date' => now()->subDay()->toDateString(),
                 'planned_duration_days' => 1, 'status' => 'not_started']);
         }
         $section = ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'columns' => ['name', 'assigned_user_name']];
         $report = $this->builder->build($this->plan($section), $actor, $org->id);
-        self::assertSame([['Задача '.$colleague->id, 'Ответственный коллега'], ['Задача '.$foreign->id, null]], $report['sections'][0]['rows']);
+        $unassigned = trans_message('ai_assistant_attention.owner_unassigned');
+        self::assertSame([['Задача '.$colleague->id, 'Ответственный коллега'], ['Задача '.$foreign->id, null],
+            ['Задача '.$inactive->id, null], ['Задача без ответственного', $unassigned]], $report['sections'][0]['rows']);
+        self::assertSame([$colleague->id], $report['source_refs'][0]['_report_scope']['assigned_user_ids']);
         self::assertTrue($this->references->canReadReference($actor, $org->id, $report['source_refs'][0]));
+        $filtered = $this->builder->build($this->plan(array_replace($section, ['filters' => [
+            ['field' => 'assigned_user_name', 'operator' => 'eq', 'value' => $unassigned],
+        ]])), $actor, $org->id);
+        self::assertSame([['Задача без ответственного', $unassigned]], $filtered['sections'][0]['rows']);
+        self::assertSame([], $filtered['source_refs'][0]['_report_scope']['assigned_user_ids']);
+        self::assertTrue($this->references->canReadReference($actor, $org->id, $filtered['source_refs'][0]));
+        $grouped = $this->builder->build($this->plan(array_replace($section, ['columns' => ['assigned_user_name'],
+            'group_by' => ['assigned_user_name'], 'metrics' => [['field' => null, 'operation' => 'count', 'label' => 'Задач']]])), $actor, $org->id);
+        self::assertEqualsCanonicalizing([[null, 2], ['Ответственный коллега', 1], [$unassigned, 1]], $grouped['sections'][0]['rows']);
+        $stream = (new \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantCustomReportRenderer)->render($filtered);
+        try {
+            $book = \PhpOffice\PhpSpreadsheet\IOFactory::load(stream_get_meta_data($stream)['uri']);
+            self::assertSame($unassigned, $book->getActiveSheet()->getCell('B6')->getValue());
+            $book->disconnectWorksheets();
+        } finally {
+            fclose($stream);
+        }
         self::assertNull($this->policy->entityQuery($actor, $org->id, 'user'));
         $colleague->organizations()->updateExistingPivot($org->id, ['is_active' => false]);
         self::assertNull($this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows'][0][1]);

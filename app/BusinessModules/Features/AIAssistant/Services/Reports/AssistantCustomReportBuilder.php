@@ -255,7 +255,7 @@ final readonly class AssistantCustomReportBuilder
         }
         if ($assigneeProjection) {
             $scope['assigned_user_ids'] = array_values(array_unique(array_map('intval', array_column(array_filter($raw,
-                static fn (array $row): bool => ($row['assigned_user_name'] ?? null) !== null), 'assigned_user_id'))));
+                static fn (array $row): bool => ($row['assigned_user_name'] ?? null) !== null && (int) ($row['assigned_user_id'] ?? 0) > 0), 'assigned_user_id'))));
         }
         $reference = $this->references->create($actor, $organizationId, $scope, array_values(array_unique($fields)),
             $rows->modelKeys(), hash('sha256', json_encode($data, JSON_THROW_ON_ERROR)), $fetchedAt);
