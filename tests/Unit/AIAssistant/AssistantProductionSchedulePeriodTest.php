@@ -14,6 +14,39 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_relative_days_and_project_start_keep_named_scope_and_resolve_without_clarification(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 00:30:00', 'Europe/Moscow'));
+        try {
+            foreach (['сегодня' => ['2026-01-01', '2026-01-01'], 'за сегодня' => ['2026-01-01', '2026-01-01'],
+                'вчера' => ['2025-12-31', '2025-12-31'], 'за вчера' => ['2025-12-31', '2025-12-31'],
+                'позавчера' => ['2025-12-30', '2025-12-30'], 'с начала проекта' => [null, '2026-01-01']] as $phrase => [$start, $end]) {
+                $query = 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase;
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $plan = ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => [
+                    'status' => 'success', 'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false],
+                ]);
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end], AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            }
+            foreach (['сегодня и вчера', 'сегодня за октябрь 2026', 'с начала проекта за октябрь 2026', 'с начала проекта и вчера'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_open_lower_bound_requires_a_valid_upper_bound_and_remains_a_known_period(): void
+    {
+        self::assertTrue(AssistantProductionSchedulePeriod::validArguments(['project_id' => 102, 'period_start' => null, 'period_end' => '2026-10-31']));
+        foreach ([['project_id' => 102, 'period_start' => null, 'period_end' => '2026-02-30'],
+            ['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => null]] as $arguments) {
+            self::assertFalse(AssistantProductionSchedulePeriod::validArguments($arguments));
+        }
+    }
+
     public function test_period_prepositions_preserve_the_named_project_and_resolve_known_dates(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
@@ -196,7 +229,6 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
             self::assertTrue(AssistantProductionSchedulePeriod::validArguments($arguments));
         }
         foreach ([['project_id' => 0], ['project_id' => '102'], ['project_id' => 102, 'period_start' => '2026-10-01'],
-            ['project_id' => 102, 'period_start' => null, 'period_end' => '2026-10-31'],
             ['project_id' => 102, 'period_start' => '2026-02-30', 'period_end' => '2026-03-31'],
             ['project_id' => 102, 'period_start' => '2026-11-01', 'period_end' => '2026-10-31'],
             ['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31', 'organization_id' => 38]] as $arguments) {

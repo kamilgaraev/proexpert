@@ -25,7 +25,7 @@ final class AssistantProductionSchedulePeriod
     public static function withoutSuffix(string $name): string
     {
         $time = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
-            .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d))';
+            .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
         $head = trim((string) ($parts[0] ?? $name));
@@ -40,11 +40,25 @@ final class AssistantProductionSchedulePeriod
         if (is_array($override) && ($override['message_sha256'] ?? null) === hash('sha256', (string) ($plan['request']['message'] ?? ''))
             && ($override['project_id'] ?? null) === $projectId) {
             $dates = array_intersect_key($override, array_flip(['project_id', 'period_start', 'period_end']));
-            if (isset($dates['period_start'], $dates['period_end']) && self::validArguments($dates)) {
+            if (array_key_exists('period_start', $dates) && isset($dates['period_end']) && self::validArguments($dates)) {
                 return ['project_id' => $projectId, 'period_start' => $dates['period_start'], 'period_end' => $dates['period_end']];
             }
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
+        $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
+        if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:проект[а-яё]*|объект[а-яё]*|работ[а-яё]*|строительств[а-яё]*)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $projectStart) > 0) {
+            return count($projectStart[0]) === 1 && ! self::hasOtherPeriod($query, $projectStart[0][0])
+                ? $arguments + ['period_start' => null, 'period_end' => \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d')] : $unresolved;
+        }
+        if (preg_match_all('/\b(?:сегодня|вчера|позавчера)\b/iu', $query, $days) > 0) {
+            if (count($days[0]) !== 1 || self::hasOtherPeriod($query, $days[0][0])) {
+                return $unresolved;
+            }
+            $offset = ['сегодня' => 0, 'вчера' => 1, 'позавчера' => 2][mb_strtolower($days[0][0])];
+            $date = \Carbon\CarbonImmutable::now('Europe/Moscow')->subDays($offset)->format('Y-m-d');
+
+            return $arguments + ['period_start' => $date, 'period_end' => $date];
+        }
         if (preg_match('/\b'.self::QUARTER_PERIOD.'/iu', $query) === 1) {
             return $arguments + self::quarterDates($query);
         }
@@ -56,7 +70,6 @@ final class AssistantProductionSchedulePeriod
         if (preg_match('/\b'.self::TIME_START.'/iu', $query) !== 1) {
             return $arguments;
         }
-        $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
         $monthCount = preg_match_all('/\b'.self::MONTH.'\b/iu', $query);
         if ($monthCount > 1 || ($monthCount === 1 && preg_match('/\bза\s+'.self::MONTH.'\s+(?:(?:19|20)\d{2}\b|(?:этого|текущего|прошлого)\s+года\b)/iu', $query) !== 1)) {
             return $unresolved;
@@ -92,13 +105,16 @@ final class AssistantProductionSchedulePeriod
             return true;
         }
         foreach (['period_start', 'period_end'] as $key) {
+            if ($key === 'period_start' && $arguments[$key] === null) {
+                continue;
+            }
             if (! is_string($arguments[$key]) || preg_match('/^(\d{4})-(\d{2})-(\d{2})$/D', $arguments[$key], $date) !== 1
                 || ! checkdate((int) $date[2], (int) $date[3], (int) $date[1])) {
                 return false;
             }
         }
 
-        return $arguments['period_start'] <= $arguments['period_end'];
+        return $arguments['period_start'] === null || $arguments['period_start'] <= $arguments['period_end'];
     }
 
     public static function pending(array $plan, array $verified): ?array
@@ -124,7 +140,7 @@ final class AssistantProductionSchedulePeriod
             && ($override['message_sha256'] ?? null) === hash('sha256', $previous['message'])
             && preg_match('/^\s*(?:покажи(?:те)?\s+)?подробнее[.!?]?\s*$/iu', $reply) === 1) {
             $arguments = array_intersect_key($override, array_flip(['project_id', 'period_start', 'period_end']));
-            if (isset($arguments['period_start'], $arguments['period_end']) && self::validArguments($arguments)) {
+            if (array_key_exists('period_start', $arguments) && isset($arguments['period_end']) && self::validArguments($arguments)) {
                 return ['query' => $previous['message']] + $arguments;
             }
         }
@@ -208,7 +224,9 @@ final class AssistantProductionSchedulePeriod
 
     private static function hasOtherPeriod(string $query, string $phrase): bool
     {
-        return preg_match('/\b'.self::TIME_START.'/iu', str_replace($phrase, ' ', $query)) === 1;
+        $remainder = str_replace($phrase, ' ', $query);
+
+        return preg_match('/\b(?:'.self::TIME_START.'|'.self::QUARTER_PERIOD.')/iu', $remainder) === 1;
     }
 
     private static function normalizedQuery(string $query): string

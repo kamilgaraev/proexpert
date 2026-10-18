@@ -513,7 +513,9 @@ class AIAssistantService
         $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($planningQuery, $requestPayload, $accessContext));
         $taskPlan['request']['message'] = $routingQuery;
         unset($taskPlan['production_period_override'], $taskPlan['request']['production_period_override']);
-        if ($periodClarification !== null && $routingQuery === $periodClarification['query'] && isset($periodClarification['period_start'], $periodClarification['period_end'])) {
+        if ($periodClarification !== null && $routingQuery === $periodClarification['query']
+            && array_key_exists('period_start', $periodClarification) && isset($periodClarification['period_end'])
+            && AssistantProductionSchedulePeriod::validArguments(array_intersect_key($periodClarification, array_flip(['project_id', 'period_start', 'period_end'])))) {
             $taskPlan['production_period_override'] = $periodClarification + ['message_sha256' => hash('sha256', $routingQuery)];
             $taskPlan['request']['production_period_override'] = $taskPlan['production_period_override'];
         }
@@ -3000,6 +3002,15 @@ class AIAssistantService
     {
         $capabilityId = $taskPlan['capability']['id'] ?? null;
         $savedRequest = $taskPlan['request'];
+        if (\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader::matches((string) ($savedRequest['message'] ?? ''))) {
+            $read = AssistantRequiredProjectRead::fromPlan($taskPlan);
+            $arguments = $read['arguments'] ?? [];
+            if (($read['name'] ?? null) === 'get_project_production_schedule_summary'
+                && array_key_exists('period_start', $arguments) && isset($arguments['period_end'])
+                && AssistantProductionSchedulePeriod::validArguments($arguments)) {
+                $savedRequest['production_period_override'] = $arguments + ['message_sha256' => hash('sha256', $savedRequest['message'])];
+            }
+        }
         if (array_key_exists('named_project_scope', $taskPlan)) {
             $projectId = AssistantRequestProjectScope::fromPlan($taskPlan)->projectId;
             foreach (['entity_refs', 'entity_references'] as $key) {

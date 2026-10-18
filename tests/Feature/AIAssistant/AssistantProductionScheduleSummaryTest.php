@@ -144,6 +144,30 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->owner, $this->fixture->organization->id, $read['source_refs']));
     }
 
+    public function test_open_project_start_period_filters_future_works_and_rechecks_its_upper_bound(): void
+    {
+        $this->work('0.1000', 'м²', ['completion_date' => '2020-01-01']);
+        $this->work('0.2000', 'м²', ['completion_date' => '2026-10-18']);
+        $future = $this->work('999.0000', 'м²', ['completion_date' => '2026-10-19']);
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, [
+            'project_id' => $this->project->id, 'period_start' => null, 'period_end' => '2026-10-18',
+        ]);
+        self::assertSame(2, $read['data']['confirmed_works']);
+        self::assertSame('0.3000', $read['data']['accepted_volumes'][0]['quantity']);
+        self::assertNull($read['data']['period_start']);
+        self::assertSame('2026-10-18', $read['data']['period_end']);
+        self::assertStringContainsString('с начала учёта проекта', $read['server_formatted_answer']);
+        self::assertStringContainsString('2026-10-18', $read['server_formatted_answer']);
+        self::assertFalse($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        self::assertTrue($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+        $tampered = $read['source_refs'][0];
+        $tampered['_read_arguments']['period_end'] = '2026-10-19';
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $tampered));
+        $future->updateQuietly(['completion_date' => '2026-10-18']);
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+    }
+
     public function test_unresolved_period_requests_dates_without_showing_all_time_totals(): void
     {
         $this->work('999.0000', 'м²');

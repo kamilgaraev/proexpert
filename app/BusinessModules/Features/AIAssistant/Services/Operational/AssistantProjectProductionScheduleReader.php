@@ -55,7 +55,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     protected function collectForArguments(User $actor, int $organizationId, array $arguments): array
     {
-        if (array_key_exists('period_start', $arguments) && $arguments['period_start'] === null) {
+        if (array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
             return ['period_unresolved' => true];
         }
 
@@ -66,7 +66,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     {
         $answer = parent::verifiedAnswer($result, $actor, $organizationId);
         $arguments = $result['source_refs'][0]['_read_arguments'] ?? [];
-        if ($answer !== null && array_key_exists('period_start', $arguments) && $arguments['period_start'] === null) {
+        if ($answer !== null && array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
             $answer['needs_clarification'] = true;
         }
 
@@ -76,8 +76,11 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     protected function collect(User $actor, int $organizationId, int $projectId, array $arguments = []): array
     {
         $works = $this->reports->resolve($actor, $organizationId, 'works', 'completed_work', $projectId)['query']->confirmed();
-        if (isset($arguments['period_start'], $arguments['period_end'])) {
-            $works->whereBetween('completed_works.completion_date', [$arguments['period_start'], $arguments['period_end']]);
+        if (isset($arguments['period_start'])) {
+            $works->where('completed_works.completion_date', '>=', $arguments['period_start']);
+        }
+        if (isset($arguments['period_end'])) {
+            $works->where('completed_works.completion_date', '<=', $arguments['period_end']);
         }
         $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId)['query'];
         $schedules = $this->projectQuery($actor, $organizationId, $projectId, 'schedule');
@@ -128,6 +131,8 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
             trans_message('ai_assistant_production_schedule.works', ['count' => $data['confirmed_works']])];
         if ($data['period_start'] !== null) {
             array_splice($lines, 1, 0, [trans_message('ai_assistant_production_schedule.period', ['from' => $data['period_start'], 'to' => $data['period_end']])]);
+        } elseif ($data['period_end'] !== null) {
+            array_splice($lines, 1, 0, [trans_message('ai_assistant_production_schedule.period_from_start', ['to' => $data['period_end']])]);
         }
         foreach ($data['accepted_volumes'] as $volume) {
             $lines[] = $volume['quantity'] === null

@@ -1985,6 +1985,65 @@ final class AssistantRequestLifecycleTest extends TestCase
         return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true]];
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('directProductionPeriods')]
+    public function test_direct_production_period_is_saved_and_older_dates_survive_detail_reply(string $phrase, ?string $start, string $end): void
+    {
+        $today = \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d');
+        $firstStart = $phrase === 'сегодня' ? $today : $start;
+        $firstEnd = $phrase === 'за октябрь 2026' ? $end : $today;
+        $original = 'Сверь выполненные работы с графиком проекта «Северный дом» '.$phrase;
+        $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Продолжение периода');
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects(self::exactly(2))->method('responses')->willReturn($this->nativeResponse('Период сохранён.', [
+            'input_tokens' => 100, 'output_tokens' => 7, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true,
+        ]));
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $calls = 0;
+        $orchestrator->expects(self::exactly(2))->method('plan')->willReturnCallback(static function (string $query, array $payload) use (&$calls, $phrase): array {
+            self::assertStringContainsString($phrase, $query);
+            if (++$calls === 2) {
+                self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_refs']);
+                self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_references']);
+            }
+
+            return ['request' => ['message' => $query] + $payload, 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []];
+        });
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->probeProviderDuringAsk = true;
+        $service->projectSearchResultOverride = ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]];
+        $payload = $this->quote(['message' => $original, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], conversationId: $conversation->id);
+        $service->ask($original, $this->organization->id, $this->actor, $conversation->id, $payload);
+        $first = $conversation->fresh()->context['last_request'];
+        $expected = ['project_id' => 102, 'period_start' => $firstStart, 'period_end' => $firstEnd,
+            'message_sha256' => hash('sha256', $first['message'])];
+        $actual = $first['production_period_override'] ?? null;
+        self::assertIsArray($actual);
+        ksort($expected);
+        ksort($actual);
+        self::assertSame($expected, $actual);
+        $context = $conversation->fresh()->context;
+        $context['last_request']['production_period_override']['period_start'] = $start;
+        $context['last_request']['production_period_override']['period_end'] = $end;
+        $conversation->update(['context' => $context]);
+        $reply = 'Покажи подробнее';
+        $payload = $this->quote(['message' => $reply, 'context' => ['entity_references' => [['entity_type' => 'project', 'entity_id' => 104]]]], conversationId: $conversation->id);
+        $service->ask($reply, $this->organization->id, $this->actor, $conversation->id, $payload);
+        self::assertSame([$original, $reply], Message::query()->where('role', 'user')->orderBy('id')->pluck('content')->all());
+        $saved = $conversation->fresh()->context['last_request'];
+        self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod::arguments(102, [
+                'request' => $saved, 'production_period_override' => $saved['production_period_override'] ?? null,
+            ]));
+    }
+
+    public static function directProductionPeriods(): array
+    {
+        return [['с начала проекта по сегодня', null, '2026-10-18'], ['сегодня', '2026-10-18', '2026-10-18'],
+            ['за октябрь 2026', '2026-10-01', '2026-10-31']];
+    }
+
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
     {
         $registry ??= new AIToolRegistry;
