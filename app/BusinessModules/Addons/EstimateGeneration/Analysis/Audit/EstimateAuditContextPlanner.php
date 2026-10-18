@@ -257,7 +257,7 @@ final class EstimateAuditContextPlanner
         $manifest['draft_record_counts'] = $distribution['counts'];
         $prepared = [];
         foreach ($distribution['parts'] as $part) {
-            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => $part['derived_quantities'], 'evidence' => $part['evidence'],
+            $payload = [...$full, 'facts' => $part['facts'], 'derived_quantities' => EstimateAuditQuantityWireProjection::project($part['derived_quantities']), 'evidence' => $part['evidence'],
                 'draft' => EstimateAuditDraftWireProjection::project($part['draft'], $part['derived_quantities']),
                 'part_id' => $part['id'], 'context_manifest' => $manifest];
             if (! $this->fits($payload, $maximumBytes)) {

@@ -112,6 +112,51 @@ final class EstimateAuditQuantityWireProjectionTest extends TestCase
         ]));
     }
 
+    public function test_partitioned_wall_context_uses_the_same_projection_for_admission_and_wire(): void
+    {
+        $first = $this->quantities()[0];
+        $second = json_decode(str_replace(['wall:1', 'fact:', 'quantity:wall'], ['wall:2', 'fact:second:', 'quantity:second'],
+            CanonicalPipelineJson::encode($first)), true, 64, JSON_THROW_ON_ERROR);
+        $quantities = [$first, $second];
+        $facts = $items = [];
+        foreach ($quantities as $index => $quantity) {
+            foreach ($quantity['operand_fact_ids'] as $id) {
+                $facts[] = ['id' => $id, 'entity_id' => $quantity['entity_id']];
+            }
+            $items[] = ['key' => 'work:'.$index, 'entity_id' => $quantity['entity_id'], 'quantity_formula' => $quantity['id'],
+                'proof' => str_repeat('unique wall proof; ', 700)];
+        }
+        $draft = ['project_proof' => str_repeat('retained source; ', 1500),
+            'local_estimates' => [['sections' => [['work_items' => $items]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, [], 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(2, $parts);
+        $seen = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            $wire = $input->canonicalPayload();
+            self::assertArrayHasKey('context_manifest', $wire);
+            self::assertCount(1, $input->derivedQuantities);
+            $seen[] = $input->derivedQuantities[0]['id'];
+            self::assertSame(CanonicalPipelineJson::encode($input->derivedQuantities), CanonicalPipelineJson::encode($this->expand($wire['derived_quantities'], ['audit_input' => $wire])));
+            self::assertSame($input->derivedQuantities[0]['operand_fact_ids'], array_column($input->facts, 'id'));
+            $messages = [
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $wire])],
+            ];
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper($messages));
+            $wire['derived_quantities'] = $input->derivedQuantities;
+            $messages[1]['content'] = CanonicalPipelineJson::encode(['audit_input' => $wire]);
+            self::assertGreaterThan(65536, EstimatorTextWirePolicy::serializedInputUpper($messages));
+        }
+        self::assertSame(array_column($quantities, 'id'), $seen);
+    }
+
     private function quantities(): array
     {
         $snapshot = ['scope' => 'current model', 'identities' => array_fill(0, 18, str_repeat('a', 64))];
