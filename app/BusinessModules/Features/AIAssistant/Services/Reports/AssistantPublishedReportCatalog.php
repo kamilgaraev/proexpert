@@ -24,6 +24,7 @@ final readonly class AssistantPublishedReportCatalog
         private ReportHttpAuthorizationTargetResolver $targets,
         private GetReportCatalogAction $catalog,
         private ReportDefinitionRegistry $definitions,
+        private AssistantPublishedReportNativeFilters $nativeFilters,
     ) {}
 
     public function read(User $actor, int $organizationId, ?string $code = null): array
@@ -49,7 +50,7 @@ final readonly class AssistantPublishedReportCatalog
                     && ($view->visibility->canViewAudit || ! $definition->outputClassification->requiresAuditForColumns([$id]));
                 $item += ['columns' => array_values(array_filter(AssistantPublishedReportColumns::exportable($code, $view->columns), static fn (array $column): bool => $visible($column['id']))),
                     'sorts' => array_values(array_filter($view->sorts, static fn (array $sort): bool => $visible($sort['id']))),
-                    'filters' => $view->filters];
+                    'filters' => $this->nativeFilters->describe($code, $view->filters)];
             }
             $items[] = $item;
         }
