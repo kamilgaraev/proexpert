@@ -2892,7 +2892,14 @@ class AIAssistantService
             $currentContext['period'] = trim($query);
         }
 
-        if (empty($currentContext['entity_refs']) && ! empty($previousContext['entity_refs'])) {
+        if ($isDetailContinuation && $this->hasOnlyBackgroundContinuationReferences($currentContext)) {
+            foreach (['entity_refs', 'entity_references'] as $key) {
+                unset($currentContext[$key]);
+                if (array_key_exists($key, $previousContext)) {
+                    $currentContext[$key] = $previousContext[$key];
+                }
+            }
+        } elseif (empty($currentContext['entity_refs']) && ! empty($previousContext['entity_refs'])) {
             $currentContext['entity_refs'] = $previousContext['entity_refs'];
         }
 
@@ -2933,16 +2940,53 @@ class AIAssistantService
         return $payload;
     }
 
+    private function hasOnlyBackgroundContinuationReferences(array $context): bool
+    {
+        foreach (['entity_refs', 'entity_references'] as $key) {
+            $references = $context[$key] ?? [];
+            if (! is_array($references)) {
+                return false;
+            }
+            $normalized = [];
+            foreach ($references as $reference) {
+                if (is_array($reference) && ! isset($reference['type'], $reference['id']) && isset($reference['entity_type'], $reference['entity_id'])) {
+                    $reference['type'] = $reference['entity_type'];
+                    $reference['id'] = $reference['entity_id'];
+                    unset($reference['entity_type'], $reference['entity_id']);
+                }
+                $normalized[] = $reference;
+            }
+            if (! AssistantRequestUnderstandingResolver::hasOnlyBackgroundProjectReferences(['entity_refs' => $normalized])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     protected function buildLastRequestContext(string $query, array $taskPlan): array
     {
         $capabilityId = $taskPlan['capability']['id'] ?? null;
+        $savedRequest = $taskPlan['request'];
+        if (array_key_exists('named_project_scope', $taskPlan)) {
+            $projectId = AssistantRequestProjectScope::fromPlan($taskPlan)->projectId;
+            foreach (['entity_refs', 'entity_references'] as $key) {
+                $savedRequest['context'][$key] = array_values(array_filter(
+                    is_array($savedRequest['context'][$key] ?? null) ? $savedRequest['context'][$key] : [],
+                    static fn (mixed $ref): bool => is_array($ref) && ($ref['entity_type'] ?? $ref['type'] ?? null) !== 'project'
+                ));
+            }
+            if ($projectId !== null) {
+                $savedRequest['context']['entity_refs'][] = ['type' => 'project', 'id' => $projectId];
+            }
+        }
 
         return [
             'last_task_type' => $taskPlan['task_type'],
             'last_capability' => $capabilityId,
             'last_image_discussion' => (bool) ($taskPlan['image_discussion'] ?? false),
-            'last_request' => $taskPlan['request'],
-            'last_request_context' => $taskPlan['request']['context'],
+            'last_request' => $savedRequest,
+            'last_request_context' => $savedRequest['context'],
             'last_access_context' => $taskPlan['access_context_public'],
             'last_report_focus' => $this->resolveReportFocus($query, $capabilityId, $taskPlan['request']['context'] ?? []),
         ];

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
@@ -114,6 +115,52 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
             self::assertFalse(AssistantProjectProductionScheduleReader::matches($query));
             self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
+    }
+
+    public function test_unquoted_name_after_our_project_is_resolved_instead_of_background_project(): void
+    {
+        foreach (['Сверь выполненные работы с графиком в нашем проекте Северный дом',
+            'Сверь выполненные работы с графиком нашего проекта северный дом и скажи, что осталось.',
+            'Сверь выполненные работы с графиком на нашем объекте №102.'] as $query) {
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($resolved)->projectId, $query);
+        }
+        foreach (['Сверь выполненные работы с графиком в нашем проекте.',
+            'Какие задачи нашего объекта сейчас задерживают этапы?',
+            'Какие открытые нарушения нашего проекта ещё не устранены?',
+            'Какие работы нашего проекта остались незавершёнными?'] as $query) {
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+        }
+    }
+
+    public function test_conversation_target_survives_detail_followup_without_changing_original_ui_context(): void
+    {
+        $plan = $this->plan('Сверь выполненные работы с графиком проекта «Северный дом».');
+        $plan += ['task_type' => 'summary', 'capability' => ['id' => 'schedules'], 'access_context_public' => []];
+        $plan['request']['context']['entity_references'] = [['entity_type' => 'project', 'entity_id' => 104], ['type' => 'user', 'id' => 9]];
+        $resolved = AssistantNamedProjectReadScope::bind($plan, fn (): array => $this->projectSearchResult([['id' => 102]], false));
+        $service = (new \ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
+        $save = new \ReflectionMethod(AIAssistantService::class, 'buildLastRequestContext');
+        $saved = $save->invoke($service, $plan['request']['message'], $resolved);
+        self::assertSame(102, AssistantRequestProjectScope::fromPlan(['request' => $saved['last_request']])->projectId);
+        self::assertSame([['type' => 'user', 'id' => 9]], $saved['last_request_context']['entity_references']);
+        self::assertSame(104, $resolved['request']['context']['entity_refs'][0]['id']);
+        self::assertArrayNotHasKey('named_project_scope', $saved['last_request']);
+        $merge = new \ReflectionMethod(AIAssistantService::class, 'mergeContinuationRequestPayload');
+        foreach ([[], ['entity_refs' => [['type' => 'project', 'id' => 104]]],
+            ['entity_refs' => [['type' => 'project', 'id' => 104]], 'entity_references' => [['type' => 'project', 'id' => 104]]],
+            ['entity_refs' => [['type' => 'project', 'id' => 104]], 'entity_references' => [['entity_type' => 'project', 'entity_id' => 104]]]] as $context) {
+            $followup = $merge->invoke($service, 'а подробнее', ['message' => 'а подробнее', 'context' => $context], $saved);
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan(['request' => $followup])->projectId);
+        }
+        $explicit = ['entity_refs' => [['type' => 'project', 'id' => 103, 'explicit_selection' => true]]];
+        self::assertSame(103, AssistantRequestProjectScope::fromPlan(['request' => $merge->invoke($service, 'а подробнее', ['message' => 'а подробнее', 'context' => $explicit], $saved)])->projectId);
+        foreach ([null, 0] as $id) {
+            $resolved['named_project_scope']['project_id'] = $id;
+            self::assertNull(AssistantRequestProjectScope::fromPlan(['request' => $save->invoke($service, $plan['request']['message'], $resolved)['last_request']])->projectId);
+        }
+        $resolved['named_project_scope'] = ['project_id' => 102, 'message_sha256' => hash('sha256', 'old question')];
+        self::assertNull(AssistantRequestProjectScope::fromPlan(['request' => $save->invoke($service, $plan['request']['message'], $resolved)['last_request']])->projectId);
     }
 
     private function plan(string $message): array
