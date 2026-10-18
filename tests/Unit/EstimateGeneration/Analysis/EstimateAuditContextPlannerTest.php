@@ -347,6 +347,148 @@ final class EstimateAuditContextPlannerTest extends TestCase
         self::assertSame(array_column($parts, 'id'), array_column((new EstimateAuditContextPlanner($policy))->prepare($root, 458752), 'id'));
     }
 
+    public function test_full_house_package_plan_and_composer_requests_fit_without_losing_sources(): void
+    {
+        $facts = $evidence = $quantities = $locals = $requests = $packages = [];
+        for ($i = 0; $i < 40; $i++) {
+            $entity = 'entity:'.$i;
+            $sourceIds = [];
+            for ($j = 0; $j < 4; $j++) {
+                $id = 'fact:'.$i.':'.$j;
+                $sourceIds[] = $id;
+                $facts[] = ['id' => $id, 'entity_id' => $entity, 'value' => str_repeat('source dimension proof ', 40)];
+                $evidence[] = ['fact_id' => $id, 'locator' => ['evidence_id' => 'evidence:'.$i.':'.$j,
+                    'native_reference' => str_repeat('drawing measurement reference ', 24)]];
+            }
+            for ($j = 0; $j < 3; $j++) {
+                $quantities[] = ['id' => 'quantity:'.$i.':'.$j, 'entity_id' => $entity, 'value' => '10', 'unit' => 'm2',
+                    'operand_fact_ids' => $sourceIds, 'quantity_basis' => ['key' => 'quantity:'.$i.':'.$j,
+                        'amount' => '10', 'unit' => 'm2', 'formula_inputs' => ['entity_id' => $entity,
+                            'decision_reason' => str_repeat('confirmed dimensional source with provenance ', 145)]]];
+            }
+            $locals[] = ['key' => 'package:'.($i % 20), 'sections' => [['key' => 'section:'.$i, 'work_items' => [[
+                'key' => 'work:'.$i, 'name' => 'Устройство части дома '.$i, 'entity_id' => $entity,
+                'quantity_formula' => 'quantity:'.$i.':0', 'quantity' => '10', 'unit' => 'm2',
+                'source_refs' => [['fact_id' => $sourceIds[0]]],
+            ]]]]];
+            $requests[] = ['index' => $i % 3, 'batch_key' => 'batch:'.$i, 'reason' => 'work_source_required',
+                'work_name' => str_repeat('Уточнение сопутствующей работы ', 5),
+                'next_action' => 'confirm_work_source', 'source_fact_ids' => [$sourceIds[0]]];
+        }
+        for ($i = 0; $i < 20; $i++) {
+            $packages[] = ['key' => 'package:'.$i, 'title' => 'Раздел дома '.$i,
+                'basis' => str_repeat('package plan requires complete coverage ', 10)];
+        }
+        $draft = ['local_estimates' => $locals, 'estimate_composition' => ['request_info' => $requests],
+            'package_plan' => ['packages' => $packages, 'target_items_min_total' => 40],
+            'traceability' => ['document_context' => ['context_text' => str_repeat('building drawing source context ', 130)]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        $seenFacts = $seenEvidence = $seenQuantities = $seenWorks = $seenRequests = $seenPackages = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
+            ]));
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            self::assertSame(['package_plan.packages' => 20, 'estimate_composition.request_info' => 40], $input->contextManifest['draft_record_counts']);
+            self::assertSame($draft['traceability'], $input->draft['traceability']);
+            array_push($seenFacts, ...array_column($input->facts, 'id'));
+            array_push($seenEvidence, ...array_column(array_column($input->evidence, 'locator'), 'evidence_id'));
+            array_push($seenQuantities, ...array_column($input->derivedQuantities, 'id'));
+            array_push($seenWorks, ...$part['work_keys']);
+            array_push($seenRequests, ...$input->draft['estimate_composition']['request_info']);
+            foreach ($input->draft['package_plan']['packages'] as $package) {
+                $seenPackages[$package['key']] = $package;
+            }
+        }
+        self::assertEqualsCanonicalizing(array_column($facts, 'id'), array_values(array_unique($seenFacts)));
+        self::assertEqualsCanonicalizing(array_column(array_column($evidence, 'locator'), 'evidence_id'), array_values(array_unique($seenEvidence)));
+        self::assertEqualsCanonicalizing(array_column($quantities, 'id'), array_values(array_unique($seenQuantities)));
+        self::assertEqualsCanonicalizing(array_map(static fn (int $index): string => 'work:'.$index, range(0, 39)), $seenWorks);
+        self::assertEqualsCanonicalizing($requests, $seenRequests);
+        self::assertEqualsCanonicalizing($packages, array_values($seenPackages));
+        self::assertSame($draft, $root->draft);
+    }
+
+    public function test_compact_work_parts_distribute_requests_even_when_all_source_context_already_fits(): void
+    {
+        $items = [];
+        for ($i = 0; $i < 65; $i++) {
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Работа '.$i, 'source_refs' => [['fact_id' => 'fact:shared']]];
+        }
+        $requests = [
+            ['index' => 0, 'reason' => 'source_required', 'source_fact_ids' => ['fact:shared']],
+            ['index' => 1, 'reason' => 'estimate_composer_physical_duplicate_covered', 'next_action' => 'keep_existing_work',
+                'covered_by_position_key' => 'work:64', 'source_fact_ids' => ['fact:shared']],
+        ];
+        $draft = ['estimate_composition' => ['request_info' => $requests],
+            'package_plan' => ['packages' => [['key' => 'floors', 'title' => 'Полы']]],
+            'local_estimates' => [['key' => 'floors', 'sections' => [['key' => 'finish', 'work_items' => $items]]]]];
+        $facts = [['id' => 'fact:shared', 'value' => '40', 'unit' => 'm2']];
+        $evidence = [['fact_id' => 'fact:shared', 'locator' => ['evidence_id' => 'evidence:shared']]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, $evidence, 'estimate-auditor:v1');
+
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, 458752);
+
+        self::assertCount(3, $parts);
+        $seen = $works = [];
+        foreach ($parts as $part) {
+            array_push($seen, ...$part['input']->draft['estimate_composition']['request_info']);
+            array_push($works, ...$part['work_keys']);
+            foreach ($part['input']->draft['estimate_composition']['request_info'] as $request) {
+                if (isset($request['covered_by_position_key'])) {
+                    self::assertContains($request['covered_by_position_key'], $part['work_keys']);
+                }
+            }
+            self::assertSame($facts, $part['input']->facts);
+            self::assertSame($evidence, $part['input']->evidence);
+            self::assertSame(2, $part['input']->contextManifest['draft_record_counts']['estimate_composition.request_info']);
+            self::assertSame($root->fingerprint(), $part['input']->contextManifest['parent_fingerprint']);
+        }
+        self::assertEqualsCanonicalizing($requests, $seen);
+        self::assertEqualsCanonicalizing(array_column($items, 'key'), $works);
+        self::assertSame($draft, $root->draft);
+    }
+
+    public function test_compact_parts_keep_entity_diagnostics_with_the_work_even_without_entity_facts(): void
+    {
+        $items = [];
+        for ($i = 0; $i < 65; $i++) {
+            $items[] = ['key' => 'work:'.$i, 'name' => 'Работа '.$i, 'entity_id' => 'entity:'.$i];
+        }
+        $diagnostic = ['code' => 'quantity_unresolved', 'details' => ['entity_id' => 'entity:0']];
+        $review = ['type' => 'quantity_blocking', 'entity_id' => 'entity:64'];
+        $draft = ['building_quantities' => ['diagnostics' => [$diagnostic]], 'stage6_review_items' => [$review],
+            'local_estimates' => [['key' => 'floors', 'sections' => [['key' => 'finish', 'work_items' => $items]]]]];
+        $facts = [['id' => 'fact:0', 'entity_id' => 'entity:0', 'value' => '40', 'unit' => 'm2']];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, [], $draft, [], 'estimate-auditor:v1');
+
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, 458752);
+
+        $diagnostics = $reviews = [];
+        foreach ($parts as $part) {
+            foreach ($part['input']->draft['building_quantities']['diagnostics'] as $record) {
+                self::assertContains('work:0', $part['work_keys']);
+                $diagnostics[] = $record;
+            }
+            foreach ($part['input']->draft['stage6_review_items'] as $record) {
+                self::assertContains('work:64', $part['work_keys']);
+                $reviews[] = $record;
+            }
+            self::assertSame($facts, $part['input']->facts);
+        }
+        self::assertSame([$diagnostic], $diagnostics);
+        self::assertSame([$review], $reviews);
+        self::assertSame($draft, $root->draft);
+    }
+
     private function root(): EstimateAuditInput
     {
         $facts = $evidence = $items = [];

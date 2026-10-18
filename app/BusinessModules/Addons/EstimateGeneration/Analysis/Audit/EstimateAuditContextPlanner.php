@@ -48,7 +48,16 @@ final class EstimateAuditContextPlanner
             }
         }
         if ($allFit) {
-            return array_map(static fn (array $part): array => [...$part, 'input' => $root->withPart($part['draft'], $part['id'])], $parts);
+            if (count($parts) === 1) {
+                return array_map(static fn (array $part): array => [...$part, 'input' => $root->withPart($part['draft'], $part['id'])], $parts);
+            }
+            $contexts = array_map(fn (array $part): array => [...$part, 'facts' => $root->facts,
+                'derived_quantities' => $root->derivedQuantities, 'evidence' => $root->evidence,
+                'entity_ids' => $this->workEntityIds($part['draft'])], $parts);
+            $prepared = $this->prepareContexts($root, $contexts, $maximumBytes);
+            if ($prepared !== null) {
+                return $prepared;
+            }
         }
         $factsById = [];
         foreach ($root->facts as $fact) {
@@ -171,12 +180,6 @@ final class EstimateAuditContextPlanner
                 }
             }
         }
-        $manifest = ['contract' => 'estimate-audit-context:v1', 'parent_fingerprint' => $root->fingerprint(),
-            'total_facts' => count($root->facts), 'total_evidence' => count($root->evidence),
-            'total_derived_quantities' => count($root->derivedQuantities),
-            'work_manifest' => array_map(static fn (array $item): array => array_intersect_key($item,
-                array_flip(['key', 'name', 'unit', 'entity_id', 'quantity_formula'])), $this->items($root->draft)),
-            'scope' => 'part_dependencies_and_assigned_unused_facts'];
         $contexts = [];
         foreach ($parts as $index => $part) {
             $id = $part['id'] === 'whole' ? 'part:'.substr(hash('sha256', CanonicalPipelineJson::encode($part['work_keys'])), 0, 40) : $part['id'];
@@ -187,6 +190,19 @@ final class EstimateAuditContextPlanner
             $contexts[$index] = [...$part, 'id' => $id, 'draft' => $draft, 'facts' => $facts,
                 'derived_quantities' => $quantities, 'evidence' => $evidence, 'entity_ids' => array_keys($entities[$index])];
         }
+
+        return $this->prepareContexts($root, $contexts, $maximumBytes);
+    }
+
+    private function prepareContexts(EstimateAuditInput $root, array $contexts, int $maximumBytes): ?array
+    {
+        $full = $root->canonicalPayload();
+        $manifest = ['contract' => 'estimate-audit-context:v1', 'parent_fingerprint' => $root->fingerprint(),
+            'total_facts' => count($root->facts), 'total_evidence' => count($root->evidence),
+            'total_derived_quantities' => count($root->derivedQuantities),
+            'work_manifest' => array_map(static fn (array $item): array => array_intersect_key($item,
+                array_flip(['key', 'name', 'unit', 'entity_id', 'quantity_formula'])), $this->items($root->draft)),
+            'scope' => 'part_dependencies_and_assigned_unused_facts'];
         $distribution = (new EstimateAuditDraftRecordPlanner)->distribute($root->draft, $contexts);
         $manifest['draft_record_counts'] = $distribution['counts'];
         $prepared = [];
@@ -211,6 +227,23 @@ final class EstimateAuditContextPlanner
         }
 
         return $prepared;
+    }
+
+    private function workEntityIds(array $draft): array
+    {
+        $entities = [];
+        foreach ($this->items($draft) as $item) {
+            $basis = $item['quantity_evidence'] ?? $item['quantity_basis_details'] ?? [];
+            foreach ([$item['entity_id'] ?? null, $item['physical_entity_id'] ?? null,
+                $item['metadata']['scope_entity_id'] ?? null,
+                is_array($basis) ? ($basis['formula_inputs']['entity_id'] ?? null) : null] as $id) {
+                if (is_string($id) && $id !== '') {
+                    $entities[$id] = true;
+                }
+            }
+        }
+
+        return array_keys($entities);
     }
 
     private function fits(array $payload, int $maximumBytes): bool

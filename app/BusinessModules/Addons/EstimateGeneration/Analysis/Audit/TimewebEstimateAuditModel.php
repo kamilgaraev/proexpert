@@ -118,7 +118,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
             .'Для точного дубля correction содержит только operation="remove_exact_duplicate", target_item_key, retained_item_key, expected_target_fingerprint и expected_retained_fingerprint. '
             .'При context_manifest оценивай работы этой части и её факты, включая назначенные неиспользованные факты. '
             .'work_manifest содержит состав полной ревизии: не предлагай дубликат работы из другой части. '
-            .'Диагностика и задания проверки распределены по объектам частей; общие сообщения назначены одной части. '
+            .'Диагностика, пакеты плана и запросы уточнения распределены между частями; общие сообщения назначены одной части. '
             .'draft_record_counts содержит общее число исходных сообщений, включая сообщения других частей. '
             .'Не считай отсутствие факта или сообщения в части доказательством его отсутствия во всём проекте. '
             .'Верни только JSON с ключами accepted и findings; accepted=true допустим только при пустом findings.';
