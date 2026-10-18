@@ -618,6 +618,49 @@ final class AssistantCustomReportsTest extends TestCase
         }
     }
 
+    public function test_completed_work_report_excludes_resource_facts_from_rows_and_volume_totals(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $data = $this->linkedWorkForReport($org, $actor, $project);
+        $work = \App\Models\CompletedWork::query()->findOrFail($data['work_id']);
+        foreach (['material', 'equipment', 'labor', 'worker'] as $kind) {
+            \App\Models\CompletedWork::withoutEvents(fn () => $work->replicate()->fill([
+                'quantity' => '500.0000', 'completed_quantity' => '500.0000',
+                'additional_info' => ['fact_kind' => $kind],
+            ])->save());
+        }
+        $section = ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id,
+            'columns' => ['name', 'unit', 'quantity']];
+        $report = $this->builder->build($this->plan($section), $actor, $org->id);
+        self::assertSame(1, $report['sections'][0]['source_row_count']);
+        self::assertSame(1.25, (float) $report['sections'][0]['rows'][0][2]);
+        $section = array_replace($section, ['columns' => ['unit'], 'group_by' => ['unit'],
+            'metrics' => [['field' => 'quantity', 'operation' => 'sum', 'label' => 'Объём']]]);
+        $rows = $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows'];
+        self::assertCount(1, $rows);
+        self::assertSame(1.25, (float) $rows[0][1]);
+    }
+
+    public function test_completed_work_report_uses_canonical_completed_quantity_for_rows_and_totals(): void
+    {
+        [$org, $actor, $project] = $this->fixture();
+        $data = $this->linkedWorkForReport($org, $actor, $project);
+        foreach ([['10.0000', 10.0], [null, 100.0], ['0.0000', 0.0], ['-2.0000', 0.0]] as [$completed, $expected]) {
+            DB::table('completed_works')->where('id', $data['work_id'])->update([
+                'quantity' => '100.0000', 'completed_quantity' => $completed,
+            ]);
+            $section = ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id,
+                'columns' => ['unit', 'quantity']];
+            $rows = $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows'];
+            self::assertCount(1, $rows);
+            self::assertSame($expected, (float) $rows[0][1]);
+            $section = array_replace($section, ['columns' => ['unit'], 'group_by' => ['unit'],
+                'metrics' => [['field' => 'quantity', 'operation' => 'sum', 'label' => 'Объём']]]);
+            $rows = $this->builder->build($this->plan($section), $actor, $org->id)['sections'][0]['rows'];
+            self::assertSame($expected, (float) $rows[0][1]);
+        }
+    }
+
     public function test_completed_work_source_hints_preserve_works_and_schedule_for_a_planning_report(): void
     {
         $this->extraModules = ['schedule-management'];

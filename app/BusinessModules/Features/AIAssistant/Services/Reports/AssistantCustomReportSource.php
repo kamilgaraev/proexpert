@@ -107,7 +107,7 @@ final readonly class AssistantCustomReportSource
         if ($entityType === 'completed_work') {
             $fields['name'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.name')];
             $fields['unit'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.work_unit')];
-            $query = (new AssistantCompletedWorkReportProjection)->apply($query, $organizationId);
+            $query = (new AssistantCompletedWorkReportProjection)->apply($query, $organizationId, array_keys($columnTypes));
         }
         $permittedAliases = array_intersect_key($aliases, $fields);
         if ($permittedAliases !== []) {

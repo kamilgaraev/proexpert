@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\Models\CompletedWork;
 use App\Models\EstimateItem;
 use App\Models\MeasurementUnit;
 use App\Models\ScheduleTask;
@@ -13,7 +14,7 @@ use Illuminate\Database\Query\JoinClause;
 
 final class AssistantCompletedWorkReportProjection
 {
-    public function apply(Builder $works, int $organizationId): Builder
+    public function apply(Builder $works, int $organizationId, array $columns): Builder
     {
         $tasks = ScheduleTask::query()->join('project_schedules', 'project_schedules.id', '=', 'schedule_tasks.schedule_id')
             ->where('schedule_tasks.organization_id', $organizationId)->where('project_schedules.organization_id', $organizationId)
@@ -26,7 +27,10 @@ final class AssistantCompletedWorkReportProjection
             ->select(['id', 'name', 'measurement_unit_id']);
         $units = MeasurementUnit::query()->where(static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)->orWhere('is_system', true))
             ->select(['id', 'short_name']);
-        $works->select('completed_works.*')
+        $works->scopes(['physicalFacts'])->select(array_map(
+            static fn (string $column): string => 'completed_works.'.$column,
+            array_values(array_diff($columns, ['quantity'])),
+        ))->selectRaw(CompletedWork::EFFECTIVE_QUANTITY_SQL.' AS quantity')
             ->leftJoinSub($tasks, 'report_work_task', static fn (JoinClause $join) => $join
                 ->on('report_work_task.id', '=', 'completed_works.schedule_task_id')
                 ->on('report_work_task.project_id', '=', 'completed_works.project_id'))
