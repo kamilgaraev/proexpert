@@ -14,6 +14,48 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateAuditContextPlannerTest extends TestCase
 {
+    public function test_unused_quantities_can_move_outside_their_entity_part_with_all_operand_evidence(): void
+    {
+        $facts = [['id' => 'fact:house', 'entity_id' => 'house:1', 'value' => '40']];
+        $evidence = [['fact_id' => 'fact:house', 'locator' => ['page' => 1]]];
+        $quantities = [];
+        for ($i = 0; $i < 3; $i++) {
+            $quantities[] = ['id' => 'unused:'.$i, 'entity_id' => 'house:1', 'operand_fact_ids' => ['fact:house'],
+                'quantity_basis' => ['key' => 'unused:'.$i, 'decision_reason' => str_repeat('confirmed dimension; ', 1000)]];
+        }
+        $draft = ['traceability' => ['source_proof' => str_repeat('trace proof; ', 1400)],
+            'local_estimates' => [['sections' => [['work_items' => [
+                ['key' => 'work:house', 'entity_id' => 'house:1'],
+                ['key' => 'work:room', 'entity_id' => 'room:1'],
+                ['key' => 'work:roof', 'entity_id' => 'roof:1'],
+            ]]]]]];
+        $root = new EstimateAuditInput(1, 2, 3, str_repeat('a', 64), 0, $facts, $quantities, $draft, $evidence, 'estimate-auditor:v1');
+        $policy = ['contract' => EstimatorTextWirePolicy::CONTRACT, 'profile' => 'normal',
+            'token_limits' => ['input_tokens' => 24576, 'output_tokens' => 8192, 'max_calls' => 5],
+            'maximum_serialized_input_bytes' => 65536];
+
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, 458752);
+
+        self::assertCount(3, $parts);
+        $seen = [];
+        foreach ($parts as $part) {
+            $input = $part['input'];
+            self::assertCount(1, $input->derivedQuantities);
+            self::assertSame($facts, $input->facts);
+            self::assertSame($evidence, $input->evidence);
+            self::assertSame($draft['traceability'], $input->draft['traceability']);
+            self::assertSame($root->fingerprint(), $input->contextManifest['parent_fingerprint']);
+            self::assertLessThanOrEqual(65536, EstimatorTextWirePolicy::serializedInputUpper([
+                ['role' => 'system', 'content' => str_repeat('context ', 1024)],
+                ['role' => 'user', 'content' => CanonicalPipelineJson::encode(['audit_input' => $input->canonicalPayload()])],
+            ]));
+            array_push($seen, ...$input->derivedQuantities);
+        }
+        self::assertEqualsCanonicalizing($quantities, $seen);
+        self::assertSame($draft, $root->draft);
+        self::assertSame(array_column($parts, 'id'), array_column((new EstimateAuditContextPlanner($policy))->prepare($root, 458752), 'id'));
+    }
+
     public function test_unused_quantity_placement_accounts_for_required_proofs_that_appear_later_in_the_input(): void
     {
         $facts = [['id' => 'fact:area', 'entity_id' => 'house:1', 'value' => '40']];

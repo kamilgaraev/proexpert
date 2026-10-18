@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationCsvExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -113,6 +114,11 @@ final class EstimateGenerationPackageController extends Controller
     {
         return $this->safeRead(function () use ($request, $project, $session): JsonResponse {
             $this->guard($request, $project, $session);
+
+            $validated = $request->validate(['include_audit_preview' => ['sometimes', 'boolean']]);
+            if ($validated['include_audit_preview'] ?? false) {
+                return AdminResponse::success(app(EstimateAuditDraftPreview::class)->read($session));
+            }
 
             return AdminResponse::success($session->draft_payload ?? []);
         }, 'show draft', $project, $session);

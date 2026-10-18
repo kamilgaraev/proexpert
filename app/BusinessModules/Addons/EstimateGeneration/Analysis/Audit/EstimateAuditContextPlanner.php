@@ -36,13 +36,14 @@ final class EstimateAuditContextPlanner
 
     private function quantityIndex(array $quantities): array
     {
-        $index = ['ids' => [], 'bases' => []];
+        $index = ['ids' => [], 'bases' => [], 'bytes' => []];
         foreach ($quantities as $quantity) {
             $id = $quantity['id'] ?? null;
             if (! is_string($id)) {
                 continue;
             }
             $index['ids'][$id] = true;
+            $index['bytes'][$id] = strlen(CanonicalPipelineJson::encode($quantity));
             if (is_array($quantity['quantity_basis'] ?? null) && $quantity['quantity_basis'] !== []) {
                 $index['bases'][CanonicalPipelineJson::encode($quantity['quantity_basis'])][] = $id;
             }
@@ -148,7 +149,7 @@ final class EstimateAuditContextPlanner
             }
             foreach ($parts as $index => $_) {
                 if (isset($quantityIds[$index][$id])) {
-                    $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
+                    $loads[$index] += $quantityIndex['bytes'][$id];
                     foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
                         $wanted[$index][$factId] = true;
                     }
@@ -188,34 +189,16 @@ final class EstimateAuditContextPlanner
                 $wanted[$index][$fact['id']] = true;
             }
         }
-        foreach ($root->derivedQuantities as $quantity) {
+        $assignedQuantityIds = [];
+        foreach ($quantityIds as $ids) {
+            $assignedQuantityIds += $ids;
+        }
+        $unusedQuantities = array_values(array_filter($root->derivedQuantities,
+            static fn (array $quantity): bool => ! isset($assignedQuantityIds[$quantity['id']])));
+        usort($unusedQuantities, static fn (array $left, array $right): int => $quantityIndex['bytes'][$right['id']] <=> $quantityIndex['bytes'][$left['id']]);
+        foreach ($unusedQuantities as $quantity) {
             $id = $quantity['id'];
-            $owners = [];
-            foreach ($parts as $index => $_) {
-                if (isset($quantityIds[$index][$id])) {
-                    $owners[] = $index;
-                }
-            }
-            if ($owners !== []) {
-                continue;
-            }
-            $entity = $quantity['entity_id'] ?? null;
-            if (is_string($entity) && isset($assignedEntities[$entity])) {
-                $owners = $assignedEntities[$entity];
-            } else {
-                foreach ($parts as $index => $_) {
-                    foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                        if (isset($wanted[$index][$factId])) {
-                            $owners[] = $index;
-                            break;
-                        }
-                    }
-                }
-            }
-            if ($owners === []) {
-                $owners = array_keys($parts);
-            }
-            $candidateLoads = array_intersect_key($loads, array_fill_keys($owners, true));
+            $candidateLoads = $loads;
             foreach (array_keys($candidateLoads) as $index) {
                 foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
                     if (! isset($wanted[$index][$factId])) {
@@ -223,16 +206,14 @@ final class EstimateAuditContextPlanner
                     }
                 }
             }
-            $owners = [array_keys($candidateLoads, min($candidateLoads), true)[0]];
-            foreach ($owners as $index) {
-                $quantityIds[$index][$id] = true;
-                $loads[$index] += strlen(CanonicalPipelineJson::encode($quantity));
-                foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
-                    if (! isset($wanted[$index][$factId])) {
-                        $loads[$index] += $factBytes[$factId];
-                    }
-                    $wanted[$index][$factId] = true;
+            $owner = array_keys($candidateLoads, min($candidateLoads), true)[0];
+            $quantityIds[$owner][$id] = true;
+            $loads[$owner] += $quantityIndex['bytes'][$id];
+            foreach ($quantity['operand_fact_ids'] ?? [] as $factId) {
+                if (! isset($wanted[$owner][$factId])) {
+                    $loads[$owner] += $factBytes[$factId];
                 }
+                $wanted[$owner][$factId] = true;
             }
         }
         $contexts = [];
