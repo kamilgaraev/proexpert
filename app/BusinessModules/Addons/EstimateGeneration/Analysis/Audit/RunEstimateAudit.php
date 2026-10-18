@@ -18,7 +18,7 @@ use Throwable;
 
 final readonly class RunEstimateAudit
 {
-    public const PROMPT_CONTRACT = 'estimate-auditor:v1';
+    public const PROMPT_CONTRACT = 'estimate-auditor:v2';
 
     public function __construct(
         private AiRoleRunRepository $runs,

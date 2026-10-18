@@ -110,6 +110,8 @@ final readonly class EstimateAuditDraftPreview
                     $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
 
                     return ['id' => $part['id'], 'work_keys' => $part['work_keys'], 'payload_bytes' => strlen($encoded),
+                        'uncompressed_payload_bytes' => strlen(CanonicalPipelineJson::encode(['audit_input' => $part['input']->canonicalPayload(false)])),
+                        'reference_value_count' => count($payload['_v'] ?? []),
                         'serialized_input_upper' => EstimatorTextWirePolicy::serializedInputUpper([
                             ['role' => 'system', 'content' => str_repeat('context ', 1024)],
                             ['role' => 'user', 'content' => $encoded],
