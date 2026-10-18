@@ -826,6 +826,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 'estimate-generation.generation.pipeline_lease_seconds',
                 self::MINIMUM_PIPELINE_LEASE_SECONDS,
             )),
+            retainedPrefix: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class),
         ));
         $this->app->singleton(
             SessionAiCostGuard::class,

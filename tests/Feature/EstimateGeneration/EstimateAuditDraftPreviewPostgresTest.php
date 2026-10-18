@@ -58,6 +58,8 @@ final class EstimateAuditDraftPreviewPostgresTest extends EstimateGenerationCano
         self::assertTrue($preview['audit_preview']['fits']);
         self::assertCount(1, $preview['audit_preview']['parts']);
         self::assertSame(['work:house'], $preview['audit_preview']['parts'][0]['work_keys']);
+        self::assertGreaterThan(0, $preview['audit_preview']['parts'][0]['field_bytes']['draft']);
+        self::assertArrayHasKey('local_estimates', $preview['audit_preview']['parts'][0]['draft_field_bytes']);
         self::assertSame('quantity:house', $preview['audit_preview']['derived_quantities'][0]['id']);
         self::assertSame(0, $preview['audit_preview']['derived_quantities'][0]['operand_count']);
         self::assertArrayNotHasKey('draft', $preview);

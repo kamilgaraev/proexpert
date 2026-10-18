@@ -84,7 +84,12 @@ final readonly class EstimatorCreditOperations
             return [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
                 'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
                 'available_units_minor' => $balance['available_minor'],
-                'reconciliation_held_units_minor' => $balance['reconciliation_held_minor']];
+                'reconciliation_held_units_minor' => $balance['reconciliation_held_minor'],
+                ...(isset($plan['retained_pipeline_prefix']) ? ['continuation' => [
+                    'source_operation_id' => $plan['retained_pipeline_prefix']['source_operation_id'],
+                    'completed_stages' => array_keys($plan['retained_pipeline_prefix']['stages']),
+                    'resume_stage' => 'validate_draft',
+                ]] : [])];
         }, 3);
     }
 
@@ -134,6 +139,10 @@ final readonly class EstimatorCreditOperations
             }
         }
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
+        if (isset($plan['retained_pipeline_prefix'])) {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)
+                ->assertCurrent($session, $plan['retained_pipeline_prefix'], $plan['known_context']);
+        }
         $request = $this->request($identity);
         $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
@@ -171,6 +180,12 @@ final readonly class EstimatorCreditOperations
             ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true, $known['part_limits'] ?? []);
         if ($known !== null) {
             $plan['known_context'] = $known;
+            if ($kind === 'generation') {
+                $prefix = app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)->capture($session, $known);
+                if ($prefix !== null) {
+                    $plan['retained_pipeline_prefix'] = $prefix;
+                }
+            }
         }
         $plan['documents'] = $manifest;
         if (! in_array($kind, ['documents', 'dialogue'], true)) {
