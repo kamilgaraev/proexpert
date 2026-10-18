@@ -6,14 +6,24 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePricePeriod;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegion;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use Illuminate\Database\Eloquent\Builder;
 
 class EstimateGenerationRegionalContextResolver
 {
+    public function retryChanges(array $input): array
+    {
+        $regional = $input['regional_context'] ?? null;
+        if (! is_array($regional)) {
+            return [];
+        }
+
+        return ['regional_context' => [...$regional, ...$this->resolve([...$input, ...$regional])]];
+    }
+
     /**
-     * @param array<string, mixed> $input
+     * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
     public function resolve(array $input): array
@@ -155,7 +165,7 @@ class EstimateGenerationRegionalContextResolver
                 if (str_contains($normalized, $needle)) {
                     return EstimateRegion::query()
                         ->whereRaw('LOWER(name) = ?', [$regionName])
-                        ->orWhereRaw('LOWER(name) LIKE ?', ['%' . $regionName . '%'])
+                        ->orWhereRaw('LOWER(name) LIKE ?', ['%'.$regionName.'%'])
                         ->first();
                 }
             }
@@ -228,7 +238,7 @@ class EstimateGenerationRegionalContextResolver
     }
 
     /**
-     * @param array<string, mixed> $input
+     * @param  array<string, mixed>  $input
      */
     private function inputText(array $input): string
     {
@@ -249,7 +259,7 @@ class EstimateGenerationRegionalContextResolver
 
     private function nullableString(mixed $value): ?string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return null;
         }
 

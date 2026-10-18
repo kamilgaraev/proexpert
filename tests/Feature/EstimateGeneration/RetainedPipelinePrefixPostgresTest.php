@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEsti
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EvidenceAwarePipelineBaseInputVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
@@ -23,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePlanResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\Models\Organization;
@@ -42,7 +44,14 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
 {
     public function test_new_approved_operation_rehydrates_completed_prefix_without_models_and_keeps_audit_pending(): void
     {
-        [$actor, $session, $sourceId] = $this->fixture();
+        $version = $this->regionalVersion();
+        $regional = app(EstimateGenerationRegionalContextResolver::class)->resolve(['estimate_regional_price_version_id' => $version]);
+        [$actor, $session, $sourceId] = $this->fixture(regional: $regional);
+        $resolver = \Mockery::mock(EstimateGenerationRegionalContextResolver::class)->makePartial();
+        $resolver->shouldReceive('retryChanges')->andReturn(
+            ['regional_context' => $regional], ['regional_context' => $regional],
+            ['regional_context' => [...$regional, 'estimate_regional_price_version_id' => $version + 1000000]]);
+        $this->app->instance(EstimateGenerationRegionalContextResolver::class, $resolver);
         $sourceBefore = DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole();
         [$operationId, $quote] = $this->quote($actor, $session);
         self::assertSame($sourceId, $quote['continuation']['source_operation_id']);
@@ -58,6 +67,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             (int) $session->id, (int) $session->organization_id, (int) $session->project_id, 4, $actor,
             ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]));
         self::assertSame(5, (int) $session->state_version);
+        self::assertSame(CanonicalPipelineJson::encode($regional), CanonicalPipelineJson::encode($session->input_payload['regional_context']));
         Bus::assertDispatched(GenerateEstimateDraftJob::class);
         $base = app(EvidenceAwarePipelineBaseInputVersionResolver::class)->fromSession($session);
         $seed = new PipelineContext((int) $session->id, (int) $session->organization_id, (int) $session->project_id,
@@ -138,6 +148,40 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         Http::assertNothingSent();
     }
 
+    public function test_new_regional_version_declines_continuation_before_a_quote_is_reserved(): void
+    {
+        $version = $this->regionalVersion();
+        $regional = app(EstimateGenerationRegionalContextResolver::class)->resolve(['estimate_regional_price_version_id' => $version]);
+        [$actor, $session] = $this->fixture(regional: $regional);
+        $this->regionalVersion($version);
+        [$id, $quote] = $this->quote($actor, $session);
+
+        self::assertArrayNotHasKey('continuation', $quote);
+        self::assertArrayNotHasKey('retained_pipeline_prefix', $this->plan($id));
+        self::assertArrayHasKey('estimate_composition', $this->plan($id)['roles']);
+        self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        Http::assertNothingSent();
+    }
+
+    public function test_regional_version_change_after_a_quote_is_rejected_before_reservation(): void
+    {
+        $version = $this->regionalVersion();
+        $regional = app(EstimateGenerationRegionalContextResolver::class)->resolve(['estimate_regional_price_version_id' => $version]);
+        [$actor, $session] = $this->fixture(regional: $regional);
+        [$id, $quote] = $this->quote($actor, $session);
+        self::assertArrayHasKey('continuation', $quote);
+        $this->regionalVersion($version);
+
+        try {
+            DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation'));
+            self::fail('Regional source changed after the quote.');
+        } catch (DomainException $error) {
+            self::assertSame('estimator_retained_pipeline_prefix_changed', $error->getMessage());
+        }
+        self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        Http::assertNothingSent();
+    }
+
     private function quote(User $actor, EstimateGenerationSession $session): array
     {
         $id = (string) Str::uuid();
@@ -158,7 +202,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         app(PipelineCheckpointStore::class)->invalidateDownstream($context, $stage, new DateTimeImmutable);
     }
 
-    private function fixture(string $change = ''): array
+    private function fixture(string $change = '', ?array $regional = null): array
     {
         Http::preventStrayRequests();
         Http::fake();
@@ -176,7 +220,8 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0,
-            'input_payload' => ['selected_sections' => ['finishing'], 'generation_actor_type' => 'user', 'generation_actor_id' => (int) $actor->id]]);
+            'input_payload' => ['selected_sections' => ['finishing'], 'generation_actor_type' => 'user', 'generation_actor_id' => (int) $actor->id,
+                ...($regional === null ? [] : ['regional_context' => $regional])]]);
         app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:retained-prefix');
         $sourceId = (string) Str::uuid();
         $sourceQuote = app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, $sourceId, 'generation');
@@ -241,6 +286,34 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         Http::fake();
 
         return [$actor, $session, $sourceId];
+    }
+
+    private function regionalVersion(?int $previous = null): int
+    {
+        $now = now();
+        $key = strtolower((string) Str::ulid());
+        $old = $previous === null ? null : DB::table('estimate_regional_price_versions')->where('id', $previous)->sole();
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fgis_labor_prices', 'version_key' => $key,
+            'bucket' => 'test', 'prefix' => $key, 'status' => 'parsed', 'created_at' => $now, 'updated_at' => $now]);
+        $region = $old?->region_id ?? DB::table('estimate_regions')->insertGetId(['code' => $key, 'name' => 'Регион продолжения',
+            'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
+        $zone = $old?->price_zone_id ?? DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $region, 'name' => 'Зона продолжения',
+            'fgiscs_price_zone_id' => random_int(1000000, 1999999), 'created_at' => $now, 'updated_at' => $now]);
+        $period = $old?->period_id ?? DB::table('estimate_price_periods')->where('year', 2099)->where('quarter', 4)->value('id')
+            ?? DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999),
+                'name' => $key, 'year' => 2099, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
+        $version = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $region,
+            'price_zone_id' => $zone, 'period_id' => $period, 'version_key' => $key, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
+        DB::table('estimate_resource_prices')->insert(['dataset_version_id' => $dataset, 'regional_price_version_id' => $version,
+            'region_id' => $region, 'price_zone_id' => $zone, 'period_id' => $period, 'resource_code' => $key, 'resource_name' => 'Труд рабочих',
+            'unit' => 'h', 'base_price' => '30.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
+        if ($previous !== null) {
+            DB::table('estimate_regional_price_versions')->where('id', $previous)->update(['status' => 'superseded', 'superseded_at' => $now]);
+        }
+        DB::table('estimate_regional_price_versions')->where('id', $version)->update([
+            'status' => 'active', 'activated_at' => $now, 'superseded_at' => null, 'rolled_back_at' => null]);
+
+        return $version;
     }
 
     private function seedSettings(): void

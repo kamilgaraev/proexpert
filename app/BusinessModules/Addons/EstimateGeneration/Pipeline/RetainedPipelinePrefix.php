@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\Evaluatio
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use DomainException;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Str;
@@ -20,6 +21,7 @@ final readonly class RetainedPipelinePrefix
         private EvidenceAwarePipelineBaseInputVersionResolver $baseVersions,
         private EvaluationInputFingerprint $inputs,
         private StageResultFactory $results,
+        private EstimateGenerationRegionalContextResolver $regionalContext,
     ) {}
 
     public function capture(EstimateGenerationSession $session, array $known, int $actorId): ?array
@@ -27,6 +29,11 @@ final readonly class RetainedPipelinePrefix
         if ($session->status->value !== 'failed' || $session->resume_status?->value !== 'generating'
             || ($session->input_payload['generation_actor_type'] ?? null) !== 'user'
             || ($session->input_payload['generation_actor_id'] ?? null) !== $actorId) {
+            return null;
+        }
+        $changes = $this->regionalContext->retryChanges($session->input_payload ?? []);
+        if ($changes !== [] && CanonicalPipelineJson::encode($changes['regional_context'])
+            !== CanonicalPipelineJson::encode($session->input_payload['regional_context'])) {
             return null;
         }
 
