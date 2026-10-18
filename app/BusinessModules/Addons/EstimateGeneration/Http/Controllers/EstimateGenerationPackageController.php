@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationCsvExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -15,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -114,6 +116,11 @@ final class EstimateGenerationPackageController extends Controller
         return $this->safeRead(function () use ($request, $project, $session): JsonResponse {
             $this->guard($request, $project, $session);
 
+            $validated = $request->validate(['include_audit_preview' => ['sometimes', 'boolean']]);
+            if ($validated['include_audit_preview'] ?? false) {
+                return AdminResponse::success(app(EstimateAuditDraftPreview::class)->read($request->user(), (int) $project->id, (int) $session->id));
+            }
+
             return AdminResponse::success($session->draft_payload ?? []);
         }, 'show draft', $project, $session);
     }
@@ -167,7 +174,7 @@ final class EstimateGenerationPackageController extends Controller
     {
         try {
             return $callback();
-        } catch (HttpExceptionInterface $exception) {
+        } catch (HttpExceptionInterface|AuthorizationException $exception) {
             throw $exception;
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());

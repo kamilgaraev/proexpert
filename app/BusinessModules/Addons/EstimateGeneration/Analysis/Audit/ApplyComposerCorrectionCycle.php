@@ -20,6 +20,18 @@ final readonly class ApplyComposerCorrectionCycle
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
     {
+        $prepared = $this->prepareParts($root);
+        $parts = $prepared['parts'];
+        $workLimit = $prepared['work_limit'];
+        $assertDraft = static function (array $draft) use ($workLimit): void {
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($draft, $workLimit);
+        };
+
+        return $this->applyPrepared($root, $parts, $workLimit, $assertDraft);
+    }
+
+    public function prepareParts(EstimateAuditInput $root): array
+    {
         $limit = $workLimit = null;
         if ($root->wireScope?->creditOperationId !== null) {
             $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
@@ -54,6 +66,14 @@ final readonly class ApplyComposerCorrectionCycle
         if ($limit !== null && count($parts) > $limit) {
             throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
         }
+
+        return ['parts' => $parts, 'work_limit' => $workLimit, 'part_limit' => $limit,
+            'maximum_part_bytes' => $this->maximumPartBytes,
+            'maximum_serialized_input_bytes' => $policy['maximum_serialized_input_bytes'] ?? null];
+    }
+
+    private function applyPrepared(EstimateAuditInput $root, array $parts, ?int $workLimit, callable $assertDraft): array
+    {
         if (count($parts) === 1) {
             return $this->applyPart($parts[0]['input'], $assertDraft);
         }

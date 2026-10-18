@@ -12,6 +12,67 @@ final class EstimateAuditDraftRecordPlanner
     private const PATHS = ['building_quantities.diagnostics', 'stage6_review_items',
         'package_plan.packages', 'estimate_composition.request_info'];
 
+    public function quantityRecordIndex(array $draft): array
+    {
+        $index = [];
+        $works = $candidates = [];
+        foreach ($draft['local_estimates'] ?? [] as $estimate) {
+            foreach ($estimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    if (is_string($item['key'] ?? null)) {
+                        $works[$item['key']] = true;
+                    }
+                    if (is_string($item['composition_intent']['candidate_id'] ?? null)) {
+                        $candidates[$item['composition_intent']['candidate_id']] = true;
+                    }
+                }
+            }
+        }
+        foreach (self::PATHS as $path) {
+            $records = Arr::get($draft, $path);
+            if (! is_array($records) || ! array_is_list($records)) {
+                continue;
+            }
+            foreach ($records as $position => $record) {
+                if (! is_array($record) || ($path === 'package_plan.packages' && is_string($record['key'] ?? null))) {
+                    continue;
+                }
+                if ($path === 'estimate_composition.request_info' && ($record['next_action'] ?? null) === 'keep_existing_work') {
+                    $covered = is_string($record['covered_by_position_key'] ?? null)
+                        ? isset($works[$record['covered_by_position_key']])
+                        : isset($candidates[$record['covered_by_candidate_id'] ?? '']);
+                    if ($covered) {
+                        continue;
+                    }
+                }
+                $ids = [];
+                foreach ([$record, $record['details'] ?? []] as $scope) {
+                    if (! is_array($scope)) {
+                        continue;
+                    }
+                    foreach (['logical_id', 'derived_quantity_id'] as $field) {
+                        if (is_string($scope[$field] ?? null)) {
+                            $ids[$scope[$field]] = true;
+                        }
+                    }
+                    foreach (is_array($scope['quantity_ids'] ?? null) ? $scope['quantity_ids'] : [] as $id) {
+                        if (is_string($id)) {
+                            $ids[$id] = true;
+                        }
+                    }
+                }
+                if ($ids !== []) {
+                    $bytes = strlen(CanonicalPipelineJson::encode([$record]));
+                    foreach (array_keys($ids) as $id) {
+                        $index[$id][$path.':'.$position] = $bytes;
+                    }
+                }
+            }
+        }
+
+        return $index;
+    }
+
     public function distribute(array $draft, array $parts): array
     {
         $collections = $counts = [];
@@ -151,6 +212,24 @@ final class EstimateAuditDraftRecordPlanner
             return $owners;
         }
         foreach ([$record, $record['details'] ?? []] as $scope) {
+            if (! is_array($scope)) {
+                continue;
+            }
+            foreach (['logical_id', 'derived_quantity_id'] as $field) {
+                if (is_string($scope[$field] ?? null)) {
+                    $owners += $lookups['quantities'][$scope[$field]] ?? [];
+                }
+            }
+            foreach (is_array($scope['quantity_ids'] ?? null) ? $scope['quantity_ids'] : [] as $id) {
+                if (is_string($id)) {
+                    $owners += $lookups['quantities'][$id] ?? [];
+                }
+            }
+        }
+        if ($owners !== []) {
+            return $owners;
+        }
+        foreach ([$record, $record['details'] ?? []] as $scope) {
             if (is_array($scope) && is_string($scope['entity_id'] ?? null)) {
                 $owners += $lookups['work_entities'][$scope['entity_id']] ?? [];
             }
@@ -162,15 +241,9 @@ final class EstimateAuditDraftRecordPlanner
             if (! is_array($scope)) {
                 continue;
             }
-            foreach (['entity_id' => 'entities', 'work_item_key' => 'works', 'fact_id' => 'facts',
-                'logical_id' => 'quantities', 'derived_quantity_id' => 'quantities'] as $field => $lookup) {
+            foreach (['entity_id' => 'entities', 'work_item_key' => 'works', 'fact_id' => 'facts'] as $field => $lookup) {
                 if (is_string($scope[$field] ?? null)) {
                     $owners += $lookups[$lookup][$scope[$field]] ?? [];
-                }
-            }
-            foreach (is_array($scope['quantity_ids'] ?? null) ? $scope['quantity_ids'] : [] as $id) {
-                if (is_string($id)) {
-                    $owners += $lookups['quantities'][$id] ?? [];
                 }
             }
             foreach (is_array($scope['source_fact_ids'] ?? null) ? $scope['source_fact_ids'] : [] as $id) {
