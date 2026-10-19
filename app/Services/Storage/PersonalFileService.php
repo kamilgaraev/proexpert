@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Services\Storage;
 
 use App\Models\PersonalFile;
+use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -263,6 +265,16 @@ final class PersonalFileService
             ->delete();
     }
 
+    public function resolveDownloadUrl(string $id, int $organizationId, User $actor): string
+    {
+        $file = $this->findOwned($id, $organizationId, (int) $actor->id);
+        if ($file->is_folder || ! is_string($file->storage_key) || $file->storage_key === '') {
+            throw (new ModelNotFoundException)->setModel(PersonalFile::class, [$id]);
+        }
+
+        return $this->fileDownloadUrl($file, $actor);
+    }
+
     /** @return array<string, mixed> */
     public function payload(PersonalFile $file, bool $withDownloadUrl = true): array
     {
@@ -274,21 +286,26 @@ final class PersonalFileService
 
         if ($withDownloadUrl && ! $file->is_folder && is_string($file->storage_key)) {
             try {
-                $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
-                if ($file->directory === 'reports/assistant' || $access->isAssistantReportPath($file->storage_key)) {
-                    $payload['download_url'] = $access->urlForPath($file->storage_key, request()->user());
-                    return $payload;
-                }
-                $payload['download_url'] = $this->files->temporaryDownloadUrl(
-                    $file->storage_key,
-                    (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),
-                );
+                $payload['download_url'] = $this->fileDownloadUrl($file, request()->user());
             } catch (Throwable) {
                 Log::warning('personal_file_temporary_url_failed', ['file_id' => $file->id]);
             }
         }
 
         return $payload;
+    }
+
+    private function fileDownloadUrl(PersonalFile $file, ?User $actor): string
+    {
+        $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+        if ($file->directory === 'reports/assistant' || $access->isAssistantReportPath((string) $file->storage_key)) {
+            return $access->urlForPath((string) $file->storage_key, $actor);
+        }
+
+        return $this->files->temporaryDownloadUrl(
+            (string) $file->storage_key,
+            (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),
+        );
     }
 
     /** @return Builder<PersonalFile> */
