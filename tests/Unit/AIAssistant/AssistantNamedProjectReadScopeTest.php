@@ -526,7 +526,7 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
 
     public function test_comparison_commands_after_project_name_preserve_named_scope(): void
     {
-        foreach (['сравни', 'сравните', 'сопоставь', 'сопоставьте'] as $command) {
+        foreach (['сравнить', 'сопоставить', 'сравни', 'сравните', 'сопоставь', 'сопоставьте'] as $command) {
             $query = 'По проекту Альфа '.$command.' выполненные работы с графиком';
             $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
                 self::assertSame(['query' => 'Альфа', 'limit' => 2, 'name_match' => 'exact'], $arguments);
