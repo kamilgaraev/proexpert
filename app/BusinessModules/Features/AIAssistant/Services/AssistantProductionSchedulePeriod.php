@@ -115,6 +115,9 @@ final class AssistantProductionSchedulePeriod
         } elseif (preg_match('/\b(?:с|со|по|до|на|от)\s+\d{1,2}(?!\d)|\bза\s+\d{1,2}(?!\d)\s+'.self::MONTH.'/iu', $query) === 1) {
             return $unresolved;
         } else {
+            if (preg_match_all('/\b'.self::TIME_START.'/iu', $query) !== 1) {
+                return $unresolved;
+            }
             $period = $resolver->resolve($query);
         }
 
@@ -267,7 +270,7 @@ final class AssistantProductionSchedulePeriod
         $query = preg_replace_callback('/\bза\s+(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
             return 'за 1 '.mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b(?:в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {
+        $query = preg_replace_callback('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);
             $adjective = str_starts_with($relative, 'эт') ? 'этот' : (str_starts_with($relative, 'текущ') ? 'текущий' : 'прошлый');
 
