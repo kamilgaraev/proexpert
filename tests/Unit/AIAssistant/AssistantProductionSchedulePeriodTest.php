@@ -105,7 +105,9 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
     public function test_historical_snapshot_does_not_turn_into_physical_day_filter(): void
     {
         foreach (['по состоянию на вчера', 'по состоянию на позавчера', 'по состоянию на завтра',
-            'по состоянию на 2026-10-01', 'по состоянию на 01.10.2026', 'за октябрь 2025 по состоянию на вчера'] as $phrase) {
+            'по состоянию на 2026-10-01', 'по состоянию на 01.10.2026', 'за октябрь 2025 по состоянию на вчера',
+            'на вчера', 'на позавчера', 'на завтра', 'на послезавтра', 'на 2026-10-01', 'на 01.10.2026',
+            'за октябрь 2025 на вчера'] as $phrase) {
             $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
             self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
             $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
@@ -123,7 +125,8 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
         try {
-            foreach (['по состоянию на сегодня', 'по состоянию на сегодняшний день', 'на сегодняшний день', 'по состоянию на сейчас',
+            foreach (['на сегодня', 'на сейчас', 'на текущий момент', 'на текущий день', 'на текущую дату',
+                'по состоянию на сегодня', 'по состоянию на сегодняшний день', 'на сегодняшний день', 'по состоянию на сейчас',
                 'по состоянию на текущий момент', 'по состоянию на текущий день', 'по состоянию на текущую дату'] as $phrase) {
                 self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
                     ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
@@ -138,6 +141,9 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
             }
             foreach (['за вчера по состоянию на сегодня' => ['2026-10-18', '2026-10-18'],
                 'за сегодня по состоянию на сегодня' => ['2026-10-19', '2026-10-19'],
+                'за вчера на сегодня' => ['2026-10-18', '2026-10-18'],
+                'за сегодня на сегодня' => ['2026-10-19', '2026-10-19'],
+                'с 2025-12-01 по 2026-01-01 на сегодня' => ['2025-12-01', '2026-01-01'],
                 'с 2025-12-01 по 2026-01-01 по состоянию на сегодня' => ['2025-12-01', '2026-01-01']] as $phrase => [$start, $end]) {
                 self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
                     AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
