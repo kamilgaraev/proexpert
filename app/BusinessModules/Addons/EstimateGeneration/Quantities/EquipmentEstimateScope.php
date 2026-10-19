@@ -34,6 +34,29 @@ final class EquipmentEstimateScope
             $restricted[$entity->id] = $scopes !== []
                 || isset($entity->attributes['visual_inventory_category']) || isset($properties['visual_inventory_category']);
         }
+        $choices = self::choices($snapshot, $decisions);
+        $result = [];
+        foreach (array_keys($equipment) as $id) {
+            $modes = array_keys($choices[$id] ?? []);
+            if ($modes === [] && ! $restricted[$id]) {
+                $result[$id] = self::SUPPLY_AND_INSTALLATION;
+            } elseif (count($modes) === 1 && in_array($modes[0], [self::SUPPLY_AND_INSTALLATION, self::INSTALLATION_ONLY], true)) {
+                $result[$id] = $modes[0];
+            }
+        }
+        ksort($result, SORT_STRING);
+
+        return $result;
+    }
+
+    public static function answeredEntityIds(ProjectModelSnapshot $snapshot, array $decisions): array
+    {
+        return array_keys(self::choices($snapshot, $decisions));
+    }
+
+    private static function choices(ProjectModelSnapshot $snapshot, array $decisions): array
+    {
+        $entities = array_column($snapshot->entities, null, 'id');
         $byFact = array_column($snapshot->facts, null, 'id');
         $accepted = [];
         foreach ($decisions as $decision) {
@@ -61,25 +84,15 @@ final class EquipmentEstimateScope
                 ? $fact->value['choice_value'] : 'exclude';
             foreach ($fact->value['source_locator']['fact_ids'] as $factId) {
                 $source = is_string($factId) ? ($byFact[$factId] ?? null) : null;
-                if ($source instanceof Fact && isset($equipment[$source->entityId])
+                if ($source instanceof Fact && isset($entities[$source->entityId])
                     && $source->sourceVersion === $fact->sourceVersion
-                    && $equipment[$source->entityId]->sourceVersion === $fact->sourceVersion) {
+                    && $entities[$source->entityId]->sourceVersion === $fact->sourceVersion) {
                     $choices[$source->entityId][$mode] = true;
                 }
             }
         }
-        $result = [];
-        foreach (array_keys($equipment) as $id) {
-            $modes = array_keys($choices[$id] ?? []);
-            if ($modes === [] && ! $restricted[$id]) {
-                $result[$id] = self::SUPPLY_AND_INSTALLATION;
-            } elseif (count($modes) === 1 && in_array($modes[0], [self::SUPPLY_AND_INSTALLATION, self::INSTALLATION_ONLY], true)) {
-                $result[$id] = $modes[0];
-            }
-        }
-        ksort($result, SORT_STRING);
 
-        return $result;
+        return $choices;
     }
 
     public static function workCount(array $scopes): int

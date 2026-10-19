@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynt
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectUnderstandingFingerprint;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EquipmentEstimateScope;
 
 final readonly class ProjectUnderstandingCoordinator
 {
@@ -21,6 +22,7 @@ final readonly class ProjectUnderstandingCoordinator
         private ProjectUnderstandingBudget $budget,
         private ProjectSynthesisRunner $synthesis,
         private ProjectSynthesisAllowance $allowance = new EloquentProjectSynthesisAllowance,
+        private VisualInventoryQuestionBuilder $visualInventory = new VisualInventoryQuestionBuilder,
     ) {}
 
     public function refresh(
@@ -79,6 +81,7 @@ final readonly class ProjectUnderstandingCoordinator
             : hash('sha256', $synthesisInput->fingerprint().'|approved-synthesis-parts:'.$approvedParts);
         $inputFingerprint = hash('sha256', ProjectUnderstandingFingerprint::CONTRACT."\0".$inputFingerprint);
         $inputFingerprint = hash('sha256', CrossDocumentFactLinker::CONTRACT."\0".$inputFingerprint);
+        $inputFingerprint = hash('sha256', VisualInventoryQuestionBuilder::CONTRACT."\0".$inputFingerprint);
         if ($allowIdentityOnlyPlanning) {
             $inputFingerprint = hash('sha256', $inputFingerprint.'|identity-only-planning:v1');
         }
@@ -160,7 +163,9 @@ final readonly class ProjectUnderstandingCoordinator
                 true,
             ),
         ));
-        foreach ((new VisualInventoryQuestionBuilder)->build($snapshot->entities, $snapshot->facts, $snapshot->evidence) as $question) {
+        $answerIds = EquipmentEstimateScope::answerFactIds($snapshot);
+        $scopeDecisions = $answerIds === [] ? [] : $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $answerIds);
+        foreach ($this->visualInventory->build($snapshot->entities, $snapshot->facts, $snapshot->evidence, $scopeDecisions) as $question) {
             $questions[$question['conflict_id']] = $question;
         }
         $questions = array_values($questions);

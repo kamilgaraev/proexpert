@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -564,6 +565,95 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    #[DataProvider('nonResidentialEquipmentQuotes')]
+    public function test_non_residential_equipment_does_not_reserve_a_residential_expansion(string $objectType, string $profile): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(256);
+        $session->update(['input_payload' => [...$session->input_payload, 'object_type' => $objectType, 'profile_id' => $profile]]);
+        $id = (string) Str::uuid();
+        $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(32, $plan['work_item_limit']);
+        self::assertArrayNotHasKey('equipment_work_scope', $plan['known_context']);
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public static function nonResidentialEquipmentQuotes(): array
+    {
+        return [['warehouse', 'construction'], ['office', 'construction'], ['mixed_warehouse_office', 'construction'], ['house', 'industrial']];
+    }
+
+    public function test_document_derived_residential_equipment_is_planned_and_a_changed_object_profile_invalidates_the_quote_before_reservation(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(17);
+        $session->update(['input_payload' => [...$session->input_payload, 'object_type' => 'custom']]);
+        $document = $this->equipmentProfileDocument($scope, $actor, 'equipment.pdf', 'Одноэтажный жилой дом, оборудование санузла.');
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $stored = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($stored->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(64, $plan['work_item_limit']);
+        self::assertSame(34, $plan['known_context']['equipment_work_scope']['operation_count']);
+        $document->update(['extracted_text' => 'Склад оборудования', 'checksum_sha256' => str_repeat('c', 64),
+            'source_version' => 'sha256:'.str_repeat('c', 64)]);
+        $current = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextSnapshot::class)->capture($session, false);
+        self::assertArrayNotHasKey('equipment_work_scope', $current);
+        self::assertNotSame($plan['known_context']['fingerprint'], $current['fingerprint']);
+        try {
+            DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+            self::fail('A changed document-derived object profile must require a new free quote.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState $error) {
+            self::assertSame(sprintf('Estimate generation session %d no longer has state version 0.', $scope->sessionId), $error->getMessage());
+        }
+        self::assertEquals($stored, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_an_oversized_equipment_profile_document_requires_a_split_before_a_quote_or_reservation(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(1);
+        $this->equipmentProfileDocument($scope, $actor, 'oversized.pdf',
+            str_repeat('x', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway::MAX_SOURCE_BYTES + 1));
+        $id = (string) Str::uuid();
+        try {
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+            self::fail('An oversized profile source must not be materialized for a quote.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_known_context_requires_source_split', $error->getMessage());
+        }
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->count());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    private function equipmentProfileDocument(EstimatorCreditRequest $scope, User $actor, string $filename, string $text): EstimateGenerationDocument
+    {
+        $checksum = hash('sha256', $text);
+        $document = EstimateGenerationDocument::query()->create([
+            'organization_id' => $scope->organizationId, 'project_id' => $scope->projectId, 'session_id' => $scope->sessionId,
+            'user_id' => $actor->id, 'filename' => $filename, 'mime_type' => 'application/pdf',
+            'status' => 'ready', 'quality_level' => 'good', 'checksum_sha256' => $checksum,
+            'source_version' => 'sha256:'.$checksum, 'extracted_text' => $text,
+            'facts_summary' => ['document_understanding' => ['role_for_estimation' => 'quantity_source']],
+        ]);
+        $document->processingUnits()->create([
+            'organization_id' => $scope->organizationId, 'project_id' => $scope->projectId, 'session_id' => $scope->sessionId,
+            'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => $document->source_version, 'status' => 'completed',
+            'output_version' => hash('sha256', 'equipment-fixture-output'), 'output_count' => 1, 'completed_at' => now(),
+            'locator' => ['source_kind' => 'pdf', 'source_version' => $document->source_version,
+                'coordinate_space' => 'pdf_page_pixels', 'artifact_path' => 'fixture/private/equipment/page.png',
+                'artifact_sha256' => 'sha256:'.hash('sha256', 'equipment-fixture-page'), 'artifact_version_id' => 'fixture.v1'],
+            'metadata' => ['processing_attempt_id' => (string) Str::uuid()],
+        ]);
+
+        return $document;
     }
 
     private function equipmentQuoteFixture(int $count): array

@@ -45,7 +45,7 @@ final class EstimatorKnownContextSnapshotTest extends TestCase
             $capture = new EstimatorKnownContextSnapshot($models, new EstimateComposerInputFactory($models, 2000),
                 new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000),
                 new ProjectSynthesisInputFactory($models), new EstimateCompositionProjector,
-                new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts);
+                new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts, $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
             $plan = $capture->capture($session, false);
             self::assertSame(1, $plan['part_limits']['audit']);
             self::assertSame(hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($draft)), $plan['saved_draft_hash']);
@@ -85,7 +85,7 @@ final class EstimatorKnownContextSnapshotTest extends TestCase
             $capture = new EstimatorKnownContextSnapshot($models, new EstimateComposerInputFactory($models, 2000),
                 new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000),
                 new ProjectSynthesisInputFactory($models), new EstimateCompositionProjector,
-                new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts);
+                new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts, $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
             $plan = $capture->capture($session, false);
             self::assertSame($status, $plan['draft_context_status']);
             self::assertSame(1, $plan['known_fact_count']);
@@ -119,7 +119,7 @@ final class EstimatorKnownContextSnapshotTest extends TestCase
             $capture = new EstimatorKnownContextSnapshot($models, new EstimateComposerInputFactory($models, 2000),
                 new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000), new ProjectSynthesisInputFactory($models),
                 new EstimateCompositionProjector, new TargetedConflictResolver(static fn (string $key): string => $key),
-                ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts);
+                ProjectUnderstandingBudget::defaults(), new EstimatorKnownContextParts, $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
             $this->expectException(\DomainException::class);
             $this->expectExceptionMessage('estimator_known_context_requires_source_split');
             $capture->capture($session, false);
@@ -138,7 +138,7 @@ final class EstimatorKnownContextSnapshotTest extends TestCase
             new EstimateAuditInputFactory($models, $this->createMock(EvidenceRepository::class), 2000),
             new ProjectSynthesisInputFactory($models), new EstimateCompositionProjector,
             new TargetedConflictResolver(static fn (string $key): string => $key), ProjectUnderstandingBudget::defaults(),
-            new EstimatorKnownContextParts);
+            new EstimatorKnownContextParts, $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway::class));
         try {
             $capture->capture($session, false);
             self::fail('A full snapshot was loaded despite the evidence preflight limit.');
