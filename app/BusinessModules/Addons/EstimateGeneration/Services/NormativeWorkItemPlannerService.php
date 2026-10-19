@@ -761,8 +761,9 @@ final class NormativeWorkItemPlannerService
         if ($fixture === null) {
             return false;
         }
-        $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
-        $negativeFixtureAction = '(?:предусмотр\p{L}*|требу(?:ется|ются)|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ(?:ен|ён)\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
+        $installationAction = '(?:устан(?:ов|ав)\p{L}*|монтаж\p{L}*|монтир\p{L}*|подключ\p{L}*)';
+        $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|'.$installationAction.')';
+        $negativeFixtureAction = '(?:предусмотр\p{L}*|требу(?:ется|ются)|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ(?:ен|ён)\p{L}*|'.$installationAction.')';
         $singularExclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ается)|отмен(?:ить|ён|ен|ена|ено|яется)|отсутствует)';
         $pluralExclusionAction = '(?:исключ(?:ены|аются)|отмен(?:ены|яются)|отсутствуют)';
         $exclusionAction = '(?:'.$singularExclusionAction.'|'.$pluralExclusionAction.')';
@@ -784,7 +785,7 @@ final class NormativeWorkItemPlannerService
         $listConjunction = '(?:(?:(?:а|и)\s+)?(?:также|ещ[её])|и|плюс)(?![\p{L}\p{N}])';
         $numberModifier = '(?:од(?:ин|н(?:а|о|у|ой|ого|ому|им))|дв(?:а|е|ух|ум|умя)|тр(?:и|[её]х|[её]м|емя)|четыр(?:е|[её]х|[её]м|ьмя)|пят(?:ь|и|ью)|шест(?:ь|и|ью)|сем(?:ь|и|ью)|вос(?:емь|ьми|емью)|девят(?:ь|и|ью)|десят(?:ь|и|ью))';
         $modifierDefinition = '(?(DEFINE)(?<fixture_modifier>(?!'.$anyFixture.')'
-            .'(?!не(?:предусмотр|запланир|нуж|включ|установ|подключ))'
+            .'(?!не(?:предусмотр|запланир|нуж))'
             .'(?:[\p{L}-]{2,30}(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими)|[1-9]\d{0,2}|'.$numberModifier.')'
             .'(?![\p{L}\p{N}])))';
         $fixtureModifiers = '(?:(?&fixture_modifier)\s+){0,3}';
@@ -801,23 +802,51 @@ final class NormativeWorkItemPlannerService
             .$fixture.$beforeNegative.$negativePredicate
             .')(?![\p{L}\p{N}])';
         $countAction = '\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?';
+        $requirementAction = '(?:требу(?:ется|ются)|планиру(?:ется|ются)|запланир\p{L}*|нуж(?:ен|на|но|ны))';
         $action = '(?:'
-            .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
+            .$installationAction.'|предусмотр\p{L}*|'.$requirementAction.'|'
             .'комплект\p{L}*|количеств\p{L}*|'.$countAction.')';
         $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
             .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
             .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
         $clauseEnd = '(?:[,;.!?]|$)';
-        $independentAction = '(?:предусмотр(?:ен|ена|ено)|'.$countAction.')';
-        $independentNegativeAction = '(?:предусмотр(?:ен|ена|ено)|требуется|планируется|запланирован(?:а|о)?|нуж(?:ен|на|но)|входит|включ(?:ён|ен)(?:а|о)?|установлен(?:а|о)?|устанавливается|подключ(?:ён|ен)(?:а|о)?|подключается)';
-        $independentPredicate = '(?:'.$independentAction.'|не\s+'.$independentNegativeAction
-            .'|'.$singularExclusionAction.')(?![\p{L}\p{N}])';
+        $fullPredicate = '(?:'.$action.'|не\s+'.$negativeFixtureAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
+        $pluralPredicate = '(?:(?:не\s+)?(?:\p{L}*(?:ются|ятся|ены|аны|ны)|входят)|'.$pluralExclusionAction.')(?![\p{L}\p{N}])';
+        $independentPredicate = '(?!'.$pluralPredicate.')'.$fullPredicate;
+        $predicateBoundary = $anyFixture.'|'.$fullPredicate.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])';
         $independentFixtureAssertion = $fixtureModifiers.$anyFixture
-            .$before($independentPredicate, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentPredicate
-            .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
+            .$before($independentPredicate, $predicateBoundary, 80).$independentPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
         $statements = preg_split('~'.$modifierDefinition.'(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
+        $pluralFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ы|ов|ам|ами|ах)|умывальник(?:и|ов|ам|ами|ах)|'
+            .'душев(?:ые|ых|ым|ыми)\s+кабин(?:ы|ам|ами|ах)?|ванн(?:ы|ам|ами|ах)?|мойк(?:и|ам|ами|ах)|'
+            .'раковин(?:ы|ам|ами|ах)?|смесител(?:и|ей|ям|ями|ях)|писсуар(?:ы|ов|ам|ами|ах)|душ(?:и|ей|ам|ами|ах)|биде)(?![\p{L}\p{N}])';
+        $independentPluralAssertion = $fixtureModifiers.$pluralFixture
+            .$before($fullPredicate, $predicateBoundary, 80).$fullPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
+        $pluralStatementSeparator = '~'.$modifierDefinition.',\s*(?=(?:'.$listConjunction.'\s*)?'.$independentPluralAssertion.')~iu';
+        $priorAssertion = '~(?<![\p{L}\p{N}])(?:'.$action.'|без|кроме|нет|не|'.$exclusionAction.')(?![\p{L}\p{N}])~iu';
+        $preparedStatements = [];
 
         foreach ($statements as $statement) {
+            $scanOffset = 0;
+            while (preg_match($pluralStatementSeparator, $statement, $separatorMatch, PREG_OFFSET_CAPTURE, $scanOffset) === 1) {
+                $separatorStart = $separatorMatch[0][1];
+                $nextOffset = $separatorStart + strlen($separatorMatch[0][0]);
+                $prefix = substr($statement, 0, $separatorStart);
+                if (preg_match($priorAssertion, $prefix) !== 1) {
+                    $scanOffset = $nextOffset;
+
+                    continue;
+                }
+                $preparedStatements[] = $prefix;
+                $statement = substr($statement, $nextOffset);
+                $scanOffset = 0;
+            }
+            $preparedStatements[] = $statement;
+        }
+
+        foreach ($preparedStatements as $statement) {
             $withoutRoomPhrases = preg_replace(
                 '~(?<![\p{L}\p{N}])(?:ванн|душев)(?:ая|ой|ую|ые|ых|ыми)\s+'
                 .'(?:комнат\p{L}*|помещен\p{L}*)(?![\p{L}\p{N}])~iu',
