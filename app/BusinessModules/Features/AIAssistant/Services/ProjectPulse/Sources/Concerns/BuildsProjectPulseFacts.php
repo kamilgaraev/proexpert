@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -105,6 +108,57 @@ trait BuildsProjectPulseFacts
             'label' => 'Проект #' . $projectId,
             'route' => '/projects/' . $projectId,
         ];
+    }
+
+    private function siteRequestLabelColumns(): array
+    {
+        return [
+            'site_requests.request_type',
+            'site_requests.personnel_type',
+            'site_requests.personnel_count',
+            'site_requests.work_location',
+            'site_requests.work_start_date',
+            'site_requests.work_end_date',
+            'site_requests.location',
+            'site_requests.required_date',
+        ];
+    }
+
+    private function siteRequestTitle(object $row): string
+    {
+        return trim((string) ($row->title ?? '')) ?: 'Заявка с объекта';
+    }
+
+    private function siteRequestLabel(object $row): string
+    {
+        $type = SiteRequestTypeEnum::fromStoredValue($row->request_type ?? null);
+        $parts = [$this->siteRequestTitle($row), $type->label()];
+        if ($type === SiteRequestTypeEnum::PERSONNEL_REQUEST) {
+            $personnelType = PersonnelTypeEnum::tryFrom((string) ($row->personnel_type ?? ''));
+            if ($personnelType !== null) {
+                $parts[] = $personnelType->label();
+            }
+            if ((int) ($row->personnel_count ?? 0) > 0) {
+                $parts[] = (int) $row->personnel_count . ' чел.';
+            }
+        }
+        $location = trim((string) ($type === SiteRequestTypeEnum::PERSONNEL_REQUEST
+            ? ($row->work_location ?? '')
+            : '')) ?: trim((string) ($row->location ?? ''));
+        if ($location !== '') {
+            $parts[] = $location;
+        }
+        if ($type === SiteRequestTypeEnum::PERSONNEL_REQUEST) {
+            $start = empty($row->work_start_date) ? null : CarbonImmutable::parse($row->work_start_date)->format('d.m.Y');
+            $end = empty($row->work_end_date) ? null : CarbonImmutable::parse($row->work_end_date)->format('d.m.Y');
+            if ($start !== null || $end !== null) {
+                $parts[] = $start !== null && $end !== null ? $start . ' — ' . $end : ($start !== null ? 'с ' . $start : 'до ' . $end);
+            }
+        }
+        if (!empty($row->required_date)) {
+            $parts[] = 'Нужно к ' . CarbonImmutable::parse($row->required_date)->format('d.m.Y');
+        }
+        return implode(' · ', $parts);
     }
 
     private function empty(): Collection
