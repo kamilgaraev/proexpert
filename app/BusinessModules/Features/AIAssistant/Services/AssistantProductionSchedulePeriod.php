@@ -56,6 +56,8 @@ final class AssistantProductionSchedulePeriod
 
     private const CALENDAR_YEAR_PERIOD = '(?<![\pL\pN.\/-])(?:('.self::PERIOD_PREFIX.')\s+)?'.self::CALENDAR_DETERMINERS.'((?:19|20)\d{2})\b(?![-.\/]\d)(?:\s+(?:год[ау]?|г\.?)(?![\pL\pN]))?';
 
+    private const HALF_YEAR_PERIOD = '(?:'.self::PERIOD_PREFIX.'\s+)?(?:(?:(?:перв|втор|трет|четв[её]рт|эт|текущ|прошл|предыдущ|позапрошл|следующ|будущ)[а-яё]*|\d+(?:-?[а-яё]+)?|[ivx]+)\s+)?полугоди(?:е|я|ю|ем|и|й|ям|ями|ях)\b';
+
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
 
     private const QUARTER_WORD = 'квартал(?:[ауеы]|ом|ов|ам|ами|ах)?';
@@ -106,11 +108,11 @@ final class AssistantProductionSchedulePeriod
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
-    private const TIME_START = '(?:'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_WITH_YEAR.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
+    private const TIME_START = '(?:'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_WITH_YEAR.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_WITH_YEAR.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_WITH_YEAR.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|'.self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -140,7 +142,7 @@ final class AssistantProductionSchedulePeriod
         if (preg_match_all('/\b'.self::ALL_TIME_PERIOD.'/iu', $withoutRanges, $allTime) > 0) {
             return count($allTime[0]) === 1 && ! self::hasOtherPeriod($query, $allTime[0][0]) ? $arguments : $unresolved;
         }
-        if (preg_match('/\b'.self::WHOLE_CALENDAR_PERIOD.'/iu', $query) === 1) {
+        if (preg_match('/\b(?:'.self::WHOLE_CALENDAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.')/iu', $query) === 1) {
             return $unresolved;
         }
         if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:((?:19|20)\d{2}|этого|текущего|прошлого|предыдущего|позапрошлого|этой|текущей|прошлой|предыдущей|позапрошлой)\s+)?(года|квартала|месяца|недели|дня|суток)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $calendarStart) > 0) {

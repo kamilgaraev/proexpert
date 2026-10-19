@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_calendar_half_years_require_dates_instead_of_expanding_to_the_whole_year(): void
+    {
+        foreach (['за первое полугодие 2026', 'за второе полугодие 2026', 'в первом полугодии 2026 года',
+            'во втором полугодии 2026 года', 'первое полугодие 2026', 'второе полугодие 2026',
+            'за 1-е полугодие 2026', 'за II полугодие 2026', 'за первое полугодие', 'за третье полугодие 2026',
+            'с первого полугодия 2026', 'на протяжении второго полугодия 2026 года',
+            'за первое полугодие 2026 и за октябрь 2026'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $plan['request']['message'] = 'Сверь выполненные работы с графиком проекта «Северный дом '.$phrase.'»';
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+        self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+            ['request' => ['message' => 'Сверь выполненные работы с полугодовым графиком']]));
+        self::assertSame('Дом с полугодовым графиком', AssistantProductionSchedulePeriod::withoutSuffix('Дом с полугодовым графиком'));
+    }
+
     public function test_calendar_year_determiners_are_removed_with_the_whole_period_after_exact_lookup(): void
     {
         foreach (['весь 2026 год', 'полный 2026 год', 'целый 2026 год', 'календарный 2026 год', 'полный календарный 2026 год',
