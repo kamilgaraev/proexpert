@@ -66,7 +66,7 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
 
-    private const ABBREVIATED_UNIT = '(?:мес|нед|дн)';
+    private const ABBREVIATED_UNIT = '(?:мес|нед|дн|сут|мин|сек|гг?|ч)';
 
     private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток|'.self::ABBREVIATED_UNIT.')';
 
@@ -403,7 +403,8 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
-        $query = preg_replace_callback('/\b('.self::ABBREVIATED_UNIT.')\b\.?/iu', static fn (array $match): string => ['мес' => 'месяц', 'нед' => 'неделю', 'дн' => 'день'][mb_strtolower($match[1])], $query) ?? $query;
+        $query = preg_replace_callback('/\b('.self::ABBREVIATED_UNIT.')\b\.?/iu', static fn (array $match): string => ['мес' => 'месяц', 'нед' => 'неделю', 'дн' => 'день', 'сут' => 'сутки',
+            'г' => 'год', 'гг' => 'год', 'ч' => 'час', 'мин' => 'минут', 'сек' => 'секунд'][mb_strtolower($match[1])].' ', $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::ADJECTIVAL_DAY.'\b/iu', static fn (array $match): string => mb_strtolower($match[1]), $query) ?? $query;
         $query = preg_replace('/\b'.self::CURRENT_SNAPSHOT.'/iu', ' ', $query) ?? $query;
         $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;

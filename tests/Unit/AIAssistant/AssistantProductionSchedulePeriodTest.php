@@ -14,6 +14,43 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_abbreviation_dots_keep_word_boundaries_between_requested_periods(): void
+    {
+        foreach (['за последние 2 г.и за 4 мес.', 'за последние 6 мес.и за 2 нед.',
+            'за последние 6 мес.сегодня', 'за последние 6 мес.Что осталось за октябрь 2026?'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
+    public function test_abbreviated_years_and_days_keep_the_full_period_out_of_project_names(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за последние 2 г.' => ['2024-10-20', '2026-10-20'], 'за последние 2 г' => ['2024-10-20', '2026-10-20'],
+                'за последние 2 гг.' => ['2024-10-20', '2026-10-20'],
+                'за последний г.' => ['2025-10-20', '2026-10-20'], 'за текущий г.' => ['2026-01-01', '2026-10-20'],
+                'за прошлый г.' => ['2025-01-01', '2025-12-31'], 'за последние 2 сут.' => ['2026-10-18', '2026-10-20'],
+                'за последние 2 сут' => ['2026-10-18', '2026-10-20']] as $phrase => [$start, $end]) {
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $this->assertPeriodScope($phrase, $start, $end);
+            }
+            self::assertSame('Дом г. Москва', AssistantProductionSchedulePeriod::withoutSuffix('Дом г. Москва за последние 2 г.'));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_abbreviated_subday_units_require_dates_and_never_become_all_time(): void
+    {
+        foreach (['за последние 2 ч.', 'за последние 2 ч', '2 ч.', 'за 30 мин.', 'за 30 мин', 'за 10 сек.', 'за 10 сек',
+            'через 2 ч.', 'за последние 100 г.', 'за несколько гг.', 'за 1.5 г.'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+    }
+
     public function test_abbreviated_duration_units_keep_dates_named_scope_and_literal_priority(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
