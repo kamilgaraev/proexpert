@@ -148,6 +148,7 @@ class ProjectPulseRuleEngine
                 projectId: $fact->projectId,
                 route: $fact->primaryAction['route'] ?? $fact->relatedEntity['route'] ?? ($fact->projectId ? '/projects/' . $fact->projectId : null),
                 source: 'rules',
+                relatedEntity: $fact->relatedEntity,
             ))
             ->values();
     }

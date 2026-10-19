@@ -16,7 +16,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 class ProjectPulseAiSynthesizerTest extends TestCase
 {
     #[DataProvider('fallbackModes')]
-    public function test_empty_ai_recommendations_do_not_hide_rule_recommendations(bool $useAi, bool $available, string $status): void
+    public function test_recommendations_preserve_rule_identity_without_trusting_ai_identity(bool $useAi, bool $available, string $status, bool $hasAiRecommendations = false): void
     {
         $container = new Container();
         $container->instance('config', new Repository([
@@ -46,6 +46,7 @@ class ProjectPulseAiSynthesizerTest extends TestCase
                 source: 'schedule',
                 category: 'schedule',
                 nextAction: 'Обновить график, ответственного и следующий контрольный срок.',
+                relatedEntity: ['type' => 'schedule_task', 'id' => 56, 'label' => 'Учебная задача'],
             ),
         ]);
         for ($index = 0; $index < 12; $index++) {
@@ -56,8 +57,8 @@ class ProjectPulseAiSynthesizerTest extends TestCase
         $ruleEngine = new ProjectPulseRuleEngine();
         $ruleRecommendations = $ruleEngine->recommendations($facts);
         $synthesizer = new ProjectPulseAiSynthesizer(
-            new class($available) implements LLMProviderInterface {
-                public function __construct(private bool $available) {}
+            new class($available, $hasAiRecommendations) implements LLMProviderInterface {
+                public function __construct(private bool $available, private bool $hasAiRecommendations) {}
                 public function chat(array $messages, array $options = []): array
                 {
                     return [
@@ -66,7 +67,11 @@ class ProjectPulseAiSynthesizerTest extends TestCase
                                 'title' => 'Есть критичные вопросы',
                                 'text' => 'Нужно проверить график.',
                             ],
-                            'recommendations' => [],
+                            'recommendations' => $this->hasAiRecommendations ? [[
+                                'priority' => 'high', 'title' => 'Проверить срок',
+                                'action' => 'Актуализировать график', 'reason' => 'Есть просрочка',
+                                'related_entity' => ['type' => 'site_request', 'id' => 999999, 'label' => 'Неподтверждённая сущность'],
+                            ]] : [],
                         ], JSON_UNESCAPED_UNICODE),
                     ];
                 }
@@ -99,15 +104,24 @@ class ProjectPulseAiSynthesizerTest extends TestCase
         );
 
         self::assertNotEmpty($result['recommendations']);
-        self::assertCount(12, $result['recommendations']);
         self::assertSame($status, $result['ai_mode']['status']);
+        if ($hasAiRecommendations) {
+            self::assertCount(1, $result['recommendations']);
+            self::assertSame('ai', $result['recommendations'][0]['source']);
+            self::assertNull($result['recommendations'][0]['related_entity'] ?? null);
+
+            return;
+        }
+
+        self::assertCount(12, $result['recommendations']);
         self::assertSame('rules:schedule_task:56:overdue', $result['recommendations'][0]['id']);
         self::assertSame('Обновить график, ответственного и следующий контрольный срок.', $result['recommendations'][0]['action']);
+        self::assertSame(['type' => 'schedule_task', 'id' => 56, 'label' => 'Учебная задача'], $result['recommendations'][0]['related_entity'] ?? null);
     }
 
     public static function fallbackModes(): array
     {
-        return [[true, true, 'active'], [false, true, 'rules_only'], [true, false, 'unavailable']];
+        return [[true, true, 'active'], [false, true, 'rules_only'], [true, false, 'unavailable'], [true, true, 'active', true]];
     }
 
     protected function tearDown(): void

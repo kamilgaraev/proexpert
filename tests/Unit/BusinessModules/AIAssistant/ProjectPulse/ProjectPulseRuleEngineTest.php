@@ -10,6 +10,30 @@ use PHPUnit\Framework\TestCase;
 
 class ProjectPulseRuleEngineTest extends TestCase
 {
+    public function test_recommendations_preserve_canonical_identity_for_identically_named_requests(): void
+    {
+        $entities = [
+            ['type' => 'site_request', 'id' => 586, 'label' => 'Учебный персонал', 'route' => '/site-requests/586'],
+            ['type' => 'site_request', 'id' => 587, 'label' => 'Учебный персонал', 'route' => '/site-requests/587'],
+        ];
+        $facts = collect($entities)->map(fn (array $entity, int $index) => new ProjectPulseFact(
+            id: 'opaque-fact-' . $index,
+            type: 'site_request',
+            priority: 'warning',
+            title: 'Заявка требует реакции',
+            text: 'Учебный персонал ожидает назначения.',
+            source: 'site_requests',
+            category: 'request',
+            relatedEntity: $entity,
+        ));
+
+        $recommendations = (new ProjectPulseRuleEngine)->recommendations($facts)
+            ->map(fn ($recommendation) => $recommendation->toArray())->all();
+
+        self::assertSame($entities, array_column($recommendations, 'related_entity'));
+        self::assertSame(['rules', 'rules'], array_column($recommendations, 'source'));
+    }
+
     public function test_critical_recommendation_precedes_limit_after_twelve_warnings(): void
     {
         $facts = collect();
