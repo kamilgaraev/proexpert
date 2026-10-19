@@ -29,7 +29,8 @@ final class AssistantProjectClarificationIntent
             $quoted = preg_match('/^(?:«(.+)»|“(.+)”|„(.+)“|"(.+)")$/u', $name, $quote) === 1;
             $name = $quoted ? (string) array_values(array_filter(array_slice($quote, 1), static fn (string $part): bool => $part !== ''))[0] : trim($name, " \t\n\r\0\x0B.!?");
             if ($name === '' || mb_strlen($normalized) > 300 || mb_strlen($name) > 255 || preg_match('/[\p{Cc}\p{Cf}]/u', $name) === 1
-                || preg_match('/\b(?:создай|удали|измени|оплати|отправь|передай|подпиши|согласуй|утверди|одобри|покажи|проверь|сверь|расскажи|сколько|какие|что|не|и\s+(?:ещ[её]|также))\b/iu', $name) === 1) {
+                || preg_match('/^(?:нет|не(?:\s+(?:знаю|помню|уверен[а]?|могу\s+(?:сказать|указать|выбрать)|хочу|надо|нужно|тот\s+проект))?)$/iu', $name) === 1
+                || preg_match('/\b(?:создай|удали|измени|оплати|отправь|передай|подпиши|согласуй|утверди|одобри|покажи|проверь|сверь|расскажи|сколько|какие|что|и\s+(?:ещ[её]|также))\b/iu', $name) === 1) {
                 return $query;
             }
 

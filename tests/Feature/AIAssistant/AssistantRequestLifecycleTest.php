@@ -1888,7 +1888,8 @@ final class AssistantRequestLifecycleTest extends TestCase
             'tokens_used' => ($usage['input_tokens'] ?? 0) + ($usage['output_tokens'] ?? 0)];
     }
 
-    public function test_unresolved_named_operational_project_stops_before_provider_or_background_project_read(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('unresolvedProjectReplies')]
+    public function test_unresolved_named_operational_project_stops_before_provider_or_background_project_read(string $reply, string $name): void
     {
         $query = 'Сверь выполненные работы с графиком проекта №102.';
         $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
@@ -1917,17 +1918,22 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame(1, Message::query()->where('role', 'assistant')->count());
         $pending = Conversation::query()->findOrFail($response['conversation_id'])->context['pending_named_project_clarification'] ?? null;
         self::assertSame(['message' => $query], $pending);
-        $followup = $this->quote(['message' => 'Северный дом'], conversationId: $response['conversation_id']);
-        $second = $service->ask('Северный дом', $this->organization->id, $this->actor, $response['conversation_id'], $followup);
+        $followup = $this->quote(['message' => $reply], conversationId: $response['conversation_id']);
+        $second = $service->ask($reply, $this->organization->id, $this->actor, $response['conversation_id'], $followup);
         self::assertTrue($second['message']['metadata']['needs_clarification']);
         self::assertSame([
             ['query' => '№102', 'limit' => 2, 'project_id' => 102],
-            ['query' => 'Северный дом', 'limit' => 2, 'name_match' => 'exact'],
-            ['query' => 'Северный дом', 'limit' => 2],
+            ['query' => $name, 'limit' => 2, 'name_match' => 'exact'],
+            ['query' => $name, 'limit' => 2],
         ], $service->projectSearchArguments);
-        self::assertSame(['message' => 'Сверь выполненные работы с графиком проекта «Северный дом».'], Conversation::query()->findOrFail($response['conversation_id'])->context['pending_named_project_clarification']);
-        self::assertSame('Северный дом', Message::query()->where('role', 'user')->latest('id')->firstOrFail()->content);
+        self::assertSame(['message' => 'Сверь выполненные работы с графиком проекта «'.$name.'».'], Conversation::query()->findOrFail($response['conversation_id'])->context['pending_named_project_clarification']);
+        self::assertSame($reply, Message::query()->where('role', 'user')->latest('id')->firstOrFail()->content);
         self::assertSame(0, AICreditProviderUsage::query()->count());
+    }
+
+    public static function unresolvedProjectReplies(): array
+    {
+        return [['Северный дом', 'Северный дом'], ['Дом не сдан', 'Дом не сдан'], ['«Дом не сдан»', 'Дом не сдан']];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('periodClarificationReplies')]

@@ -332,6 +332,30 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_qualified_durations_require_dates_and_preserve_literal_project_priority(): void
+    {
+        foreach (['за последние 6 календарных месяцев', 'последние 6 календарных месяцев',
+            'за шесть календарных месяцев', '6 календарных месяцев', 'за 5 рабочих дней',
+            'пять рабочих дней', 'за последние три полных месяца', 'последние полные недели',
+            'в течение нескольких рабочих дней', 'на протяжении 2 календарных лет',
+            'за последние 6 полных календарных месяцев', 'за сентябрь 2026 и 5 рабочих дней'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
     public function test_explicit_ranges_with_year_suffix_are_not_fractional_durations(): void
     {
         foreach (['с 01.10.2026 по 10.10.2026 года', 'с 01/10/2026 по 10/10/2026 года',
