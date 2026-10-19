@@ -60,10 +60,14 @@ final readonly class EstimatorCreditOperations
             if ($existing !== null) {
                 $request = $this->replayRequest($actor, $session, $existing, $kind, $normalized);
                 $plan = json_decode($existing->processing_plan, true, 64, JSON_THROW_ON_ERROR);
-                app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan);
+                if (isset($plan['retained_pipeline_prefix'])) {
+                    app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan);
+                }
+                $generationCycle = app(EstimatorGenerationCycleBudget::class)->assertFits($kind, $plan);
                 $payload = $this->credits->replayEstimatorQuote($organization, $actor, (int) $existing->quote_id, $request);
             } else {
                 [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $normalized);
+                $generationCycle = $plan['generation_cycle_preflight'] ?? null;
                 $payload = $this->credits->quoteEstimator($organization, $actor, $request);
             }
             $quote = AICreditQuote::query()->where('public_id', $payload['quote_id'])->where('organization_id', $organization->id)->firstOrFail();
@@ -82,7 +86,7 @@ final readonly class EstimatorCreditOperations
 
             $balance = $this->credits->balance($organization);
 
-            return [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
+            $response = [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
                 'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
                 'available_units_minor' => $balance['available_minor'],
                 'reconciliation_held_units_minor' => $balance['reconciliation_held_minor'],
@@ -91,6 +95,7 @@ final readonly class EstimatorCreditOperations
                     'included_document_cost_micro_rub' => $plan['document_costs']['cost_micro_rub'] ?? 0,
                     'supplier_tariff' => $request->identity()['supplier_tariff'],
                     'audit_output_tokens' => $plan['roles']['estimate_audit']['output_ceiling'] ?? null,
+                    ...($generationCycle !== null ? ['generation_cycle' => $generationCycle] : []),
                     ...(isset($plan['retained_audit_preflight']) ? [
                         'initial_audit_pass' => $plan['retained_audit_preflight'],
                         'remaining_audit_cycle' => $plan['retained_audit_preflight'],
@@ -101,6 +106,8 @@ final readonly class EstimatorCreditOperations
                     'completed_stages' => array_keys($plan['retained_pipeline_prefix']['stages']),
                     'resume_stage' => 'validate_draft',
                 ]] : [])];
+
+            return json_decode(CanonicalPipelineJson::encode($response), true, 64, JSON_THROW_ON_ERROR);
         }, 3);
     }
 
@@ -156,6 +163,7 @@ final readonly class EstimatorCreditOperations
             app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan, 'quote_id');
         }
         $request = $this->request($identity);
+        app(EstimatorGenerationCycleBudget::class)->assertFits($kind, $plan, 'quote_id');
         $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
         $this->database->table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)
@@ -213,9 +221,14 @@ final readonly class EstimatorCreditOperations
         if ($qaBudget !== null) {
             $plan = $this->plans->capForQaBudget($plan, $qaBudget);
         }
-        $preflight = app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan);
+        $preflight = isset($plan['retained_pipeline_prefix'])
+            ? app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan) : null;
         if ($preflight !== null) {
             $plan['retained_audit_preflight'] = $preflight;
+        }
+        $generationCycle = app(EstimatorGenerationCycleBudget::class)->assertFits($kind, $plan);
+        if ($generationCycle !== null) {
+            $plan['generation_cycle_preflight'] = $generationCycle;
         }
         $manifestHash = hash('sha256', CanonicalPipelineJson::encode($manifest));
         $identity = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,
