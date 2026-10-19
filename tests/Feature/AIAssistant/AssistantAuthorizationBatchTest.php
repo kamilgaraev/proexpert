@@ -170,8 +170,10 @@ final class AssistantAuthorizationBatchTest extends TestCase
         $access = app(AssistantDataAccessPolicy::class);
         $actor = new \App\Models\User;
         $actor->id = 71;
+        $foreignActor = clone $actor;
+        $foreignActor->id = 72;
         $failure = new RuntimeException('private-scope-failure');
-        $access->withCurrentChecks($actor, 101, function () use ($access, $actor, $failure): void {
+        $access->withCurrentChecks($actor, 101, function () use ($access, $actor, $foreignActor, $failure): void {
             $access->withCurrentChecks($actor, 102, static fn (): bool => true);
             try {
                 $access->withCurrentChecks($actor, 103, static function () use ($failure): never { throw $failure; });
@@ -180,14 +182,27 @@ final class AssistantAuthorizationBatchTest extends TestCase
                 self::assertSame($failure, $actual);
             }
             self::assertTrue($access->withCurrentChecks($actor, 101, static fn (): bool => true));
+            self::assertTrue($access->withCurrentChecks($actor, 101, static fn (): bool => true, true));
+            self::assertTrue($access->withCurrentChecks($foreignActor, 101, static fn (): bool => true));
+            self::assertTrue($access->withCurrentChecks($foreignActor, 104, static fn (): bool => true));
+            self::assertTrue($access->withCurrentChecks($actor, 105, static fn (): bool => true, true));
         });
+        self::assertTrue((new \App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard($access))->canRead($actor, 101, []));
         $reads = $metrics->summary()['access_reads'];
-        self::assertSame(2, $reads['policy_restore']['count']);
+        self::assertSame(6, $reads['policy_restore']['count']);
         self::assertSame(1, $reads['policy_restore']['organizations']);
         self::assertSame(1, $reads['policy_restore']['frames']);
-        self::assertSame(3, $reads['policy_enter']['organizations']);
+        self::assertSame(5, $reads['policy_enter']['organizations']);
         self::assertSame(1, $reads['policy_reuse']['count']);
-        self::assertSame(5, $reads['scope_memoized']['count']);
+        self::assertSame(14, $reads['scope_memoized']['count']);
+        foreach (['policy_outer', 'policy_outer_fresh', 'policy_nested_fresh_same', 'policy_nested_fresh_changed',
+            'policy_nested_actor_changed', 'policy_nested_identity_changed'] as $boundary) {
+            self::assertSame(1, $reads[$boundary]['count']);
+        }
+        self::assertSame(2, $reads['policy_nested_org_changed']['count']);
+        self::assertSame(['reference_guard' => 1], $reads['policy_outer_fresh']['callers']);
+        self::assertStringNotContainsString('AssistantSourceReferenceGuard', json_encode($reads, JSON_THROW_ON_ERROR));
+        self::assertSame($reads, (new \App\Services\Logging\SensitiveDataRedactor)->redact(['access_reads' => $reads])['access_reads']);
         self::assertStringNotContainsString('private', json_encode($reads, JSON_THROW_ON_ERROR));
     }
 
