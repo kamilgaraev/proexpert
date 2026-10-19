@@ -290,11 +290,12 @@ class ScheduleTask extends Model
 
     public function getIsOverdueAttribute(): bool
     {
-        if ($this->status === TaskStatusEnum::COMPLETED) {
+        if (in_array($this->status, [TaskStatusEnum::COMPLETED, TaskStatusEnum::CANCELLED], true)
+            || $this->planned_end_date === null || $this->progress_percent === null) {
             return false;
         }
 
-        return $this->planned_end_date->isPast() && $this->progress_percent < 100;
+        return $this->planned_end_date->format('Y-m-d') < self::overdueCutoffDate() && $this->progress_percent < 100;
     }
 
     public function getDaysUntilDeadlineAttribute(): int
@@ -504,9 +505,14 @@ class ScheduleTask extends Model
 
     public function scopeOverdue($query, ?\DateTimeInterface $asOf = null)
     {
-        return $query->where('planned_end_date', '<', ($asOf ?? now())->format('Y-m-d'))
+        return $query->where('planned_end_date', '<', self::overdueCutoffDate($asOf))
                     ->where('progress_percent', '<', 100)
                     ->whereNotIn('status', [TaskStatusEnum::COMPLETED->value, TaskStatusEnum::CANCELLED->value]);
+    }
+
+    private static function overdueCutoffDate(?\DateTimeInterface $asOf = null): string
+    {
+        return ($asOf ?? now())->format('Y-m-d');
     }
 
     public function scopeByType($query, TaskTypeEnum $type)

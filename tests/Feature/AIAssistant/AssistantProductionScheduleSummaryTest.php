@@ -15,14 +15,18 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRe
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Http\Resources\Api\V1\Schedule\ScheduleTaskGanttResource;
+use App\Http\Resources\Api\V1\Schedule\ScheduleTaskResource;
 use App\Models\CompletedWork;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
+use App\Repositories\Schedule\ProjectScheduleRepository;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -234,6 +238,43 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
             date_default_timezone_set($previousTimezone);
             Carbon::setTestNow();
             \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_native_overdue_scope_repository_and_resources_share_calendar_deadlines(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        config(['app.timezone' => 'UTC']);
+        date_default_timezone_set('UTC');
+        Carbon::setTestNow(new Carbon('2026-10-18 21:30:00', 'UTC'));
+        try {
+            $schedule = $this->schedule();
+            $tasks = collect([
+                $this->task($schedule, 'Вчера', ['planned_end_date' => '2026-10-17']),
+                $this->task($schedule, 'Сегодня', ['planned_end_date' => '2026-10-18']),
+                $this->task($schedule, 'Завтра', ['planned_end_date' => '2026-10-19']),
+                $this->task($schedule, 'Завершена', ['planned_end_date' => '2026-10-17', 'status' => 'completed', 'progress_percent' => 80]),
+                $this->task($schedule, 'Отменена', ['planned_end_date' => '2026-10-17', 'status' => 'cancelled']),
+                $this->task($schedule, 'Полный объём', ['planned_end_date' => '2026-10-17', 'progress_percent' => 100]),
+            ]);
+            $request = Request::create('/');
+            foreach (['UTC' => [$tasks[0]->id], 'Europe/Moscow' => [$tasks[0]->id, $tasks[1]->id]] as $timezone => $expected) {
+                date_default_timezone_set($timezone);
+                config(['app.timezone' => $timezone]);
+                self::assertSame($expected, ScheduleTask::query()->where('schedule_id', $schedule->id)->overdue()->orderBy('id')->pluck('id')->all());
+                $nativeSchedules = app(ProjectScheduleRepository::class)->getWithOverdueTasks($this->fixture->organization->id);
+                self::assertSame($expected, $nativeSchedules->flatMap(fn (ProjectSchedule $item) => $item->tasks->pluck('id'))->sort()->values()->all());
+                foreach ($tasks as $task) {
+                    $task->refresh();
+                    $isOverdue = in_array($task->id, $expected, true);
+                    self::assertSame($isOverdue, $task->is_overdue, $timezone.' '.$task->name);
+                    self::assertSame($isOverdue, ScheduleTaskResource::make($task)->resolve($request)['is_overdue']);
+                    self::assertSame($isOverdue, ScheduleTaskGanttResource::make($task)->resolve($request)['is_overdue']);
+                }
+            }
+        } finally {
+            date_default_timezone_set($previousTimezone);
+            Carbon::setTestNow();
         }
     }
 

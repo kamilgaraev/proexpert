@@ -48,9 +48,9 @@ final class AssistantProductionSchedulePeriod
 
     private const DURATION_NUMBER = '(?:\d{1,2}|один|одна|одну|два|две|пара|пару|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)';
 
-    private const DURATION_MODIFIER = '(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))';
+    private const DURATION_MODIFIER = '(?:последн(?:ий|яя|ие|их|юю)|крайн(?:ий|яя|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ая|ую|ие|их))';
 
-    private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы)';
+    private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделя|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы)';
 
     private const INDEFINITE_DURATION_PERIOD = '(?:(?:за|в\s+течение|на\s+протяжении)\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?(?:нескольк(?:о|их)|много|немного|ряд|(?:неизвестное|неопредел[её]нное|некоторое)\s+количество)\s+(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
@@ -407,8 +407,9 @@ final class AssistantProductionSchedulePeriod
 
             return str_starts_with($relative, 'позапрошл') ? 'позавчера' : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 'вчера' : 'сегодня');
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b(?:за\s+)?(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год|квартал)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
+        $query = preg_replace_callback('/\b(?:за\s+)?(?:(?:(?:последн|крайн)(?:ий|яя|юю)|(?:прошедш|минувш)(?:ий|ая|ую))\s+(день|недел[яю]|месяц|год|квартал)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
             $unit = mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
+            $unit = $unit === 'неделя' ? 'неделю' : $unit;
 
             return $unit === 'квартал' ? 'за квартал' : 'за 1 '.$unit;
         }, $query) ?? $query;
