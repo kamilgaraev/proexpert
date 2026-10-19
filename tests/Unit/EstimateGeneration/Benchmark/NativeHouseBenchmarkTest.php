@@ -129,7 +129,7 @@ final class NativeHouseBenchmarkTest extends TestCase
             self::assertSame(1.0, $byId[$id]['metrics']['quantity_mape'], $id);
             $diagnostic = $adapter->diagnostics[$id];
             self::assertCount(10, $diagnostic['selected_sections']);
-            self::assertSame(['equipment'], $diagnostic['uncovered_sections']);
+            self::assertSame([], $diagnostic['uncovered_sections']);
             self::assertFalse($diagnostic['accuracy_calibrated']);
             self::assertFalse($diagnostic['estimate_complete']);
             self::assertFalse($diagnostic['paid_actions_enabled']);
@@ -156,6 +156,16 @@ final class NativeHouseBenchmarkTest extends TestCase
                 self::assertTrue(BigDecimal::of($actual[$key])->isEqualTo($amount), $id.' '.$key);
             }
             self::assertNotEmpty($diagnostic['items']);
+            $equipment = array_filter($diagnostic['items'], static fn (array $item): bool => ($item['metadata']['package_key'] ?? null) === 'equipment');
+            self::assertCount(3, $equipment);
+            foreach ($equipment as $item) {
+                self::assertNull($item['quantity']);
+                self::assertSame('count', $item['unit']);
+                self::assertSame('quantity_unknown', $item['pricing_blocker']);
+                self::assertTrue($item['skip_normative_matching']);
+                self::assertTrue($item['metadata']['requires_specification']);
+                self::assertNotEmpty($item['metadata']['composition_work_key']);
+            }
             foreach ($diagnostic['items'] as $item) {
                 self::assertSame('not_calculated', $item['pricing_status']);
                 self::assertNull($item['price_source']);

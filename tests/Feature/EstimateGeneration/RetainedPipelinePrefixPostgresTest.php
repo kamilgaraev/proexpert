@@ -26,6 +26,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputReposit
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePlanResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\StageDefinition;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
@@ -149,12 +150,20 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         return array_map(static fn (string $value): array => [$value], ['invalidated', 'missing', 'base', 'active', 'scope', 'input', 'actor']);
     }
 
-    public function test_changed_prefix_is_rejected_before_credit_reservation(): void
+    #[DataProvider('changedSourcesAfterQuote')]
+    public function test_changed_prefix_is_rejected_before_credit_reservation(string $change): void
     {
         [$actor, $session] = $this->fixture();
         [$id, $quote] = $this->quote($actor, $session);
         self::assertArrayHasKey('retained_pipeline_prefix', $this->plan($id));
-        $this->invalidate($session, ProcessingStage::BuildDraft);
+        if ($change === 'old_work_plan_schema') {
+            $outputs = \Mockery::mock(PipelineOutputRepository::class);
+            $outputs->shouldReceive('priorOutputs')->once()
+                ->andThrow(new \InvalidArgumentException('Persisted pipeline output schema is stale.'));
+            $this->app->instance(PipelineOutputRepository::class, $outputs);
+        } else {
+            $this->invalidate($session, ProcessingStage::BuildDraft);
+        }
         try {
             DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation'));
             self::fail('Changed prefix must not be reserved.');
@@ -162,6 +171,25 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             self::assertSame('estimator_retained_pipeline_prefix_changed', $error->getMessage());
         }
         self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        Http::assertNothingSent();
+    }
+
+    public static function changedSourcesAfterQuote(): array
+    {
+        return [['invalidated'], ['old_work_plan_schema']];
+    }
+
+    public function test_previous_work_plan_schema_is_not_reused_or_reserved_by_a_fresh_quote(): void
+    {
+        [$actor, $session, $sourceId] = $this->fixture('old_work_plan_schema');
+        $sourceBefore = DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole();
+        $reservationsBefore = DB::table('ai_credit_reservations')->count();
+        [$id] = $this->quote($actor, $session);
+        self::assertArrayNotHasKey('retained_pipeline_prefix', $this->plan($id));
+        self::assertNull(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('reservation_id'));
+        self::assertSame($reservationsBefore, DB::table('ai_credit_reservations')->count());
+        self::assertEquals($sourceBefore, DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         Http::assertNothingSent();
     }
 
@@ -482,8 +510,15 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         $this->app->instance(PipelineArtifactStore::class, $artifacts);
         $this->app->instance(PipelineOutputRepository::class, new EloquentPipelineOutputRepository($artifacts));
         $base = app(EvidenceAwarePipelineBaseInputVersionResolver::class)->fromSession($session);
+        $graph = PipelineDefinitionGraph::standard();
+        if ($change === 'old_work_plan_schema') {
+            $graph = new PipelineDefinitionGraph(array_map(static fn (StageDefinition $definition): StageDefinition => $definition->stage === ProcessingStage::PlanWorkItems
+                ? new StageDefinition($definition->stage, 87, $definition->dependencies, $definition->maxArtifactBytes)
+                : $definition, $graph->ordered()));
+        }
+        $results = new StageResultFactory($artifacts, $graph);
         $versions = [];
-        foreach (PipelineDefinitionGraph::standard()->ordered() as $definition) {
+        foreach ($graph->ordered() as $definition) {
             $deps = [];
             foreach ($definition->dependencies as $dependency) {
                 $deps[$dependency->value] = $versions[$dependency->value];
@@ -505,7 +540,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
                 ]]],
                 default => throw new \LogicException,
             };
-            $result = app(StageResultFactory::class)->make($context, $definition->stage, $data, warnings: ['source-warning']);
+            $result = $results->make($context, $definition->stage, $data, warnings: ['source-warning']);
             if ($change !== 'missing' || $definition->stage !== ProcessingStage::PlanWorkItems) {
                 EstimateGenerationPipelineCheckpoint::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
                     'project_id' => $project->id, 'generation_attempt_id' => $sourceId, 'base_input_version' => $change === 'base' && $definition->stage === ProcessingStage::PlanWorkItems ? 'sha256:'.str_repeat('f', 64) : $base, 'stage' => $definition->stage->value,

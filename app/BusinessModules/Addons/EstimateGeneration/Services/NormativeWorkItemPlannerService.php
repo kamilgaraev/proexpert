@@ -21,6 +21,7 @@ final class NormativeWorkItemPlannerService
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
         private readonly ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
         private readonly RoofTypeResolver $roofTypeResolver = new RoofTypeResolver,
+        private readonly PackagePlannerService $packagePlanner = new PackagePlannerService,
     ) {}
 
     /**
@@ -661,22 +662,26 @@ final class NormativeWorkItemPlannerService
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $universal = ($analysis['evaluation_policy']['mode'] ?? null) === 'universal';
+        $selectedResidentialEquipment = $packageKey === 'equipment' && $universal
+            && ($analysis['evaluation_policy']['profile_id'] ?? null) !== 'industrial'
+            && in_array('equipment', $analysis['evaluation_policy']['selected_sections'] ?? [], true)
+            && ObjectTypeSignalClassifier::isResidential($this->packagePlanner->profileFromAnalysis($analysis)->objectType);
         $separateWaterScope = $universal && in_array($packageKey, ['plumbing', 'sewerage'], true);
         $openingQuantityKeys = match ($packageKey) {
             'gates' => ['warehouse.gates', 'warehouse.loading_nodes', 'openings.gates'],
             'entrance_group' => ['openings.windows', 'openings.doors'],
             default => null,
         };
-        $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
+        $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis, $selectedResidentialEquipment);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
             ...$packageDefinitions,
-            ...$this->scopeInferenceDefinitions(
+            ...($selectedResidentialEquipment ? [] : $this->scopeInferenceDefinitions(
                 $analysis,
                 $scopeType,
                 $packageKey,
                 $sourceBackedQuantityKeys
-            ),
+            )),
         ];
 
         return array_values(array_filter(
@@ -985,9 +990,14 @@ final class NormativeWorkItemPlannerService
         string $scopeType,
         array $quantityModel,
         array $analysis,
+        bool $selectedResidentialEquipment,
     ): array {
         $roofType = $quantityModel['features']['roof_type'] ?? null;
         $definitionKey = $this->packageDefinitionKey($packageKey, $scopeType);
+
+        if ($selectedResidentialEquipment) {
+            return $this->residentialEquipmentDefinitions();
+        }
 
         return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
@@ -1223,6 +1233,22 @@ final class NormativeWorkItemPlannerService
             ],
             default => [],
         };
+    }
+
+    private function residentialEquipmentDefinitions(): array
+    {
+        $definitions = [];
+        foreach (['purchase' => ['equipment_purchase', 'equipment'], 'delivery' => ['delivery', 'other'], 'install' => ['installation', 'work']] as $key => [$requirement, $ordinaryType]) {
+            $name = trans_message('estimate_generation.residential_equipment.'.$key.'.name');
+            $definitions[] = [...$this->definition(
+                $name, 'engineering', $name, 'equipment.'.$key,
+                operations: [trans_message('estimate_generation.residential_equipment.'.$key.'.operation')],
+                metadata: ['requirement_key' => $requirement, 'ordinary_item_type' => $ordinaryType,
+                    'requires_specification' => true, 'requires_technology_confirmation' => true],
+            ), 'unit' => 'count'];
+        }
+
+        return $definitions;
     }
 
     private function industrialDefinition(string $name, string $category, string $quantityKey, string $unit, string $requirement, string $ordinaryType = 'work'): array

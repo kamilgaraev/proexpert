@@ -131,7 +131,11 @@ final readonly class RetainedPipelinePrefix
         }
         $base = $this->baseVersions->fromSession($session);
         $context = $this->context($session, $base, $attempt, $operationId);
-        $prior = $this->outputs->priorOutputs($context);
+        try {
+            $prior = $this->outputs->priorOutputs($context);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
         $checkpoints = EstimateGenerationPipelineCheckpoint::query()->where('session_id', $session->id)
             ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->where('generation_attempt_id', $attempt)->where('status', CheckpointStatus::Completed->value)

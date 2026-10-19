@@ -50,6 +50,11 @@ final readonly class WorkPlanCompiler
                     $packages[] = $package;
                 }
             }
+            if (in_array('equipment', $selected, true)
+                && ObjectTypeSignalClassifier::isResidential($profile->objectType)
+                && ! in_array('equipment', array_column($packages, 'key'), true)) {
+                $packages[] = $this->packagePlanner->selectedResidentialEquipmentPackage(count($packages));
+            }
             $plan = new PackagePlanData(array_values(array_filter($packages, static fn (array $package): bool => in_array(
                 EvaluationSectionMap::forPackage((string) $package['key']), $selected, true,
             ) || in_array((string) $package['key'], $selected, true))), $plan->assumptions);

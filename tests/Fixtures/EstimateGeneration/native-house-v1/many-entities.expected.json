@@ -97,7 +97,10 @@
       "heating:heating-section-1:heating.radiators",
       "heating:heating-section-1:heating.pipe",
       "ventilation:ventilation-section-1:ventilation.air_exchange",
-      "ventilation:ventilation-section-1:ventilation.distribution_devices"
+      "ventilation:ventilation-section-1:ventilation.distribution_devices",
+      "equipment:equipment-section-1:equipment.purchase",
+      "equipment:equipment-section-1:equipment.delivery",
+      "equipment:equipment-section-1:equipment.install"
     ],
     "normative_rankings": {},
     "costs": [],

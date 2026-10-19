@@ -9,7 +9,7 @@
       "input_locator": "known-inputs.txt",
       "expected_locator": "known-inputs.expected.json",
       "input_sha256": "8c2427378302787f378c951f55bb3d1fb740e8a937817f7fbf1e861ebf6b0286",
-      "expected_sha256": "9a7fd3b774a4cbac70d9ed96a4e16a2dce2bffa21a58accfd2d871699fb47af2",
+      "expected_sha256": "59db136f18aeb08826212c675be1f9239e20ac06af99584bee5164d5c010e20b",
       "license": "CC0-1.0",
       "provenance": "synthetic:documented-native-house:v1",
       "tags": [
@@ -29,7 +29,7 @@
       "input_locator": "missing-height.txt",
       "expected_locator": "missing-height.expected.json",
       "input_sha256": "fca044672605a858a9f3963071b070f8ecd651b55d9324b8e6199955a504cc51",
-      "expected_sha256": "4f3299eac47d585944c1889d6cd2be3b19d04542678428ef69e8fdfc6d3f47d0",
+      "expected_sha256": "e2708dc6ce4e23e802e21dd3e96a53dff310d7b4377cb702a297d7faea79af28",
       "license": "CC0-1.0",
       "provenance": "synthetic:documented-native-house:v1",
       "tags": [
@@ -49,7 +49,7 @@
       "input_locator": "source-conflict.txt",
       "expected_locator": "source-conflict.expected.json",
       "input_sha256": "bf57cdf724df837c80c957e4c469bbf998aaad0e7860b2c79d0c6b274ceca639",
-      "expected_sha256": "4f3299eac47d585944c1889d6cd2be3b19d04542678428ef69e8fdfc6d3f47d0",
+      "expected_sha256": "e2708dc6ce4e23e802e21dd3e96a53dff310d7b4377cb702a297d7faea79af28",
       "license": "CC0-1.0",
       "provenance": "synthetic:documented-native-house:v1",
       "tags": [
@@ -69,7 +69,7 @@
       "input_locator": "many-entities.txt",
       "expected_locator": "many-entities.expected.json",
       "input_sha256": "4871ac84b7948d8c36c9c64f41148ba1aef9bdfb29ae309068567ca617cac91f",
-      "expected_sha256": "3c9231e02e61bf8c8c950a262b3f11dd33139ac5f351c5baa64d1791b8ef24b4",
+      "expected_sha256": "e2794dedbf13ef7b1ab7c958ee958aacbb9beb6c5edf1f05dbe5c1da1aa8f2a2",
       "license": "CC0-1.0",
       "provenance": "synthetic:documented-native-house:v1",
       "tags": [
