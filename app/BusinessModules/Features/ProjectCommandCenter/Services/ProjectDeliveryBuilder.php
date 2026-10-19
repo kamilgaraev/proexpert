@@ -31,7 +31,7 @@ final class ProjectDeliveryBuilder
             ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END")
             ->orderByDesc('updated_at')
             ->first([
-                'id', 'status', 'planned_end_date', 'baseline_end_date', 'actual_end_date', 'overall_progress_percent',
+                'id', 'name', 'status', 'planned_end_date', 'baseline_end_date', 'actual_end_date', 'overall_progress_percent',
                 'critical_path_calculated', 'critical_path_duration_days',
             ]);
 
@@ -76,6 +76,8 @@ final class ProjectDeliveryBuilder
 
         return $this->fromFacts([
             'schedule' => [
+                'id' => (int) $schedule->id,
+                'name' => (string) $schedule->name,
                 'planned_end_date' => $schedule->planned_end_date,
                 'baseline_end_date' => $schedule->baseline_end_date,
                 'actual_end_date' => $schedule->actual_end_date,
@@ -114,6 +116,11 @@ final class ProjectDeliveryBuilder
             : null;
 
         return ProjectDeliveryData::available([
+            ...(isset($schedule['id'], $schedule['name']) ? ['schedule' => [
+                'id' => (int) $schedule['id'],
+                'name' => (string) $schedule['name'],
+                'status' => (string) $schedule['status'],
+            ]] : []),
             'forecast_completion' => [
                 'available' => $forecastCompletion !== null,
                 'reason_key' => $forecastCompletion === null ? 'project_command_center.delivery.forecast_completion_unavailable' : null,

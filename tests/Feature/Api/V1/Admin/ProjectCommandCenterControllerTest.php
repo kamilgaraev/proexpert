@@ -22,6 +22,68 @@ use Tests\TestCase;
 
 final class ProjectCommandCenterControllerTest extends TestCase
 {
+    public function test_it_identifies_the_selected_schedule_without_changing_its_priority(): void
+    {
+        [$context, $project] = $this->linkedForecast();
+        $schedule = [
+            'project_id' => $project->id,
+            'organization_id' => $context->organization->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Основной учебный график',
+            'planned_start_date' => now()->toDateString(),
+            'planned_end_date' => now()->addDays(7)->toDateString(),
+            'status' => 'active',
+            'overall_progress_percent' => 43.21,
+            'created_at' => now()->subDay(),
+            'updated_at' => now()->subDay(),
+        ];
+        $activeId = DB::table('project_schedules')->insertGetId($schedule);
+        DB::table('project_schedules')->insert([
+            ...$schedule, 'name' => 'Более свежий черновик', 'status' => 'draft', 'updated_at' => now(),
+        ]);
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        DB::table('project_schedules')->insert([
+            ...$schedule, 'project_id' => $foreignProject->id, 'organization_id' => $foreignOrganization->id,
+            'name' => 'Чужой график', 'updated_at' => now(),
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/project-command-center?project_id='.$project->id)
+            ->assertOk()
+            ->assertJsonPath('data.delivery.schedule.id', $activeId)
+            ->assertJsonPath('data.delivery.schedule.name', 'Основной учебный график')
+            ->assertJsonPath('data.delivery.schedule.status', 'active')
+            ->assertJsonPath('data.delivery.progress_percent', 43.21);
+    }
+
+    public function test_it_does_not_aggregate_foreign_currency_obligations_as_rubles(): void
+    {
+        [$context, $project, , $order] = $this->linkedForecast();
+        $url = '/api/v1/admin/project-command-center?project_id='.$project->id;
+        $this->withHeaders($context->authHeaders())->getJson($url)
+            ->assertOk()->assertJsonPath('data.finance.cash_flow.available', true);
+
+        $foreignCurrency = $order->replicate();
+        $foreignCurrency->fill([
+            'document_number' => 'FORECAST-USD-'.$project->id,
+            'currency' => 'USD', 'amount' => 100, 'remaining_amount' => 100,
+            'source_type' => null, 'source_id' => null,
+        ])->save();
+
+        $this->withHeaders($context->authHeaders())->getJson($url)
+            ->assertOk()
+            ->assertJsonPath('data.finance.cash_flow.available', false)
+            ->assertJsonPath('data.finance.cash_flow.reason_key', 'project_command_center.finance.payment_currency_unsupported')
+            ->assertJsonPath('data.finance.cash_flow.accounts_payable', 0)
+            ->assertJsonPath('data.finance.cash_flow.projections', [])
+            ->assertJsonPath('data.analytics.cash_flow.available', false);
+
+        $foreignCurrency->update(['status' => 'cancelled']);
+        $this->withHeaders($context->authHeaders())->getJson($url)
+            ->assertOk()->assertJsonPath('data.finance.cash_flow.available', true);
+    }
+
     public function test_it_requires_a_project_id(): void
     {
         $context = AdminApiTestContext::create();
