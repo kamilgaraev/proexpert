@@ -93,7 +93,7 @@ final class AssistantNamedProjectReadScope
             $name = trim((string) ($parts[0] ?? ''));
             preg_match_all('/\s+(?:и|или|а|но)\s+/iu', $name, $conjunctions, PREG_OFFSET_CAPTURE);
             foreach ($conjunctions[0] as [$conjunction, $offset]) {
-                if (AssistantOperationalReaderRegistry::hasTopic(substr($name, $offset + strlen($conjunction)))) {
+                if (AssistantOperationalReaderRegistry::hasProjectNameContinuation(substr($name, $offset + strlen($conjunction)))) {
                     $name = rtrim(substr($name, 0, $offset));
                     break;
                 }

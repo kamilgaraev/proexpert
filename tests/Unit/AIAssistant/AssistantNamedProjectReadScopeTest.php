@@ -14,6 +14,33 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_financial_and_organization_topics_after_name_remain_visible(): void
+    {
+        foreach (['сметы', 'уведомления', 'договоры', 'оплату'] as $topic) {
+            $query = 'Сверь выполненные работы с графиком проекта Северный дом и '.$topic;
+            self::assertSame('Северный дом', AssistantNamedProjectReadScope::name($this->plan($query)), $topic);
+            self::assertStringContainsString('и '.$topic, AssistantNamedProjectReadScope::semanticQuery($query));
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query));
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls): array {
+                $calls++;
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(0, $calls);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($bound));
+            $name = 'Северный дом и '.$topic;
+            $quoted = 'Сверь выполненные работы с графиком проекта «'.$name.'»';
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($quoted), function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+        }
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent('Сверь выполненные работы с графиком проекта Северный дом и сколько потрачено'));
+    }
+
     public function test_site_request_responsibility_filter_keeps_ui_route_after_empty_exact_lookup(): void
     {
         foreach (['Покажи заявки проекта %s', 'Покажите заявки проекта %s', 'Какие заявки проекта %s?'] as $template) {

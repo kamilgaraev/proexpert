@@ -272,7 +272,21 @@ final class AssistantOperationalReaderRegistry
         return self::hasTopic($query);
     }
 
-    public static function hasTopic(string $query): bool
+    public static function hasProjectNameContinuation(string $query): bool
+    {
+        if (self::hasTopic($query) || AssistantProjectProductionScheduleReader::hasExcludedTopic($query)) {
+            return true;
+        }
+        foreach ([...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $class) {
+            if ($class::hasIntent($query)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function hasTopic(string $query): bool
     {
         foreach (self::TOPICS as $pattern) {
             if (preg_match($pattern, $query) === 1) {

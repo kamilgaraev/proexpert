@@ -12,7 +12,9 @@ final class AssistantProductionSchedulePeriod
 
     private const EXPLICIT_RANGE = '(?:(?:за|в)\s+(?:весь\s+)?период\s+)?(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b';
 
-    private const CURRENT_SNAPSHOT = '(?:по\s+состоянию\s+на\s+(?:сегодняшний\s+день|сегодня)|на\s+сегодняшний\s+день)\b';
+    private const SNAPSHOT_PREFIX = 'по\s+состоянию\s+на\b';
+
+    private const CURRENT_SNAPSHOT = '(?:'.self::SNAPSHOT_PREFIX.'\s+(?:сегодняшний\s+день|сегодня|сейчас|текущий\s+(?:момент|день)|текущую\s+дату)|на\s+сегодняшний\s+день)\b';
 
     private const SUBDAY_UNIT = '(?:час(?:а|ов|ы)?|минут(?:а|у|ы)?|секунд(?:а|у|ы)?)';
 
@@ -26,7 +28,7 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|'.self::DURATION_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|крайн|следующ|позапрошл|прошедш|минувш)[а-яё]*)(?:\s+(?:и\s+)?(?:\d+|'.self::DURATION_NUMBER.'))?\s+';
 
-    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|(?:последний|крайний|прошедший|минувший)\s+)'.self::QUARTER_WORD.'\b';
+    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
 
     private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток)';
 
@@ -52,7 +54,7 @@ final class AssistantProductionSchedulePeriod
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::CURRENT_SNAPSHOT.'|'.self::SUBDAY_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::SUBDAY_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -74,7 +76,7 @@ final class AssistantProductionSchedulePeriod
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
-        if (preg_match('/\b'.self::SUBDAY_PERIOD.'/iu', $query) === 1) {
+        if (preg_match('/\b(?:'.self::SNAPSHOT_PREFIX.'|'.self::SUBDAY_PERIOD.')/iu', $query) === 1) {
             return $unresolved;
         }
         $withoutRanges = preg_replace('/\b'.self::EXPLICIT_RANGE.'/iu', ' ', $query) ?? $query;
@@ -384,6 +386,7 @@ final class AssistantProductionSchedulePeriod
 
             return 'за '.$adjective.' '.(str_starts_with(mb_strtolower($match[2]), 'год') ? 'год' : 'месяц');
         }, $query) ?? $query;
+        $query = preg_replace_callback('/\b(?:(за|в|во|на|с|со|по|до)\s+)?((?:этот|текущий|прошлый|предыдущий|позапрошлый|следующий)\s+квартал)\b/iu', static fn (array $match): string => ($match[1] ?? '') !== '' ? $match[0] : 'за '.$match[2], $query) ?? $query;
         $months = ['январе' => 'январь', 'феврале' => 'февраль', 'марте' => 'март', 'апреле' => 'апрель', 'мае' => 'май', 'июне' => 'июнь',
             'июле' => 'июль', 'августе' => 'август', 'сентябре' => 'сентябрь', 'октябре' => 'октябрь', 'ноябре' => 'ноябрь', 'декабре' => 'декабрь'];
 

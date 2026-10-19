@@ -32,7 +32,12 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     public static function matches(string $query): bool
     {
         return self::hasIntent($query)
-            && preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд|потрач|расход|затрат|прибыл|выручк|рентаб|марж|финанс/iu', \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query)) !== 1;
+            && ! self::hasExcludedTopic(\App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query));
+    }
+
+    public static function hasExcludedTopic(string $query): bool
+    {
+        return preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд|потрач|расход|затрат|прибыл|выручк|рентаб|марж|финанс/iu', $query) === 1;
     }
 
     public function read(User $actor, int $organizationId, array $arguments): array
