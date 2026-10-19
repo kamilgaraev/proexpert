@@ -28,6 +28,7 @@ final class RecordApiResponseTime
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
             'api/v1/admin/permissions',
+            'api/v1/landing/user-management/available-roles',
             'api/v1/admin/projects/*/contracts',
             'api/v1/admin/project-command-center',
             'api/v1/admin/budgeting/cfo-command-center',
