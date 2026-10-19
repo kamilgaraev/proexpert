@@ -44,6 +44,46 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_journal_summary_keeps_project_totals_when_status_filter_changes(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $anotherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $this->allowAdminAccess();
+
+        $active = $this->createJournal($context->organization, $project, $context->user);
+        $archived = $this->createJournal($context->organization, $project, $context->user, [
+            'status' => JournalStatusEnum::ARCHIVED,
+        ]);
+        $this->createJournal($context->organization, $anotherProject, $context->user);
+        $this->createJournal($foreignOrganization, $project, $context->user);
+
+        foreach (['active' => $active->id, 'archived' => $archived->id, 'closed' => null] as $status => $journalId) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?status={$status}&per_page=1")
+                ->assertOk()
+                ->assertJsonPath('meta.total', $journalId === null ? 0 : 1)
+                ->assertJsonCount($journalId === null ? 0 : 1, 'data')
+                ->assertJsonPath('summary.total_journals', 2)
+                ->assertJsonPath('summary.active_journals', 1)
+                ->assertJsonPath('summary.archived_journals', 1)
+                ->assertJsonPath('summary.closed_journals', 0);
+
+            if ($journalId !== null) {
+                $response->assertJsonPath('data.0.id', $journalId);
+            }
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?per_page=1")
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('meta.total', 2)
+            ->assertJsonPath('summary.total_journals', 2);
+    }
+
     public function test_foreign_project_denials_are_localized_and_own_project_remains_accessible(): void
     {
         $context = AdminApiTestContext::create();

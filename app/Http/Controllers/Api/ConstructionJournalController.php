@@ -54,7 +54,7 @@ class ConstructionJournalController extends Controller
                 null,
                 200,
                 [
-                    'total_journals' => $journals->total(),
+                    'total_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->count(),
                     'active_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'active')->count(),
                     'archived_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'archived')->count(),
                     'closed_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'closed')->count(),
