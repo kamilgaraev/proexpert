@@ -828,6 +828,21 @@ return [
         'low_confidence' => 'Низкая уверенность',
         'technology_recommendation' => 'Рекомендация по технологии',
     ],
+    'prerequisites' => [
+        'unknown_parameter' => 'Исходный параметр',
+        'parameters' => [
+            'site_area' => 'Площадь участка работ',
+            'foundation_area' => 'Площадь основания фундамента',
+            'pile_count' => 'Количество свай',
+            'foundation_column_count' => 'Количество опор фундамента',
+            'waterproofing_area' => 'Площадь гидроизоляции',
+            'facade_area' => 'Площадь фасада',
+            'roof_area' => 'Площадь кровли',
+            'waste_volume' => 'Объём строительных отходов',
+            'engineering_system_count' => 'Количество инженерных систем',
+            'disturbed_area' => 'Площадь восстановления благоустройства',
+        ],
+    ],
     'planning' => [
         'blocking_reason' => 'Подготовка сметы остановлена: требуется проверить исходные данные проекта.',
         'technology' => [

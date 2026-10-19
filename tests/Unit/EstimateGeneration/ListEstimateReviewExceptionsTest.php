@@ -13,6 +13,29 @@ use PHPUnit\Framework\TestCase;
 
 final class ListEstimateReviewExceptionsTest extends TestCase
 {
+    public function test_prerequisite_backlog_survives_the_existing_review_envelope(): void
+    {
+        $backlog = ['contract_version' => 'estimate-prerequisites:v1', 'version' => 'sha256:'.str_repeat('a', 64),
+            'provenance' => ['source_version' => 'source:v1', 'finding_key' => 'finding:roof'],
+            'questions' => [['key' => 'prerequisite:roof', 'input_fact_type' => 'roof_area',
+                'label' => 'Площадь кровли', 'scope' => 'rule', 'answer_action' => 'review_sources',
+                'formula_ids' => ['formula:roof'], 'quantity_units' => ['m2']]],
+            'total' => 1, 'partial' => false, 'limitations' => []];
+        $service = new ListEstimateReviewExceptions($this->source([
+            $this->item('finding:roof', 'missing_required_data', false, null, 'warning', '0.75', [
+                'origin' => 'stage5', 'recommendation' => ['work_packages' => [], 'prerequisites' => $backlog,
+                    'internal' => ['prompt' => 'private']],
+            ]),
+        ]));
+
+        $result = $service->handle($this->session(), []);
+
+        self::assertSame($backlog, $result['items'][0]['recommendation']['prerequisites']);
+        self::assertArrayNotHasKey('internal', $result['items'][0]['recommendation']);
+        self::assertSame(4, $result['meta']['state_version']);
+        self::assertSame(1, $result['summary']['unresolved']);
+    }
+
     public function test_public_recommendation_keeps_selection_state_and_stable_alternative_identity(): void
     {
         foreach (['selected', 'not_selected', 'requires_review'] as $state) {

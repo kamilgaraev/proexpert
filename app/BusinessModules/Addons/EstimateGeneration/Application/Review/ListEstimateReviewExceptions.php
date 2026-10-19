@@ -389,7 +389,7 @@ final class ListEstimateReviewExceptions
         if (! is_array($value)) {
             return null;
         }
-        $allowed = ['decision_key', 'question', 'rationale', 'applicability', 'evidence', 'alternatives', 'work_packages', 'response_options', 'selected_option', 'selection_state'];
+        $allowed = ['decision_key', 'question', 'rationale', 'applicability', 'evidence', 'alternatives', 'work_packages', 'response_options', 'selected_option', 'selection_state', 'prerequisites'];
 
         return array_intersect_key($value, array_flip($allowed));
     }
