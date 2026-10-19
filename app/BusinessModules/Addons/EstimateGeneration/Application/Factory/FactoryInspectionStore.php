@@ -108,7 +108,7 @@ final readonly class FactoryInspectionStore
                 $run = $this->runs($session)->where('id', $run->id)->first();
                 $checkpoint = $this->checkpoints($session)->where('id', $id)->first();
                 if (! $capture['within_budget']) {
-                    $this->finish($session, $id, self::stop('unavailable', ['input_budget_exceeded']), $now);
+                    $this->finish($session, $id, self::stop('unavailable', $capture['limitations']), $now);
 
                     return $this->present($session, $run, $this->checkpoints($session)->where('id', $id)->first(), $capture);
                 }

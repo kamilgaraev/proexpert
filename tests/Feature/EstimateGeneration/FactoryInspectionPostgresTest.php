@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryIns
 use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\InspectFactoryInputs;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationFactoryController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -219,6 +220,73 @@ final class FactoryInspectionPostgresTest extends EstimateGenerationCanonicalPos
         self::assertSame(['input_budget_exceeded'], $result['checkpoint']['result']['limitations']);
         self::assertFalse($result['fresh']);
         self::assertEquals($payload, $session->fresh()->input_payload);
+        self::assertSame(1, $session->fresh()->state_version);
+    }
+
+    public function test_a_new_conflict_with_unchanged_state_and_model_token_invalidates_both_claim_and_saved_freshness(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $store = app(FactoryInspectionStore::class);
+        $inspect = app(InspectFactoryInputs::class);
+        $oldRequest = (string) Str::uuid();
+        $saved = $inspect->handle($actor, $session->project_id, $session->id, 1, $oldRequest);
+        $claim = $store->claim($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertInstanceOf(FactoryInspectionClaim::class, $claim);
+        $models = app(ProjectModelRepository::class);
+        $models->saveSourceModel([], [], [], [Conflict::between('conflict:factory-late', $claim->snapshot->facts, 'Новый конфликт исходных размеров')]);
+        self::assertSame($claim->modelToken, $models->snapshotForPlanning($session->organization_id, $session->project_id, $session->id, 10001)['token']);
+        self::assertSame(1, $session->fresh()->state_version);
+        self::assertFalse($store->complete($claim, $this->inspectionResult($claim)));
+        $replay = $store->current($actor, $session->project_id, $session->id, $oldRequest);
+        self::assertSame($saved['checkpoint'], $replay['checkpoint']);
+        self::assertFalse($replay['fresh']);
+        CarbonImmutable::setTestNow(CarbonImmutable::now()->addSeconds(61));
+        try {
+            $next = $inspect->handle($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+            self::assertTrue($next['fresh']);
+            self::assertSame('source_review_required', $next['checkpoint']['status']);
+            self::assertSame($saved['run']['id'], $next['run']['id']);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_conflict_count_limit_stops_before_reading_token_or_snapshot(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshotForPlanning($session->organization_id, $session->project_id, $session->id, 10001)['snapshot'];
+        $conflicts = [];
+        for ($index = 0; $index < 33; $index++) {
+            $conflicts[] = Conflict::between('conflict:factory-budget-'.$index, $snapshot->facts, 'Конфликт в пределах тестового источника');
+        }
+        $models->saveSourceModel([], [], [], $conflicts);
+        $mock = Mockery::mock(ProjectModelRepository::class);
+        $mock->shouldNotReceive('snapshotForPlanning');
+        $this->app->instance(ProjectModelRepository::class, $mock);
+        $result = app(InspectFactoryInputs::class)->handle($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertSame('unavailable', $result['checkpoint']['status']);
+        self::assertSame(['input_budget_exceeded'], $result['checkpoint']['result']['limitations']);
+        self::assertSame(1, $session->fresh()->state_version);
+    }
+
+    public function test_duplicate_current_projections_of_one_assertion_stop_before_token_expansion(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $projection = (array) DB::table('estimate_generation_project_model_fact_projections')
+            ->where('session_id', $session->id)->where('is_current', true)->where('fact_type', '<>', 'dimension_height')->first();
+        self::assertNotEmpty($projection);
+        unset($projection['id']);
+        $projection['projection_version']++;
+        $projection['fact_type'] = 'dimension_height';
+        DB::table('estimate_generation_project_model_fact_projections')->insert($projection);
+        $mock = Mockery::mock(ProjectModelRepository::class);
+        $mock->shouldNotReceive('snapshotForPlanning');
+        $this->app->instance(ProjectModelRepository::class, $mock);
+        $result = app(InspectFactoryInputs::class)->handle($actor, $session->project_id, $session->id, 1, (string) Str::uuid());
+        self::assertSame('unavailable', $result['checkpoint']['status']);
+        self::assertSame(['additional_review_required'], $result['checkpoint']['result']['limitations']);
+        self::assertFalse($result['fresh']);
         self::assertSame(1, $session->fresh()->state_version);
     }
 
