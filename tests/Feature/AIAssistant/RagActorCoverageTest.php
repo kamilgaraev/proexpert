@@ -24,6 +24,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
+use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\DB;
@@ -141,6 +142,67 @@ final class RagActorCoverageTest extends TestCase
         $this->assertSame(1, $status['source_count']);
         $this->assertSame(['project'], array_column($status['source_catalog'], 'type'));
         $this->assertNotContains('payments.invoice.view', $this->permissionChecks);
+        $this->coverage->coverageForActor($organization->id, $actor);
+        Queue::assertPushed(RefreshRagCoverageJob::class, 1);
+    }
+
+    public function test_missing_snapshot_refresh_waits_for_commit_and_does_not_survive_rollback(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $initialLevel = DB::connection()->transactionLevel();
+        foreach ([false, true] as $commit) {
+            DB::beginTransaction();
+            try {
+                $this->coverage->coverageForActor($organization->id, $actor);
+                Queue::assertNotPushed(RefreshRagCoverageJob::class);
+                if ($commit) { DB::commit(); } else { DB::rollBack(); }
+            } finally {
+                while (DB::connection()->transactionLevel() > $initialLevel) { DB::rollBack(); }
+            }
+            if (! $commit) { Queue::assertNotPushed(RefreshRagCoverageJob::class); }
+        }
+        Queue::assertPushed(RefreshRagCoverageJob::class, 1);
+        $this->coverage->coverageForActor($organization->id, $actor);
+        Queue::assertPushed(RefreshRagCoverageJob::class, 1);
+    }
+
+    public function test_refresh_waits_for_own_connection_commit_when_another_connection_commits_first(): void
+    {
+        $organization = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $originalName = DB::getDefaultConnection();
+        $originalConnections = config('database.connections');
+        $originalManager = app('db.transactions');
+        $configuration = DB::connection()->getConfig();
+        unset($configuration['name']);
+        $first = $second = null;
+        try {
+            config(['database.connections.rag_coverage_first' => $configuration, 'database.connections.rag_coverage_second' => $configuration]);
+            $this->app->instance('db.transactions', new DatabaseTransactionsManager());
+            DB::setDefaultConnection('rag_coverage_first');
+            $first = DB::connection('rag_coverage_first');
+            $second = DB::connection('rag_coverage_second');
+            foreach ([false, true] as $commit) {
+                $first->beginTransaction();
+                $second->beginTransaction();
+                $this->coverage->coverage($organization->id, sourceType: 'project');
+                Queue::assertNotPushed(RefreshRagCoverageJob::class);
+                $second->commit();
+                Queue::assertNotPushed(RefreshRagCoverageJob::class);
+                if ($commit) { $first->commit(); } else { $first->rollBack(); }
+                if (! $commit) { Queue::assertNotPushed(RefreshRagCoverageJob::class); }
+            }
+            Queue::assertPushed(RefreshRagCoverageJob::class, 1);
+        } finally {
+            foreach ([$second, $first] as $connection) {
+                if ($connection !== null) { while ($connection->transactionLevel() > 0) { $connection->rollBack(); } }
+            }
+            DB::purge('rag_coverage_first');
+            DB::purge('rag_coverage_second');
+            DB::setDefaultConnection($originalName);
+            $this->app->instance('db.transactions', $originalManager);
+            config(['database.connections' => $originalConnections]);
+        }
     }
 
     public function test_projection_proof_and_counts_use_the_same_visible_rows_and_generation(): void
