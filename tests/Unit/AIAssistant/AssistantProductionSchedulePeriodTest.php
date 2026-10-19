@@ -308,6 +308,35 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_relative_forward_offsets_require_dates_and_preserve_literal_project_names(): void
+    {
+        foreach (['через неделю', 'через месяц', 'через год', 'через квартал', 'через полгода', 'через два дня',
+            'через 100 недель', 'через тринадцать дней', 'через двадцать один день', 'через несколько месяцев',
+            'через неизвестное количество лет', 'через полтора года', 'через два с половиной месяца', 'через одну-две недели',
+            'через три рабочих дня', 'через две календарные недели', 'через час', 'через тридцать минут',
+            'спустя неделю', 'спустя пару месяцев', 'спустя несколько часов', 'через следующую неделю', 'за сентябрь 2026 через неделю'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+        foreach (['Прокладка сетей через жилой квартал', 'Маршрут через географический квартал'] as $description) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком. '.$description]]));
+            self::assertSame('Северный дом '.$description, AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$description));
+        }
+    }
+
     public function test_current_snapshot_suffix_keeps_named_project_and_optional_work_period(): void
     {
         foreach (['сейчас', 'прямо сейчас', 'на сейчас', 'на прямо сейчас', 'по состоянию на сейчас', 'по состоянию на прямо сейчас',
