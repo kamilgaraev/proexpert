@@ -9,6 +9,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -28,7 +29,10 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Services\Monitoring\SlowQueryContext;
+use App\Services\Project\ProjectParticipantService;
 use App\Services\Workflow\JournalScheduleTaskResolver;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +47,16 @@ use Tests\TestCase;
 class ConstructionJournalCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_journal_index_batches_one_performer_for_several_visible_journals(): void
+    {
+        $this->assertJournalPerformerBatch(false);
+    }
+
+    public function test_journal_index_batches_distinct_performers_and_preserves_visibility_between_pages(): void
+    {
+        $this->assertJournalPerformerBatch(true);
+    }
 
     public function test_journal_summary_keeps_project_totals_when_status_filter_changes(): void
     {
@@ -768,6 +782,93 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
         }
 
         return [$contractor, $contract, $estimate, ...$parents];
+    }
+
+    private function assertJournalPerformerBatch(bool $distinctPerformers): void
+    {
+        Event::fakeExcept([QueryExecuted::class]);
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $performer = $distinctPerformers
+            ? Organization::factory()->verified()->create()
+            : $context->organization;
+
+        if ($distinctPerformers) {
+            $project->organizations()->attach($performer->id, [
+                'role' => ProjectOrganizationRole::CONTRACTOR->value,
+                'role_new' => ProjectOrganizationRole::CONTRACTOR->value,
+                'is_active' => true,
+            ]);
+            app(ProjectParticipantService::class)->saveHierarchy($project, $context->organization->id, [
+                ['organization_id' => $performer->id, 'parent_organization_id' => $context->organization->id],
+            ]);
+        }
+
+        $journals = [];
+        foreach (range(0, 3) as $index) {
+            $journal = $this->createJournal($context->organization, $project, $context->user, [
+                'performing_organization_id' => $index % 2 === 0 ? $context->organization->id : $performer->id,
+            ]);
+            $journal->forceFill(['created_at' => now()->addSeconds($index)])->saveQuietly();
+            $journals[] = $journal;
+        }
+        $hiddenPerformer = Organization::factory()->verified()->create();
+        $this->createJournal($context->organization, $project, $context->user, [
+            'performing_organization_id' => $hiddenPerformer->id,
+        ]);
+        $performers = [$context->organization->id => $context->organization, $performer->id => $performer];
+        $displayReads = ['batch' => 0, 'per_row' => 0];
+        DB::listen(static function (QueryExecuted $query) use (&$displayReads): void {
+            if (! str_contains($query->sql, 'from "organizations"')) {
+                return;
+            }
+            $source = SlowQueryContext::source(['tests/Feature/Api/V1/Admin/ConstructionJournalCoreExperienceControllerTest.php']);
+            if (($source['file'] ?? null) === 'app/Http/Controllers/Api/ConstructionJournalController.php') {
+                $displayReads['batch']++;
+            } elseif (($source['file'] ?? null) === 'app/BusinessModules/Features/BudgetEstimates/Services/ConstructionJournalPayloadService.php') {
+                $displayReads['per_row']++;
+            }
+        });
+
+        $pages = $distinctPerformers ? [array_slice($journals, 2, 2), array_slice($journals, 0, 2)] : [$journals];
+        foreach ($pages as $page => $expectedJournals) {
+            $displayReads = ['batch' => 0, 'per_row' => 0];
+            $pageNumber = $page + 1;
+            $perPage = $distinctPerformers ? 2 : 100;
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?page={$pageNumber}&per_page={$perPage}")
+                ->assertOk()
+                ->assertJsonPath('meta.total', 4)
+                ->assertJsonPath('summary.total_journals', 4)
+                ->assertJsonCount(count($expectedJournals), 'data');
+            $this->assertEqualsCanonicalizing(
+                array_map(static fn (ConstructionJournal $journal): int => $journal->id, $expectedJournals),
+                array_column($response->json('data'), 'id'),
+            );
+            foreach ($response->json('data') as $payload) {
+                $organization = $performers[$payload['performing_organization_id']];
+                $this->assertSame(['id' => $organization->id, 'name' => $organization->name], $payload['performingOrganization']);
+            }
+            $this->assertSame(['batch' => 1, 'per_row' => 0], $displayReads);
+        }
+
+        if ($distinctPerformers) {
+            $project->organizations()->updateExistingPivot($performer->id, ['is_active' => false]);
+        } else {
+            $context->organization->update(['name' => 'Updated performer']);
+        }
+        $displayReads = ['batch' => 0, 'per_row' => 0];
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/construction-journals?per_page=100")
+            ->assertOk()
+            ->assertJsonPath('meta.total', $distinctPerformers ? 2 : 4)
+            ->assertJsonCount($distinctPerformers ? 2 : 4, 'data');
+        foreach ($response->json('data') as $payload) {
+            $this->assertSame($context->organization->id, $payload['performing_organization_id']);
+            $this->assertSame(['id' => $context->organization->id, 'name' => $context->organization->name], $payload['performingOrganization']);
+        }
+        $this->assertSame(['batch' => 1, 'per_row' => 0], $displayReads);
     }
 
     private function createJournal(
