@@ -14,6 +14,79 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_numeric_subject_constraints_do_not_create_date_filters(): void
+    {
+        foreach (['на 5 этажах', 'по 3 корпусам', 'на 5-м этаже', 'в корпусе 3', 'на 5–7 этажах'] as $phrase) {
+            $expected = ['project_id' => 102, 'scope_clarification' => 'location'];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame($expected + ['period_start' => '2026-10-01', 'period_end' => '2026-10-31'], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase.' за октябрь 2026']]), $phrase);
+        }
+        foreach (['с 5 незавершёнными задачами', 'для 2 ответственных', 'по 3 контрольным точкам', 'на 100 м²', 'на 1.5 м²'] as $phrase) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
+    public function test_numeric_location_suffix_requires_scope_clarification_after_empty_exact_lookup(): void
+    {
+        foreach (['на 5 этажах', 'по 3 корпусам', 'в корпусе 3'] as $phrase) {
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 102, 'scope_clarification' => 'location'], AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            foreach ([['status' => 'error'], ['status' => 'success', 'results' => [], 'result_window' => ['has_more' => true]]] as $failure) {
+                $calls = 0;
+                $failed = AssistantNamedProjectReadScope::bind($plan, static function () use (&$calls, $failure): array {
+                    $calls++;
+
+                    return $failure;
+                });
+                self::assertSame(1, $calls);
+                self::assertNull(AssistantRequiredProjectRead::fromPlan($failed));
+            }
+            self::assertSame('Сверь выполненные работы с графиком проекта «Другой дом» '.$phrase.' за октябрь 2026',
+                AssistantNamedProjectReadScope::clarifiedQuery($plan['request']['message'].' за октябрь 2026', 'Другой дом'));
+            foreach (['', '«'] as $quote) {
+                $plan['request']['message'] = 'Сверь выполненные работы с графиком проекта '.$quote.'Северный дом '.$phrase.($quote === '' ? '' : '»');
+                $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                    self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                });
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+            }
+        }
+    }
+
+    public function test_incomplete_numeric_dates_remain_unresolved_without_generic_number_fallback(): void
+    {
+        foreach (['за 01.10', 'на 01/10', 'за 01.10.', 'с 01/10 по 02/10'] as $phrase) {
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $this->assertPeriodScope($phrase, null, null);
+        }
+    }
+
+    public function test_location_scope_is_validated_and_never_becomes_a_pending_period(): void
+    {
+        self::assertTrue(AssistantProductionSchedulePeriod::validArguments(['project_id' => 102, 'scope_clarification' => 'location']));
+        foreach ([null, false, true, 'floor', ['location']] as $invalid) {
+            self::assertFalse(AssistantProductionSchedulePeriod::validArguments(['project_id' => 102, 'scope_clarification' => $invalid]));
+        }
+        $query = 'Сверь выполненные работы с графиком на 5 этажах за октябрь';
+        self::assertNull(AssistantProductionSchedulePeriod::pending(['request' => ['message' => $query]], [
+            'replaced' => true, 'needs_clarification' => true, 'source_refs' => [[
+                'entity_type' => AssistantProjectProductionScheduleReader::TYPE,
+                '_read_arguments' => ['project_id' => 102, 'scope_clarification' => 'location', 'period_start' => null, 'period_end' => null],
+            ]],
+        ]));
+        $override = ['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-31', 'message_sha256' => hash('sha256', $query)];
+        self::assertSame(['project_id' => 102, 'scope_clarification' => 'location', 'period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+            AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => $query], 'production_period_override' => $override]));
+    }
+
     public function test_verbal_dates_without_a_year_require_bounds_instead_of_all_time(): void
     {
         foreach (['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'] as $month) {

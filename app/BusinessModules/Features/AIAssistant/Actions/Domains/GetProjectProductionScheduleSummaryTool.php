@@ -24,6 +24,10 @@ final readonly class GetProjectProductionScheduleSummaryTool extends AssistantPr
             'type' => ['string', 'null'], 'pattern' => '^\d{4}-\d{2}-\d{2}$',
             'description' => trans_message('ai_assistant_production_schedule.period_parameter'),
         ];
+        $schema['properties']['scope_clarification'] = [
+            'type' => 'string', 'enum' => ['location'],
+            'description' => trans_message('ai_assistant_production_schedule.location_parameter'),
+        ];
 
         return $schema;
     }

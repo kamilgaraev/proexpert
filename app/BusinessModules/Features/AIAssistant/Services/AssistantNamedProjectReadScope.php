@@ -45,7 +45,13 @@ final class AssistantNamedProjectReadScope
                 $rows = is_array($result) ? ($result['results'] ?? null) : null;
                 if (! isset($arguments['project_id']) && ! self::hasQuotedName($query) && ! $implicitQuestion) {
                     $periodName = AssistantProductionSchedulePeriod::withoutSuffix($name);
-                    foreach (array_unique([$periodName, self::withoutScheduleComparison($periodName)]) as $shortName) {
+                    $names = [$periodName, self::withoutScheduleComparison($periodName)];
+                    if ($intent['name'] === 'get_project_production_schedule_summary') {
+                        foreach ($names as $candidate) {
+                            $names[] = AssistantProductionScheduleLocationScope::withoutSuffix($candidate);
+                        }
+                    }
+                    foreach (array_unique($names) as $shortName) {
                         if ($shortName === $arguments['query'] || $shortName === '') {
                             continue;
                         }
@@ -170,6 +176,9 @@ final class AssistantNamedProjectReadScope
             }
             $old = self::name(['request' => ['message' => $slice]]);
             $old = $old === null ? null : self::withoutScheduleComparison(AssistantProductionSchedulePeriod::withoutSuffix($old));
+            if ($old !== null && (AssistantOperationalReaderRegistry::intent($query)['name'] ?? null) === 'get_project_production_schedule_summary') {
+                $old = AssistantProductionScheduleLocationScope::withoutSuffix($old);
+            }
             $old = $old === null ? null : preg_replace('/\s+(?:и|а|но)$/iu', '', $old);
             $start = $old === null || $old === '' ? false : strpos($slice, $old, strlen($prefix));
             if ($start !== false) {

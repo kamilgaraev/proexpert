@@ -36,6 +36,8 @@ final class AssistantProductionSchedulePeriod
 
     private const PERIOD_PREFIX = '(?:'.self::PERIOD_PREPOSITION.'|'.self::DURATION_CONTEXT_INTRODUCER.')';
 
+    private const INCOMPLETE_DATE = '(?:'.self::PERIOD_PREFIX.'\s+)?\d{1,2}[.\/]\d{1,2}(?![\pL\pN\/-]|\.\d)(?=\s*(?:$|[.!?;,]|(?:и|по|до)\b))';
+
     private const ADJECTIVAL_DAY = '('.self::RELATIVE_DAY.')шн(?:ий|его|ему|им|ем|ие|их|ими)\s+(?:день|дня|дню|дн[её]м|дне|сутки|суток|суткам|сутками|сутках)';
 
     private const ADJECTIVAL_DAY_PERIOD = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::ADJECTIVAL_DAY.'\b';
@@ -122,14 +124,14 @@ final class AssistantProductionSchedulePeriod
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
-    private const TIME_START = '(?:'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_PERIOD.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
+    private const TIME_START = '(?:'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_PERIOD.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
 
     public static function withoutSuffix(string $name): string
     {
         $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_PERIOD.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|'.self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
-        foreach ([self::BACKWARD_OFFSET_PERIOD, self::VERBAL_DATE] as $pattern) {
+        foreach ([self::BACKWARD_OFFSET_PERIOD, self::VERBAL_DATE, self::INCOMPLETE_DATE] as $pattern) {
             $candidate = preg_split('/\s+(?='.$pattern.')/iu', $name, 2);
             if (count($candidate) > 1 && (count($parts) === 1 || strlen($candidate[0]) < strlen($parts[0]))) {
                 $parts = $candidate;
@@ -144,17 +146,20 @@ final class AssistantProductionSchedulePeriod
     public static function arguments(int $projectId, array $plan): array
     {
         $arguments = ['project_id' => $projectId];
+        $query = AssistantNamedProjectReadScope::periodQuery($plan);
+        if (AssistantProductionScheduleLocationScope::matches($query)) {
+            $arguments['scope_clarification'] = 'location';
+        }
         $override = $plan['production_period_override'] ?? null;
         if (is_array($override) && ($override['message_sha256'] ?? null) === hash('sha256', (string) ($plan['request']['message'] ?? ''))
             && ($override['project_id'] ?? null) === $projectId) {
             $dates = array_intersect_key($override, array_flip(['project_id', 'period_start', 'period_end']));
             if (array_key_exists('period_start', $dates) && isset($dates['period_end']) && self::validArguments($dates)) {
-                return ['project_id' => $projectId, 'period_start' => $dates['period_start'], 'period_end' => $dates['period_end']];
+                return $arguments + ['period_start' => $dates['period_start'], 'period_end' => $dates['period_end']];
             }
         }
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
-        $query = AssistantNamedProjectReadScope::periodQuery($plan);
-        if (preg_match('/\b'.self::VERBAL_DATE.'/iu', $query) === 1) {
+        if (preg_match('/\b(?:'.self::VERBAL_DATE.'|'.self::INCOMPLETE_DATE.')/iu', $query) === 1) {
             return $unresolved;
         }
         $query = self::normalizedQuery($query);
@@ -271,7 +276,7 @@ final class AssistantProductionSchedulePeriod
             } else {
                 $period = $resolver->resolve(preg_replace('/\bсо\s+(?=\d)/iu', 'с ', $ranges[0][0]) ?? $ranges[0][0]);
             }
-        } elseif (preg_match('/\b(?:с|со|по|до|на|от)\s+\d{1,2}(?!\d)|\bза\s+\d{1,2}(?!\d)\s+'.self::MONTH.'/iu', $query) === 1) {
+        } elseif (preg_match('/\b(?:с|со|по|до|на|от)\s+'.self::EXPLICIT_DATE.'\b/iu', $query) === 1) {
             return $unresolved;
         } else {
             if (preg_match_all('/\b'.self::TIME_START.'/iu', $query) !== 1) {
@@ -287,7 +292,8 @@ final class AssistantProductionSchedulePeriod
     public static function validArguments(array $arguments): bool
     {
         if (! is_int($arguments['project_id'] ?? null) || $arguments['project_id'] < 1
-            || array_diff(array_keys($arguments), ['project_id', 'period_start', 'period_end']) !== []) {
+            || array_diff(array_keys($arguments), ['project_id', 'period_start', 'period_end', 'scope_clarification']) !== []
+            || (array_key_exists('scope_clarification', $arguments) && $arguments['scope_clarification'] !== 'location')) {
             return false;
         }
         if (! array_key_exists('period_start', $arguments) && ! array_key_exists('period_end', $arguments)) {
@@ -318,7 +324,7 @@ final class AssistantProductionSchedulePeriod
         $arguments = is_array($ref) ? ($ref['_read_arguments'] ?? null) : null;
         if (($verified['replaced'] ?? false) !== true || ($verified['needs_clarification'] ?? false) !== true
             || ($ref['entity_type'] ?? null) !== \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader::TYPE
-            || ! is_array($arguments) || ! self::validArguments($arguments) || ! array_key_exists('period_start', $arguments)
+            || ! is_array($arguments) || isset($arguments['scope_clarification']) || ! self::validArguments($arguments) || ! array_key_exists('period_start', $arguments)
             || $arguments['period_start'] !== null || $arguments['period_end'] !== null) {
             return null;
         }

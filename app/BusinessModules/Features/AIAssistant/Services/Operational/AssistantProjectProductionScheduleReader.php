@@ -70,6 +70,9 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     protected function collectAt(User $actor, int $organizationId, array $arguments, \DateTimeImmutable $asOf): array
     {
+        if (($arguments['scope_clarification'] ?? null) === 'location') {
+            return ['location_unresolved' => true];
+        }
         if (array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
             return ['period_unresolved' => true];
         }
@@ -81,7 +84,8 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     {
         $answer = parent::verifiedAnswer($result, $actor, $organizationId);
         $arguments = $result['source_refs'][0]['_read_arguments'] ?? [];
-        if ($answer !== null && array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
+        if ($answer !== null && (($arguments['scope_clarification'] ?? null) === 'location'
+            || array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null)) {
             $answer['needs_clarification'] = true;
         }
 
@@ -140,6 +144,9 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     protected function format(array $data): string
     {
+        if (($data['location_unresolved'] ?? false) === true) {
+            return trans_message('ai_assistant_production_schedule.location_clarification');
+        }
         if (($data['period_unresolved'] ?? false) === true) {
             return trans_message('ai_assistant_production_schedule.period_clarification');
         }

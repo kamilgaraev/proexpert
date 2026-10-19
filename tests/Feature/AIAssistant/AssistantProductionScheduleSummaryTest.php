@@ -280,6 +280,24 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         }
     }
 
+    public function test_location_constraint_requests_scope_without_showing_project_totals(): void
+    {
+        $this->work('999.0000', 'м²');
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $arguments = ['project_id' => $this->project->id, 'scope_clarification' => 'location'];
+        $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $arguments);
+        self::assertSame('location', $read['source_refs'][0]['_read_arguments']['scope_clarification']);
+        self::assertArrayNotHasKey('confirmed_works', $read['data']);
+        self::assertArrayNotHasKey('open_tasks', $read['data']);
+        self::assertStringContainsString('по этажам и корпусам', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('Уточните год', $read['server_formatted_answer']);
+        self::assertStringNotContainsString('999', $read['server_formatted_answer']);
+        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        $read['data']['location_unresolved'] = false;
+        self::assertTrue($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id)['needs_clarification']);
+        self::assertArrayHasKey('scope_clarification', app(GetProjectProductionScheduleSummaryTool::class)->getParametersSchema()['properties']);
+    }
+
     public function test_unresolved_period_requests_dates_without_showing_all_time_totals(): void
     {
         $this->work('999.0000', 'м²');
