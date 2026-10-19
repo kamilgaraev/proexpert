@@ -91,7 +91,10 @@ final readonly class EstimatorCreditOperations
                     'included_document_cost_micro_rub' => $plan['document_costs']['cost_micro_rub'] ?? 0,
                     'supplier_tariff' => $request->identity()['supplier_tariff'],
                     'audit_output_tokens' => $plan['roles']['estimate_audit']['output_ceiling'] ?? null,
-                    ...(isset($plan['retained_audit_preflight']) ? ['initial_audit_pass' => $plan['retained_audit_preflight']] : []),
+                    ...(isset($plan['retained_audit_preflight']) ? [
+                        'initial_audit_pass' => $plan['retained_audit_preflight'],
+                        'remaining_audit_cycle' => $plan['retained_audit_preflight'],
+                    ] : []),
                 ],
                 ...(isset($plan['retained_pipeline_prefix']) ? ['continuation' => [
                     'source_operation_id' => $plan['retained_pipeline_prefix']['source_operation_id'],

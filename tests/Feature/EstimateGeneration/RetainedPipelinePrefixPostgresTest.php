@@ -68,6 +68,11 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         self::assertFalse($quote['provider_budget']['initial_audit_pass']['completion_guaranteed']);
         self::assertSame(CanonicalPipelineJson::encode($plan['retained_audit_preflight']),
             CanonicalPipelineJson::encode($quote['provider_budget']['initial_audit_pass']));
+        self::assertSame($quote['provider_budget']['initial_audit_pass'], $quote['provider_budget']['remaining_audit_cycle']);
+        self::assertTrue($quote['provider_budget']['remaining_audit_cycle']['corrections_included']);
+        self::assertTrue($quote['provider_budget']['remaining_audit_cycle']['retries_included']);
+        self::assertSame($plan['maximum_provider_cost_micro_rub'] - ($plan['document_costs']['cost_micro_rub'] ?? 0),
+            $quote['provider_budget']['remaining_audit_cycle']['maximum_remaining_cycle_cost_micro_rub']);
         self::assertArrayHasKey('input_per_million', $quote['provider_budget']['supplier_tariff']);
         self::assertSame(['estimate_audit', 'estimate_composer_correction'], array_keys($plan['roles']));
         self::assertLessThan($sourceBefore->maximum_calls, $plan['maximum_calls']);
@@ -160,9 +165,17 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         Http::assertNothingSent();
     }
 
-    public function test_retained_audit_pass_that_exceeds_remaining_qa_budget_is_rejected_before_quote_or_reservation(): void
+    #[DataProvider('insufficientCycleBudgets')]
+    public function test_retained_audit_cycle_that_exceeds_remaining_qa_budget_is_rejected_before_quote_or_reservation(bool $fitsInitialPass): void
     {
         [$actor, $session, $sourceId] = $this->fixture();
+        $exposure = '88.92000000';
+        if ($fitsInitialPass) {
+            [, $uncapped] = $this->quote($actor, $session);
+            $initial = $uncapped['provider_budget']['remaining_audit_cycle']['maximum_initial_audit_cost_micro_rub'];
+            self::assertLessThan($uncapped['provider_budget']['remaining_audit_cycle']['maximum_remaining_cycle_cost_micro_rub'], $initial + 1);
+            $exposure = (string) \Brick\Math\BigDecimal::of(90000000 - $initial - 1)->dividedBy(1000000, 8);
+        }
         $runId = (string) Str::uuid();
         config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => $runId]);
         $attempt = (string) Str::uuid();
@@ -174,7 +187,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now(),
         ]);
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)
-            ->admit($attempt, new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost('88.92000000', 'RUB', 'available')));
+            ->admit($attempt, new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost($exposure, 'RUB', 'available')));
         $sourceBefore = DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole();
         $runBefore = DB::table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->sole();
         $qaBefore = DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)->sole();
@@ -201,19 +214,34 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         Http::assertNothingSent();
     }
 
+    public static function insufficientCycleBudgets(): array
+    {
+        return [['fitsInitialPass' => false], ['fitsInitialPass' => true]];
+    }
+
     #[DataProvider('legacyQuoteActions')]
-    public function test_existing_quote_without_preflight_cannot_bypass_initial_pass_budget(string $action): void
+    public function test_existing_quote_cannot_bypass_the_remaining_cycle_preflight(string $action, bool $oldPreflight): void
     {
         [$actor, $session] = $this->fixture();
         [$id, $quote] = $this->quote($actor, $session);
         $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
         $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
-        unset($plan['retained_audit_preflight']);
-        $plan['maximum_provider_cost_micro_rub'] = 1080000;
+        if ($oldPreflight) {
+            $plan['retained_audit_preflight'] = array_intersect_key($plan['retained_audit_preflight'], array_flip([
+                'contract_version', 'source_operation_id', 'source_artifact_version', 'initial_audit_parts',
+                'per_call_maximum_cost_micro_rub', 'maximum_initial_audit_cost_micro_rub',
+                'available_provider_cost_micro_rub', 'corrections_included', 'completion_guaranteed',
+            ]));
+            $plan['retained_audit_preflight']['contract_version'] = 'estimator-retained-audit-preflight:v1';
+            $plan['retained_audit_preflight']['corrections_included'] = false;
+        } else {
+            unset($plan['retained_audit_preflight']);
+            $plan['maximum_provider_cost_micro_rub'] = 1080000;
+        }
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         $id = (string) Str::uuid();
         $identity['operation_id'] = $id;
-        $identity['maximum_provider_cost_micro_rub'] = 1080000;
+        $identity['maximum_provider_cost_micro_rub'] = $plan['maximum_provider_cost_micro_rub'];
         $identity['processing_plan_hash'] = hash('sha256', CanonicalPipelineJson::encode($plan));
         $request = new \App\Services\Credits\EstimatorCreditRequest($identity['organization_id'], $identity['project_id'],
             $identity['session_id'], $identity['actor_user_id'], $id, $identity['operation_kind'], $identity['state_version'],
@@ -225,7 +253,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         DB::table('estimate_generation_credit_operations')->insert([...$legacy, 'operation_id' => $id,
             'quote_id' => \App\Models\Credits\AICreditQuote::query()->where('public_id', $quote['quote_id'])->value('id'),
             'processing_plan' => CanonicalPipelineJson::encode($plan), 'plan_hash' => $identity['processing_plan_hash'],
-            'maximum_provider_cost_micro_rub' => 1080000, 'credit_request' => CanonicalPipelineJson::encode($identity),
+            'maximum_provider_cost_micro_rub' => $plan['maximum_provider_cost_micro_rub'], 'credit_request' => CanonicalPipelineJson::encode($identity),
         ]);
         $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
         $reservationsBefore = DB::table('ai_credit_reservations')->count();
@@ -238,7 +266,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             }
             self::fail('A quote created before preflight must also be checked before reuse.');
         } catch (\Illuminate\Validation\ValidationException $error) {
-            self::assertSame([$action === 'begin' ? 'quote_id' : 'quote' => [trans_message('estimate_generation.retained_audit_budget_insufficient')]], $error->errors());
+            self::assertSame([$action === 'begin' ? 'quote_id' : 'quote' => [trans_message('estimate_generation.'.($oldPreflight ? 'retained_audit_preflight_unavailable' : 'retained_audit_budget_insufficient'))]], $error->errors());
         }
 
         self::assertSame((array) $before, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
@@ -251,7 +279,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
 
     public static function legacyQuoteActions(): array
     {
-        return [['begin'], ['replay']];
+        return [['begin', false], ['replay', false], ['begin', true], ['replay', true]];
     }
 
     public function test_generate_permission_without_view_can_quote_and_reserve_a_retained_generation(): void
