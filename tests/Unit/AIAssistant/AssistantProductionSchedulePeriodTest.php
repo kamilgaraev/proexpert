@@ -56,6 +56,29 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         self::assertSame('Завтраково', AssistantProductionSchedulePeriod::withoutSuffix('Завтраково'));
     }
 
+    public function test_future_calendar_selectors_require_dates_and_keep_literal_project_priority(): void
+    {
+        foreach (['будущий месяц', 'будущий год', 'будущий квартал', 'будущий день', 'будущая неделя',
+            'будущую неделю', 'за будущий месяц', 'в будущем месяце', 'в будущем году', 'на будущей неделе',
+            'следующий месяц', 'следующая неделя', 'следующую неделю', 'на следующей неделе',
+            'будущие два месяца', 'следующие 3 недели', 'будущий час', 'за сентябрь 2026 и будущая неделя'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
     public function test_supported_neutral_details_keep_period_without_rewriting_new_financial_intent(): void
     {
         $message = 'Сверь выполненные работы с графиком проекта «Северный дом» с 2026-10-01 по 2026-10-10';
