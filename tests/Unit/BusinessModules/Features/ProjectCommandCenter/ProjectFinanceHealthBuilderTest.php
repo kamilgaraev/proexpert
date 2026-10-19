@@ -35,8 +35,8 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
             'contracted_revenue' => 1_500_000,
             'metrics' => ['bac' => 1_000_000, 'ac' => 400_000, 'eac' => 1_200_000, 'spi' => 0.91],
             'payments' => [
-                ['direction' => 'incoming', 'amount' => 600_000, 'due_at' => '2026-08-10'],
-                ['direction' => 'outgoing', 'amount' => 150_000, 'due_at' => '2026-09-15'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 600_000, 'due_at' => '2026-08-10'],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 150_000, 'due_at' => '2026-09-15'],
             ],
         ], CarbonImmutable::parse('2026-07-21'))->toArray();
 
@@ -69,9 +69,9 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         $result = $this->builder()->fromFacts([
             'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
             'payments' => [
-                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-08-10'],
-                ['direction' => 'incoming', 'amount' => 300, 'due_at' => null],
-                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => null],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-08-10'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 300, 'due_at' => null],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 250, 'due_at' => null],
             ],
         ], CarbonImmutable::parse('2026-07-21'))->toArray();
 
@@ -85,8 +85,8 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         $result = $this->builder()->fromFacts([
             'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
             'payments' => [
-                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-12-01'],
-                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-12-01'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-12-01'],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-12-01'],
             ],
         ], CarbonImmutable::parse('2026-07-21'))->toArray();
 
@@ -115,8 +115,8 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         $result = $this->builder()->fromFacts([
             'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
             'payments' => [
-                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-01-15'],
-                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-08-10'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-01-15'],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-08-10'],
             ],
         ], CarbonImmutable::parse('2026-07-21'), $historicalPeriod)->toArray();
 
@@ -132,10 +132,10 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         $result = $this->builder()->fromFacts([
             'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
             'payments' => [
-                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-07-21'],
-                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-07-21'],
-                ['direction' => 'incoming', 'amount' => 100, 'due_at' => '2026-07-20'],
-                ['direction' => 'outgoing', 'amount' => 50, 'due_at' => '2026-07-20'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-07-21'],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-07-21'],
+                ['currency' => 'RUB', 'direction' => 'incoming', 'amount' => 100, 'due_at' => '2026-07-20'],
+                ['currency' => 'RUB', 'direction' => 'outgoing', 'amount' => 50, 'due_at' => '2026-07-20'],
             ],
         ], CarbonImmutable::parse('2026-07-21'))->toArray();
 

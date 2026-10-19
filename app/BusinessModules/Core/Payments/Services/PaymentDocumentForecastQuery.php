@@ -37,7 +37,7 @@ final class PaymentDocumentForecastQuery
             ->when($organizationId !== null, static fn (Builder $query): Builder => $query
                 ->where('payment_documents.organization_id', $organizationId))
             ->select(['payment_documents.id', 'payment_documents.amount', 'payment_documents.remaining_amount',
-                'payment_documents.direction', 'payment_documents.due_date'])
+                'payment_documents.direction', 'payment_documents.due_date', 'payment_documents.currency'])
             ->selectRaw("CASE WHEN linked_request.document_type = 'payment_request' AND linked_request.amount > 0 "
                 ."AND linked_request.deleted_at IS NULL AND linked_request.status NOT IN ('cancelled', 'rejected') "
                 ."AND linked_request.direction IN ('incoming', 'outgoing') AND ({$matches}) "
@@ -84,6 +84,7 @@ final class PaymentDocumentForecastQuery
         foreach ($documents as $id => $row) {
             if ($remaining[$id]->isPositive()) {
                 $facts[] = [
+                    'currency' => strtoupper(trim((string) $row->currency)),
                     'direction' => (string) $row->direction,
                     'amount' => $remaining[$id]->toFloat(),
                     'due_at' => (string) $row->due_date,

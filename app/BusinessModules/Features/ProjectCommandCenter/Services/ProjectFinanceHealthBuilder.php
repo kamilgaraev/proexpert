@@ -139,6 +139,19 @@ final class ProjectFinanceHealthBuilder
                 continue;
             }
 
+            if (($payment['currency'] ?? null) !== 'RUB') {
+                return [
+                    'available' => false,
+                    'reason_key' => 'project_command_center.finance.payment_currency_unsupported',
+                    'accounts_receivable' => 0.0,
+                    'accounts_payable' => 0.0,
+                    'as_of' => $asOf->toDateString(),
+                    'horizon_days' => 90,
+                    'overdue' => ['incoming' => 0.0, 'outgoing' => 0.0],
+                    'projections' => [],
+                ];
+            }
+
             if ($payment['direction'] === 'incoming') {
                 $receivable += (float) $payment['amount'];
             } else {
