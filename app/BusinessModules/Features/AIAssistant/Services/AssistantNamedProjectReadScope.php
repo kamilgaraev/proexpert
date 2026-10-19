@@ -116,14 +116,15 @@ final class AssistantNamedProjectReadScope
         $periodHead = $candidate === null ? null : AssistantProductionSchedulePeriod::withoutSuffix('текущий '.$candidate);
         if ($candidate !== null && (preg_match('/^(?:сегодня|вчера|позавчера)[.!?]*$/iu', $candidate) === 1
             || preg_match('/^с\s+график[а-яё]*(?:\s|[.!?;:,]|$)/iu', $candidate) === 1
+            || preg_match('/^(?:без|с|со)\s+(?:(?:назначенн|указанн)[а-яё]*\s+)?(?:ответственн|исполнител)[а-яё]*(?=\s|[.!?]|$)/iu', $candidate) === 1
+            || preg_match('/^(?:онлайн|офлайн|оффлайн|online|offline|(?:не\s+)?в\s+сети|вне\s+сети)(?=\s|[.!?]|$)/iu', $candidate) === 1
             || ($periodHead !== null && preg_match('/^текущий(?:\s+(?:за|с|со|по|для|на|от|в|во|до))*$/iu', $periodHead) === 1))) {
             return true;
         }
 
         return $candidate !== null
             && (preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1 || preg_match('/\?\s*$/u', $query) === 1)
-            && (preg_match('/^(?:без|с|со)\s+(?:(?:назначенн|указанн)[а-яё]*\s+)?(?:ответственн|исполнител)[а-яё]*(?=\s|[.!?]|$)/iu', $candidate) === 1
-                || preg_match('/^(?:(?:онлайн|офлайн|оффлайн|online|offline|(?:не\s+)?в\s+сети|вне\s+сети)(?=\s|[.!?]|$)|\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано|ны|на|но|ен|ён)(?=\s|[.!?]|$)))/u', $candidate) === 1);
+            && preg_match('/^\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано|ны|на|но|ен|ён)(?=\s|[.!?]|$))/u', $candidate) === 1;
     }
 
     public static function clarifiedQuery(string $query, string $name): ?string

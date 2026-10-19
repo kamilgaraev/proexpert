@@ -16,26 +16,28 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
 {
     public function test_site_request_responsibility_filter_keeps_ui_route_after_empty_exact_lookup(): void
     {
-        foreach (['без ответственного', 'без исполнителя', 'с ответственным', 'с исполнителем', 'без назначенного ответственного', 'без указанного исполнителя'] as $filter) {
-            $query = 'Какие заявки проекта '.$filter.'?';
-            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)));
-            self::assertSame($query, AssistantNamedProjectReadScope::semanticQuery($query));
-            $calls = 0;
-            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls, $filter): array {
-                $calls++;
-                self::assertSame(['query' => $filter, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+        foreach (['Покажи заявки проекта %s', 'Покажите заявки проекта %s', 'Какие заявки проекта %s?'] as $template) {
+            foreach (['без ответственного', 'без исполнителя', 'с ответственным', 'с исполнителем', 'без назначенного ответственного', 'без указанного исполнителя'] as $filter) {
+                $query = sprintf($template, $filter);
+                self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)));
+                self::assertSame($query, AssistantNamedProjectReadScope::semanticQuery($query));
+                $calls = 0;
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls, $filter): array {
+                    $calls++;
+                    self::assertSame(['query' => $filter, 'limit' => 2, 'name_match' => 'exact'], $arguments);
 
-                return $this->projectSearchResult([], false);
-            });
-            self::assertSame(1, $calls);
-            self::assertArrayNotHasKey('named_project_scope', $resolved);
-            self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
-            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
-            self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
-            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
-                $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
-                self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId);
-                self::assertNull(AssistantRequiredProjectRead::fromPlan($blocked));
+                    return $this->projectSearchResult([], false);
+                });
+                self::assertSame(1, $calls);
+                self::assertArrayNotHasKey('named_project_scope', $resolved);
+                self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+                $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+                self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+                foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                    $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
+                    self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId);
+                    self::assertNull(AssistantRequiredProjectRead::fromPlan($blocked));
+                }
             }
         }
     }
@@ -72,24 +74,26 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
 
     public function test_camera_network_predicates_use_ui_only_after_complete_empty_exact_lookup(): void
     {
-        foreach (['в сети', 'вне сети', 'не в сети'] as $predicate) {
-            $query = 'Какие камеры проекта '.$predicate.'?';
-            $calls = 0;
-            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($predicate, &$calls): array {
-                $calls++;
-                self::assertSame(['query' => $predicate, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+        foreach (['Покажи камеры проекта %s', 'Покажите камеры проекта %s', 'Какие камеры проекта %s?'] as $template) {
+            foreach (['в сети', 'вне сети', 'не в сети'] as $predicate) {
+                $query = sprintf($template, $predicate);
+                $calls = 0;
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($predicate, &$calls): array {
+                    $calls++;
+                    self::assertSame(['query' => $predicate, 'limit' => 2, 'name_match' => 'exact'], $arguments);
 
-                return $this->projectSearchResult([], false);
-            });
-            self::assertSame(1, $calls);
-            self::assertArrayNotHasKey('named_project_scope', $resolved);
-            self::assertSame(104, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
-            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
-            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
-            self::assertSame(102, AssistantRequestProjectScope::fromPlan($literal)->projectId);
-            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
-            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
-                self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result))->projectId);
+                    return $this->projectSearchResult([], false);
+                });
+                self::assertSame(1, $calls);
+                self::assertArrayNotHasKey('named_project_scope', $resolved);
+                self::assertSame(104, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+                self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+                $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+                self::assertSame(102, AssistantRequestProjectScope::fromPlan($literal)->projectId);
+                self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+                foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                    self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result))->projectId);
+                }
             }
         }
     }
