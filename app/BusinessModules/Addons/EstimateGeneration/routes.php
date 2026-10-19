@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationManualFactsController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPrerequisiteController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationQuestionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationRoomIdentityController;
@@ -86,6 +87,9 @@ Route::middleware([
         Route::get('/{session}/draft', [EstimateGenerationPackageController::class, 'draft'])->middleware('authorize:estimate_generation.view,project,project')->name('draft');
         Route::get('/{session}/review-items', [EstimateGenerationReviewController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('review-items');
         Route::get('/{session}/review-exceptions', [EstimateGenerationReviewController::class, 'exceptions'])->middleware('authorize:estimate_generation.view,project,project')->name('review-exceptions');
+        Route::get('/{session}/prerequisites', [EstimateGenerationPrerequisiteController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('prerequisites.index');
+        Route::post('/{session}/prerequisites/refresh', [EstimateGenerationPrerequisiteController::class, 'refresh'])->middleware('authorize:estimate_generation.review,project,project')->name('prerequisites.refresh');
+        Route::post('/{session}/prerequisites/answer', [EstimateGenerationPrerequisiteController::class, 'answer'])->middleware('authorize:estimate_generation.review,project,project')->name('prerequisites.answer');
         Route::get('/{session}/questions', [EstimateGenerationQuestionController::class, 'index'])->middleware('authorize:estimate_generation.review,project,project')->name('questions.index');
         Route::get('/{session}/questions/{question}/answer-receipt', [EstimateGenerationAnswerReceiptController::class, 'show'])->where('question', '[a-z][a-z0-9_]{1,79}')->middleware('authorize:estimate_generation.view,project,project')->name('questions.answer-receipt');
         Route::post('/{session}/questions/{question}/answer', [EstimateGenerationQuestionController::class, 'answer'])->where('question', '[a-z][a-z0-9_]{1,79}')->middleware('authorize:estimate_generation.review,project,project')->name('questions.answer');

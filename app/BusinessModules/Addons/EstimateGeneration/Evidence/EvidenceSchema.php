@@ -44,7 +44,7 @@ final class EvidenceSchema
         [$schema, $required] = match ($type) {
             EvidenceType::SourceFact => [['fact_key' => 'attribute', 'fact_value' => 'normalized_scalar', 'unit' => 'unit'], ['fact_key', 'fact_value']],
             EvidenceType::Extracted => [['field_key' => 'attribute', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
-            EvidenceType::Measured => [['quantity' => 'nonnegative_number', 'unit' => 'unit', 'method' => 'method'], ['quantity', 'unit']],
+            EvidenceType::Measured => [['quantity' => 'measured_quantity', 'unit' => 'unit', 'method' => 'method'], ['quantity', 'unit']],
             EvidenceType::Inferred => [['result_code' => 'domain_code', 'confidence_band' => 'confidence_band'], ['result_code']],
             EvidenceType::WorkItem => [[
                 'work_code' => 'domain_code', 'quantity' => 'canonical_decimal', 'unit' => 'unit',
@@ -89,6 +89,8 @@ final class EvidenceSchema
         $valid = match ($rule) {
             'positive_int' => is_int($value) && $value > 0 && $value <= 1_000_000,
             'nonnegative_number' => (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1_000_000_000_000,
+            'measured_quantity' => CanonicalSourceDecimal::isNonNegative($value)
+                || ((is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1_000_000_000_000),
             'canonical_decimal' => is_string($value) && preg_match('/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/D', $value) === 1
                 && strlen($value) <= 64,
             'confidence' => (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1,

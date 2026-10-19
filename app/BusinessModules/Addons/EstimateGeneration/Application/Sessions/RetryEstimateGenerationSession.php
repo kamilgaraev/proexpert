@@ -120,6 +120,11 @@ final class RetryEstimateGenerationSession
         EstimateGenerationSession $session,
         bool &$reconcileImmediately,
     ): EstimateGenerationSession {
+        if (($session->input_payload['input_confirmed'] ?? null) === false) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'session' => trans_message('estimate_generation.prerequisites.input_confirmation_required'),
+            ]);
+        }
         $requiresPlanningRecovery = $this->hasBlockedPlanningReview($session);
         $documentIds = $session->documents
             ->filter(static fn ($document): bool => in_array((string) $document->status, [

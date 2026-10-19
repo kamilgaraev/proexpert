@@ -43,6 +43,10 @@ final readonly class EvidenceData
         $this->sourceVersion = (new EvidenceVersion($sourceVersion))->value;
         $this->producerName = EvidenceProducer::tryFrom($producerName)?->value
             ?? throw new InvalidArgumentException('Evidence producer is invalid.');
+        if ($type === EvidenceType::Measured && is_string($value['quantity'] ?? null)
+            && ($sourceType !== EvidenceSourceType::UserInput || $this->producerName !== EvidenceProducer::UserInputNormalizer->value)) {
+            throw new InvalidArgumentException('Exact measured evidence requires explicit user input.');
+        }
         $this->producerVersion = (new EvidenceVersion($producerVersion))->value;
         if (! is_finite($confidence) || $confidence < 0 || $confidence > 1) {
             throw new InvalidArgumentException('Evidence confidence must be between zero and one.');
