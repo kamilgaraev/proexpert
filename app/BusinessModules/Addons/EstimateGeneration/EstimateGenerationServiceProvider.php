@@ -780,6 +780,15 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ),
         );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class,
+            fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput(
+                $app->make('db')->connection(), $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+            ));
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionStore::class,
+            fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionStore(
+                $app->make('db')->connection(), $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+            ));
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class,
