@@ -134,7 +134,15 @@ final class AssistantDocumentCoverageService
         }
         foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(pg_catalog.SUM('.$metric.'), 0) AS '.$metric);
         if ($checkpoint !== null) { $checkpoint(); }
-        $result = $this->withVisibleDocuments($aggregate, (clone $visibleDocuments)->whereNotNull('ai_assistant_documents.file_id'))->first();
+        if ($reuseSnapshot && $visibleDocuments->getConnection() === DB::connection()) {
+            $fileDocuments = $this->policy->accessibleDocuments($actor, $organizationId,
+                $documents->getModel()->newQuery()->whereNotNull('ai_assistant_documents.file_id'));
+            if ($projectId !== null) { $fileDocuments->where(static fn (Builder $query) => $query->where('ai_assistant_documents.project_id', $projectId)->orWhereNull('ai_assistant_documents.project_id')); }
+            $visibleFileDocuments = $fileDocuments->toBase();
+        } else {
+            $visibleFileDocuments = (clone $visibleDocuments)->whereNotNull('ai_assistant_documents.file_id');
+        }
+        $result = $this->withVisibleDocuments($aggregate, $visibleFileDocuments)->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
         $nativeCandidates = $this->nativeCandidateTypes($organizationId, $actor, $checkpoint, $guard);
         $nativeCoverage = [];
