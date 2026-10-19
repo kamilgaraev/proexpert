@@ -157,9 +157,7 @@ class ProcurementLifecycleService
         $proposal->loadMissing(['supplierRequest.proposalDecision', 'purchaseOrder']);
 
         if ($proposal->status === SupplierProposalStatusEnum::ACCEPTED) {
-            return $this->summary('proposal_accepted', $proposal->purchase_order_id === null ? 'create_order' : null, [
-                'canCreateOrder' => $proposal->purchase_order_id === null,
-            ]);
+            return $this->acceptedProposalSummary($proposal);
         }
 
         if ($proposal->status === SupplierProposalStatusEnum::REJECTED) {
@@ -312,6 +310,13 @@ class ProcurementLifecycleService
             );
     }
 
+    private function acceptedProposalSummary(SupplierProposal $proposal): ProcurementLifecycleSummary
+    {
+        return $this->summary('proposal_accepted', $proposal->purchase_order_id === null ? 'create_order' : null, [
+            'canCreateOrder' => $proposal->purchase_order_id === null,
+        ]);
+    }
+
     private function supplierRequestRespondedSummary(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
     {
         $acceptedProposal = $supplierRequest->proposals->first(
@@ -319,7 +324,9 @@ class ProcurementLifecycleService
         );
 
         if ($acceptedProposal instanceof SupplierProposal) {
-            return $this->forSupplierProposal($acceptedProposal);
+            return $this::class === self::class
+                ? $this->acceptedProposalSummary($acceptedProposal)
+                : $this->forSupplierProposal($acceptedProposal);
         }
 
         $decision = $supplierRequest->proposalDecision;

@@ -6,6 +6,7 @@ namespace Tests\Feature\Procurement;
 
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
+use App\BusinessModules\Features\Procurement\Http\Resources\SupplierProposalResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\SupplierRequestResource;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
@@ -352,6 +353,104 @@ class ProcurementLifecycleServiceTest extends TestCase
         }
         $this->assertSame('proposal_expired', $expected[array_key_first($expected)]['workflow_summary']['stage']);
         $this->assertLessThanOrEqual(12, count($queries));
+    }
+
+    public function test_supplier_request_list_does_not_reload_accepted_proposal_relations(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $expected = [];
+        for ($index = 0; $index < 8; $index++) {
+            $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded', [
+                'request_number' => 'SR-ACCEPTED-' . $index,
+                'public_token' => str_repeat((string) $index, 48),
+            ]);
+            $proposal = $this->createProposal($supplierRequest, ['status' => 'accepted']);
+            $this->createDecision($supplierRequest, $proposal, 'selected');
+            if ($index === 0) {
+                $order = PurchaseOrder::query()->create([
+                    'organization_id' => $purchaseRequest->organization_id,
+                    'purchase_request_id' => $purchaseRequest->id,
+                    'accepted_supplier_proposal_id' => $proposal->id,
+                    'order_number' => 'PO-ACCEPTED-' . $index,
+                    'order_date' => now()->toDateString(),
+                    'status' => 'confirmed',
+                    'total_amount' => 100,
+                    'currency' => 'RUB',
+                ]);
+                $proposal->update(['purchase_order_id' => $order->id]);
+            }
+            $supplierRequest->load(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion']);
+            $expected[$supplierRequest->id] = (new SupplierRequestResource($supplierRequest))->response()->getData(true)['data'];
+            $summary = $expected[$supplierRequest->id]['workflow_summary'];
+            $this->assertSame('proposal_accepted', $summary['stage']);
+            $this->assertSame($index === 0 ? null : 'create_order', $summary['next_action']);
+            $this->assertSame($index !== 0, $summary['can_create_order']);
+            $this->assertFalse($summary['can_accept_proposal']);
+        }
+        $foreign = $this->createSupplierRequest($this->createPurchaseRequest('approved'), 'responded');
+        $this->createProposal($foreign, ['status' => 'accepted']);
+        $queryCounts = [];
+        $orderQueryCounts = [];
+        foreach ([1, 20] as $perPage) {
+            $request = Request::create('/api/v1/admin/procurement/supplier-requests', 'GET', ['per_page' => $perPage]);
+            $request->attributes->set('current_organization_id', $purchaseRequest->organization_id);
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $response = app(SupplierRequestController::class)->index($request);
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+            }
+            $this->assertSame(200, $response->getStatusCode());
+            $items = $response->getData(true)['data'];
+            $this->assertCount($perPage === 1 ? 1 : 8, $items);
+            $this->assertNotContains($foreign->id, array_column($items, 'id'));
+            foreach ($items as $item) {
+                $this->assertSame($expected[$item['id']], $item);
+            }
+            $queryCounts[] = count($queries);
+            $orderQueryCounts[] = count(array_filter($queries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "purchase_orders"')
+            ));
+        }
+        $this->assertSame($queryCounts[0], $queryCounts[1]);
+        $this->assertSame([0, 0], $orderQueryCounts);
+    }
+
+    public function test_direct_accepted_proposal_resource_keeps_related_payload(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded');
+        $proposal = $this->createProposal($supplierRequest, ['status' => 'accepted']);
+        $decision = $this->createDecision($supplierRequest, $proposal, 'selected');
+        $order = $this->createPurchaseOrder($purchaseRequest, 'confirmed');
+        $proposal->update(['purchase_order_id' => $order->id]);
+
+        $fresh = $proposal->fresh();
+        $this->assertFalse($fresh->relationLoaded('supplierRequest'));
+        $this->assertFalse($fresh->relationLoaded('purchaseOrder'));
+        $payload = (new SupplierProposalResource($fresh))->response()->getData(true)['data'];
+
+        $this->assertSame($supplierRequest->id, $payload['supplier_request']['id']);
+        $this->assertSame($order->id, $payload['purchase_order']['id']);
+        $this->assertSame($decision->id, $payload['decision']['id']);
+        $this->assertSame($payload['decision'], $payload['proposal_decision']);
+        $this->assertSame('proposal_accepted', $payload['workflow_summary']['stage']);
+        $this->assertNull($payload['workflow_summary']['next_action']);
+        $this->assertFalse($payload['workflow_summary']['can_create_order']);
+    }
+
+    public function test_custom_lifecycle_service_keeps_accepted_proposal_dispatch(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded');
+        $proposal = $this->createProposal($supplierRequest, ['status' => 'accepted']);
+        $expected = app(ProcurementLifecycleService::class)->forSupplierProposal($proposal);
+        $service = \Mockery::mock(ProcurementLifecycleService::class, [app(PurchaseOrderPaymentGateService::class)])->makePartial();
+        $service->shouldReceive('forSupplierProposal')->once()->andReturn($expected);
+
+        $this->assertSame($expected, $service->forLoadedSupplierRequest($supplierRequest->fresh()));
     }
 
     private function createPurchaseRequest(string $status): PurchaseRequest
