@@ -272,7 +272,11 @@ final class PersonalFileService
             throw (new ModelNotFoundException)->setModel(PersonalFile::class, [$id]);
         }
 
-        return $this->fileDownloadUrl($file, $actor);
+        $url = $this->fileDownloadUrl($file, $actor);
+
+        return str_starts_with($url, '/api/v1/ai-assistant/reports/')
+            ? str_replace('/api/v1/ai-assistant/reports/', '/api/v1/admin/ai-assistant/reports/', $url)
+            : $url;
     }
 
     /** @return array<string, mixed> */

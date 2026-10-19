@@ -176,9 +176,9 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $grant = app(AssistantReportAccessService::class)->register($personal->storage_key, $context->organization, $context->user,
             [['entity_type' => 'project', 'entity_id' => (string) $project->id]], ['projects']);
         $files = Mockery::mock(FileService::class);
-        $files->shouldNotReceive('disk');
+        $files->shouldReceive('disk')->once()->andReturn(Storage::disk('s3'));
         $files->shouldNotReceive('temporaryDownloadUrl');
-        $files->shouldReceive('readCurrent')->once()->with($personal->storage_key)->andReturnUsing(static function () {
+        $files->shouldReceive('readCurrent')->twice()->with($personal->storage_key)->andReturnUsing(static function () {
             $stream = fopen('php://temp', 'w+');
             fwrite($stream, 'report');
             rewind($stream);
@@ -186,23 +186,31 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             return $stream;
         });
         $this->app->instance(FileService::class, $files);
+        foreach (['/api/v1/admin/personal-files?folder=reports%2Fassistant', '/api/v1/admin/report-files?include_download_urls=1'] as $route) {
+            $legacy = $this->withHeaders($context->authHeaders())->getJson($route)->assertOk();
+            self::assertStringStartsWith('/api/v1/ai-assistant/reports/', $legacy->json('data.0.download_url'));
+        }
         $routes = ['/api/v1/admin/personal-files/'.$personal->id.'/download-url', '/api/v1/admin/report-files/'.$report->id.'/download-url'];
+        $downloadUrls = [];
         foreach ($routes as $route) {
             $response = $this->withHeaders($context->authHeaders())->getJson($route)->assertOk();
-            self::assertStringStartsWith('/api/v1/ai-assistant/reports/', $response->json('data.download_url'));
+            $url = $response->json('data.download_url');
+            self::assertIsString($url);
+            self::assertStringStartsWith('/api/v1/admin/ai-assistant/reports/', $url);
+            $downloadUrls[] = $url;
         }
-        $token = basename(dirname($grant['download_url']));
-        $streamRoute = '/api/v1/admin/ai-reports/download/'.$token;
-        $download = $this->withHeaders($context->authHeaders())->get($streamRoute)->assertOk();
-        self::assertSame('report', $download->streamedContent());
+        foreach ($downloadUrls as $url) {
+            $download = $this->withHeaders($context->authHeaders())->get($url)->assertOk();
+            self::assertSame('report', $download->streamedContent());
+        }
 
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
-        foreach ([...$routes, $streamRoute] as $route) {
+        foreach ([...$routes, ...$downloadUrls] as $route) {
             $this->withHeaders($context->authHeaders())->getJson($route)->assertForbidden();
         }
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
         $this->moduleSlugs = array_values(array_diff($this->moduleSlugs, ['reports']));
-        foreach ([...$routes, $streamRoute] as $route) {
+        foreach ([...$routes, ...$downloadUrls] as $route) {
             $this->withHeaders($context->authHeaders())->getJson($route)->assertForbidden();
         }
         DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['expires_at' => now()->subSecond()]);

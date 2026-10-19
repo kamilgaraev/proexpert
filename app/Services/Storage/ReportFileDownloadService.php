@@ -28,7 +28,9 @@ final readonly class ReportFileDownloadService
         }
         $access = app(AssistantReportAccessService::class);
         if ($access->isAssistantReportPath((string) $file->path)) {
-            return $access->urlForPath((string) $file->path, $actor);
+            $url = $access->urlForPath((string) $file->path, $actor);
+
+            return str_replace('/api/v1/ai-assistant/reports/', '/api/v1/admin/ai-assistant/reports/', $url);
         }
         $storage = $this->files->disk($organization);
         if (! $storage->exists($file->path)) {
