@@ -782,7 +782,13 @@ final class NormativeWorkItemPlannerService
         $beforeExcludedFixture = $before($fixture, $excludedBoundary);
         $beforeAnyExcludedFixture = $before($anyFixture, $excludedBoundary);
         $listConjunction = '(?:(?:(?:а|и)\s+)?(?:также|ещ[её])|и|плюс)(?![\p{L}\p{N}])';
-        $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*';
+        $numberModifier = '(?:од(?:ин|н(?:а|о|у|ой|ого|ому|им))|дв(?:а|е|ух|ум|умя)|тр(?:и|[её]х|[её]м|емя)|четыр(?:е|[её]х|[её]м|ьмя)|пят(?:ь|и|ью)|шест(?:ь|и|ью)|сем(?:ь|и|ью)|вос(?:емь|ьми|емью)|девят(?:ь|и|ью)|десят(?:ь|и|ью))';
+        $modifierDefinition = '(?(DEFINE)(?<fixture_modifier>(?!'.$anyFixture.')'
+            .'(?!не(?:предусмотр|запланир|нуж|включ|установ|подключ))'
+            .'(?:[\p{L}-]{2,30}(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими)|[1-9]\d{0,2}|'.$numberModifier.')'
+            .'(?![\p{L}\p{N}])))';
+        $fixtureModifiers = '(?:(?&fixture_modifier)\s+){0,3}';
+        $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*'.$fixtureModifiers;
         $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
         $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
             .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'
@@ -806,10 +812,10 @@ final class NormativeWorkItemPlannerService
         $independentNegativeAction = '(?:предусмотр(?:ен|ена|ено)|требуется|планируется|запланирован(?:а|о)?|нуж(?:ен|на|но)|входит|включ(?:ён|ен)(?:а|о)?|установлен(?:а|о)?|устанавливается|подключ(?:ён|ен)(?:а|о)?|подключается)';
         $independentPredicate = '(?:'.$independentAction.'|не\s+'.$independentNegativeAction
             .'|'.$singularExclusionAction.')(?![\p{L}\p{N}])';
-        $independentFixtureAssertion = $anyFixture
+        $independentFixtureAssertion = $fixtureModifiers.$anyFixture
             .$before($independentPredicate, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentPredicate
             .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
-        $statements = preg_split('~(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
+        $statements = preg_split('~'.$modifierDefinition.'(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
 
         foreach ($statements as $statement) {
             $withoutRoomPhrases = preg_replace(
@@ -824,17 +830,17 @@ final class NormativeWorkItemPlannerService
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
             $withoutFixtureLocation = preg_replace(
-                '~(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$anyFixture
+                '~'.$modifierDefinition.'(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$fixtureModifiers.$anyFixture
                 .'(?:'.$listSeparator.$anyFixture.'){0,7}~iu',
                 ' ',
                 $withoutLocativeRoomReference
             ) ?? $withoutLocativeRoomReference;
-            $withoutSharedNegative = preg_replace('~'.$sharedNegative.'~iu', ' ', $withoutFixtureLocation) ?? '';
+            $withoutSharedNegative = preg_replace('~'.$modifierDefinition.$sharedNegative.'~iu', ' ', $withoutFixtureLocation) ?? '';
             $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutSharedNegative) ?? '';
             $positiveFixtureStatement = preg_replace('~(?<![\p{L}\p{N}])не\s+'.$negativeAction.'(?![\p{L}\p{N}])~iu', ' ', $positiveFixtureStatement) ?? '';
 
             if (preg_match(
-                '~(?<![\p{L}\p{N}])'.$positiveFixture
+                '~'.$modifierDefinition.'(?<![\p{L}\p{N}])'.$positiveFixture
                 .'(?![\p{L}\p{N}])~iu',
                 $positiveFixtureStatement
             ) === 1) {
