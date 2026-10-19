@@ -684,14 +684,26 @@ final class NormativeWorkItemPlannerService
             )),
         ];
 
-        return array_values(array_filter(
+        $definitions = array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
                 && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
                 && ($openingQuantityKeys === null || in_array($definition['quantity_key'] ?? null, $openingQuantityKeys, true))
                 && $this->definitionBelongsToPackage((string) ($definition['quantity_key'] ?? ''), $packageKey, $packagePlan)
                 && ($universal || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
-                && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
+        ));
+        $confirmedSanitaryInferenceKeys = [];
+        foreach ($definitions as $definition) {
+            $inference = $definition['metadata']['scope_inference'] ?? null;
+            $quantityKey = (string) ($definition['quantity_key'] ?? '');
+            if (is_array($inference) && $this->isConfirmedSanitaryFixtureInference($inference, $quantityKey)) {
+                $confirmedSanitaryInferenceKeys[$quantityKey] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $definitions,
+            fn (array $definition): bool => $this->definitionHasSanitaryFixtureEvidence($definition, $analysis, $confirmedSanitaryInferenceKeys)
         ));
     }
 
@@ -712,7 +724,7 @@ final class NormativeWorkItemPlannerService
         return $owner === null || ! in_array($owner, $packages, true) || $packageKey === $owner;
     }
 
-    private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool
+    private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis, array $confirmedSanitaryInferenceKeys): bool
     {
         $quantityKey = (string) ($definition['quantity_key'] ?? '');
         if (! in_array($quantityKey, [
@@ -731,10 +743,8 @@ final class NormativeWorkItemPlannerService
         if ($this->hasConfirmedSanitaryFixtureTakeoff($analysis, $quantityKey)) {
             return true;
         }
-        foreach ($this->scopeInferenceService->inferFromAnalysis($analysis) as $inference) {
-            if ($this->isConfirmedSanitaryFixtureInference($inference, $quantityKey)) {
-                return false;
-            }
+        if (isset($confirmedSanitaryInferenceKeys[$quantityKey])) {
+            return false;
         }
 
         if ($quantityKey === 'sanitary.points') {

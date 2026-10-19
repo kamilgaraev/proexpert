@@ -737,6 +737,41 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         }
     }
 
+    public function test_incompatible_sanitary_inference_does_not_suppress_matching_catalog_definition(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach ([
+            'sanitary.showers' => 'Предусмотрена установка душевой кабины.',
+            'sanitary.toilets' => 'Предусмотрена установка унитаза.',
+            'sanitary.washbasins' => 'Предусмотрена установка умывальника.',
+        ] as $key => $text) {
+            foreach (['sewerage', 'engineering', 'plumbing'] as $scope) {
+                $inference = ['inference_type' => 'specification_takeoff', 'scope_type' => $scope,
+                    'title' => 'Количество по спецификации', 'confidence' => 0.91,
+                    'source_ref' => ['document_id' => 82], 'review_required' => false,
+                    'normalized_payload' => ['quantity_key' => $key, 'quantity_value' => 2, 'unit' => 'шт']];
+                $analysis = ['object' => ['object_type' => 'house', 'manual_description' => $text],
+                    'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                    'document_context' => ['scope_inferences' => [$inference]]];
+                $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+                self::assertSame([$key], array_column($items, 'quantity_formula'), $key.' '.$scope);
+                self::assertSame($scope === 'plumbing' ? '2' : null, $items[0]['quantity']);
+                self::assertSame($scope === 'plumbing' ? 'scope_inference' : 'qualitative_work_catalog', $items[0]['metadata']['generation_source']);
+                foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resource) {
+                    self::assertSame([], $items[0][$resource]);
+                }
+                if ($scope === 'plumbing') {
+                    self::assertSame(82, $items[0]['source_refs'][0]['document_id']);
+                    self::assertArrayHasKey('scope_inference', $items[0]['metadata']);
+                } else {
+                    self::assertSame([], $items[0]['source_refs']);
+                    self::assertArrayNotHasKey('scope_inference', $items[0]['metadata']);
+                }
+            }
+        }
+    }
+
     public function test_direct_sanitary_takeoff_is_detected_outside_package_local_definitions(): void
     {
         $localEstimate = $this->localEstimate('custom-plumbing', 'Специальные работы ВК', 'plumbing', 12);
