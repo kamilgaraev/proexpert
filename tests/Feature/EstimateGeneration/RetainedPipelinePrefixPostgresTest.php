@@ -64,6 +64,10 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         self::assertSame($plan['document_costs']['cost_micro_rub'] ?? 0, $quote['provider_budget']['included_document_cost_micro_rub']);
         self::assertSame($plan['roles']['estimate_audit']['output_ceiling'], $quote['provider_budget']['audit_output_tokens']);
         self::assertSame('RUB', $quote['provider_budget']['supplier_tariff']['currency']);
+        self::assertSame(1, $quote['provider_budget']['initial_audit_pass']['initial_audit_parts']);
+        self::assertFalse($quote['provider_budget']['initial_audit_pass']['completion_guaranteed']);
+        self::assertSame(CanonicalPipelineJson::encode($plan['retained_audit_preflight']),
+            CanonicalPipelineJson::encode($quote['provider_budget']['initial_audit_pass']));
         self::assertArrayHasKey('input_per_million', $quote['provider_budget']['supplier_tariff']);
         self::assertSame(['estimate_audit', 'estimate_composer_correction'], array_keys($plan['roles']));
         self::assertLessThan($sourceBefore->maximum_calls, $plan['maximum_calls']);
@@ -156,6 +160,152 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         Http::assertNothingSent();
     }
 
+    public function test_retained_audit_pass_that_exceeds_remaining_qa_budget_is_rejected_before_quote_or_reservation(): void
+    {
+        [$actor, $session, $sourceId] = $this->fixture();
+        $runId = (string) Str::uuid();
+        config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => $runId]);
+        $attempt = (string) Str::uuid();
+        DB::table('estimate_generation_vision_physical_attempts')->insert([
+            'attempt_id' => $attempt, 'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id, 'session_id' => $session->id,
+            'request_fingerprint' => hash('sha256', $attempt), 'logical_request_fingerprint' => hash('sha256', $attempt),
+            'state' => 'pre_wire', 'owner_token' => $attempt, 'lease_expires_at' => now()->addMinutes(5),
+            'usage_recorded' => false, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)
+            ->admit($attempt, new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost('88.92000000', 'RUB', 'available')));
+        $sourceBefore = DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole();
+        $runBefore = DB::table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->sole();
+        $qaBefore = DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)->sole();
+        $quotesBefore = DB::table('ai_credit_quotes')->count();
+        $reservationsBefore = DB::table('ai_credit_reservations')->count();
+        $id = (string) Str::uuid();
+
+        try {
+            app(EstimatorCreditOperations::class)->quote($actor, (int) $session->project_id, (int) $session->id, 4, $id, 'generation');
+            self::fail('An insufficient remaining budget must not offer a retained audit quote.');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            self::assertSame(['quote' => [trans_message('estimate_generation.retained_audit_budget_insufficient')]], $error->errors());
+        }
+
+        self::assertFalse(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->exists());
+        self::assertSame($quotesBefore, DB::table('ai_credit_quotes')->count());
+        self::assertSame($reservationsBefore, DB::table('ai_credit_reservations')->count());
+        self::assertSame((array) $sourceBefore, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole());
+        self::assertSame((array) $runBefore, (array) DB::table('estimate_generation_qa_expense_runs')->where('run_id', $runId)->sole());
+        self::assertSame((array) $qaBefore, (array) DB::table('estimate_generation_qa_expense_attempts')->where('run_id', $runId)->sole());
+        self::assertSame('failed', $session->fresh()->status->value);
+        self::assertSame(4, (int) $session->fresh()->state_version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('legacyQuoteActions')]
+    public function test_existing_quote_without_preflight_cannot_bypass_initial_pass_budget(string $action): void
+    {
+        [$actor, $session] = $this->fixture();
+        [$id, $quote] = $this->quote($actor, $session);
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        unset($plan['retained_audit_preflight']);
+        $plan['maximum_provider_cost_micro_rub'] = 1080000;
+        $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
+        $id = (string) Str::uuid();
+        $identity['operation_id'] = $id;
+        $identity['maximum_provider_cost_micro_rub'] = 1080000;
+        $identity['processing_plan_hash'] = hash('sha256', CanonicalPipelineJson::encode($plan));
+        $request = new \App\Services\Credits\EstimatorCreditRequest($identity['organization_id'], $identity['project_id'],
+            $identity['session_id'], $identity['actor_user_id'], $id, $identity['operation_kind'], $identity['state_version'],
+            $identity['evaluation_input_hash'], $identity['source_input_version'], $identity['manifest_hash'],
+            $identity['processing_plan_hash'], $identity['maximum_provider_cost_micro_rub'], $identity['maximum_calls'], $identity['supplier_tariff']);
+        $quote = app(AICreditService::class)->quoteEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $request);
+        $legacy = (array) $operation;
+        unset($legacy['id']);
+        DB::table('estimate_generation_credit_operations')->insert([...$legacy, 'operation_id' => $id,
+            'quote_id' => \App\Models\Credits\AICreditQuote::query()->where('public_id', $quote['quote_id'])->value('id'),
+            'processing_plan' => CanonicalPipelineJson::encode($plan), 'plan_hash' => $identity['processing_plan_hash'],
+            'maximum_provider_cost_micro_rub' => 1080000, 'credit_request' => CanonicalPipelineJson::encode($identity),
+        ]);
+        $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $reservationsBefore = DB::table('ai_credit_reservations')->count();
+
+        try {
+            if ($action === 'begin') {
+                DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation'));
+            } else {
+                app(EstimatorCreditOperations::class)->quote($actor, (int) $session->project_id, (int) $session->id, 4, $id, 'generation');
+            }
+            self::fail('A quote created before preflight must also be checked before reuse.');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            self::assertSame([$action === 'begin' ? 'quote_id' : 'quote' => [trans_message('estimate_generation.retained_audit_budget_insufficient')]], $error->errors());
+        }
+
+        self::assertSame((array) $before, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame($reservationsBefore, DB::table('ai_credit_reservations')->count());
+        self::assertSame('failed', $session->fresh()->status->value);
+        self::assertSame(4, (int) $session->fresh()->state_version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public static function legacyQuoteActions(): array
+    {
+        return [['begin'], ['replay']];
+    }
+
+    public function test_generate_permission_without_view_can_quote_and_reserve_a_retained_generation(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $authorization = \Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+        $authorization->shouldReceive('authorize')->andReturnUsing(static function ($user, $target, string $permission): void {
+            if ($permission !== 'estimate_generation.generate') {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+        });
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class, $authorization);
+        [$id, $quote] = $this->quote($actor, $session);
+
+        self::assertSame(1, $quote['provider_budget']['initial_audit_pass']['initial_audit_parts']);
+        self::assertSame($id, DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation')));
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview::class)
+                ->read($actor, (int) $session->project_id, (int) $session->id);
+            self::fail('The public preview must still require view permission.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertTrue(true);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('artifactStorageFailures')]
+    public function test_unreadable_artifact_on_quote_replay_returns_controlled_preflight_failure(string $failure): void
+    {
+        [$actor, $session] = $this->fixture();
+        [$id] = $this->quote($actor, $session);
+        $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $reservationsBefore = DB::table('ai_credit_reservations')->count();
+        $this->blockBuildDraftArtifact($failure);
+
+        try {
+            app(EstimatorCreditOperations::class)->quote($actor, (int) $session->project_id, (int) $session->id, 4, $id, 'generation');
+            self::fail('Unreadable retained artifacts must fail before reservation.');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            self::assertSame(['quote' => [trans_message('estimate_generation.retained_audit_preflight_unavailable')]], $error->errors());
+        }
+
+        self::assertSame((array) $before, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame($reservationsBefore, DB::table('ai_credit_reservations')->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public static function artifactStorageFailures(): array
+    {
+        return [['integrity'], ['storage']];
+    }
+
     public function test_new_regional_version_declines_continuation_before_a_quote_is_reserved(): void
     {
         $version = $this->regionalVersion();
@@ -241,6 +391,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             return match ($failure) {
                 'missing' => throw new DomainException('Pipeline artifact is unavailable.'),
                 'integrity' => throw new TypedFailureException(FailureCategory::Terminal, 'pipeline_artifact_integrity_failed'),
+                'storage' => throw new TypedFailureException(FailureCategory::Recoverable, 'pipeline_artifact_storage_unavailable'),
                 'schema' => ['invalid' => 'payload'],
             };
         });
@@ -319,7 +470,11 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
                 ProcessingStage::PlanWorkItems => ['object_profile' => [], 'package_plan' => [], 'document_requirements' => [], 'generation_mode' => 'standard', 'regional_context' => [], 'normative_context_pin' => [], 'local_estimates' => [],
                     'estimate_composition' => ['schema_version' => 1, 'snapshot_token' => str_repeat('a', 64), 'input_fingerprint' => str_repeat('b', 64), 'intents_count' => 1, 'derived_quantities' => []]],
                 ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => []],
-                ProcessingStage::BuildDraft => ['draft' => ['total' => '40']],
+                ProcessingStage::BuildDraft => ['draft' => ['total' => '40', 'local_estimates' => [
+                    ['key' => 'house', 'sections' => [['key' => 'works', 'work_items' => [
+                        ['key' => 'work:house', 'name' => 'Дом', 'quantity' => '40', 'unit' => 'm2'],
+                    ]]]],
+                ]]],
                 default => throw new \LogicException,
             };
             $result = app(StageResultFactory::class)->make($context, $definition->stage, $data, warnings: ['source-warning']);

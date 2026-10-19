@@ -60,6 +60,7 @@ final readonly class EstimatorCreditOperations
             if ($existing !== null) {
                 $request = $this->replayRequest($actor, $session, $existing, $kind, $normalized);
                 $plan = json_decode($existing->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+                app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan);
                 $payload = $this->credits->replayEstimatorQuote($organization, $actor, (int) $existing->quote_id, $request);
             } else {
                 [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $normalized);
@@ -90,6 +91,7 @@ final readonly class EstimatorCreditOperations
                     'included_document_cost_micro_rub' => $plan['document_costs']['cost_micro_rub'] ?? 0,
                     'supplier_tariff' => $request->identity()['supplier_tariff'],
                     'audit_output_tokens' => $plan['roles']['estimate_audit']['output_ceiling'] ?? null,
+                    ...(isset($plan['retained_audit_preflight']) ? ['initial_audit_pass' => $plan['retained_audit_preflight']] : []),
                 ],
                 ...(isset($plan['retained_pipeline_prefix']) ? ['continuation' => [
                     'source_operation_id' => $plan['retained_pipeline_prefix']['source_operation_id'],
@@ -148,6 +150,7 @@ final readonly class EstimatorCreditOperations
         if (isset($plan['retained_pipeline_prefix'])) {
             app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\RetainedPipelinePrefix::class)
                 ->assertCurrent($session, $plan['retained_pipeline_prefix'], $plan['known_context'], (int) $actor->id);
+            app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan, 'quote_id');
         }
         $request = $this->request($identity);
         $qaGuard->assertReservationBudget($plan, (int) $quote->max_units_minor);
@@ -206,6 +209,10 @@ final readonly class EstimatorCreditOperations
         $qaBudget = app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->quoteBudget($plan['document_costs'] ?? []);
         if ($qaBudget !== null) {
             $plan = $this->plans->capForQaBudget($plan, $qaBudget);
+        }
+        $preflight = app(EstimatorRetainedAuditBudget::class)->assertFits($actor, $session, $plan);
+        if ($preflight !== null) {
+            $plan['retained_audit_preflight'] = $preflight;
         }
         $manifestHash = hash('sha256', CanonicalPipelineJson::encode($manifest));
         $identity = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,
