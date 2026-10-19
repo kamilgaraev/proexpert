@@ -12,6 +12,10 @@ class EstimatePositionCatalog extends Model
 {
     use HasFactory, SoftDeletes;
 
+    public ?int $priceChangeUserId = null;
+
+    public ?string $priceChangeReason = null;
+
     protected $table = 'estimate_position_catalog';
 
     protected $fillable = [

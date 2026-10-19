@@ -14,6 +14,11 @@ class EstimatePositionCatalogObserver
      */
     public function updating(EstimatePositionCatalog $catalogItem): void
     {
+        $userId = $catalogItem->priceChangeUserId ?? Auth::id() ?? $catalogItem->created_by_user_id;
+        $reason = $catalogItem->priceChangeReason ?? 'Изменение цены';
+        $catalogItem->priceChangeUserId = null;
+        $catalogItem->priceChangeReason = null;
+
         // Проверить, изменилась ли цена
         if ($catalogItem->isDirty('unit_price')) {
             $oldPrice = $catalogItem->getOriginal('unit_price');
@@ -22,10 +27,10 @@ class EstimatePositionCatalogObserver
             // Сохранить историю изменения цены
             EstimatePositionPriceHistory::create([
                 'catalog_item_id' => $catalogItem->id,
-                'user_id' => Auth::id() ?? $catalogItem->created_by_user_id,
+                'user_id' => $userId,
                 'old_price' => $oldPrice,
                 'new_price' => $newPrice,
-                'change_reason' => $catalogItem->getAttribute('price_change_reason') ?? 'Изменение цены',
+                'change_reason' => $reason,
                 'changed_at' => now(),
             ]);
         }
