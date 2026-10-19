@@ -233,6 +233,17 @@ final class CommercialProposalService
         return $proposal;
     }
 
+    private function findForUpdate(int $organizationId, string $proposalId): CommercialProposal
+    {
+        CommercialProposal::query()
+            ->withTrashed()
+            ->forOrganization($organizationId)
+            ->lockForUpdate()
+            ->findOrFail($proposalId);
+
+        return $this->find($organizationId, $proposalId, true);
+    }
+
     public function create(int $organizationId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $data, $actorUserId): CommercialProposal {
@@ -281,7 +292,7 @@ final class CommercialProposalService
     public function updateDraft(int $organizationId, string $proposalId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $this->assertStatus($proposal, [CommercialProposalStatus::DRAFT], 'draft_only');
             $this->validateCrmDeal($organizationId, $data['crm_deal_id'] ?? null);
 
@@ -343,7 +354,7 @@ final class CommercialProposalService
     public function archive(int $organizationId, string $proposalId, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $fromStatus = $this->statusOf($proposal);
             $toStatus = $fromStatus->isFinal() ? $fromStatus : CommercialProposalStatus::CANCELLED;
 
@@ -374,7 +385,7 @@ final class CommercialProposalService
     public function createVersion(int $organizationId, string $proposalId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $fromStatus = $this->statusOf($proposal);
             if (!in_array('create_version', $fromStatus->availableActions(), true)) {
                 $this->block('version_not_allowed');
@@ -411,7 +422,7 @@ final class CommercialProposalService
     public function requestApproval(int $organizationId, string $proposalId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $version = $this->currentVersion($proposal);
             $blockers = $this->approvalBlockers($proposal, $version);
 
@@ -456,7 +467,7 @@ final class CommercialProposalService
     public function decideApproval(int $organizationId, string $proposalId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $this->assertStatus($proposal, [CommercialProposalStatus::INTERNAL_REVIEW], 'approval_decision_status');
             $version = $this->currentVersion($proposal);
             $approval = CommercialProposalApproval::query()
@@ -512,7 +523,7 @@ final class CommercialProposalService
         bool $canViewAmounts
     ): CommercialProposal {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId, $canViewAmounts): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $this->assertStatus($proposal, [CommercialProposalStatus::APPROVED], 'send_only_after_approval');
             $version = $this->currentVersion($proposal);
 
@@ -572,7 +583,7 @@ final class CommercialProposalService
     public function recordResult(int $organizationId, string $proposalId, array $data, ?int $actorUserId): CommercialProposal
     {
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
-            $proposal = $this->find($organizationId, $proposalId, true);
+            $proposal = $this->findForUpdate($organizationId, $proposalId);
             $this->assertStatus($proposal, [
                 CommercialProposalStatus::SENT,
                 CommercialProposalStatus::CUSTOMER_REVIEW,
