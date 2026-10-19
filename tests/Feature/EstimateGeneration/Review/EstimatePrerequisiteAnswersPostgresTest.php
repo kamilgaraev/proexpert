@@ -100,12 +100,57 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         self::assertSame('40.1234', $fact->value);
         $proof = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->latest('id')->first();
         self::assertSame('measured', $proof->type);
-        self::assertSame(40.1234, json_decode($proof->value, true)['quantity']);
+        self::assertSame('40.1234', json_decode($proof->value, true)['quantity']);
         $replacement = 'sha256:'.str_repeat('b', 64);
         $models->invalidateSourceVersion(...[...$this->scope($session), self::SOURCE, $replacement]);
         self::assertSame([], array_filter($models->snapshotForPlanning(...[...$this->scope($session), 10001])['snapshot']->facts,
             static fn (Fact $candidate): bool => $candidate->id === $fact->id));
         self::assertNotNull($models->fact(...[...$this->scope($session), $fact->id]));
+        $this->assertNoPaidEffects();
+    }
+
+    public function test_measurement_keeps_the_large_source_decimal_without_float_rounding(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $this->persistProjection($session);
+        $group = $this->foundation(app(GetEstimatePrerequisites::class)->handle($actor, (int) $session->project_id, (int) $session->id));
+        $input = [...$this->answer($group), 'basis' => 'measurement', 'value' => '999999999999.0003'];
+        $result = app(UpdateEstimatePrerequisites::class)->answer($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(), $input);
+        $fact = app(ProjectModelRepository::class)->fact(...[...$this->scope($session), $result['fact_id']]);
+        $proof = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->latest('id')->first();
+        self::assertSame('999999999999.0003', $fact->value);
+        self::assertSame($fact->value, json_decode($proof->value, true)['quantity']);
+        $this->assertNoPaidEffects();
+    }
+
+    public function test_database_guard_keeps_exact_measurements_bounded_and_separate_from_document_producers(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $this->persistProjection($session);
+        $group = $this->foundation(app(GetEstimatePrerequisites::class)->handle($actor, (int) $session->project_id, (int) $session->id));
+        app(UpdateEstimatePrerequisites::class)->answer($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(),
+            [...$this->answer($group), 'basis' => 'measurement', 'value' => '999999999999.0003']);
+        $proof = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->latest('id')->first();
+        foreach ([['quantity' => '1e2'], ['quantity' => '1000000000000.0001'], ['producer_name' => 'pdf_geometry']] as $index => $change) {
+            $row = (array) $proof;
+            unset($row['id']);
+            $row['fingerprint'] = hash('sha256', 'invalid-exact-measurement:'.$session->id.':'.$index);
+            if (isset($change['quantity'])) {
+                $row['value'] = json_encode([...json_decode($row['value'], true), 'quantity' => $change['quantity']], JSON_THROW_ON_ERROR);
+            } else {
+                $row['producer_name'] = $change['producer_name'];
+            }
+            try {
+                DB::connection()->transaction(static fn () => DB::table('estimate_generation_evidence')->insert($row));
+                self::fail('Database accepted an invalid exact measurement.');
+            } catch (\Illuminate\Database\QueryException $error) {
+                self::assertStringContainsString('estimate_generation.evidence_value_invalid', $error->getMessage());
+            }
+        }
+        $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_19_000100_allow_exact_user_measurement_evidence.php');
+        $migration->up();
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count());
+        self::assertSame($proof->value, DB::table('estimate_generation_evidence')->where('id', $proof->id)->value('value'));
         $this->assertNoPaidEffects();
     }
 
@@ -307,6 +352,7 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         $group = $this->foundation($response->json('data'));
         $input = [...$this->answer($group), 'state_version' => 0, 'request_id' => (string) Str::uuid()];
         $this->postJson($url.'/answer', [...$input, 'value' => 40])->assertUnprocessable()->assertJsonValidationErrors('value');
+        $this->postJson($url.'/answer', [...$input, 'reason' => str_repeat('я', 600)])->assertUnprocessable()->assertJsonValidationErrors('reason');
         $this->postJson($url.'/answer', $input)->assertOk()->assertJsonPath('data.cost_units', '0')->assertJsonPath('data.state_version', 1);
         $this->postJson($url.'/answer', [...$input, 'request_id' => (string) Str::uuid()])->assertConflict();
         $this->assertNoPaidEffects();

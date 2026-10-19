@@ -139,7 +139,7 @@ final readonly class UpdateEstimatePrerequisites
             $measurement ? EvidenceType::Measured : EvidenceType::SourceFact, EvidenceSourceType::UserInput,
             'input:'.$session->id, $target['entity_source_version'],
             ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => $nativeReference],
-            $measurement ? ['quantity' => BigDecimal::of($number)->toFloat(), 'unit' => $unit === 'item' ? 'pcs' : $unit, 'method' => 'user_confirmed']
+            $measurement ? ['quantity' => $number, 'unit' => $unit === 'item' ? 'pcs' : $unit, 'method' => 'user_confirmed']
                 : ['fact_key' => 'quantity', 'fact_value' => $number, 'unit' => $unit === 'item' ? 'pcs' : $unit],
             0.0, EvidenceProducer::UserInputNormalizer->value, 'sha256:'.hash('sha256', 'prerequisite-answer:v1:'.$input['basis']),
         ]));
