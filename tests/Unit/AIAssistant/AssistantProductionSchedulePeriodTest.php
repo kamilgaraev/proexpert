@@ -308,6 +308,28 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_bare_current_snapshot_suffix_keeps_named_project_and_optional_work_period(): void
+    {
+        foreach (['сейчас', 'прямо сейчас', 'на сейчас', 'на прямо сейчас', 'по состоянию на сейчас', 'по состоянию на прямо сейчас'] as $snapshot) {
+            foreach (['Сверь выполненные работы проекта Северный дом с графиком ', 'Сверь выполненные работы с графиком проекта Северный дом '] as $prefix) {
+                foreach (['' => ['project_id' => 102], ' за сентябрь 2026' => ['project_id' => 102, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30']] as $period => $expected) {
+                    $plan = ['request' => ['message' => $prefix.$snapshot.$period,
+                        'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                    $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                        'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                    self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $plan['request']['message']);
+                    $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($prefix, $snapshot, $period): array {
+                        self::assertSame(['query' => 'Северный дом'.(str_contains($prefix, 'дом с графиком') ? ' с графиком' : '').' '.$snapshot.$period,
+                            'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                        return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                    });
+                    self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+                }
+            }
+        }
+    }
+
     public function test_feminine_week_durations_keep_named_scope_and_rolling_period(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));

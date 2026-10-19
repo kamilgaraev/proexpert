@@ -12,7 +12,9 @@ final class AssistantProductionSchedulePeriod
 
     private const EXPLICIT_RANGE = '(?:(?:за|в)\s+(?:весь\s+)?период\s+)?(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b';
 
-    private const CURRENT_SNAPSHOT_TIME = '(?:сегодняшний\s+день|сегодня|сейчас|(?:текущий|данный|настоящий)\s+момент|текущий\s+день|текущую\s+дату)';
+    private const BARE_CURRENT_SNAPSHOT_TIME = '(?:прямо\s+)?сейчас';
+
+    private const CURRENT_SNAPSHOT_TIME = '(?:сегодняшний\s+день|сегодня|'.self::BARE_CURRENT_SNAPSHOT_TIME.'|(?:текущий|данный|настоящий)\s+момент|текущий\s+день|текущую\s+дату)';
 
     private const FUTURE_DAY = '(?:завтра|послезавтра)';
 
@@ -22,7 +24,7 @@ final class AssistantProductionSchedulePeriod
 
     private const SNAPSHOT_PREFIX = '(?:по\s+состоянию\s+на|на(?=\s+(?:'.self::CURRENT_SNAPSHOT_TIME.'|вчера|позавчера|'.self::FUTURE_DAY.'|'.self::EXPLICIT_DATE.')\b))\b';
 
-    private const CURRENT_SNAPSHOT = self::SNAPSHOT_PREFIX.'\s+'.self::CURRENT_SNAPSHOT_TIME.'\b';
+    private const CURRENT_SNAPSHOT = '(?:'.self::SNAPSHOT_PREFIX.'\s+'.self::CURRENT_SNAPSHOT_TIME.'|'.self::BARE_CURRENT_SNAPSHOT_TIME.')\b';
 
     private const SUBDAY_UNIT = '(?:час(?:а|ов|ы)?|минут(?:а|у|ы)?|секунд(?:а|у|ы)?)';
 
