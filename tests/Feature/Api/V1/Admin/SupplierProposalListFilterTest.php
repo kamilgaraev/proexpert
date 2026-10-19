@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Models\Supplier;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
@@ -71,9 +72,14 @@ class SupplierProposalListFilterTest extends TestCase
         $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/procurement/proposals?'.http_build_query([
             'supplier_id' => $request->supplier_id, 'supplier_request_id' => $otherRequest->id,
         ]))->assertOk()->assertJsonCount(0, 'data')->assertJsonPath('meta.total', 0);
+
+        Supplier::query()->whereKey($request->supplier_id)->update(['is_active' => false]);
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/procurement/proposals?'.http_build_query([
+            'supplier_id' => $request->supplier_id, 'status' => 'submitted',
+        ]))->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $submitted->id);
     }
 
-    public function test_supplier_from_another_organization_returns_no_current_or_foreign_proposals(): void
+    public function test_foreign_or_unknown_supplier_filters_are_rejected(): void
     {
         $context = AdminApiTestContext::create();
         $request = $this->createCanonicalSelectionSupplierRequest($context->organization, 1000, 'PR-OWN', 'SR-OWN');
@@ -84,7 +90,10 @@ class SupplierProposalListFilterTest extends TestCase
 
         $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/procurement/proposals?'.http_build_query([
             'supplier_id' => $foreignRequest->supplier_id,
-        ]))->assertOk()->assertJsonCount(0, 'data')->assertJsonPath('meta.total', 0);
+        ]))->assertUnprocessable()->assertJsonValidationErrors('supplier_id');
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/procurement/proposals?'.http_build_query([
+            'supplier_id' => (int) Supplier::query()->max('id') + 1,
+        ]))->assertUnprocessable()->assertJsonValidationErrors('supplier_id');
     }
 
     public function test_invalid_supplier_filters_are_rejected_instead_of_returning_the_entire_registry(): void
