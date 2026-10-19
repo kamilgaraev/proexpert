@@ -14,6 +14,32 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_site_request_responsibility_filter_keeps_ui_route_after_empty_exact_lookup(): void
+    {
+        foreach (['без ответственного', 'без исполнителя', 'с ответственным', 'с исполнителем', 'без назначенного ответственного', 'без указанного исполнителя'] as $filter) {
+            $query = 'Какие заявки проекта '.$filter.'?';
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)));
+            self::assertSame($query, AssistantNamedProjectReadScope::semanticQuery($query));
+            $calls = 0;
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls, $filter): array {
+                $calls++;
+                self::assertSame(['query' => $filter, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([], false);
+            });
+            self::assertSame(1, $calls);
+            self::assertArrayNotHasKey('named_project_scope', $resolved);
+            self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(['name' => 'get_project_site_request_queue', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
+                self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId);
+                self::assertNull(AssistantRequiredProjectRead::fromPlan($blocked));
+            }
+        }
+    }
+
     public function test_second_operational_topic_after_unquoted_name_remains_visible_to_routing(): void
     {
         foreach (['и нарушения', 'или нарушения', 'а журналы работ', 'но камеры и нарушения'] as $tail) {
