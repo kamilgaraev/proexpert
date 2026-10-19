@@ -763,12 +763,13 @@ final class NormativeWorkItemPlannerService
             return false;
         }
         $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
+        $negativeFixtureAction = '(?:предусмотр\p{L}*|требу(?:ется|ются)|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ(?:ен|ён)\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
         $exclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ены|ается|аются)|отмен(?:ить|ён|ен|ена|ено|ены|яется|яются)|отсутств(?:ует|уют))';
         $anyFixture = '(?<![\p{L}\p{N}])(?:'.implode('|', $fixturePatterns)
             .'|ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|мойк\p{L}*|раковин\p{L}*|смесител\p{L}*|биде|писсуар\p{L}*|душ(?:а|у|е|ем|и|ей|ам|ами|ах)?)'
             .'(?![\p{L}\p{N}])';
         $separateAssertion = '(?<![\p{L}\p{N}])(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|включ\p{L}*|будет|будут)(?![\p{L}\p{N}])';
-        $negativePredicate = '(?:не\s+'.$negativeAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
+        $negativePredicate = '(?:не\s+'.$negativeFixtureAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
         $before = static fn (string $target, string $boundary): string => '(?=[^,;.!?\r\n]{0,60}'.$target.')'
             .'(?:(?!'.$boundary.')[^,;.!?\r\n])*?';
         $fixtureBoundary = $anyFixture.'|'.$separateAssertion;
