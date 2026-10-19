@@ -14,6 +14,36 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_bare_calendar_years_keep_dates_named_scope_and_literal_project_priority(): void
+    {
+        foreach (['2026', '1900', '1999', '2000', '2024', '2099'] as $year) {
+            foreach ([$year.' год', $year.' года', $year.' году', $year.' г.', $year.' г', $year,
+                'в течение '.$year.' года', 'на протяжении '.$year.' года'] as $phrase) {
+                $expected = ['project_id' => 102, 'period_start' => $year.'-01-01', 'period_end' => $year.'-12-31'];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+                $literalPlan = $plan;
+                $literalPlan['request']['message'] = 'Сверь выполненные работы с графиком проекта «Северный дом '.$phrase.'»';
+                $literal = AssistantNamedProjectReadScope::bind($literalPlan, static function (array $arguments) use ($phrase): array {
+                    self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                });
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+            }
+        }
+        foreach (['2025 год и 2026 год', '2026 год и за октябрь', 'до 2026 года', 'от 2026 года', 'по 2026 год', 'с 2026 года'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase));
+        }
+    }
+
     public function test_adjectival_relative_days_keep_day_bounds_named_scope_and_literal_priority(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
