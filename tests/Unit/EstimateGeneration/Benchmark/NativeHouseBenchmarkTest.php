@@ -24,6 +24,8 @@ use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\EstimateGeneration\NativeHouseBenchmarkAdapter;
@@ -92,6 +94,8 @@ final class NativeHouseBenchmarkTest extends TestCase
         Http::assertNothingSent();
     }
 
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
     public function test_pinned_native_controls_use_real_quantities_and_candidates_before_reading_independent_oracles(): void
     {
         $objects = new class(new LocalBenchmarkObjectReader($this->root)) implements BenchmarkObjectReader
