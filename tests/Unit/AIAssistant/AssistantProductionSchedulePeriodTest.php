@@ -308,9 +308,11 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
-    public function test_bare_current_snapshot_suffix_keeps_named_project_and_optional_work_period(): void
+    public function test_current_snapshot_suffix_keeps_named_project_and_optional_work_period(): void
     {
-        foreach (['сейчас', 'прямо сейчас', 'на сейчас', 'на прямо сейчас', 'по состоянию на сейчас', 'по состоянию на прямо сейчас'] as $snapshot) {
+        foreach (['сейчас', 'прямо сейчас', 'на сейчас', 'на прямо сейчас', 'по состоянию на сейчас', 'по состоянию на прямо сейчас',
+            'в настоящий момент', 'в текущий момент', 'в данный момент', 'в этот момент', 'в настоящее время', 'в текущее время', 'в данное время',
+            'на этот момент', 'на текущий момент', 'на данный момент', 'на настоящий момент', 'на настоящее время', 'на текущее время', 'на данное время'] as $snapshot) {
             foreach (['Сверь выполненные работы проекта Северный дом с графиком ', 'Сверь выполненные работы с графиком проекта Северный дом '] as $prefix) {
                 foreach (['' => ['project_id' => 102], ' за сентябрь 2026' => ['project_id' => 102, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30']] as $period => $expected) {
                     $plan = ['request' => ['message' => $prefix.$snapshot.$period,
