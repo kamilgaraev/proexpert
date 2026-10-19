@@ -14,6 +14,23 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_counted_quarters_require_dates_and_preserve_named_project_priority(): void
+    {
+        foreach (['за три квартала', 'за последние три квартала', 'за предыдущие два квартала',
+            'за один квартал', 'за последние одиннадцать кварталов', 'за несколько кварталов'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+        }
+    }
+
     public function test_previous_counted_durations_preserve_words_named_scope_and_unsupported_amounts(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));

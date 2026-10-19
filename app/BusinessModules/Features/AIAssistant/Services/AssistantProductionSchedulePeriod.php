@@ -18,7 +18,7 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_WORD = 'квартал(?:[ауеы]|ом|ов|ам|ами|ах)?';
 
-    private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*)(?:\s+(?:и\s+)?\d+)?\s+';
+    private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|'.self::DURATION_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*)(?:\s+(?:и\s+)?(?:\d+|'.self::DURATION_NUMBER.'))?\s+';
 
     private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
 
@@ -26,7 +26,7 @@ final class AssistantProductionSchedulePeriod
 
     private const DURATION_NUMBER = '(?:\d{1,2}|один|одна|одну|два|две|пара|пару|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)';
 
-    private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
+    private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 
@@ -38,11 +38,11 @@ final class AssistantProductionSchedulePeriod
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
-    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
