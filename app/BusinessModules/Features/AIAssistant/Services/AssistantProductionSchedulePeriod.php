@@ -8,6 +8,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResol
 
 final class AssistantProductionSchedulePeriod
 {
+    private const EXPLICIT_DATE = '(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4})';
+
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
@@ -33,7 +35,7 @@ final class AssistantProductionSchedulePeriod
     public static function withoutSuffix(string $name): string
     {
         $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
-            .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
+            .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
         $head = trim((string) ($parts[0] ?? $name));
@@ -139,10 +141,15 @@ final class AssistantProductionSchedulePeriod
             return $unresolved;
         }
         $resolver = new AssistantPeriodResolver;
-        if (preg_match('/\bс\s+(\d{4}-\d{2}-\d{2})\s+по\s+(\d{4}-\d{2}-\d{2})\b/iu', $query, $dates) === 1) {
-            $period = $resolver->resolve(['date_from' => $dates[1], 'date_to' => $dates[2]]);
-        } elseif (preg_match('/\bс\s+\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4}\s+по\s+\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4}\b/iu', $query) === 1) {
-            $period = $resolver->resolve($query);
+        if (preg_match_all('/\b(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b/iu', $query, $ranges) > 0) {
+            if (count($ranges[0]) !== 1 || self::hasOtherPeriod($query, $ranges[0][0])) {
+                return $unresolved;
+            }
+            if (preg_match('/\b(?:с|со)\s+(\d{4}-\d{2}-\d{2})\s+по\s+(\d{4}-\d{2}-\d{2})\b/iu', $ranges[0][0], $dates) === 1) {
+                $period = $resolver->resolve(['date_from' => $dates[1], 'date_to' => $dates[2]]);
+            } else {
+                $period = $resolver->resolve(preg_replace('/^со\s+/iu', 'с ', $ranges[0][0]) ?? $ranges[0][0]);
+            }
         } elseif (preg_match('/\b(?:с|со|по|до|на|от)\s+\d{1,2}(?!\d)|\bза\s+\d{1,2}(?!\d)\s+'.self::MONTH.'/iu', $query) === 1) {
             return $unresolved;
         } else {
@@ -299,6 +306,12 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace_callback('/\b((?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)\s+(этого|текущего|прошлого|предыдущего|позапрошлого)\s+года\b/iu', static function (array $match): string {
+            $relative = mb_strtolower($match[2]);
+            $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);
+
+            return $match[1].' '.((int) \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y') - $offset);
+        }, $query) ?? $query;
         $query = preg_replace_callback('/\bза\s+(этот|текущий|прошлый|предыдущий|позапрошлый)\s+день\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);
 

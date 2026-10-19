@@ -14,6 +14,47 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_numbered_quarters_resolve_relative_years_and_preserve_named_scope(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 00:30:00', 'Europe/Moscow'));
+        try {
+            foreach (['за первый квартал текущего года' => ['2026-01-01', '2026-03-31'],
+                'за 3 квартал прошлого года' => ['2025-07-01', '2025-09-30'],
+                'за IV квартал предыдущего года' => ['2025-10-01', '2025-12-31'],
+                'во втором квартале этого года' => ['2026-04-01', '2026-06-30'],
+                'за четвёртый квартал позапрошлого года' => ['2024-10-01', '2024-12-31']] as $phrase => [$start, $end]) {
+                $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]],
+                    static fn (array $arguments): array => ['status' => 'success',
+                        'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_multiple_explicit_ranges_never_silently_select_the_first_period(): void
+    {
+        foreach (['с 2026-10-01 по 2026-10-15 и с 2026-09-01 по 2026-09-15',
+            'с 01.10.2026 по 15.10.2026 и с 01.09.2026 по 15.09.2026',
+            'с 01/10/2026 по 15/10/2026 и с 01-09-2026 по 15-09-2026',
+            'с 2026-10-01 по 2026-10-15 и с 01.09.2026 по 15.09.2026',
+            'с 2026-10-01 по 2026-10-15 и с 2026-10-01 по 2026-10-15',
+            'с 2026-10-01 по 2026-10-15 и за сентябрь 2026'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase]],
+                static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+        }
+    }
+
     public function test_calendar_day_adjectives_resolve_like_today_yesterday_and_day_before(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 10:00:00', 'Europe/Moscow'));
