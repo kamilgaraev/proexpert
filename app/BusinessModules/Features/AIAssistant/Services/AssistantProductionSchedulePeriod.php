@@ -30,7 +30,11 @@ final class AssistantProductionSchedulePeriod
 
     private const SUBDAY_UNIT = '(?:час(?:а|ов|ы)?|минут(?:а|у|ы)?|секунд(?:а|у|ы)?)';
 
-    private const DURATION_INTRODUCER = '(?:за|в\s+течение|на\s+протяжении)';
+    private const DURATION_CONTEXT_INTRODUCER = '(?:в\s+течение|на\s+протяжении)';
+
+    private const DURATION_INTRODUCER = '(?:за|'.self::DURATION_CONTEXT_INTRODUCER.')';
+
+    private const PERIOD_PREFIX = '(?:'.self::PERIOD_PREPOSITION.'|'.self::DURATION_CONTEXT_INTRODUCER.')';
 
     private const SUBDAY_PERIOD = '(?:'.self::DURATION_INTRODUCER.'\s+(?:[\pL\pN-]+\s+){0,5}|(?:'.self::DURATION_MODIFIER.'\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+|'.self::DURATION_MODIFIER.'\s+)'.self::SUBDAY_UNIT.'\b';
 
@@ -74,7 +78,7 @@ final class AssistantProductionSchedulePeriod
 
     private const QUALIFIED_DURATION_PERIOD = '(?:'.self::DURATION_INTRODUCER.'\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::DURATION_MODIFIER.'\s+(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::OFFSET_NUMBER.'\s+)'.self::DURATION_QUALIFIERS.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
-    private const FUTURE_CALENDAR_PERIOD = '(?:'.self::PERIOD_PREPOSITION.'\s+)?(?:следующ|будущ)[а-яё]*\s+(?:'.self::OFFSET_NUMBER.'(?:\s+'.self::OFFSET_NUMBER.'){0,5}\s+)?'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
+    private const FUTURE_CALENDAR_PERIOD = '(?:'.self::PERIOD_PREFIX.'\s+)?(?:следующ|будущ)[а-яё]*\s+(?:'.self::OFFSET_NUMBER.'(?:\s+'.self::OFFSET_NUMBER.'){0,5}\s+)?'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
     private const UNRESOLVED_NUMERIC_PERIOD = '(?<![\pL\pN])(?:'.self::DURATION_INTRODUCER.'\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?(?:(?:[+-]?\d+\s+)?(?=\d*[.,\/eE_+-])'.self::NUMERIC_DURATION_VALUE.'|полтора|полторы|половин[а-яё]*)\s+'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
@@ -92,12 +96,12 @@ final class AssistantProductionSchedulePeriod
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
-    private const TIME_START = '(?:'.self::MONTH_WITH_YEAR.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREPOSITION.'\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
+    private const TIME_START = '(?:'.self::EXPLICIT_DATE.'|'.self::MONTH_WITH_YEAR.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|'.self::RELATIVE_DAY.'\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::MONTH_WITH_YEAR.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREPOSITION.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
-            .'|'.self::PERIOD_PREPOSITION.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|'.self::PERIOD_PREPOSITION.'\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:'.self::PERIOD_PREPOSITION.'\s+)?'.self::RELATIVE_DAY.'\b)';
+        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::MONTH_WITH_YEAR.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+            .'|'.self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|'.self::PERIOD_PREFIX.'\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
         $head = trim((string) ($parts[0] ?? $name));
