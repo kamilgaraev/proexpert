@@ -74,7 +74,8 @@ final class WarehouseMovementsPaginationControllerTest extends TestCase
             ->assertJsonPath('meta.per_page', 2)
             ->assertJsonPath('meta.total', 3)
             ->assertJsonCount(1, 'data')
-            ->assertJsonPath('data.0.document_number', 'WO-001');
+            ->assertJsonPath('data.0.document_number', 'WO-001')
+            ->assertJsonPath('data.0.movement_date', '2026-08-01T10:00:00+00:00');
         $this->assertStringContainsString(
             'movement_type=write_off',
             (string) $response->json('links.prev'),

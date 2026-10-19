@@ -874,7 +874,7 @@ class WarehouseService implements WarehouseReportDataProvider
             allocatedQuantity: (float) ($allocatedByMaterial->get($materialId) ?? 0),
             averagePrice: (float) $avgPrice,
             totalValue: (float) $totalValue,
-            lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
+            lastMovementAt: $batches->max('last_movement_at')?->toIso8601String(),
             material: $batches->first()->material ?? null,
             warehouse: $batches->first()->warehouse ?? null
         );
@@ -943,7 +943,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 allocatedQuantity: (float) ($allocatedByMaterial->get($materialId) ?? 0),
                 averagePrice: (float) $avgPrice,
                 totalValue: (float) $totalValue,
-                lastMovementAt: $batches->max('last_movement_at')?->toDateTimeString(),
+                lastMovementAt: $batches->max('last_movement_at')?->toIso8601String(),
                 material: $batches->first()->material,
                 warehouse: $batches->first()->warehouse
             );
@@ -1122,7 +1122,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'cell' => $allBatchesInSingleCell ? $cells->first() : null,
                 'storage_address' => $batches->pluck('cell.full_address')->filter()->unique()->implode(', ')
                     ?: $batches->pluck('location_code')->filter()->unique()->implode(', '),
-                'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
+                'last_movement_at' => $batches->max('last_movement_at')?->toIso8601String(),
                 'photo_gallery' => $balancePhotos !== [] ? $balancePhotos : $receiptPhotos,
                 'receipt_photo_gallery' => $receiptPhotos,
                 'receipt_documents' => $receiptDocumentMap[$galleryKey] ?? [],
@@ -1779,7 +1779,7 @@ class WarehouseService implements WarehouseReportDataProvider
             'is_tolling_material' => $movement->isContractorTransferOut() || $movement->isCustomerMaterialReceipt(),
             'reason' => $movement->reason,
             'description' => is_string($description) ? $description : null,
-            'movement_date' => $movement->movement_date->toDateTimeString(),
+            'movement_date' => $movement->movement_date->toIso8601String(),
             'photo_gallery' => $movement->photo_gallery,
             'passport_document' => $movement->passport_document,
         ];
