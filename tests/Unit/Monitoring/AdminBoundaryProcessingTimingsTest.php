@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Monitoring;
 
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageCollection;
 use App\BusinessModules\Features\Procurement\Http\Middleware\EnsureProcurementActive;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Http\Middleware\InterfaceMiddleware;
@@ -17,6 +18,7 @@ use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\ResourceCollection;
 use Mockery;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\Cookie;
@@ -25,6 +27,104 @@ use Tests\TestCase;
 
 final class AdminBoundaryProcessingTimingsTest extends TestCase
 {
+    public function test_design_serialization_phases_are_exact_get_opt_in_and_keep_response_bytes(): void
+    {
+        $expected = null;
+        foreach ([
+            ['/api/v1/admin/design-management/packages', 'GET', true],
+            ['/api/v1/admin/design-management/packages/1', 'GET', true],
+            ['/api/v1/admin/design-management/packages', 'POST', true],
+            ['/api/v1/admin/design-management/packages', 'GET', false],
+        ] as [$path, $method, $capture]) {
+            $request = Request::create($path, $method);
+            $metrics = new ApiQueryMetrics($capture);
+            $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+            $this->app->instance('request', $request);
+            $response = AdminResponse::paginated(new DesignPackageCollection(collect()), ['total' => 0], 'fixture', 201);
+            $expected ??= $response->getContent();
+            self::assertSame($expected, $response->getContent());
+            self::assertSame(201, $response->getStatusCode());
+            $phases = $metrics->summary()['processing_phases'] ?? [];
+            if ($path !== '/api/v1/admin/design-management/packages' || $method !== 'GET' || ! $capture) {
+                self::assertSame([], $phases);
+                continue;
+            }
+            self::assertSame(['design_freshness', 'design_resources', 'design_response_build', 'design_response_decode', 'request_render', 'list_encode'], array_keys($phases));
+            foreach ($phases as $phase) {
+                self::assertSame(1, $phase['count']);
+                self::assertSame(0, $phase['sql_count']);
+                foreach ($phase as $value) {
+                    self::assertTrue(is_int($value) || is_float($value));
+                }
+            }
+            self::assertStringNotContainsString('fixture', json_encode($phases, JSON_THROW_ON_ERROR));
+        }
+    }
+
+    public function test_design_response_build_and_decode_keep_separate_sql_deltas(): void
+    {
+        $request = Request::create('/api/v1/admin/design-management/packages');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $this->app->instance('request', $request);
+        $collection = new class(collect()) extends ResourceCollection
+        {
+            public function response($request = null): JsonResponse
+            {
+                ApiQueryMetrics::record(app('request'), 2.5);
+
+                return new class(['data' => [['nested' => [null, false, 2.5, 'МОСТ']]]]) extends JsonResponse
+                {
+                    public function getData($assoc = false, $depth = 512): mixed
+                    {
+                        ApiQueryMetrics::record(app('request'), 4.5);
+
+                        return parent::getData($assoc, $depth);
+                    }
+                };
+            }
+        };
+        $response = AdminResponse::paginated($collection, ['total' => 1]);
+        self::assertSame([['nested' => [null, false, 2.5, 'МОСТ']]], $response->getData(true)['data']);
+        foreach (['design_response_build' => [1, 2.5], 'design_response_decode' => [1, 4.5], 'request_render' => [2, 7.0]] as $name => [$count, $total]) {
+            $phase = $metrics->summary()['processing_phases'][$name];
+            self::assertSame(1, $phase['count']);
+            self::assertSame($count, $phase['sql_count']);
+            self::assertSame($total, $phase['sql_total_ms']);
+        }
+    }
+
+    public function test_design_response_phases_close_and_preserve_build_and_decode_exceptions(): void
+    {
+        foreach (['build', 'decode'] as $failure) {
+            $request = Request::create('/api/v1/admin/design-management/packages');
+            $metrics = new ApiQueryMetrics(true);
+            $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+            $this->app->instance('request', $request);
+            $sentinel = new RuntimeException('private-fixture');
+            $collection = Mockery::mock(ResourceCollection::class);
+            if ($failure === 'build') {
+                $collection->shouldReceive('response')->once()->andThrow($sentinel);
+            } else {
+                $response = Mockery::mock(JsonResponse::class);
+                $response->shouldReceive('getData')->once()->with(true)->andThrow($sentinel);
+                $collection->shouldReceive('response')->once()->andReturn($response);
+            }
+            try {
+                AdminResponse::paginated($collection, []);
+                self::fail('expected serialization failure');
+            } catch (RuntimeException $exception) {
+                self::assertSame($sentinel, $exception);
+            }
+            $phases = $metrics->summary()['processing_phases'];
+            self::assertSame(1, $phases['design_response_build']['count']);
+            self::assertSame(1, $phases['request_render']['count']);
+            self::assertSame($failure === 'decode', isset($phases['design_response_decode']));
+            self::assertArrayNotHasKey('list_encode', $phases);
+            self::assertStringNotContainsString('private-fixture', json_encode($phases, JSON_THROW_ON_ERROR));
+        }
+    }
+
     public function test_authorization_timers_keep_each_permission_check_and_original_response(): void
     {
         foreach (['admin.access' => 'admin_authorize', 'procurement.purchase_requests.view' => 'purchase_authorize'] as $permission => $phase) {

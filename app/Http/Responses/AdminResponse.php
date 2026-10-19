@@ -109,9 +109,9 @@ class AdminResponse
 
         if ($data instanceof ResourceCollection) {
             [$resourceResponse, $resolved] = self::measurePIRPhase('request_render', static function () use ($data): array {
-                $response = $data->response();
+                $response = self::measurePIRPhase('design_response_build', static fn () => $data->response());
 
-                return [$response, $response->getData(true)];
+                return [$response, self::measurePIRPhase('design_response_decode', static fn () => $response->getData(true))];
             });
 
             if (

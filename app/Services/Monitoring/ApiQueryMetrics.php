@@ -244,6 +244,7 @@ final class ApiQueryMetrics
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
+            'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode',
             'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
             'file_report_list', 'file_report_classify', 'file_report_access',
