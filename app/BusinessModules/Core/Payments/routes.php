@@ -163,6 +163,9 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/{id}', [PaymentDocumentController::class, 'show'])
                 ->middleware('authorize:payments.invoice.view')
                 ->name('show');
+            Route::get('/{id}/activity', [PaymentDocumentController::class, 'activity'])
+                ->middleware('authorize:payments.transaction.view')
+                ->name('activity');
             Route::put('/{id}', [PaymentDocumentController::class, 'update'])
                 ->middleware('authorize:payments.invoice.edit')
                 ->name('update');

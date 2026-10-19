@@ -19,6 +19,7 @@ use App\BusinessModules\Core\Payments\Http\Requests\UpcomingPaymentDocumentsRequ
 use App\BusinessModules\Core\Payments\Http\Requests\UpdatePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentActivityService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentQueryService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService;
@@ -150,6 +151,24 @@ final class PaymentDocumentController extends Controller
     public function showForSchedule(Request $request, int|string $id): JsonResponse
     {
         return $this->showDocument($request, $id, 'payments.schedule.view');
+    }
+
+    public function activity(Request $request, int|string $id, PaymentDocumentActivityService $activity): JsonResponse
+    {
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1', 'max:1000000'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        try {
+            return AdminResponse::success($activity->forDocument($this->organizationId($request), $this->actor($request), $id, $pagination));
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('payments.not_found'), 404);
+        } catch (Throwable $e) {
+            Log::error('payment_document.activity.error', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
+        }
     }
 
     private function showDocument(Request $request, int|string $id, string $permission): JsonResponse
