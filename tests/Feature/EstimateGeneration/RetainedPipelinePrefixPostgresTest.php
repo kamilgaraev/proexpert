@@ -254,6 +254,58 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         return [['begin'], ['replay']];
     }
 
+    public function test_generate_permission_without_view_can_quote_and_reserve_a_retained_generation(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $authorization = \Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+        $authorization->shouldReceive('authorize')->andReturnUsing(static function ($user, $target, string $permission): void {
+            if ($permission !== 'estimate_generation.generate') {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+        });
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class, $authorization);
+        [$id, $quote] = $this->quote($actor, $session);
+
+        self::assertSame(1, $quote['provider_budget']['initial_audit_pass']['initial_audit_parts']);
+        self::assertSame($id, DB::transaction(fn () => app(EstimatorCreditOperations::class)->begin($actor, $session, 4, $id, $quote['quote_id'], 'generation')));
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview::class)
+                ->read($actor, (int) $session->project_id, (int) $session->id);
+            self::fail('The public preview must still require view permission.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            self::assertTrue(true);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    #[DataProvider('artifactStorageFailures')]
+    public function test_unreadable_artifact_on_quote_replay_returns_controlled_preflight_failure(string $failure): void
+    {
+        [$actor, $session] = $this->fixture();
+        [$id] = $this->quote($actor, $session);
+        $before = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $reservationsBefore = DB::table('ai_credit_reservations')->count();
+        $this->blockBuildDraftArtifact($failure);
+
+        try {
+            app(EstimatorCreditOperations::class)->quote($actor, (int) $session->project_id, (int) $session->id, 4, $id, 'generation');
+            self::fail('Unreadable retained artifacts must fail before reservation.');
+        } catch (\Illuminate\Validation\ValidationException $error) {
+            self::assertSame(['quote' => [trans_message('estimate_generation.retained_audit_preflight_unavailable')]], $error->errors());
+        }
+
+        self::assertSame((array) $before, (array) DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame($reservationsBefore, DB::table('ai_credit_reservations')->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
+    public static function artifactStorageFailures(): array
+    {
+        return [['integrity'], ['storage']];
+    }
+
     public function test_new_regional_version_declines_continuation_before_a_quote_is_reserved(): void
     {
         $version = $this->regionalVersion();
@@ -339,6 +391,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
             return match ($failure) {
                 'missing' => throw new DomainException('Pipeline artifact is unavailable.'),
                 'integrity' => throw new TypedFailureException(FailureCategory::Terminal, 'pipeline_artifact_integrity_failed'),
+                'storage' => throw new TypedFailureException(FailureCategory::Recoverable, 'pipeline_artifact_storage_unavailable'),
                 'schema' => ['invalid' => 'payload'],
             };
         });

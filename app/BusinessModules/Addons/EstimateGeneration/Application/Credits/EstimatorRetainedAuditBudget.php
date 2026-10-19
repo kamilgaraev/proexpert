@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Credits;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDraftPreview;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\Models\User;
 use Brick\Math\BigInteger;
@@ -35,13 +36,18 @@ final readonly class EstimatorRetainedAuditBudget
             if (! hash_equals($source->plan_hash, hash('sha256', CanonicalPipelineJson::encode($sourcePlan)))) {
                 throw new DomainException('estimator_retained_audit_preflight_unavailable');
             }
-            $forecast = self::forecast($plan, $sourcePlan, $this->preview->read($actor, (int) $session->project_id, (int) $session->id));
+            $forecast = self::forecast($plan, $sourcePlan, $this->preview->readForGeneration($actor, (int) $session->project_id, (int) $session->id));
             if (isset($plan['retained_audit_preflight'])
                 && CanonicalPipelineJson::encode($plan['retained_audit_preflight']) !== CanonicalPipelineJson::encode($forecast)) {
                 throw new DomainException('estimator_retained_audit_preflight_unavailable');
             }
 
             return $forecast;
+        } catch (TypedFailureException $error) {
+            if (! in_array($error->safeCode, ['pipeline_artifact_storage_unavailable', 'pipeline_artifact_integrity_failed'], true)) {
+                throw $error;
+            }
+            throw ValidationException::withMessages([$errorKey => trans_message('estimate_generation.retained_audit_preflight_unavailable')]);
         } catch (DomainException $error) {
             $key = match ($error->getMessage()) {
                 'estimator_retained_audit_budget_insufficient' => 'retained_audit_budget_insufficient',

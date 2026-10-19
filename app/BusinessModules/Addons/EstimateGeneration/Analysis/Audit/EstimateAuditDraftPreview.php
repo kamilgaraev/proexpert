@@ -34,12 +34,22 @@ final readonly class EstimateAuditDraftPreview
 
     public function read(User $actor, int $projectId, int $sessionId): array
     {
+        return $this->readForPermission($actor, $projectId, $sessionId, 'estimate_generation.view');
+    }
+
+    public function readForGeneration(User $actor, int $projectId, int $sessionId): array
+    {
+        return $this->readForPermission($actor, $projectId, $sessionId, 'estimate_generation.generate');
+    }
+
+    private function readForPermission(User $actor, int $projectId, int $sessionId, string $permission): array
+    {
         $session = EstimateGenerationSession::query()->whereKey($sessionId)
             ->where('organization_id', $actor->current_organization_id)->where('project_id', $projectId)->first();
         if ($session === null) {
             throw new AuthorizationException(trans_message('estimate_generation.access_denied'));
         }
-        $this->authorization->authorize($actor, $session, 'estimate_generation.view');
+        $this->authorization->authorize($actor, $session, $permission);
         $unavailable = ['preview_only' => true, 'cost_units' => 0, 'available' => false,
             'state_version' => (int) $session->state_version, 'validated' => false];
         $attempt = $session->input_payload['generation_attempt_id'] ?? null;
