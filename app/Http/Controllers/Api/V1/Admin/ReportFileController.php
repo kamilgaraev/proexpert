@@ -64,7 +64,7 @@ class ReportFileController extends Controller
                 $query->whereDate('created_at', '<=', $params['date_to']);
             }
 
-            $paginator = ApiQueryMetrics::measureProcessingPhase('file_report_list', fn () => $query->orderBy($sortBy, $sortDir)->paginate($perPage));
+            $paginator = ApiQueryMetrics::measureProcessingPhase('file_report_list', fn () => $query->orderBy($sortBy, $sortDir)->orderBy('id', $sortDir)->paginate($perPage));
             $storage = $request->boolean('include_download_urls', true)
                 ? $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization)
                 : null;

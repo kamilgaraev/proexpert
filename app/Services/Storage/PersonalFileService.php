@@ -80,7 +80,7 @@ final class PersonalFileService
         $sortDirection = ($filters['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 15)));
 
-        return $query->orderBy($sortBy, $sortDirection)->paginate($perPage);
+        return $query->orderBy($sortBy, $sortDirection)->orderBy('id', $sortDirection)->paginate($perPage);
     }
 
     public function createFolder(
