@@ -39,7 +39,9 @@ final class RecordApiResponseTime
             ) === 1,
             default => false,
         };
-        $metrics = new ApiQueryMetrics($designDocumentSources || ($request->isMethod('GET') && $request->is(
+        $pulseSources = ($request->isMethod('GET') && $request->path() === 'api/v1/admin/ai-assistant/project-pulse/current')
+            || ($request->isMethod('POST') && $request->path() === 'api/v1/admin/ai-assistant/project-pulse/generate');
+        $metrics = new ApiQueryMetrics($pulseSources || $designDocumentSources || ($request->isMethod('GET') && $request->is(
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
             'api/v1/admin/permissions',

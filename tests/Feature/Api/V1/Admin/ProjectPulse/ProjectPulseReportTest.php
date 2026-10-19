@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
+use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
+use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseFact;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactCollector;
+use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseService;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Contract;
 use App\Models\ContractOrganizationView;
@@ -13,7 +17,10 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\Project\ProjectParticipantService;
+use ArrayObject;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -60,11 +67,14 @@ class ProjectPulseReportTest extends TestCase
             'generated_at' => now(),
         ]);
 
+        $timings = $this->capturePulseTimings();
         $response = $this
             ->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/ai-assistant/project-pulse/current?project_id=' . $project->id);
 
         $response->assertOk();
+        self::assertCount(1, $timings);
+        $this->assertPulsePhases($timings[0], ['pulse_actor', 'pulse_current', 'pulse_format']);
         $response->assertJsonPath('data.scope.organization_id', $organization->id);
         $response->assertJsonPath('data.scope.project_id', $project->id);
         $response->assertJsonStructure([
@@ -205,6 +215,7 @@ class ProjectPulseReportTest extends TestCase
         $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
 
+        $timings = $this->capturePulseTimings();
         $response = $this
             ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/project-pulse/generate', [
@@ -214,6 +225,9 @@ class ProjectPulseReportTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('data.ai_mode.status', 'rules_only');
+        self::assertCount(1, $timings);
+        $this->assertPulsePhases($timings[0], ['pulse_actor', 'pulse_facts', 'pulse_access', 'pulse_rules',
+            'pulse_synthesis', 'pulse_finance', 'pulse_write', 'pulse_format']);
         $this->assertDatabaseHas('project_pulse_reports', [
             'organization_id' => $organization->id,
             'scope_type' => 'organization',
@@ -847,6 +861,93 @@ class ProjectPulseReportTest extends TestCase
             self::assertContains($expectedCategory, $categoryKeys);
             self::assertContains($expectedCategory, $riskGroupKeys);
         }
+    }
+
+    public function test_rfi_alias_keeps_fresh_organization_and_soft_delete_checks_outside_http(): void
+    {
+        $context = $this->context(roleSlug: 'organization_owner');
+        $foreignContext = $this->context(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $insert = static fn (AdminApiTestContext $owner, Project $parent, string $number, bool $deleted = false): int => DB::table('change_management_rfis')->insertGetId([
+            'organization_id' => $owner->organization->id,
+            'project_id' => $parent->id,
+            'created_by_user_id' => $owner->user->id,
+            'rfi_number' => $number,
+            'subject' => 'RFI guard fixture',
+            'question' => 'RFI guard question',
+            'addressee_type' => 'designer',
+            'status' => 'sent',
+            'response_due_date' => now()->subDay()->toDateString(),
+            'deleted_at' => $deleted ? now() : null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $ownId = $insert($context, $project, 'RFI-OWN');
+        $foreignId = $insert($foreignContext, $foreignProject, 'RFI-FOREIGN');
+        $deletedId = $insert($context, $project, 'RFI-DELETED', true);
+        $facts = collect([$ownId, $foreignId, $deletedId])->map(static fn (int $id): ProjectPulseFact => new ProjectPulseFact(
+            id: 'rfi:'.$id.':guard',
+            type: 'unanswered_rfi',
+            priority: 'warning',
+            title: 'RFI guard',
+            text: 'RFI guard fact',
+            relatedEntity: ['type' => 'rfi', 'id' => $id],
+            category: 'change',
+        ));
+        $collector = $this->mock(ProjectPulseFactCollector::class);
+        $collector->shouldReceive('collect')->twice()->andReturn($facts);
+        $collector->shouldReceive('finance')->twice()->andReturn([]);
+        $service = app(ProjectPulseService::class);
+        $requestContext = ProjectPulseContext::fromValidated(['project_id' => $project->id, 'use_ai' => false], $context->organization->id, $context->user->id);
+
+        $first = $service->generate($requestContext);
+
+        self::assertSame(['rfi:'.$ownId.':guard'], array_column($first['facts'], 'id'));
+        self::assertSame('rfi', $first['facts'][0]['related_entity']['type']);
+        $stored = ProjectPulseReport::findOrFail($first['id']);
+        $referenceIdentities = static fn (ProjectPulseReport $report): array => array_map(
+            static fn (array $reference): array => [$reference['entity_type'], $reference['entity_id']],
+            $report->source_refs,
+        );
+        self::assertContains(['change_management_rfi', (string) $ownId], $referenceIdentities($stored));
+        self::assertNotContains(['change_management_rfi', (string) $foreignId], $referenceIdentities($stored));
+        self::assertNotContains(['change_management_rfi', (string) $deletedId], $referenceIdentities($stored));
+
+        DB::table('change_management_rfis')->where('id', $ownId)->update(['deleted_at' => now()]);
+        $second = $service->generate($requestContext);
+
+        self::assertSame([], $second['facts']);
+        self::assertNotContains(['change_management_rfi', (string) $ownId], $referenceIdentities(ProjectPulseReport::findOrFail($second['id'])));
+    }
+
+    private function capturePulseTimings(): ArrayObject
+    {
+        $timings = new ArrayObject;
+        Event::listen(MessageLogged::class, static function (MessageLogged $event) use ($timings): void {
+            if ($event->message === 'api_response_timing'
+                && in_array($event->context['route'] ?? null, ['api/v1/admin/ai-assistant/project-pulse/current',
+                    'api/v1/admin/ai-assistant/project-pulse/generate'], true)) {
+                $timings[] = $event->context;
+            }
+        });
+
+        return $timings;
+    }
+
+    private function assertPulsePhases(array $timing, array $expected): void
+    {
+        self::assertArrayHasKey('sql_sources', $timing);
+        $phases = array_filter($timing['processing_phases'], static fn (string $name): bool => str_starts_with($name, 'pulse_'), ARRAY_FILTER_USE_KEY);
+        self::assertSame($expected, array_keys($phases));
+        foreach ($phases as $phase) {
+            self::assertSame(1, $phase['count']);
+            self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+            self::assertGreaterThanOrEqual(0, $phase['sql_count']);
+            self::assertGreaterThanOrEqual(0, $phase['sql_total_ms']);
+            self::assertSame([], array_diff(array_keys($phase), ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']));
+        }
+        self::assertLessThanOrEqual($timing['sql_count'], array_sum(array_column($phases, 'sql_count')));
     }
 
     private function context(array $userAttributes = [], array $organizationAttributes = [], string $roleSlug = 'web_admin'): AdminApiTestContext
