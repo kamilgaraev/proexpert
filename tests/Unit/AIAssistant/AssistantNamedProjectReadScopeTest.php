@@ -14,6 +14,55 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_introductory_commands_preserve_question_predicate_after_project(): void
+    {
+        foreach (['Покажи, какие камеры проекта отключены', 'Покажите какие камеры проекта отключены',
+            'Расскажи, какие камеры проекта отключены', 'Подскажи пожалуйста какие камеры проекта отключены'] as $query) {
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)), $query);
+            self::assertSame($query, AssistantNamedProjectReadScope::semanticQuery($query));
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls): array {
+                $calls++;
+                self::assertSame(['query' => 'отключены', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([], false);
+            });
+            self::assertSame(1, $calls);
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($bound));
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                self::assertNull(AssistantRequiredProjectRead::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result)));
+            }
+        }
+    }
+
+    public function test_recognized_topic_after_punctuation_is_not_masked_with_project_name(): void
+    {
+        foreach ([', ', '; ', ': ', ' — ', ' – ', ' - '] as $separator) {
+            $name = 'Северный дом'.$separator.'нарушения';
+            $query = 'Какие камеры проекта '.$name.'?';
+            self::assertSame('Северный дом', AssistantNamedProjectReadScope::name($this->plan($query)), $separator);
+            self::assertStringContainsString('нарушения', AssistantNamedProjectReadScope::semanticQuery($query));
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query));
+            $calls = 0;
+            AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls): array {
+                $calls++;
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(0, $calls);
+            $literal = AssistantNamedProjectReadScope::bind($this->plan('Какие камеры проекта «'.$name.'»?'), function (array $arguments) use ($name): array {
+                self::assertSame($name, $arguments['query']);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+            $ordinary = 'Северный дом'.$separator.'первая очередь';
+            self::assertSame($ordinary, AssistantNamedProjectReadScope::name($this->plan('Какие камеры проекта '.$ordinary.'?')));
+        }
+    }
+
     public function test_financial_and_organization_topics_after_name_remain_visible(): void
     {
         foreach (['сметы', 'уведомления', 'договоры', 'оплату'] as $topic) {

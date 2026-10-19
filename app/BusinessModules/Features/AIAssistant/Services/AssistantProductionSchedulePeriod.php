@@ -20,6 +20,12 @@ final class AssistantProductionSchedulePeriod
 
     private const SUBDAY_PERIOD = '(?:за\s+(?:[\pL\pN-]+\s+){0,5}|(?:'.self::DURATION_MODIFIER.'\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+|'.self::DURATION_MODIFIER.'\s+)'.self::SUBDAY_UNIT.'\b';
 
+    private const BARE_CALENDAR_SELECTOR = '(?:эт(?:от|а|у)|(?:текущ|прошл|предыдущ|позапрошл|следующ)(?:ий|ый|ая|ую))';
+
+    private const BARE_CALENDAR_UNIT = '(?:год|месяц|квартал|неделя|неделю|день)';
+
+    private const BARE_CALENDAR_PERIOD = self::BARE_CALENDAR_SELECTOR.'\s+'.self::BARE_CALENDAR_UNIT.'\b';
+
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
@@ -50,11 +56,11 @@ final class AssistantProductionSchedulePeriod
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
-    private const TIME_START = '(?:'.self::SUBDAY_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const TIME_START = '(?:'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::SUBDAY_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -363,6 +369,19 @@ final class AssistantProductionSchedulePeriod
 
             return 'с '.$start->format('Y-m-d').' по '.$end->format('Y-m-d');
         }, $query) ?? $query;
+        $query = preg_replace_callback('/\b(?:(за|в|во|на|с|со|по|до)\s+)?('.self::BARE_CALENDAR_SELECTOR.')\s+('.self::BARE_CALENDAR_UNIT.')\b/iu', static function (array $match): string {
+            if (($match[1] ?? '') !== '') {
+                return $match[0];
+            }
+            $adjective = mb_strtolower($match[2]);
+            $unit = mb_strtolower($match[3]);
+            if ($unit === 'неделя' || $unit === 'неделю') {
+                $unit = 'неделю';
+                $adjective = $adjective === 'эта' ? 'эту' : (preg_replace('/ая$/u', 'ую', $adjective) ?? $adjective);
+            }
+
+            return 'за '.$adjective.' '.$unit;
+        }, $query) ?? $query;
         $query = preg_replace('/\b((?:за|в|во|на)\s+)в(?:есь|с[её]м|сю|сей|се)\s+(?=(?:19|20)\d{2}\b(?![-.\/]\d)|'.self::MONTH.'\b|'.self::QUARTER_NUMBER.'\s+'.self::QUARTER_WORD.'\b)/iu', '$1', $query) ?? $query;
         $query = preg_replace_callback('/\b((?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)\s+(этого|текущего|прошлого|предыдущего|позапрошлого)\s+года\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[2]);
@@ -386,7 +405,6 @@ final class AssistantProductionSchedulePeriod
 
             return 'за '.$adjective.' '.(str_starts_with(mb_strtolower($match[2]), 'год') ? 'год' : 'месяц');
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b(?:(за|в|во|на|с|со|по|до)\s+)?((?:этот|текущий|прошлый|предыдущий|позапрошлый|следующий)\s+квартал)\b/iu', static fn (array $match): string => ($match[1] ?? '') !== '' ? $match[0] : 'за '.$match[2], $query) ?? $query;
         $months = ['январе' => 'январь', 'феврале' => 'февраль', 'марте' => 'март', 'апреле' => 'апрель', 'мае' => 'май', 'июне' => 'июнь',
             'июле' => 'июль', 'августе' => 'август', 'сентябре' => 'сентябрь', 'октябре' => 'октябрь', 'ноябре' => 'ноябрь', 'декабре' => 'декабрь'];
 

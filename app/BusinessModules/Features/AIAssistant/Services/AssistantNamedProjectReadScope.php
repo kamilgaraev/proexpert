@@ -91,9 +91,9 @@ final class AssistantNamedProjectReadScope
             $continuation = '(?:скажи(?:те)?|расскажи(?:те)?|покажи(?:те)?|проверь(?:те)?|сверь(?:те)?|укажи(?:те)?|назови(?:те)?|уточни(?:те)?|сформируй(?:те)?|создай(?:те)?|удали(?:те)?|измени(?:те)?|закрой(?:те)?|отправь(?:те)?|подпиши(?:те)?|назначь(?:те)?|назначит[а-яё]*|перенес[а-яё]*|перенос[а-яё]*|сдвин[а-яё]*|обнови[а-яё]*|добавь(?:те)?|добавит[а-яё]*|поменяй(?:те)?|исправь(?:те)?|заплат[а-яё]*|оплати[а-яё]*|нужно|надо|можно|что|кто|где|когда|как|какие|какой|какая|какое|каков[а-яё]*|сколько)(?![\pL\pN])';
             $parts = preg_split('/(?:\s+(?:(?:и|а|но)\s+)?|[.!?,;:]\s*)(?='.$continuation.')|[!?]/iu', $name, 2);
             $name = trim((string) ($parts[0] ?? ''));
-            preg_match_all('/\s+(?:и|или|а|но)\s+/iu', $name, $conjunctions, PREG_OFFSET_CAPTURE);
-            foreach ($conjunctions[0] as [$conjunction, $offset]) {
-                if (AssistantOperationalReaderRegistry::hasProjectNameContinuation(substr($name, $offset + strlen($conjunction)))) {
+            preg_match_all('/\s+(?:и|или|а|но)\s+|\s*[,;:—–]\s*|\s+-\s+/iu', $name, $boundaries, PREG_OFFSET_CAPTURE);
+            foreach ($boundaries[0] as [$separator, $offset]) {
+                if (AssistantOperationalReaderRegistry::hasProjectNameContinuation(substr($name, $offset + strlen($separator)))) {
                     $name = rtrim(substr($name, 0, $offset));
                     break;
                 }
@@ -122,8 +122,10 @@ final class AssistantNamedProjectReadScope
             return true;
         }
 
+        $head = preg_split('/\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?![\pL\pN])/iu', $query, 2)[0] ?? '';
+
         return $candidate !== null
-            && (preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1 || preg_match('/\?\s*$/u', $query) === 1)
+            && (preg_match('/\b(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $head) === 1 || preg_match('/\?\s*$/u', $query) === 1)
             && preg_match('/^\p{Ll}+(?:(?:ют|ут|ят|ат|ет|ёт|ит)(?:ся)?(?:\s+\p{Ll}|[.!?]*$)|(?:ованы|овано|ированы|ировано|ены|ено|аны|ано|ны|на|но|ен|ён)(?=\s|[.!?]|$))/u', $candidate) === 1;
     }
 

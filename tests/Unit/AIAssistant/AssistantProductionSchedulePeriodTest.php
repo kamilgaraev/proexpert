@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_prepositionless_calendar_units_match_explicit_periods_and_named_scope(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['прошлый месяц' => 'за прошлый месяц', 'предыдущий месяц' => 'за предыдущий месяц',
+                'текущий месяц' => 'за текущий месяц', 'этот месяц' => 'за этот месяц', 'позапрошлый месяц' => 'за позапрошлый месяц',
+                'прошлый год' => 'за прошлый год', 'предыдущий год' => 'за предыдущий год', 'текущий год' => 'за текущий год',
+                'позапрошлый год' => 'за позапрошлый год', 'прошлая неделя' => 'за прошлую неделю',
+                'предыдущая неделя' => 'за предыдущую неделю', 'текущая неделя' => 'за текущую неделю', 'эта неделя' => 'за эту неделю',
+                'позапрошлая неделя' => 'за позапрошлую неделю', 'прошлый день' => 'за прошлый день',
+                'предыдущий день' => 'за предыдущий день', 'текущий день' => 'за текущий день', 'позапрошлый день' => 'за позапрошлый день'] as $phrase => $explicit) {
+                $expected = AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$explicit]]);
+                self::assertNotNull($expected['period_start'] ?? null, $explicit);
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+                $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                    'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_prepositionless_relative_quarters_keep_calendar_bounds_and_named_project(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
