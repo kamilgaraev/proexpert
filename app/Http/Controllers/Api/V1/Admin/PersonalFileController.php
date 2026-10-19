@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 use function trans_message;
 
@@ -36,7 +37,7 @@ final class PersonalFileController extends Controller
                 $request->validated(),
             );
             $paginator->getCollection()->transform(
-                fn ($file): array => $this->personalFiles->payload($file),
+                fn ($file): array => $this->personalFiles->payload($file, $request->boolean('include_download_urls', true)),
             );
 
             return AdminResponse::paginated(
@@ -55,6 +56,26 @@ final class PersonalFileController extends Controller
             $this->logFailure('personal_files.index_failed', $exception, $request);
 
             return AdminResponse::error(trans_message('files.load_failed'), 500);
+        }
+    }
+
+    public function downloadUrl(Request $request, string $id): JsonResponse
+    {
+        try {
+            [$organizationId] = $this->scope($request);
+            $url = $this->personalFiles->resolveDownloadUrl($id, $organizationId, $request->user());
+
+            return AdminResponse::success(['download_url' => $url], trans_message('files.file_found'))
+                ->header('Cache-Control', 'no-store');
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('files.not_found'), 404)->header('Cache-Control', 'no-store');
+        } catch (HttpExceptionInterface $exception) {
+            return AdminResponse::error(trans_message('files.operation_failed'), $exception->getStatusCode())
+                ->header('Cache-Control', 'no-store');
+        } catch (Throwable $exception) {
+            $this->logFailure('personal_files.download_url_failed', $exception, $request, $id);
+
+            return AdminResponse::error(trans_message('files.operation_failed'), 500)->header('Cache-Control', 'no-store');
         }
     }
 

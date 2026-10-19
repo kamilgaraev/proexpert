@@ -12,6 +12,7 @@ use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Storage\FileService;
 use App\Services\Storage\OrganizationStoragePath;
+use App\Services\Storage\ReportFileDownloadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -64,12 +65,18 @@ class ReportFileController extends Controller
             }
 
             $paginator = ApiQueryMetrics::measureProcessingPhase('file_report_list', fn () => $query->orderBy($sortBy, $sortDir)->paginate($perPage));
-            $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
+            $storage = $request->boolean('include_download_urls', true)
+                ? $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization)
+                : null;
 
             $items = collect($paginator->items())->map(function (ReportFile $file) use ($storage, $organizationId) {
                 $payload = $file->toArray();
                 $payload['path'] = OrganizationStoragePath::displayPath($file->organization_id ?? $organizationId, $file->path);
                 $payload['download_url'] = null;
+
+                if ($storage === null) {
+                    return $payload;
+                }
 
                 try {
                     $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
@@ -105,6 +112,31 @@ class ReportFileController extends Controller
             ]);
 
             return AdminResponse::error(trans_message('files.load_failed'), 500);
+        }
+    }
+
+    public function downloadUrl(Request $request, string $id, ReportFileDownloadService $downloads): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            $organization = OrganizationContext::getOrganization() ?? $actor->currentOrganization;
+            $url = $downloads->resolveDownloadUrl($id, $organization, $actor);
+
+            return AdminResponse::success(['download_url' => $url], trans_message('files.file_found'))
+                ->header('Cache-Control', 'no-store');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return AdminResponse::error(trans_message('files.not_found'), 404)->header('Cache-Control', 'no-store');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            return AdminResponse::error(trans_message('files.operation_failed'), $exception->getStatusCode())
+                ->header('Cache-Control', 'no-store');
+        } catch (\Throwable $exception) {
+            Log::error('report_files.download_url_failed', [
+                'exception_class' => $exception::class,
+                'file_id' => $id,
+                'user_id' => $request->user()?->id,
+            ]);
+
+            return AdminResponse::error(trans_message('files.operation_failed'), 500)->header('Cache-Control', 'no-store');
         }
     }
 

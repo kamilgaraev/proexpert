@@ -24,6 +24,7 @@ class ListFilesRequest extends FormRequest
             'sort_by' => ['sometimes', 'in:created_at,size,filename'],
             'sort_dir' => ['sometimes', 'in:asc,desc'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'include_download_urls' => ['sometimes', 'boolean'],
         ];
     }
 
