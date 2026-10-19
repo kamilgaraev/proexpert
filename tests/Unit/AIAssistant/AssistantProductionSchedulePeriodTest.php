@@ -14,6 +14,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_verbal_dates_without_a_year_require_bounds_instead_of_all_time(): void
+    {
+        foreach (['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'] as $month) {
+            $this->assertPeriodScope('1 '.$month, null, null);
+            $this->assertPeriodScope('за 1 '.$month, null, null);
+        }
+    }
+
+    public function test_bare_months_without_a_year_require_bounds_instead_of_all_time(): void
+    {
+        foreach (['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'] as $month) {
+            $this->assertPeriodScope($month, null, null);
+            $this->assertPeriodScope('весь '.$month, null, null);
+        }
+    }
+
+    public function test_incomplete_month_and_day_suffixes_keep_named_scope_after_empty_exact_lookup(): void
+    {
+        foreach (['1 октября', 'за 1 октября', 'на 1 октября', 'с 1 октября', 'октябрь', 'весь октябрь', 'полный октябрь'] as $phrase) {
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $this->assertPeriodScope($phrase, null, null);
+        }
+    }
+
     public function test_verbal_date_ranges_with_shared_year_keep_named_scope_and_require_explicit_bounds(): void
     {
         foreach (['с 1 октября по 15 ноября 2026', 'со 2 октября до 15 ноября 2026 года',
@@ -1697,7 +1721,18 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
 
     public function test_ranges_keep_boundaries_and_unknown_periods_never_become_all_time(): void
     {
-        self::assertSame('ЖК на 8 Марта', AssistantProductionSchedulePeriod::withoutSuffix('ЖК на 8 Марта'));
+        foreach (['ЖК на 8 Марта', 'ЖК Май', 'Дом Октябрь', 'Дом Маяковского'] as $name) {
+            foreach (['', '«'] as $quote) {
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта '.$quote.$name.($quote === '' ? '' : '»'),
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($name): array {
+                    self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                });
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $name);
+            }
+        }
         foreach ([
             'Сверь выполненные работы с графиком за октябрь 2026' => ['2026-10-01', '2026-10-31'],
             'Сверь выполненные работы с графиком с 2026-10-01 по 2026-10-15' => ['2026-10-01', '2026-10-15'],
