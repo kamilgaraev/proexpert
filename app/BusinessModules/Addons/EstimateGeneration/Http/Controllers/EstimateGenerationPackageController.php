@@ -147,14 +147,20 @@ final class EstimateGenerationPackageController extends Controller
                     echo json_encode($draft, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 }, 'estimate-generation-draft-'.$session->id.'.json', ['Content-Type' => 'application/json; charset=UTF-8']);
             }
+            if (($session->input_payload['evaluation_mode'] ?? null) === 'universal') {
+                $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)
+                    ->read($request->user(), (int) $project->id, (int) $session->id);
+            }
             $result = $this->exporter->export($session->loadMissing(['project.organization', 'organization']));
             $filename = $result['filename'];
 
             return response($result['content'])
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''".rawurlencode($filename));
-        } catch (HttpExceptionInterface $exception) {
+        } catch (HttpExceptionInterface|AuthorizationException $exception) {
             throw $exception;
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.export_not_ready'), 422, $exception->errors());
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Export failed', ['failure_code' => 'export_failed', 'session_id' => $session->id]);
 

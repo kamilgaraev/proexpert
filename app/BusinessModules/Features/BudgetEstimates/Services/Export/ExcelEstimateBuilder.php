@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 
 use App\Models\Estimate;
 use App\Services\Export\ExportValueBinder;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -405,7 +406,7 @@ class ExcelEstimateBuilder
         if ($options['show_prices']) {
             // Unit price
             $sheet->setCellValue("{$col}{$row}", $item['unit_price']);
-            $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode('#,##0.00##########');
             $sheet->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
             $col++;
 
@@ -503,6 +504,7 @@ class ExcelEstimateBuilder
             ['Прямые затраты:', $totals['total_direct_costs']],
             ['Накладные расходы (' . number_format($totals['overhead_rate'], 2) . '%):', $totals['total_overhead_costs']],
             ['Сметная прибыль (' . number_format($totals['profit_rate'], 2) . '%):', $totals['total_estimated_profit']],
+            ...((float) ($totals['contingency_amount'] ?? 0) === 0.0 ? [] : [['Резерв на непредвиденные расходы:', $totals['contingency_amount']]]),
             ['ИТОГО без НДС:', $totals['total_amount']],
             [($totals['vat_calculation_method'] ?? null) === \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator::METHOD
                 ? 'НДС по подтверждённым источникам:' : 'НДС (' . number_format($totals['vat_rate'], 0) . '%):', $totals['vat_amount']],
@@ -652,9 +654,27 @@ class ExcelEstimateBuilder
             $this->collectItemsForMetadata($section['items'], $metadata['items'], $showPrices);
         }
 
-        // Write JSON to cell A1
-        $json = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        $sheet->setCellValue('A1', $json);
+        $json = json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+        if (mb_strlen($json, 'UTF-8') <= 32767 && strlen(mb_convert_encoding($json, 'UTF-16LE', 'UTF-8')) <= 65534) {
+            $sheet->setCellValueExplicit('A1', $json, DataType::TYPE_STRING);
+        } else {
+            $offset = 0;
+            $row = 2;
+            $byteLength = strlen($json);
+            while ($offset < $byteLength) {
+                $chunk = mb_strcut($json, $offset, 30000, 'UTF-8');
+                $sheet->setCellValueExplicit('A'.$row++, $chunk, DataType::TYPE_STRING);
+                $offset += strlen($chunk);
+            }
+            $sheet->setCellValueExplicit('A1', json_encode([
+                'prohelper_export' => true,
+                'version' => '3.0',
+                'encoding' => 'utf8-json-chunks',
+                'chunk_count' => $row - 2,
+                'byte_length' => $byteLength,
+                'sha256' => hash('sha256', $json),
+            ], JSON_THROW_ON_ERROR), DataType::TYPE_STRING);
+        }
         $sheet->getColumnDimension('A')->setWidth(150);
         $sheet->getStyle('A1')->getAlignment()->setWrapText(true);
     }

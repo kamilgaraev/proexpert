@@ -17,6 +17,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvalu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkSourceType;
@@ -25,6 +28,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\RoomIdentity
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
@@ -40,6 +44,8 @@ use App\Models\MeasurementUnit;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
@@ -49,6 +55,8 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
 {
     public function test_actual_xlsx_upload_and_published_measurements_reach_the_real_composer_and_final_signed_draft(): void
     {
+        $this->app->singleton(ApplyComposerCorrectionCycle::class, static fn ($app): ApplyComposerCorrectionCycle => new ApplyComposerCorrectionCycle(
+            $app->make(RunEstimateAudit::class), $app->make(RunEstimateComposerCorrection::class), 24576));
         $directory = sys_get_temp_dir().'/most-native-replay-'.bin2hex(random_bytes(8));
         self::assertTrue(mkdir($directory));
         $input = $directory.'/dimensions.xlsx';
@@ -162,12 +170,21 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             }
             $positions = array_values(array_filter($adapter->lastRun['evaluation']['scenarios'][0]['positions'], static fn (array $item): bool => $item['work_key'] === 'finish.floor'));
             self::assertCount(1, $positions);
-            self::assertSame('finish_finishing-norm-intent-1', $positions[0]['key']);
+            self::assertCount(1, array_unique(array_column($numeric, 'entityId')));
+            $roomEntityId = $numeric[0]->entityId;
+            self::assertSame('room-floor:'.hash('sha256', "finish_finishing-norm-intent-1\0".$roomEntityId), $positions[0]['key']);
+            self::assertSame($roomEntityId, $positions[0]['entity_id']);
             self::assertSame('50', $positions[0]['quantity']);
             self::assertSame('m2', $positions[0]['unit']);
             self::assertSame('supported', $positions[0]['quantity_status']);
             self::assertSame('floor_area', $positions[0]['quantity_formula']);
             self::assertNotEmpty($positions[0]['quantity_evidence_details']);
+            $roughFloor = array_values(array_filter($adapter->lastRun['evaluation']['scenarios'][0]['positions'], static fn (array $item): bool => $item['work_key'] === 'rough.floor'));
+            self::assertCount(1, $roughFloor);
+            self::assertSame('room-floor:'.hash('sha256', "rough_finishing-norm-intent-1\0".$roomEntityId), $roughFloor[0]['key']);
+            self::assertSame($roomEntityId, $roughFloor[0]['entity_id']);
+            self::assertSame('50', $roughFloor[0]['quantity']);
+            self::assertSame('supported', $roughFloor[0]['quantity_status']);
             self::assertNull($positions[0]['price_snapshot']);
             $coveredDuplicates = array_values(array_filter($session->draft_payload['estimate_composition']['request_info'],
                 static fn (array $notice): bool => $notice['reason'] === 'estimate_composer_physical_duplicate_covered'));
@@ -195,7 +212,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
                 self::assertSame($currentIds, array_column($repository->currentDerivedQuantities(
                     (int) $session->organization_id, (int) $session->project_id, (int) $session->id, $measurementVersion), 'id'));
             }
-            $this->confirmAndApplyOriginalWorklist($session, $adapter);
+            $this->confirmAndApplyOriginalWorklist($session, $adapter, $roomEntityId);
         } finally {
             $book->disconnectWorksheets();
             if (is_file($input)) {
@@ -205,7 +222,7 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         }
     }
 
-    private function confirmAndApplyOriginalWorklist(EstimateGenerationSession $session, RecordedUniversalPipelineAdapter $adapter): void
+    private function confirmAndApplyOriginalWorklist(EstimateGenerationSession $session, RecordedUniversalPipelineAdapter $adapter, string $roomEntityId): void
     {
         $actor = User::query()->findOrFail($session->user_id);
         $projectId = (int) $session->project_id;
@@ -213,9 +230,10 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $organizationId = (int) $session->organization_id;
         $original = $adapter->lastRun['evaluation']['scenarios'][0]['positions'];
         $originalKeys = array_column($original, 'key');
+        $nativePosition = array_values(array_filter($original, static fn (array $item): bool => $item['work_key'] === 'finish.floor'))[0];
         self::assertEqualsCanonicalizing([
-            'rough_finishing-norm-intent-1', 'rough_finishing-norm-intent-2', 'rough_finishing-norm-intent-3',
-            'finish_finishing-norm-intent-1', 'finish_finishing-norm-intent-2', 'finish_finishing-norm-intent-3',
+            'room-floor:'.hash('sha256', "rough_finishing-norm-intent-1\0".$roomEntityId), 'rough_finishing-norm-intent-2', 'rough_finishing-norm-intent-3',
+            'room-floor:'.hash('sha256', "finish_finishing-norm-intent-1\0".$roomEntityId), 'finish_finishing-norm-intent-2', 'finish_finishing-norm-intent-3',
             'finish_finishing-norm-intent-4', 'finishing', 'preparation',
         ], $originalKeys);
         $snapshot = app(ProjectModelRepository::class)->snapshot($organizationId, $projectId, $sessionId);
@@ -235,7 +253,6 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $sources = $sourceResult['sources'];
         self::assertCount(1, $sources);
         $identity = $sources[0];
-        $nativePosition = array_values(array_filter($original, static fn (array $item): bool => $item['work_key'] === 'finish.floor'))[0];
         self::assertSame($nativePosition['entity_id'], $identity['entity_id']);
         self::assertSame('candidate', $identity['status']);
         $identityInput = ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->fresh()->state_version,
@@ -311,6 +328,14 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
             ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
                 'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'],
                 'scenario_id' => 'base', 'assumptions_accepted' => true]);
+        $request = Request::create('/export', 'GET', ['format' => 'excel']);
+        $request->setUserResolver(static fn () => $actor);
+        $beforeExport = $session->fresh()->getRawOriginal();
+        $response = app(EstimateGenerationPackageController::class)->export($request, $session->project, $session->fresh());
+        self::assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+        self::assertSame('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $response->headers->get('Content-Type'));
+        self::assertSame($beforeExport, $session->fresh()->getRawOriginal());
+        $this->assertPipelineXlsx((string) $response->getContent(), $originalKeys);
         $assignment = UserRoleAssignment::query()->where('user_id', $actor->id)->firstOrFail();
         $role = OrganizationCustomRole::query()->where('organization_id', $organizationId)->where('slug', $assignment->role_slug)->firstOrFail();
         $permissions = $role->module_permissions;
@@ -330,5 +355,51 @@ final class RecordedSpreadsheetPipelinePostgresTest extends EstimateGenerationCa
         $totals = (new \ReflectionMethod(EstimateExportService::class, 'prepareTotalsData'))->invoke(app(EstimateExportService::class), $estimate->fresh());
         self::assertSame('1.74', (string) $totals['total_amount_with_vat']);
         self::assertSame(4, DB::table('estimate_generation_ai_usage')->where('session_id', $sessionId)->count());
+    }
+
+    private function assertPipelineXlsx(string $content, array $workKeys): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-recorded-pipeline-export-');
+        self::assertNotFalse($path);
+        $book = null;
+        try {
+            file_put_contents($path, $content);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            self::assertNotNull($sheet);
+            $gross = [];
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                if ($sheet->getCell('F'.$row)->getValue() === 'ВСЕГО С НДС:') {
+                    $gross[] = (string) \Brick\Math\BigDecimal::of(str_replace(' ', '', (string) $sheet->getCell('G'.$row)->getValue()))->toScale(2);
+                }
+            }
+            self::assertSame(['1.74'], $gross);
+            $metadataSheet = $book->getSheetByName('_METADATA_');
+            self::assertNotNull($metadataSheet);
+            $metadata = json_decode((string) $metadataSheet->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
+            if (($metadata['encoding'] ?? null) === 'utf8-json-chunks') {
+                $json = '';
+                for ($row = 2; $row <= $metadata['chunk_count'] + 1; $row++) {
+                    $json .= (string) $metadataSheet->getCell('A'.$row)->getValue();
+                }
+                self::assertSame($metadata['byte_length'], strlen($json));
+                self::assertSame($metadata['sha256'], hash('sha256', $json));
+                $metadata = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+            }
+            self::assertCount(count($workKeys), $metadata['items']);
+            self::assertEqualsCanonicalizing($workKeys, array_column(array_column($metadata['items'], 'metadata'), 'work_item_key'));
+            $exported = [];
+            foreach ($metadata['items'] as $item) {
+                self::assertNull($item['parent_work_id']);
+                self::assertGreaterThan(0, $item['quantity_total']);
+                self::assertNotEmpty($item['metadata']['price_snapshot']['source_hash']);
+                self::assertNotEmpty($item['metadata']['source_money']);
+                $exported[] = $item['metadata']['evaluation_confirmation']['scenario_id'];
+            }
+            self::assertSame(array_fill(0, count($workKeys), 'base'), $exported);
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($path);
+        }
     }
 }

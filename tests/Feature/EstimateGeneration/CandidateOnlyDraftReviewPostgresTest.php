@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
@@ -167,6 +168,12 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
                 'revision_id' => $ready['revision_id'], 'content_hash' => $ready['content_hash'],
                 'scenario_id' => 'base', 'assumptions_accepted' => true]);
         $this->actingAs($actor);
+        $beforeExport = $session->fresh()->getRawOriginal();
+        $exportSession = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport::class)
+            ->read($actor, (int) $project->id, (int) $session->id);
+        $file = app(\App\Integrations\EstimateGeneration\EstimateGenerationExcelExportService::class)->export($exportSession);
+        $this->assertNativeResourceXlsx($file['content'], [$item['key'], $finish['key']]);
+        self::assertSame($beforeExport, $session->fresh()->getRawOriginal());
         $factsBeforeRead = app(ProjectModelRepository::class)->snapshotForPlanning((int) $organization->id, (int) $project->id, (int) $session->id, 10001)['token'];
         $probeItems = array_column(array_intersect_key((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkScope)
             ->items($session->fresh()->draft_payload), array_fill_keys([$item['key'], $finish['key']], true)), 'item');
@@ -351,6 +358,58 @@ final class CandidateOnlyDraftReviewPostgresTest extends EstimateGenerationCanon
         self::assertSame('1989.58', $estimate->fresh()->total_amount_with_vat);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         Http::assertNothingSent();
+    }
+
+    private function assertNativeResourceXlsx(string $content, array $workKeys): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-confirmed-native-resources-');
+        self::assertNotFalse($path);
+        $book = null;
+        try {
+            file_put_contents($path, $content);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            self::assertNotNull($sheet);
+            $gross = [];
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                if ($sheet->getCell('F'.$row)->getValue() === 'ВСЕГО С НДС:') {
+                    $gross[] = (string) \Brick\Math\BigDecimal::of(str_replace(' ', '', (string) $sheet->getCell('G'.$row)->getValue()))->toScale(2);
+                }
+            }
+            self::assertSame(['1989.58'], $gross);
+            $metadataSheet = $book->getSheetByName('_METADATA_');
+            self::assertNotNull($metadataSheet);
+            $metadata = json_decode((string) $metadataSheet->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
+            if (($metadata['encoding'] ?? null) === 'utf8-json-chunks') {
+                $json = '';
+                for ($row = 2; $row <= $metadata['chunk_count'] + 1; $row++) {
+                    $json .= (string) $metadataSheet->getCell('A'.$row)->getValue();
+                }
+                self::assertSame($metadata['sha256'], hash('sha256', $json));
+                $metadata = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+            }
+            self::assertCount(6, $metadata['items']);
+            self::assertCount(6, array_unique(array_column($metadata['items'], 'id')));
+            $works = array_values(array_filter($metadata['items'], static fn (array $item): bool => $item['parent_work_id'] === null));
+            $resources = array_values(array_filter($metadata['items'], static fn (array $item): bool => $item['parent_work_id'] !== null));
+            self::assertEqualsCanonicalizing($workKeys, array_column(array_column($works, 'metadata'), 'work_item_key'));
+            self::assertCount(4, $resources);
+            self::assertEqualsCanonicalizing(['labor', 'labor', 'material', 'material'], array_column($resources, 'item_type'));
+            self::assertEqualsCanonicalizing([6, 6, 0.12, 6.3], array_column($resources, 'quantity_total'));
+            self::assertEqualsCanonicalizing([30, 30, 90, 200], array_column($resources, 'unit_price'));
+            foreach ($resources as $resource) {
+                self::assertNotEmpty($resource['metadata']['resource_key']);
+                self::assertNotEmpty($resource['metadata']['normative_ref']['price_id']);
+                self::assertNotEmpty($resource['measurement_unit']);
+            }
+            foreach ($works as $work) {
+                self::assertSame('normative', $work['metadata']['price_snapshot']['source_type']);
+                self::assertNotEmpty($work['metadata']['source_money']);
+            }
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($path);
+        }
     }
 
     #[DataProvider('candidateOrigins')]
