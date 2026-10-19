@@ -513,7 +513,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         $graph = PipelineDefinitionGraph::standard();
         if ($change === 'old_work_plan_schema') {
             $graph = new PipelineDefinitionGraph(array_map(static fn (StageDefinition $definition): StageDefinition => $definition->stage === ProcessingStage::PlanWorkItems
-                ? new StageDefinition($definition->stage, 87, $definition->dependencies, $definition->maxArtifactBytes)
+                ? new StageDefinition($definition->stage, 88, $definition->dependencies, $definition->maxArtifactBytes)
                 : $definition, $graph->ordered()));
         }
         $results = new StageResultFactory($artifacts, $graph);

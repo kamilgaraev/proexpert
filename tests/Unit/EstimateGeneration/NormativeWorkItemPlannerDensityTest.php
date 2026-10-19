@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeS
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class NormativeWorkItemPlannerDensityTest extends TestCase
@@ -448,6 +449,336 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ));
 
             self::assertNotContains('sanitary.points', array_column($items, 'quantity_formula'), $text);
+        }
+    }
+
+    #[DataProvider('typedResidentialFixtureStatements')]
+    public function test_universal_fixture_text_does_not_select_a_different_type(string $text, array $expected): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['manual', 'document'] as $source) {
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']]];
+            if ($source === 'manual') {
+                $analysis['object']['manual_description'] = $text;
+            } else {
+                $analysis['source_documents'] = [['id' => 91, 'filename' => 'spec.pdf', 'status' => 'ready',
+                    'quality' => ['level' => 'good'], 'text' => $text,
+                    'document_understanding' => ['role_for_estimation' => 'quantity_source']]];
+            }
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame($expected, array_column($items, 'quantity_formula'), $source.' '.$text);
+            foreach ($items as $item) {
+                self::assertNull($item['quantity']);
+                self::assertSame($item['quantity_formula'], $item['metadata']['material_scenario_work_key']);
+                self::assertTrue($item['metadata']['material_assumption']['requires_confirmation']);
+                self::assertSame('not_calculated', $item['pricing_status']);
+                foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resource) {
+                    self::assertSame([], $item[$resource]);
+                }
+            }
+        }
+    }
+
+    public static function typedResidentialFixtureStatements(): array
+    {
+        return [
+            ['Установка ванны — 1 шт.', []],
+            ['Монтаж кухонной мойки — 1 шт.', []],
+            ['Монтаж водонагревателя 150 л — 1 шт.', []],
+            ['Предусмотрена установка унитаза — 1 шт.', ['sanitary.toilets']],
+            ['Установка умывальника с подводкой ХВС и ГВС.', ['sanitary.washbasins']],
+            ['Предусмотрена установка душевой кабины с пластиковым поддоном.', ['sanitary.showers']],
+            ['Душ — 1 шт.', []],
+            ['Раковина — 1 шт.', []],
+            ['Унитаз не предусмотрен. Установка умывальника.', ['sanitary.washbasins']],
+            ['Без унитаза; предусмотрена душевая кабина.', ['sanitary.showers']],
+            ['Умывальник не требуется, предусмотрена установка унитаза.', ['sanitary.toilets']],
+            ['Установка ванны. Унитаз не предусмотрен.', []],
+            ['Установка унитаза без умывальника.', ['sanitary.toilets']],
+            ['Не предусмотрена установка напольного унитаза.', []],
+            ['Унитаз с бачком не предусмотрен.', []],
+            ['Без напольного унитаза; предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Умывальник керамический не требуется, установка душевой кабины.', ['sanitary.showers']],
+            ['Установка умывальника — не менее 1 шт.', ['sanitary.washbasins']],
+            ['Безопасная установка умывальника.', ['sanitary.washbasins']],
+            ['Установка умывальника после отмены работ по электрике.', ['sanitary.washbasins']],
+            ['Предусмотрена установка унитаза; отменён монтаж умывальника.', ['sanitary.toilets']],
+            ['Без ванны предусмотрена установка унитаза.', ['sanitary.toilets']],
+            ['Без кухонной мойки предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Без унитаза предусмотрена установка душевой кабины.', ['sanitary.showers']],
+            ['Унитаз предусмотрен и умывальник не требуется.', ['sanitary.toilets']],
+            ['Установка унитаза и умывальника не предусмотрена.', []],
+            ['Унитаз и умывальник не предусмотрены.', []],
+            ['Без умывальника унитаз — 1 шт.', ['sanitary.toilets']],
+            ['Без ванны и мойки предусмотрена установка унитаза.', ['sanitary.toilets']],
+            ['Унитаз не предусмотрен и установка умывальника требуется.', ['sanitary.washbasins']],
+            ['Исключена ванна, предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Без ремонта предусмотрена установка унитаза.', ['sanitary.toilets']],
+            ['Без замены подводки предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Без унитаза и умывальника предусмотрена установка душевой кабины.', ['sanitary.showers']],
+            ['Не предусмотрена установка унитаза и умывальника, предусмотрена душевая кабина.', ['sanitary.showers']],
+            ['Без бачка установка унитаза.', ['sanitary.toilets']],
+            ['Без инсталляции монтаж унитаза.', ['sanitary.toilets']],
+            ['Без монтажа унитаза предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Отменена установка унитаза, предусмотрена установка умывальника.', ['sanitary.washbasins']],
+            ['Установка унитаза не требует демонтажа пола.', ['sanitary.toilets']],
+            ['Монтаж унитаза не включает поставку бачка.', ['sanitary.toilets']],
+            ['Установка унитаза и умывальника не требует демонтажа пола.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Монтаж унитаза и умывальника не включает поставку бачков.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Схема не требует установки унитаза.', []],
+            ['Унитаз не включён в смету.', []],
+            ['Установка ванны рядом с унитазом.', []],
+            ['Монтаж унитаза рядом с умывальником.', ['sanitary.toilets']],
+            ['Монтаж умывальника рядом с унитазом.', ['sanitary.washbasins']],
+            ['Установка ванны и унитаза.', ['sanitary.toilets']],
+            ['Унитаз и умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз — 1 шт., рядом с умывальником.', ['sanitary.toilets']],
+            ['Предусмотрена установка душевой кабины рядом с унитазом.', ['sanitary.showers']],
+            ['Унитаз рядом с умывальником предусмотрен.', ['sanitary.toilets']],
+            ['Установка ванны в помещении с унитазом.', []],
+            ['Монтаж унитаза в помещении с умывальником.', ['sanitary.toilets']],
+            ['Монтаж унитаза рядом с умывальником не требуется.', []],
+            ['Предусмотрены унитаз, а также умывальник.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Предусмотрены унитаз а также умывальник.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз, а также умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза, а ещё умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз, а также умывальник не предусмотрены.', []],
+            ['Без унитаза, а также умывальника предусмотрена установка душевой кабины.', ['sanitary.showers']],
+            ['Унитаз, умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза, а также умывальника предусмотрена.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза, умывальник не предусмотрен.', ['sanitary.toilets']],
+            ['Установка унитаза, а также умывальник не требуется.', ['sanitary.toilets']],
+            ['Установка унитаза, умывальник отсутствует.', ['sanitary.toilets']],
+            ['Унитаз, умывальник не предусмотрены.', []],
+            ['Монтаж унитаза рядом с умывальником, душевая кабина не предусмотрена.', ['sanitary.toilets']],
+            ['Предусмотрена установка унитаза, а также умывальник не включён в смету.', ['sanitary.toilets']],
+            ['Установка унитаза, умывальник исключается.', ['sanitary.toilets']],
+            ['Установка унитаза, а также умывальник отменяется.', ['sanitary.toilets']],
+            ['Установка унитаза, умывальник исключаются.', []],
+            ['Установка унитаза, умывальник отменяются.', []],
+            ['Монтаж унитаза рядом с умывальником, душевая кабина исключается.', ['sanitary.toilets']],
+            ['Установка унитаза и настенного умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз и керамический умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и нового настенного керамического умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Без унитаза, керамический умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Монтаж унитаза, настенный умывальник не предусмотрен.', ['sanitary.toilets']],
+            ['Установка ванны рядом с настенным унитазом и керамическим умывальником.', []],
+            ['Установка унитаза и настенного умывальника не предусмотрена.', []],
+            ['Установка унитаза и непредусмотренного умывальника.', ['sanitary.toilets']],
+            ['Установка унитаза и 2 керамических умывальников.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и двух керамических умывальников.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и неподключенного умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и нового неустановленного умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Без унитаза, умывальник устанавливается.', ['sanitary.washbasins']],
+            ['Без унитаза, а также умывальник подключается.', ['sanitary.washbasins']],
+            ['Без унитаза, умывальник монтируется.', ['sanitary.washbasins']],
+            ['Без унитаза, умывальник нужен.', ['sanitary.washbasins']],
+            ['Без унитаза, умывальник требуется.', ['sanitary.washbasins']],
+            ['Установка унитаза, умывальники не предусмотрены.', ['sanitary.toilets']],
+            ['Без унитаза, умывальники предусмотрены.', ['sanitary.washbasins']],
+            ['Установка унитаза, умывальники исключаются.', ['sanitary.toilets']],
+            ['Унитаз, умывальники предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и умывальников не предусмотрена.', []],
+            ['Установка унитаза, умывальник не предусмотрены.', []],
+            ['Установка унитаза, умывальников не предусмотрено.', ['sanitary.toilets']],
+            ['Без унитаза, настенные умывальники предусмотрены.', ['sanitary.washbasins']],
+            ['Монтаж унитаза рядом с умывальником, душевые кабины не предусмотрены.', ['sanitary.toilets']],
+            ['Без унитаза, два умывальника предусмотрены.', ['sanitary.washbasins']],
+            ['Установка умывальника, два унитаза не предусмотрены.', ['sanitary.washbasins']],
+            ['Без унитаза, 2 новых умывальника предусмотрены.', ['sanitary.washbasins']],
+            ['Без унитаза, два новых керамических умывальника предусмотрены.', ['sanitary.washbasins']],
+            ['Унитаз, два умывальника предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и двух умывальников не предусмотрена.', []],
+            ['Без ванны и унитаз предусмотрен.', ['sanitary.toilets']],
+            ['Установка унитаза с бачком и умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз с бачком и умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза со встроенным сливным бачком и умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз с бачком и умывальник не предусмотрены.', []],
+            ['Не предусмотрена установка унитаза с бачком и умывальника.', []],
+            ['Без унитаза с бачком и умывальника.', []],
+            ['Установка ванны с экраном и умывальника.', ['sanitary.washbasins']],
+            ['Монтаж унитаза с бачком рядом с умывальником и душевой кабиной.', ['sanitary.toilets']],
+            ['Монтаж унитаза с бачком и умывальник не предусмотрен.', ['sanitary.toilets']],
+            ['Установка унитаза и умывальника с тумбой и душевой кабины.', ['sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins']],
+            ['Монтаж унитаза с бачком и умывальником.', ['sanitary.toilets']],
+            ['Монтаж унитаза со встроенным бачком и подвесным умывальником.', ['sanitary.toilets']],
+            ['Установка унитаза с бачком и крышкой и умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Унитаз с бачком и крышкой и умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Не предусмотрена установка унитаза с бачком и крышкой и умывальника.', []],
+            ['Унитаз с бачком и крышкой и умывальник не предусмотрены.', []],
+            ['Без унитаза с бачком и крышкой и умывальника.', []],
+            ['Монтаж унитаза с бачком и крышкой и умывальником.', ['sanitary.toilets']],
+            ['Монтаж унитаза с бачком, крышкой, а также умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Монтаж унитаза с новым бачком и крышкой и умывальника.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Монтаж унитаза с бачком и крышкой рядом с умывальником и душевой кабиной.', ['sanitary.toilets']],
+            ['Монтаж ванны с экраном и креплением и умывальника.', ['sanitary.washbasins']],
+            ['Без унитаза и умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Без ванны и подвесной унитаз предусмотрен.', ['sanitary.toilets']],
+            ['Без унитаза а также умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Монтаж унитаза и умывальник не предусмотрен.', ['sanitary.toilets']],
+            ['Монтаж унитаза и умывальника не предусмотрен.', []],
+            ['Без унитаза и умывальники предусмотрены.', ['sanitary.washbasins']],
+            ['Унитаз и умывальники предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза и умывальники не предусмотрены.', []],
+            ['Без ванны и два унитаза предусмотрены.', ['sanitary.toilets']],
+            ['Монтаж унитаза рядом с умывальником и душевая кабина предусмотрена.', ['sanitary.showers', 'sanitary.toilets']],
+            ['Не предусмотрена установка унитаза, а также умывальника.', []],
+            ['Без унитаза, умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Без унитаза, умывальник — 1 шт.', ['sanitary.washbasins']],
+            ['Без ванны, унитаз предусмотрен по плану.', ['sanitary.toilets']],
+            ['Без унитаза и умывальника, душевая кабина предусмотрена.', ['sanitary.showers']],
+            ['Без унитаза, умывальник не предусмотрен.', []],
+            ['Установка ванны рядом с унитазом и умывальником.', []],
+            ['Монтаж унитаза рядом с умывальником и душевой кабиной.', ['sanitary.toilets']],
+            ['Установка ванны рядом с унитазом, а также умывальником.', []],
+            ['Монтаж унитаза рядом с умывальником, душевая кабина предусмотрена.', ['sanitary.showers', 'sanitary.toilets']],
+            ['Без унитаза, а также умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Установка ванны рядом с унитазом, а также умывальник предусмотрен.', ['sanitary.washbasins']],
+            ['Без унитаза, и ещё умывальник — 1 шт.', ['sanitary.washbasins']],
+            ['Без унитаза, а также умывальник не предусмотрен.', []],
+            ['Без унитаза, а также умывальника предусмотрена установка душевой кабины.', ['sanitary.showers']],
+            ['Установка розетки в ванной комнате.', []],
+        ];
+    }
+
+    public function test_confirmed_sanitary_takeoff_opens_only_its_exact_fixture_key(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            $takeoff = $this->confirmedTakeoff($key, 1, 'шт');
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                'document_context' => ['quantity_takeoffs' => [$takeoff]]];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('1', $items[0]['quantity']);
+            foreach (['review', 'no_source', 'zero'] as $invalid) {
+                $bad = $takeoff;
+                if ($invalid === 'review') {
+                    $bad['normalized_payload']['review_required'] = true;
+                } elseif ($invalid === 'no_source') {
+                    $bad['source_refs'] = [];
+                } else {
+                    $bad['quantity'] = 0;
+                }
+                $analysis['document_context']['quantity_takeoffs'] = [$bad];
+                $items = array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.'));
+                self::assertSame([], array_values($items), $key.' '.$invalid);
+            }
+        }
+    }
+
+    public function test_singular_source_ref_stays_bound_to_its_sanitary_takeoff(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        $estimate['source_refs'] = [['type' => 'drawing', 'filename' => 'unrelated-section.pdf', 'page_number' => 99]];
+        $estimate['sections'][0]['source_refs'] = $estimate['source_refs'];
+
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            foreach (['missing', 'empty', 'invalid'] as $plural) {
+                $takeoff = $this->confirmedTakeoff($key, 2, 'шт');
+                unset($takeoff['source_refs']);
+                if ($plural !== 'missing') {
+                    $takeoff['source_refs'] = $plural === 'empty' ? [] : ['invalid'];
+                }
+                $takeoff['source_ref'] = ['type' => 'drawing', 'filename' => $key.'.pdf', 'page_number' => 4];
+                $analysis = ['object' => ['object_type' => 'house'],
+                    'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                    'document_context' => ['quantity_takeoffs' => [$takeoff]]];
+                $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+                self::assertSame([$key], array_column($items, 'quantity_formula'));
+                self::assertSame('2', $items[0]['quantity']);
+                self::assertCount(1, $items[0]['source_refs']);
+                self::assertSame($key.'.pdf', $items[0]['source_refs'][0]['filename']);
+                self::assertSame(4, $items[0]['source_refs'][0]['page_number']);
+            }
+        }
+    }
+
+    public function test_provenance_aware_sanitary_inference_opens_only_its_own_type(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            $inference = ['inference_type' => 'specification_takeoff', 'scope_type' => 'plumbing',
+                'title' => 'Количество по спецификации', 'confidence' => 0.91,
+                'source_ref' => ['document_id' => 82], 'review_required' => false,
+                'normalized_payload' => ['quantity_key' => $key, 'quantity_value' => 2, 'unit' => 'шт']];
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                'document_context' => ['scope_inferences' => [$inference]]];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('2', $items[0]['quantity']);
+            $named = $inference;
+            $named['title'] = match ($key) {
+                'sanitary.points' => 'Установка биде',
+                'sanitary.showers' => 'Установка душевой кабины',
+                'sanitary.toilets' => 'Установка унитаза',
+                default => 'Установка умывальника',
+            };
+            $analysis['document_context']['scope_inferences'] = [$named];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('2', $items[0]['quantity']);
+            foreach (['review', 'no_source', 'zero', 'untrusted_type'] as $invalid) {
+                $bad = $inference;
+                if ($invalid === 'review') {
+                    $bad['review_required'] = true;
+                } elseif ($invalid === 'no_source') {
+                    unset($bad['source_ref']);
+                } elseif ($invalid === 'zero') {
+                    $bad['normalized_payload']['quantity_value'] = 0;
+                } else {
+                    $bad['inference_type'] = 'drawing_hint';
+                }
+                $analysis['document_context']['scope_inferences'] = [$bad];
+                $items = array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.'));
+                self::assertSame([], array_values($items), $key.' '.$invalid);
+            }
+        }
+    }
+
+    public function test_incompatible_sanitary_inference_does_not_suppress_matching_catalog_definition(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach ([
+            'sanitary.showers' => 'Предусмотрена установка душевой кабины.',
+            'sanitary.toilets' => 'Предусмотрена установка унитаза.',
+            'sanitary.washbasins' => 'Предусмотрена установка умывальника.',
+        ] as $key => $text) {
+            foreach (['sewerage', 'engineering', 'plumbing'] as $scope) {
+                $inference = ['inference_type' => 'specification_takeoff', 'scope_type' => $scope,
+                    'title' => 'Количество по спецификации', 'confidence' => 0.91,
+                    'source_ref' => ['document_id' => 82], 'review_required' => false,
+                    'normalized_payload' => ['quantity_key' => $key, 'quantity_value' => 2, 'unit' => 'шт']];
+                $analysis = ['object' => ['object_type' => 'house', 'manual_description' => $text],
+                    'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                    'document_context' => ['scope_inferences' => [$inference]]];
+                $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+                self::assertSame([$key], array_column($items, 'quantity_formula'), $key.' '.$scope);
+                self::assertSame($scope === 'plumbing' ? '2' : null, $items[0]['quantity']);
+                self::assertSame($scope === 'plumbing' ? 'scope_inference' : 'qualitative_work_catalog', $items[0]['metadata']['generation_source']);
+                foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resource) {
+                    self::assertSame([], $items[0][$resource]);
+                }
+                if ($scope === 'plumbing') {
+                    self::assertSame(82, $items[0]['source_refs'][0]['document_id']);
+                    self::assertArrayHasKey('scope_inference', $items[0]['metadata']);
+                } else {
+                    self::assertSame([], $items[0]['source_refs']);
+                    self::assertArrayNotHasKey('scope_inference', $items[0]['metadata']);
+                }
+            }
         }
     }
 

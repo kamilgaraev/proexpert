@@ -684,14 +684,26 @@ final class NormativeWorkItemPlannerService
             )),
         ];
 
-        return array_values(array_filter(
+        $definitions = array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
                 && (! $separateWaterScope || ($definition['category'] ?? null) === $scopeType)
                 && ($openingQuantityKeys === null || in_array($definition['quantity_key'] ?? null, $openingQuantityKeys, true))
                 && $this->definitionBelongsToPackage((string) ($definition['quantity_key'] ?? ''), $packageKey, $packagePlan)
                 && ($universal || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
-                && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
+        ));
+        $confirmedSanitaryInferenceKeys = [];
+        foreach ($definitions as $definition) {
+            $inference = $definition['metadata']['scope_inference'] ?? null;
+            $quantityKey = (string) ($definition['quantity_key'] ?? '');
+            if (is_array($inference) && $this->isConfirmedSanitaryFixtureInference($inference, $quantityKey)) {
+                $confirmedSanitaryInferenceKeys[$quantityKey] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $definitions,
+            fn (array $definition): bool => $this->definitionHasSanitaryFixtureEvidence($definition, $analysis, $confirmedSanitaryInferenceKeys)
         ));
     }
 
@@ -712,7 +724,7 @@ final class NormativeWorkItemPlannerService
         return $owner === null || ! in_array($owner, $packages, true) || $packageKey === $owner;
     }
 
-    private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool
+    private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis, array $confirmedSanitaryInferenceKeys): bool
     {
         $quantityKey = (string) ($definition['quantity_key'] ?? '');
         if (! in_array($quantityKey, [
@@ -724,12 +736,23 @@ final class NormativeWorkItemPlannerService
             return true;
         }
 
-        if ($this->hasConfirmedSanitaryPointsTakeoff($analysis)) {
+        $inference = $definition['metadata']['scope_inference'] ?? null;
+        if (is_array($inference)) {
+            return $this->isConfirmedSanitaryFixtureInference($inference, $quantityKey);
+        }
+        if ($this->hasConfirmedSanitaryFixtureTakeoff($analysis, $quantityKey)) {
             return true;
+        }
+        if (isset($confirmedSanitaryInferenceKeys[$quantityKey])) {
+            return false;
+        }
+
+        if ($quantityKey === 'sanitary.points') {
+            return false;
         }
 
         foreach ($this->sanitaryFixtureEvidenceTexts($analysis) as $text) {
-            if ($this->hasLocalSanitaryFixtureStatement($text)) {
+            if ($this->hasLocalSanitaryFixtureStatement($text, $quantityKey)) {
                 return true;
             }
         }
@@ -737,28 +760,123 @@ final class NormativeWorkItemPlannerService
         return false;
     }
 
-    private function hasLocalSanitaryFixtureStatement(string $text): bool
+    private function hasLocalSanitaryFixtureStatement(string $text, string $quantityKey): bool
     {
-        $statements = preg_split('~(?:[.!?;]+|\R+)~u', $text) ?: [];
-        $fixture = '(?:'
-            .'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
-            .'раковин(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
-            .'умывальник(?:а|и|ов|ом|ами)?|'
-            .'ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
-            .'душ(?:а|у|е|ем|и|ей|ам|ами|ах)?|'
-            .'смесител(?:ь|я|ю|ем|е|и|ей|ям|ями|ях)|'
-            .'биде|'
-            .'писсуар(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
-            .'мойк(?:а|и|у|е|ой|ою|ам|ами|ах)|'
-            .'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+'
-            .'(?:поддон(?:а|у|ом|е|ы|ов|ам|ами|ах)?|кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?)'
-            .')';
+        $fixturePatterns = [
+            'sanitary.toilets' => 'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?',
+            'sanitary.washbasins' => 'умывальник(?:а|у|е|и|ов|ом|ам|ами|ах)?',
+            'sanitary.showers' => 'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?',
+        ];
+        $fixture = $fixturePatterns[$quantityKey] ?? null;
+        if ($fixture === null) {
+            return false;
+        }
+        $installationAction = '(?:устан(?:ов|ав)\p{L}*|монтаж\p{L}*|монтир\p{L}*|подключ\p{L}*)';
+        $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|'.$installationAction.')';
+        $negativeFixtureAction = '(?:предусмотр\p{L}*|требу(?:ется|ются)|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ(?:ен|ён)\p{L}*|'.$installationAction.')';
+        $singularExclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ается)|отмен(?:ить|ён|ен|ена|ено|яется)|отсутствует)';
+        $pluralExclusionAction = '(?:исключ(?:ены|аются)|отмен(?:ены|яются)|отсутствуют)';
+        $exclusionAction = '(?:'.$singularExclusionAction.'|'.$pluralExclusionAction.')';
+        $anyFixture = '(?<![\p{L}\p{N}])(?:'.implode('|', $fixturePatterns)
+            .'|ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|мойк\p{L}*|раковин\p{L}*|смесител\p{L}*|биде|писсуар\p{L}*|душ(?:а|у|е|ем|и|ей|ам|ами|ах)?)'
+            .'(?![\p{L}\p{N}])';
+        $separateAssertion = '(?<![\p{L}\p{N}])(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|включ\p{L}*|будет|будут)(?![\p{L}\p{N}])';
+        $negativePredicate = '(?:не\s+'.$negativeFixtureAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
+        $before = static fn (string $target, string $boundary, int $maxDistance = 60): string => '(?=[^,;.!?\r\n]{0,'.$maxDistance.'}'.$target.')'
+            .'(?:(?!'.$boundary.')[^,;.!?\r\n])*?';
+        $fixtureBoundary = $anyFixture.'|'.$separateAssertion;
+        $excludedBoundary = $fixtureBoundary.'|(?<![\p{L}\p{N}])(?:установка|установку|монтаж|подключение)(?![\p{L}\p{N}])';
+        $beforeNegative = $before($negativePredicate, $anyFixture);
+        $beforeFixture = $before($fixture, $fixtureBoundary);
+        $beforeNegatedFixture = $before($fixture, $fixtureBoundary.'|(?<![\p{L}\p{N}])(?:и|но|а|зато)(?![\p{L}\p{N}])');
+        $beforeAnyFixture = $before($anyFixture, $fixtureBoundary);
+        $beforeExcludedFixture = $before($fixture, $excludedBoundary);
+        $beforeAnyExcludedFixture = $before($anyFixture, $excludedBoundary);
+        $listConjunction = '(?:(?:(?:а|и)\s+)?(?:также|ещ[её])|и|плюс)(?![\p{L}\p{N}])';
+        $numberModifier = '(?:од(?:ин|н(?:а|о|у|ой|ого|ому|им))|дв(?:а|е|ух|ум|умя)|тр(?:и|[её]х|[её]м|емя)|четыр(?:е|[её]х|[её]м|ьмя)|пят(?:ь|и|ью)|шест(?:ь|и|ью)|сем(?:ь|и|ью)|вос(?:емь|ьми|емью)|девят(?:ь|и|ью)|десят(?:ь|и|ью))';
+        $modifierDefinition = '(?(DEFINE)(?<fixture_modifier>(?!'.$anyFixture.')'
+            .'(?!не(?:предусмотр|запланир|нуж))'
+            .'(?:[\p{L}-]{2,30}(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими)|[1-9]\d{0,2}|'.$numberModifier.')'
+            .'(?![\p{L}\p{N}])))';
+        $fixtureModifiers = '(?:(?&fixture_modifier)\s+){0,3}';
+        $listConnector = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*';
+        $listSeparator = $listConnector.$fixtureModifiers;
+        $attributeWord = '(?!'.$anyFixture.'|'.$listConjunction.'|(?<![\p{L}\p{N}])(?:не|без|кроме)(?![\p{L}\p{N}]))'
+            .'(?:(?&fixture_modifier)|(?!'.$negativeAction.'|'.$exclusionAction.')[\p{L}\p{N}-]{1,32}(?![\p{L}\p{N}]))';
+        $instrumentalFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ом|ами)|умывальник(?:ом|ами)|'
+            .'душев(?:ой|ыми)\s+кабин(?:ой|ою|ами)|ванн(?:ой|ою|ами)|мойк(?:ой|ою|ами)|раковин(?:ой|ою|ами)|'
+            .'смесител(?:ем|ями)|писсуар(?:ом|ами)|душ(?:ем|ами))(?![\p{L}\p{N}])';
+        $fixtureListAttribute = $anyFixture.'\K\s+с(?:о)?\s+'.$attributeWord.'(?:(?:\s+|'.$listConnector.')'.$attributeWord.'){0,3}'
+            .'(?='.$listSeparator.'(?!'.$instrumentalFixture.')'.$anyFixture.')';
+        $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
+        $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
+            .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'
+            .'(?<![\p{L}\p{N}])(?:'.$exclusionAction.'|не\s+'.$negativeAction.')(?![\p{L}\p{N}])'
+            .$beforeAnyFixture.$fixtureList.')';
+        $negative = '(?<![\p{L}\p{N}])(?:'
+            .'(?:без|кроме)(?![\p{L}\p{N}])'.$beforeExcludedFixture.$fixture.'|'
+            .$exclusionAction.'(?![\p{L}\p{N}])'.$beforeFixture.$fixture.'|'
+            .'не\s+'.$negativeAction.$beforeNegatedFixture.$fixture.'|'
+            .$fixture.$beforeNegative.$negativePredicate
+            .')(?![\p{L}\p{N}])';
+        $countAction = '\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?';
+        $requirementAction = '(?:требу(?:ется|ются)|планиру(?:ется|ются)|запланир\p{L}*|нуж(?:ен|на|но|ны))';
         $action = '(?:'
-            .'установ\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
-            .'комплект\p{L}*|количеств\p{L}*|'
-            .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
+            .$installationAction.'|предусмотр\p{L}*|'.$requirementAction.'|'
+            .'комплект\p{L}*|количеств\p{L}*|'.$countAction.')';
+        $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
+            .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
+            .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
+        $clauseEnd = '(?:[,;.!?]|$)';
+        $fullPredicate = '(?:'.$action.'|не\s+'.$negativeFixtureAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
+        $pluralPredicate = '(?:(?:не\s+)?(?:\p{L}*(?:ются|ятся|ены|аны|ны)|входят)|'.$pluralExclusionAction.')(?![\p{L}\p{N}])';
+        $independentPredicate = '(?!'.$pluralPredicate.')'.$fullPredicate;
+        $predicateBoundary = $anyFixture.'|'.$fullPredicate.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])';
+        $independentFixtureAssertion = $fixtureModifiers.$anyFixture
+            .$before($independentPredicate, $predicateBoundary, 80).$independentPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
+        $nominativeFixture = '(?<![\p{L}\p{N}])(?:унитаз|умывальник|душевая\s+кабина|ванна|мойка|раковина|смеситель|писсуар|душ|биде)(?![\p{L}\p{N}])';
+        $independentConjoinedAssertion = $fixtureModifiers.$nominativeFixture
+            .$before($independentPredicate, $predicateBoundary, 80).$independentPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
+        $statements = preg_split('~'.$modifierDefinition.'(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.')'
+            .'|\s+'.$listConjunction.'\s+(?='.$independentConjoinedAssertion.'))~iu', $text) ?: [];
+        $pluralFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ы|ов|ам|ами|ах)|умывальник(?:и|ов|ам|ами|ах)|'
+            .'душев(?:ые|ых|ым|ыми)\s+кабин(?:ы|ам|ами|ах)?|ванн(?:ы|ам|ами|ах)?|мойк(?:и|ам|ами|ах)|'
+            .'раковин(?:ы|ам|ами|ах)?|смесител(?:и|ей|ям|ями|ях)|писсуар(?:ы|ов|ам|ами|ах)|душ(?:и|ей|ам|ами|ах)|биде)(?![\p{L}\p{N}])';
+        $pluralCountModifier = '(?:[2-9]|[1-9]\d{1,2}|(?!од)'.$numberModifier.')(?![\p{L}\p{N}])';
+        $countedFixture = $pluralCountModifier.'\s+'.$fixtureModifiers
+            .'(?:унитаза|умывальника|смесителя|писсуара|душа)(?![\p{L}\p{N}])';
+        $pluralFixtureHead = '(?!(?:(?&fixture_modifier)\s+){4})'.$fixtureModifiers.'(?:'.$pluralFixture.'|'.$countedFixture.')';
+        $independentPluralAssertion = $pluralFixtureHead
+            .$before($fullPredicate, $predicateBoundary, 80).$fullPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
+        $pluralStatementSeparator = '~'.$modifierDefinition.'(?:,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentPluralAssertion.')'
+            .'|\s+'.$listConjunction.'\s+(?='.$independentPluralAssertion.'))~iu';
+        $priorAssertion = '~(?<![\p{L}\p{N}])(?:'.$action.'|без|кроме|нет|не|'.$exclusionAction.')(?![\p{L}\p{N}])~iu';
+        $priorNegative = '~(?<![\p{L}\p{N}])(?:без|кроме|нет|не|'.$exclusionAction.')(?![\p{L}\p{N}])~iu';
+        $preparedStatements = [];
 
         foreach ($statements as $statement) {
+            $scanOffset = 0;
+            while (preg_match($pluralStatementSeparator, $statement, $separatorMatch, PREG_OFFSET_CAPTURE, $scanOffset) === 1) {
+                $separatorStart = $separatorMatch[0][1];
+                $nextOffset = $separatorStart + strlen($separatorMatch[0][0]);
+                $prefix = substr($statement, 0, $separatorStart);
+                $assertionPattern = str_starts_with(ltrim($separatorMatch[0][0]), ',') ? $priorAssertion : $priorNegative;
+                if (preg_match($assertionPattern, $prefix) !== 1) {
+                    $scanOffset = $nextOffset;
+
+                    continue;
+                }
+                $preparedStatements[] = $prefix;
+                $statement = substr($statement, $nextOffset);
+                $scanOffset = 0;
+            }
+            $preparedStatements[] = $statement;
+        }
+
+        foreach ($preparedStatements as $statement) {
             $withoutRoomPhrases = preg_replace(
                 '~(?<![\p{L}\p{N}])(?:ванн|душев)(?:ая|ой|ую|ые|ых|ыми)\s+'
                 .'(?:комнат\p{L}*|помещен\p{L}*)(?![\p{L}\p{N}])~iu',
@@ -770,11 +888,25 @@ final class NormativeWorkItemPlannerService
                 ' ',
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
+            $withoutFixtureListAttributes = preg_replace(
+                '~'.$modifierDefinition.$fixtureListAttribute.'~iu',
+                '',
+                $withoutLocativeRoomReference
+            ) ?? $withoutLocativeRoomReference;
+            $withoutFixtureLocation = preg_replace(
+                '~'.$modifierDefinition.'(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$fixtureModifiers.$anyFixture
+                .'(?:'.$listSeparator.$anyFixture.'){0,7}~iu',
+                ' ',
+                $withoutFixtureListAttributes
+            ) ?? $withoutFixtureListAttributes;
+            $withoutSharedNegative = preg_replace('~'.$modifierDefinition.$sharedNegative.'~iu', ' ', $withoutFixtureLocation) ?? '';
+            $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutSharedNegative) ?? '';
+            $positiveFixtureStatement = preg_replace('~(?<![\p{L}\p{N}])не\s+'.$negativeAction.'(?![\p{L}\p{N}])~iu', ' ', $positiveFixtureStatement) ?? '';
 
             if (preg_match(
-                '~(?<![\p{L}\p{N}])(?:'.$action.'.{0,80}'.$fixture.'|'.$fixture.'.{0,80}'.$action.')'
+                '~'.$modifierDefinition.'(?<![\p{L}\p{N}])'.$positiveFixture
                 .'(?![\p{L}\p{N}])~iu',
-                $withoutLocativeRoomReference
+                $positiveFixtureStatement
             ) === 1) {
                 return true;
             }
@@ -784,13 +916,13 @@ final class NormativeWorkItemPlannerService
     }
 
     /** @param array<string, mixed> $analysis */
-    private function hasConfirmedSanitaryPointsTakeoff(array $analysis): bool
+    private function hasConfirmedSanitaryFixtureTakeoff(array $analysis, string $quantityKey): bool
     {
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $takeoffs = is_array($documentContext['quantity_takeoffs'] ?? null) ? $documentContext['quantity_takeoffs'] : [];
 
         foreach ($takeoffs as $takeoff) {
-            if (! is_array($takeoff) || EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff) !== 'sanitary.points') {
+            if (! is_array($takeoff) || EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff) !== $quantityKey) {
                 continue;
             }
 
@@ -809,6 +941,18 @@ final class NormativeWorkItemPlannerService
         }
 
         return false;
+    }
+
+    private function isConfirmedSanitaryFixtureInference(array $inference, string $quantityKey): bool
+    {
+        if (! $this->hasKnownInferenceTextProvenance($inference)) {
+            return false;
+        }
+        $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
+        $quantity = $this->firstNumeric($payload, ['quantity_value', 'quantity', 'value', 'value_number']);
+
+        return ($payload['quantity_key'] ?? null) === $quantityKey && $quantity !== null && $quantity > 0
+            && ($payload['review_required'] ?? false) === false;
     }
 
     /**
@@ -1562,7 +1706,7 @@ final class NormativeWorkItemPlannerService
                 unit: (string) ($takeoff['unit'] ?? $payload['unit'] ?? 'ед'),
                 basis: (string) ($takeoff['name'] ?? $takeoff['label'] ?? $takeoff['formula'] ?? 'Количество извлечено из проектной документации.'),
                 confidence: (float) ($takeoff['confidence'] ?? 0.76),
-                sourceRefs: is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [],
+                sourceRefs: $this->sourceRefsFromEvidence($takeoff),
                 reviewRequired: (bool) ($payload['review_required'] ?? $takeoff['review_required'] ?? false)
             );
             $quantities[$quantityKey] = isset($quantities[$quantityKey])
@@ -2086,7 +2230,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param  array<string, mixed>  $inference
+     * @param  array<string, mixed>  $evidence
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefsFromEvidence(array $evidence): array
