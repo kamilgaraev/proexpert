@@ -5,19 +5,92 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Review;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\ListEstimateReviewExceptions;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\ProjectCompletenessAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class EstimateReviewExceptionsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_persisted_prerequisites_are_scoped_stale_bound_and_not_repeated_after_known_input_without_ai(): void
+    {
+        Http::fake([]);
+        Http::preventStrayRequests();
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
+            'status' => 'draft', 'state_version' => 1, 'input_payload' => [], 'draft_payload' => [],
+        ]);
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+        $source = 'sha256:'.str_repeat('a', 64);
+        $models = app(ProjectModelRepository::class);
+        $models->saveSourceModel([
+            new Entity('entity:foundation', ...[...$scope, $source, 'quantity', 'entity:foundation', ['semantic_type' => 'quantity']]),
+        ], [
+            new Fact('fact:foundation-type', ...[...$scope, $source, 'entity:foundation', 'foundation_type',
+                'slab', null, 0.0, 'user_assumption', 'confirmed', []]),
+        ], []);
+        $rules = CompletenessRuleCatalog::fromArray(require base_path('config/estimate-generation-completeness-rules.php'));
+        $persist = function () use ($models, $scope, $source, $rules): void {
+            $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+            $projection = ['source_version' => $source, 'input_fingerprint' => $capture['token'],
+                'catalog_version' => 'technology:v1', 'catalog_hash' => str_repeat('c', 64),
+                'rule_catalog_version' => $rules->version, 'rule_catalog_hash' => $rules->contentHash];
+            $result = app(ProjectCompletenessAnalyzer::class)->analyze($capture['snapshot'], [], [], $projection);
+            self::assertTrue($models->replaceCompleteness(...[...$scope, $source, $capture['token'],
+                'technology:v1', str_repeat('c', 64), $rules->version, $rules->contentHash,
+                $result->findings, $result->limitations]));
+        };
+        $persist();
+        $service = app(ListEstimateReviewExceptions::class);
+        $first = $service->handle($session, ['origin' => 'stage5']);
+        $finding = array_values(array_filter($first['items'], static fn (array $item): bool => in_array('base_preparation', $item['codes'], true)))[0];
+        $backlog = $finding['recommendation']['prerequisites'];
+
+        self::assertSame(['foundation_area'], array_column($backlog['questions'], 'input_fact_type'));
+        self::assertSame('Площадь основания фундамента', $backlog['questions'][0]['label']);
+        self::assertSame($source, $backlog['provenance']['source_version']);
+        self::assertSame($rules->contentHash, $backlog['provenance']['rule_catalog_hash']);
+        self::assertSame($backlog, $service->handle($session, ['origin' => 'stage5'])['items'][array_search($finding['id'], array_column($first['items'], 'id'), true)]['recommendation']['prerequisites']);
+
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignSession = EstimateGenerationSession::query()->create([
+            'organization_id' => $foreignOrganization->id, 'project_id' => $foreignProject->id, 'user_id' => $actor->id,
+            'status' => 'draft', 'state_version' => 1, 'input_payload' => [], 'draft_payload' => [],
+        ]);
+        self::assertSame([], $service->handle($foreignSession, ['origin' => 'stage5'])['items']);
+
+        $models->saveSourceModel([], [
+            new Fact('fact:foundation-area', ...[...$scope, $source, 'entity:foundation', 'foundation_area',
+                '40', 'm2', 0.0, 'user_assumption', 'confirmed', []]),
+        ], []);
+        self::assertNull($models->currentCompleteness(...$scope));
+        self::assertSame([], $service->handle($session, ['origin' => 'stage5'])['items']);
+        $persist();
+        $updated = $service->handle($session, ['origin' => 'stage5']);
+        $current = array_values(array_filter($updated['items'], static fn (array $item): bool => in_array('base_preparation', $item['codes'], true)))[0]['recommendation']['prerequisites'];
+        self::assertSame([], $current['questions']);
+        self::assertNotSame($backlog['version'], $current['version']);
+        Http::assertNothingSent();
+        self::assertSame(0, DB::table('estimate_generation_qa_expense_attempts')->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
     public function test_real_postgres_keeps_review_filter_order_cursor_locator_and_tenant_scope_stable(): void
     {
         self::assertSame('pgsql', DB::connection()->getDriverName());

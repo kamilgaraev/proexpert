@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Review;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimatePrerequisiteBacklogProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimateReviewExceptionSource;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
@@ -19,6 +20,7 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
         private readonly ProjectModelRepository $models,
         private readonly EstimateGenerationReviewItemService $draftReview,
         private readonly PersistedTechnologyReviewSelections $selections,
+        private readonly EstimatePrerequisiteBacklogProjector $prerequisites = new EstimatePrerequisiteBacklogProjector,
     ) {}
 
     public function current(EstimateGenerationSession $session, int $limit): array
@@ -153,7 +155,10 @@ final class ProjectModelEstimateReviewExceptionSource implements EstimateReviewE
                 'stage' => 'stage5', 'stable_key' => $finding->stableKey,
             ],
             'locators' => $this->locators($evidenceIds, $evidence),
-            'recommendation' => $finding->workPackage === null ? null : ['work_packages' => [$finding->workPackage->toArray()]],
+            'recommendation' => $finding->workPackage === null ? null : [
+                'work_packages' => [$finding->workPackage->toArray()],
+                'prerequisites' => $this->prerequisites->project($finding, $projection),
+            ],
         ];
     }
 
