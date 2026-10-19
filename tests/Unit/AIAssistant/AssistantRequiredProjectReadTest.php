@@ -11,6 +11,38 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_production_schedule_summary_does_not_hide_competing_operational_topics(): void
+    {
+        $registry = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::class;
+        $tool = 'get_project_production_schedule_summary';
+        foreach (['Сверь выполненные работы с графиком и покажи камеры проекта',
+            'Сверь выполненные работы с графиком и проверь журналы работ',
+            'Сверь выполненные работы с графиком и покажи нарушения охраны труда',
+            'Сверь выполненные работы с графиком и покажи сотрудников проекта',
+            'Сверь выполненные работы с графиком и покажи CRM-сделки',
+            'Сверь выполненные работы с графиком и покажи акты на согласовании',
+            'Сверь выполненные работы с графиком и какой критический путь графика?',
+            'Сверь выполненные работы с графиком и сколько техники свободно?',
+            'Сверь выполненные работы с графиком и сколько часов отработано?',
+            'Сверь выполненные работы с графиком и какой баланс единиц МОСТ?',
+            'Сверь выполненные работы с графиком и покажи каталог материалов'] as $query) {
+            self::assertTrue($registry::hasIntent($query), $query);
+            self::assertNull($registry::intent($query), $query);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)), $query);
+            self::assertNull(AssistantRequiredProjectRead::decisionReader($tool, $query), $query);
+            self::assertSame($query, \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::planningQuery($query));
+        }
+        foreach (['Сверь выполненные работы с графиком',
+            'Сверь принятые работы с графиком: что осталось незавершённым, какой плановый срок и кто отвечает?'] as $query) {
+            self::assertSame($tool, $registry::intent($query)['name']);
+            self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+        $named = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::bind(
+            $this->plan('Сверь выполненные работы с графиком проекта «Камеры и журналы»'),
+            static fn (): array => ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]]);
+        self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($named));
+    }
+
     public function test_overdue_manager_question_requires_full_schedule_read(): void
     {
         foreach (['Какие просроченные задачи нашего объекта сейчас задерживают этапы и что руководителю проверить в первую очередь?',

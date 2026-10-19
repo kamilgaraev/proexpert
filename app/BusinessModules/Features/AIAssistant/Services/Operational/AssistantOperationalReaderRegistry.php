@@ -87,8 +87,27 @@ final class AssistantOperationalReaderRegistry
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
         if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
-            return AssistantProjectProductionScheduleReader::matches($query)
-                ? ['name' => 'get_project_production_schedule_summary', 'reader' => AssistantProjectProductionScheduleReader::class] : null;
+            if (! AssistantProjectProductionScheduleReader::matches($query) || preg_match('/каталог|справочник|шаблон/iu', $query) === 1) {
+                return null;
+            }
+            foreach (self::TOPICS as $pattern) {
+                if (preg_match($pattern, $query) === 1) {
+                    return null;
+                }
+            }
+            foreach ([...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $reader) {
+                if ($reader::hasIntent($query)) {
+                    return null;
+                }
+            }
+            $withoutScheduleWording = preg_replace('/\b(?:график[а-яё]*|планов[а-яё]*\s+срок[а-яё]*)\b/iu', ' ', $query) ?? $query;
+            foreach (AssistantRequiredProjectRead::READERS as $reader) {
+                if (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : ($reader::matches($query) || $reader::matches($withoutScheduleWording))) {
+                    return null;
+                }
+            }
+
+            return ['name' => 'get_project_production_schedule_summary', 'reader' => AssistantProjectProductionScheduleReader::class];
         }
         if (AssistantProjectMaterialRequestReader::hasIntent($query) && ! AssistantProjectMaterialRequestReader::matches($query)) {
             return null;
