@@ -769,16 +769,24 @@ final class NormativeWorkItemPlannerService
             .'(?![\p{L}\p{N}])';
         $separateAssertion = '(?<![\p{L}\p{N}])(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|включ\p{L}*|будет|будут)(?![\p{L}\p{N}])';
         $negativePredicate = '(?:не\s+'.$negativeAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
-        $beforeNegative = '(?=[^,;.!?\r\n]{0,60}'.$negativePredicate.')'
-            .'(?:(?!'.$anyFixture.')[^,;.!?\r\n])*?';
-        $beforeFixture = '(?=[^,;.!?\r\n]{0,60}'.$fixture.')'
-            .'(?:(?!'.$anyFixture.'|'.$separateAssertion.')[^,;.!?\r\n])*?';
-        $beforeNegatedFixture = '(?=[^,;.!?\r\n]{0,60}'.$fixture.')'
-            .'(?:(?!'.$anyFixture.'|'.$separateAssertion.'|(?<![\p{L}\p{N}])(?:и|но|а|зато)(?![\p{L}\p{N}]))[^,;.!?\r\n])*?';
-        $sharedNegative = $anyFixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){1,7}'
-            .$beforeNegative.$negativePredicate;
+        $before = static fn (string $target, string $boundary): string => '(?=[^,;.!?\r\n]{0,60}'.$target.')'
+            .'(?:(?!'.$boundary.')[^,;.!?\r\n])*?';
+        $fixtureBoundary = $anyFixture.'|'.$separateAssertion;
+        $excludedBoundary = $fixtureBoundary.'|(?<![\p{L}\p{N}])(?:установка|установку|монтаж|подключение)(?![\p{L}\p{N}])';
+        $beforeNegative = $before($negativePredicate, $anyFixture);
+        $beforeFixture = $before($fixture, $fixtureBoundary);
+        $beforeNegatedFixture = $before($fixture, $fixtureBoundary.'|(?<![\p{L}\p{N}])(?:и|но|а|зато)(?![\p{L}\p{N}])');
+        $beforeAnyFixture = $before($anyFixture, $fixtureBoundary);
+        $beforeExcludedFixture = $before($fixture, $excludedBoundary);
+        $beforeAnyExcludedFixture = $before($anyFixture, $excludedBoundary);
+        $fixtureList = $anyFixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){1,7}';
+        $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
+            .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'
+            .'(?<![\p{L}\p{N}])(?:'.$exclusionAction.'|не\s+'.$negativeAction.')(?![\p{L}\p{N}])'
+            .$beforeAnyFixture.$fixtureList.')';
         $negative = '(?<![\p{L}\p{N}])(?:'
-            .'(?:без|кроме|'.$exclusionAction.')(?![\p{L}\p{N}])'.$beforeFixture.$fixture.'|'
+            .'(?:без|кроме)(?![\p{L}\p{N}])'.$beforeExcludedFixture.$fixture.'|'
+            .$exclusionAction.'(?![\p{L}\p{N}])'.$beforeFixture.$fixture.'|'
             .'не\s+'.$negativeAction.$beforeNegatedFixture.$fixture.'|'
             .$fixture.$beforeNegative.$negativePredicate
             .')(?![\p{L}\p{N}])';
