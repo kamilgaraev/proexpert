@@ -763,7 +763,9 @@ final class NormativeWorkItemPlannerService
         }
         $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
         $negativeFixtureAction = '(?:предусмотр\p{L}*|требу(?:ется|ются)|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ(?:ен|ён)\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
-        $exclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ены|ается|аются)|отмен(?:ить|ён|ен|ена|ено|ены|яется|яются)|отсутств(?:ует|уют))';
+        $singularExclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ается)|отмен(?:ить|ён|ен|ена|ено|яется)|отсутствует)';
+        $pluralExclusionAction = '(?:исключ(?:ены|аются)|отмен(?:ены|яются)|отсутствуют)';
+        $exclusionAction = '(?:'.$singularExclusionAction.'|'.$pluralExclusionAction.')';
         $anyFixture = '(?<![\p{L}\p{N}])(?:'.implode('|', $fixturePatterns)
             .'|ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|мойк\p{L}*|раковин\p{L}*|смесител\p{L}*|биде|писсуар\p{L}*|душ(?:а|у|е|ем|и|ей|ам|ами|ах)?)'
             .'(?![\p{L}\p{N}])';
@@ -803,7 +805,7 @@ final class NormativeWorkItemPlannerService
         $independentAction = '(?:предусмотр(?:ен|ена|ено)|'.$countAction.')';
         $independentNegativeAction = '(?:предусмотр(?:ен|ена|ено)|требуется|планируется|запланирован(?:а|о)?|нуж(?:ен|на|но)|входит|включ(?:ён|ен)(?:а|о)?|установлен(?:а|о)?|устанавливается|подключ(?:ён|ен)(?:а|о)?|подключается)';
         $independentPredicate = '(?:'.$independentAction.'|не\s+'.$independentNegativeAction
-            .'|исключ(?:ён|ен|ена|ено)|отмен(?:ён|ен|ена|ено)|отсутствует)(?![\p{L}\p{N}])';
+            .'|'.$singularExclusionAction.')(?![\p{L}\p{N}])';
         $independentFixtureAssertion = $anyFixture
             .$before($independentPredicate, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentPredicate
             .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
