@@ -14,11 +14,13 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Http\Mappers\PurchaseOrderListMapper;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -31,7 +33,9 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -131,6 +135,171 @@ final class ProcurementChainControllerTest extends TestCase
         $listResponse->assertOk();
         $this->assertArrayNotHasKey('procurement_chain', $listResponse->json('data.0'));
         $listResponse->assertJsonPath('data.0.procurement_chain_summary.stage', 'payment_approved');
+    }
+
+    public function test_purchase_order_list_reuses_receipt_parent_graphs_without_reusing_payment_reads(): void
+    {
+        $this->freezeTime();
+        $context = AdminApiTestContext::create();
+        $orderIds = [];
+        $receiptIds = [];
+        for ($index = 0; $index < 2; $index++) {
+            $purchaseRequest = $this->createPurchaseRequest($context->organization);
+            $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::PARTIALLY_DELIVERED);
+            $this->createPaymentDocument($order, PaymentDocumentStatus::PAID, 500);
+            $orderIds[] = $order->id;
+            $receiptIds[$order->id] = [
+                $this->createPostedReceipt($order, 1, 100)->id,
+                $this->createPostedReceipt($order, 1, 100)->id,
+            ];
+        }
+        $foreignRequest = $this->createPurchaseRequest(Organization::factory()->create());
+        $foreignOrder = $this->createPurchaseOrder($foreignRequest, PurchaseOrderStatusEnum::PARTIALLY_DELIVERED);
+        $this->createPaymentDocument($foreignOrder, PaymentDocumentStatus::PAID, 500);
+        $this->createPostedReceipt($foreignOrder, 1, 100);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+        $expectedReceiptSummaries = [];
+        foreach ($receiptIds as $ids) {
+            foreach ($ids as $id) {
+                $expectedReceiptSummaries[$id] = app(ProcurementChainService::class)
+                    ->forPurchaseReceipt(PurchaseReceipt::query()->findOrFail($id), $context->user, includePermissions: false)
+                    ->compact()
+                    ->toArray();
+            }
+        }
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $small = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=1&sort_by=id&sort_dir=desc');
+            $smallQueries = DB::getQueryLog();
+            DB::flushQueryLog();
+            $large = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=2&sort_by=id&sort_dir=desc');
+            $largeQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $small->assertOk();
+        $large->assertOk();
+        $this->assertSame(array_reverse($orderIds), collect($large->json('data'))->pluck('id')->all());
+        $this->assertSame($small->json('data.0'), $large->json('data.0'));
+        foreach ($large->json('data') as $payload) {
+            $this->assertSame((int) $context->organization->id, $payload['organization_id']);
+            $this->assertArrayNotHasKey('procurement_chain', $payload);
+            $this->assertEquals(500, $payload['payment_summary']['paid_amount']);
+            $this->assertEquals(200, $payload['payment_summary']['received_amount']);
+            $this->assertEquals(300, $payload['payment_summary']['available_paid_amount']);
+            $this->assertSame(1, $payload['payment_summary']['documents_count']);
+            $this->assertSame('partially_delivered', $payload['procurement_chain_summary']['stage']);
+            $actualReceiptIds = array_column($payload['receipts'], 'id');
+            $this->assertEqualsCanonicalizing($receiptIds[$payload['id']], $actualReceiptIds);
+            foreach ($payload['receipts'] as $receipt) {
+                $this->assertSame($payload['id'], $receipt['purchase_order_id']);
+                $this->assertSame($payload['organization_id'], $receipt['organization_id']);
+                $this->assertArrayNotHasKey('purchase_order', $receipt);
+                $this->assertSame($expectedReceiptSummaries[$receipt['id']], $receipt['procurement_chain_summary']);
+                $this->assertCount(1, $receipt['lines']);
+            }
+        }
+
+        $linkedPaymentReadCount = static fn (array $queries): int => count(array_filter(
+            $queries,
+            static fn (array $query): bool => str_contains($query['query'], 'from "payment_documents"')
+                && str_contains($query['query'], 'order by "document_date" desc'),
+        ));
+        $this->assertSame(3, $linkedPaymentReadCount($smallQueries));
+        $this->assertSame(6, $linkedPaymentReadCount($largeQueries));
+        $graphQueryCount = static fn (array $queries): int => count(array_filter(
+            $queries,
+            static fn (array $query): bool => preg_match('/\bsum\s*\(/i', $query['query']) !== 1
+                && preg_match('/\b(?:from|join)\s+"?(?:purchase_requests|purchase_orders|supplier_proposals|supplier_proposal_decisions|purchase_order_items|purchase_receipts|purchase_receipt_lines|organization_warehouses|material_deliveries|site_requests)\b/i', $query['query']) === 1,
+        ));
+        $this->assertGreaterThan(0, $graphQueryCount($smallQueries));
+        $this->assertLessThanOrEqual($graphQueryCount($smallQueries) + 1, $graphQueryCount($largeQueries));
+    }
+
+    public function test_purchase_order_list_preserves_an_explicitly_loaded_null_receipt_parent(): void
+    {
+        $this->freezeTime();
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::PARTIALLY_DELIVERED);
+        $this->createPaymentDocument($order, PaymentDocumentStatus::PAID, 500);
+        $receipt = $this->createPostedReceipt($order, 1, 100);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+        $receipt->setRelation('purchaseOrder', null);
+        $expected = app(ProcurementChainService::class)
+            ->forPurchaseReceipt($receipt, $context->user, includePermissions: false)
+            ->compact()
+            ->toArray();
+        $dispatcher = PurchaseReceipt::getEventDispatcher();
+        $this->assertNotNull($dispatcher);
+        PurchaseReceipt::setEventDispatcher(clone $dispatcher);
+        try {
+            PurchaseReceipt::retrieved(static function (PurchaseReceipt $loadedReceipt): void {
+                $loadedReceipt->setRelation('purchaseOrder', null);
+            });
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-orders');
+        } finally {
+            PurchaseReceipt::setEventDispatcher($dispatcher);
+        }
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data.0.receipts');
+        $response->assertJsonPath('data.0.receipts.0.id', $receipt->id);
+        $this->assertSame($expected, $response->json('data.0.receipts.0.procurement_chain_summary'));
+        $this->assertSame($dispatcher, PurchaseReceipt::getEventDispatcher());
+    }
+
+    public function test_purchase_order_list_mapper_preserves_scope_explicit_relations_and_pagination_without_queries(): void
+    {
+        $order = (new PurchaseOrder)->forceFill(['id' => 11, 'organization_id' => 21]);
+        $otherParent = (new PurchaseOrder)->forceFill(['id' => 12, 'organization_id' => 21]);
+        $matching = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $differentOrder = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 12, 'organization_id' => 21]);
+        $differentOrganization = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 22]);
+        $explicitNull = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $explicitNull->setRelation('purchaseOrder', null);
+        $explicitParent = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $explicitParent->setRelation('purchaseOrder', $otherParent);
+        $order->setRelation('receipts', new EloquentCollection([
+            $matching, $differentOrder, $differentOrganization, $explicitNull, $explicitParent,
+        ]));
+        $missingIdentity = (new PurchaseOrder)->forceFill(['organization_id' => 21]);
+        $missingParentId = (new PurchaseReceipt)->forceFill(['organization_id' => 21]);
+        $missingIdentity->setRelation('receipts', new EloquentCollection([$missingParentId]));
+        $page = new LengthAwarePaginator(new EloquentCollection([$order, $otherParent, $missingIdentity]), 13, 3, 2);
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $prepared = (new PurchaseOrderListMapper)->prepare($page);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertSame($page, $prepared);
+        $this->assertSame(13, $prepared->total());
+        $this->assertSame(3, $prepared->perPage());
+        $this->assertSame(2, $prepared->currentPage());
+        $this->assertSame($order, $matching->getRelation('purchaseOrder'));
+        $this->assertFalse($differentOrder->relationLoaded('purchaseOrder'));
+        $this->assertFalse($differentOrganization->relationLoaded('purchaseOrder'));
+        $this->assertTrue($explicitNull->relationLoaded('purchaseOrder'));
+        $this->assertNull($explicitNull->getRelation('purchaseOrder'));
+        $this->assertSame($otherParent, $explicitParent->getRelation('purchaseOrder'));
+        $this->assertFalse($otherParent->relationLoaded('receipts'));
+        $this->assertFalse($missingParentId->relationLoaded('purchaseOrder'));
+        $this->assertSame([], $queries);
     }
 
     public function test_partially_delivered_order_chain_uses_receipt_and_payment_state(): void
