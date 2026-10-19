@@ -752,7 +752,6 @@ final class NormativeWorkItemPlannerService
 
     private function hasLocalSanitaryFixtureStatement(string $text, string $quantityKey): bool
     {
-        $statements = preg_split('~(?:[.!?;]+|\R+)~u', $text) ?: [];
         $fixturePatterns = [
             'sanitary.toilets' => 'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?',
             'sanitary.washbasins' => 'умывальник(?:а|у|е|и|ов|ом|ам|ами|ах)?',
@@ -800,6 +799,11 @@ final class NormativeWorkItemPlannerService
         $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
             .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
             .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
+        $clauseEnd = '(?:[,;.!?]|$)';
+        $independentFixtureAssertion = $anyFixture
+            .$before($action, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$action
+            .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
+        $statements = preg_split('~(?:[.!?;]+|\R+|,\s*(?='.$independentFixtureAssertion.'))~iu', $text) ?: [];
 
         foreach ($statements as $statement) {
             $withoutRoomPhrases = preg_replace(
@@ -814,7 +818,8 @@ final class NormativeWorkItemPlannerService
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
             $withoutFixtureLocation = preg_replace(
-                '~(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$anyFixture.'~iu',
+                '~(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$anyFixture
+                .'(?:'.$listSeparator.$anyFixture.'){0,7}~iu',
                 ' ',
                 $withoutLocativeRoomReference
             ) ?? $withoutLocativeRoomReference;
