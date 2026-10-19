@@ -14,6 +14,31 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_past_quarter_aliases_share_rolling_period_and_reject_ambiguous_years(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за прошедший квартал', 'за минувший квартал', 'прошедший квартал', 'минувший квартал'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => '2026-07-19', 'period_end' => '2026-10-19'],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 102, 'period_start' => '2026-07-19', 'period_end' => '2026-10-19'], AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+                $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                    'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            }
+            foreach (['за прошедший квартал 2026', 'за минувший квартал и вчера'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_prepositionless_durations_keep_resolver_semantics_and_named_scope(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));

@@ -18,9 +18,9 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_WORD = 'квартал(?:[ауеы]|ом|ов|ам|ами|ах)?';
 
-    private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|'.self::DURATION_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*)(?:\s+(?:и\s+)?(?:\d+|'.self::DURATION_NUMBER.'))?\s+';
+    private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|'.self::DURATION_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*)(?:\s+(?:и\s+)?(?:\d+|'.self::DURATION_NUMBER.'))?\s+';
 
-    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|последний\s+)'.self::QUARTER_WORD.'\b';
+    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|(?:последний|прошедший|минувший)\s+)'.self::QUARTER_WORD.'\b';
 
     private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток)';
 
@@ -284,7 +284,7 @@ final class AssistantProductionSchedulePeriod
             return $unresolved;
         }
         $years = preg_match_all('/\b(?:19|20)\d{2}\b/u', $query);
-        if ($years === 0 && preg_match('/\b(?:за\s+(?:последний\s+)?|последний\s+)квартал\b/iu', $query, $rolling) === 1) {
+        if ($years === 0 && preg_match('/\bза\s+квартал\b/iu', $query, $rolling) === 1) {
             if (self::hasOtherPeriod($query, $rolling[0])) {
                 return $unresolved;
             }
@@ -362,8 +362,10 @@ final class AssistantProductionSchedulePeriod
 
             return str_starts_with($relative, 'позапрошл') ? 'позавчера' : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 'вчера' : 'сегодня');
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b(?:за\s+)?(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
-            return 'за 1 '.mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
+        $query = preg_replace_callback('/\b(?:за\s+)?(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год|квартал)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
+            $unit = mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
+
+            return $unit === 'квартал' ? 'за квартал' : 'за 1 '.$unit;
         }, $query) ?? $query;
         $query = preg_replace_callback('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);

@@ -14,6 +14,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_camera_network_predicates_use_ui_only_after_complete_empty_exact_lookup(): void
+    {
+        foreach (['в сети', 'вне сети', 'не в сети'] as $predicate) {
+            $query = 'Какие камеры проекта '.$predicate.'?';
+            $calls = 0;
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($predicate, &$calls): array {
+                $calls++;
+                self::assertSame(['query' => $predicate, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([], false);
+            });
+            self::assertSame(1, $calls);
+            self::assertArrayNotHasKey('named_project_scope', $resolved);
+            self::assertSame(104, AssistantRequestProjectScope::fromPlan($resolved)->projectId);
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($literal)->projectId);
+            self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result))->projectId);
+            }
+        }
+    }
+
     public function test_leading_prepositions_are_checked_as_full_names_before_any_ui_fallback(): void
     {
         foreach (['За рекой', 'за рекой', 'С видом на парк', 'По улице Мира', 'Для детей', 'На берегу', 'От истока', 'В пути', 'У озера', 'Без границ'] as $name) {
