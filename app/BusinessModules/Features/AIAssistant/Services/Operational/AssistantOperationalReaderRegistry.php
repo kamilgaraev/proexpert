@@ -268,6 +268,12 @@ final class AssistantOperationalReaderRegistry
                 return true;
             }
         }
+
+        return self::hasTopic($query);
+    }
+
+    public static function hasTopic(string $query): bool
+    {
         foreach (self::TOPICS as $pattern) {
             if (preg_match($pattern, $query) === 1) {
                 return true;

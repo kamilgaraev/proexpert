@@ -18,7 +18,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
         try {
-            foreach (['за прошедший квартал', 'за минувший квартал', 'прошедший квартал', 'минувший квартал'] as $phrase) {
+            foreach (['за крайний квартал', 'крайний квартал', 'за прошедший квартал', 'за минувший квартал', 'прошедший квартал', 'минувший квартал'] as $phrase) {
                 self::assertSame(['project_id' => 102, 'period_start' => '2026-07-19', 'period_end' => '2026-10-19'],
                     AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
                 $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,

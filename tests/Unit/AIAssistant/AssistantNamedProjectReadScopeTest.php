@@ -14,6 +14,36 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_second_operational_topic_after_unquoted_name_remains_visible_to_routing(): void
+    {
+        foreach (['и нарушения', 'или нарушения', 'а журналы работ', 'но камеры и нарушения'] as $tail) {
+            $query = 'Какие камеры проекта Северный дом '.$tail.'?';
+            self::assertSame('Северный дом', AssistantNamedProjectReadScope::name($this->plan($query)));
+            self::assertStringContainsString($tail, AssistantNamedProjectReadScope::semanticQuery($query));
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::hasIntent($query));
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query));
+            self::assertSame($query, AssistantNamedProjectReadScope::planningQuery($query));
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls): array {
+                $calls++;
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(0, $calls);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($bound));
+        }
+        $name = 'Северный дом и нарушения';
+        $query = 'Какие камеры проекта «'.$name.'»?';
+        $literal = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+            self::assertSame($name, $arguments['query']);
+
+            return $this->projectSearchResult([['id' => 102]], false);
+        });
+        self::assertSame(['name' => 'get_project_camera_roster', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+        self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query.' И нарушения?'));
+        self::assertSame('Северный дом и сад', AssistantNamedProjectReadScope::name($this->plan('Какие камеры проекта Северный дом и сад?')));
+    }
+
     public function test_camera_network_predicates_use_ui_only_after_complete_empty_exact_lookup(): void
     {
         foreach (['в сети', 'вне сети', 'не в сети'] as $predicate) {

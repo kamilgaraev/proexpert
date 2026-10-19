@@ -91,6 +91,13 @@ final class AssistantNamedProjectReadScope
             $continuation = '(?:скажи(?:те)?|расскажи(?:те)?|покажи(?:те)?|проверь(?:те)?|сверь(?:те)?|укажи(?:те)?|назови(?:те)?|уточни(?:те)?|сформируй(?:те)?|создай(?:те)?|удали(?:те)?|измени(?:те)?|закрой(?:те)?|отправь(?:те)?|подпиши(?:те)?|назначь(?:те)?|назначит[а-яё]*|перенес[а-яё]*|перенос[а-яё]*|сдвин[а-яё]*|обнови[а-яё]*|добавь(?:те)?|добавит[а-яё]*|поменяй(?:те)?|исправь(?:те)?|заплат[а-яё]*|оплати[а-яё]*|нужно|надо|можно|что|кто|где|когда|как|какие|какой|какая|какое|каков[а-яё]*|сколько)(?![\pL\pN])';
             $parts = preg_split('/(?:\s+(?:(?:и|а|но)\s+)?|[.!?,;:]\s*)(?='.$continuation.')|[!?]/iu', $name, 2);
             $name = trim((string) ($parts[0] ?? ''));
+            preg_match_all('/\s+(?:и|или|а|но)\s+/iu', $name, $conjunctions, PREG_OFFSET_CAPTURE);
+            foreach ($conjunctions[0] as [$conjunction, $offset]) {
+                if (AssistantOperationalReaderRegistry::hasTopic(substr($name, $offset + strlen($conjunction)))) {
+                    $name = rtrim(substr($name, 0, $offset));
+                    break;
+                }
+            }
             if (preg_match('/^(?:(?:id|№|#)\s*)?[1-9]\d*(?=\s+(?:за|с|по|на|для|от)\b|[.!?]*$)/iu', $name, $numeric) === 1) {
                 $name = $numeric[0];
             }
