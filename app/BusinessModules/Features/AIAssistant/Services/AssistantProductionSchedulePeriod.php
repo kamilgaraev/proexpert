@@ -54,7 +54,11 @@ final class AssistantProductionSchedulePeriod
 
     private const MONTH_YEAR = '(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого|предыдущего|позапрошлого|следующего|будущего)\s+года)';
 
-    private const VERBAL_DATE = '(?:'.self::PERIOD_PREFIX.'\s+)?\d{1,2}\s+'.self::MONTH.'\s+'.self::MONTH_YEAR.'\b';
+    private const VERBAL_DAY = '\d{1,2}(?:-(?:го|е|ого))?';
+
+    private const VERBAL_RANGE = '(?:(?:(?:за|в)\s+)?(?:весь\s+)?период\s+)?(?:'.self::PERIOD_PREFIX.'\s+)?'.self::VERBAL_DAY.'(?:\s+'.self::MONTH.'(?:\s+'.self::MONTH_YEAR.')?)?(?:\s+(?:по|до)\s+|\s*[—–-]\s*)'.self::VERBAL_DAY.'\s+'.self::MONTH.'(?:\s+'.self::MONTH_YEAR.')?\b';
+
+    private const VERBAL_DATE = '(?:'.self::VERBAL_RANGE.'|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::VERBAL_DAY.'\s+'.self::MONTH.'\s+'.self::MONTH_YEAR.'\b)';
 
     private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::MONTH.'\s+'.self::MONTH_YEAR.'\b';
 

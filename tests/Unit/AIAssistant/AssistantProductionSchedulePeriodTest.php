@@ -14,6 +14,20 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_verbal_date_ranges_with_shared_year_keep_named_scope_and_require_explicit_bounds(): void
+    {
+        foreach (['с 1 октября по 15 ноября 2026', 'со 2 октября до 15 ноября 2026 года',
+            'за период с 1 октября по 15 ноября 2026', 'весь период с 1 октября по 15 ноября 2026',
+            'за весь период с 1 октября по 15 ноября 2026', 'с 1 по 15 октября 2026',
+            '1 октября — 15 ноября 2026', '1–15 октября 2026', 'за 1-15 октября 2026',
+            'с 1-го октября по 15-е ноября 2026', 'с 1 октября по 15 ноября текущего года',
+            'с 1 октября по 15 ноября', 'с 32 февраля по 40 марта 2026',
+            'с 1 октября по 15 ноября 2026 и за декабрь 2026'] as $phrase) {
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $this->assertPeriodScope($phrase, null, null);
+        }
+    }
+
     public function test_verbal_dates_with_a_year_require_explicit_bounds_instead_of_a_month(): void
     {
         foreach (['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'] as $month) {
