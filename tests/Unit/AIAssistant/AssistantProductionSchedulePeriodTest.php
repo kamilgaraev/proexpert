@@ -260,9 +260,57 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
-    public function test_large_introduced_counts_require_dates_and_keep_literal_project_priority(): void
+    public function test_unsupported_integer_durations_require_dates_and_keep_literal_project_priority(): void
     {
-        foreach (['в течение 100 месяцев', 'на протяжении 100 недель', 'в течение 999 дней', 'на протяжении 2026 дней'] as $phrase) {
+        $phrases = ['последние 100 месяцев', 'в течение 100 месяцев', 'на протяжении 100 недель', 'в течение 999 дней', 'на протяжении 2026 дней',
+            '2026 дней', 'последние 2026 года', 'последние 999999999999999999999999999999999 месяцев'];
+        foreach (['', 'последние', 'крайние', 'прошедшие', 'минувшие', 'предыдущие'] as $modifier) {
+            foreach (['дней', 'суток', 'недель', 'месяцев', 'лет', 'кварталов'] as $unit) {
+                $phrases[] = trim($modifier.' 100 '.$unit);
+            }
+        }
+        foreach (array_unique($phrases) as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
+    public function test_supported_two_digit_duration_boundary_keeps_shared_resolver_dates(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['99 месяцев', 'последние 99 месяцев', 'за 99 месяцев', 'в течение 99 месяцев', 'на протяжении 99 месяцев'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => '2018-07-19', 'period_end' => '2026-10-19'],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase));
+            }
+            foreach (['одиннадцать' => '2025-11-19', 'двенадцать' => '2025-10-19'] as $number => $start) {
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-19'],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$number.' месяцев']]));
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$number.' месяцев'));
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_unsupported_word_and_compound_counts_require_dates_and_keep_literal_priority(): void
+    {
+        foreach (['сто месяцев', 'последние двадцать месяцев', 'тринадцать месяцев', 'тридцать дней', 'сорок недель',
+            'пятьдесят дней', 'девяносто лет', 'двести дней', 'пятьсот дней', 'тысяча месяцев', 'миллион дней',
+            'двадцать пять месяцев', 'сто пятьдесят месяцев', '20 пять месяцев', 'два пять месяцев', '2 5 месяцев'] as $phrase) {
             $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
             self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
                 ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
