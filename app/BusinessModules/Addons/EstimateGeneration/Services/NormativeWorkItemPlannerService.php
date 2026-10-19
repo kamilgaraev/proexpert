@@ -792,18 +792,19 @@ final class NormativeWorkItemPlannerService
             .'не\s+'.$negativeAction.$beforeNegatedFixture.$fixture.'|'
             .$fixture.$beforeNegative.$negativePredicate
             .')(?![\p{L}\p{N}])';
+        $countAction = '\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?';
         $action = '(?:'
             .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
-            .'комплект\p{L}*|количеств\p{L}*|'
-            .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
+            .'комплект\p{L}*|количеств\p{L}*|'.$countAction.')';
         $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
             .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
             .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
         $clauseEnd = '(?:[,;.!?]|$)';
+        $independentAction = '(?:предусмотр(?:ен|ена|ено)|'.$countAction.')(?![\p{L}\p{N}])';
         $independentFixtureAssertion = $anyFixture
-            .$before($action, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$action
+            .$before($independentAction, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentAction
             .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
-        $statements = preg_split('~(?:[.!?;]+|\R+|,\s*(?='.$independentFixtureAssertion.'))~iu', $text) ?: [];
+        $statements = preg_split('~(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
 
         foreach ($statements as $statement) {
             $withoutRoomPhrases = preg_replace(
