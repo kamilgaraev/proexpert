@@ -109,6 +109,46 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         $this->assertNoPaidEffects();
     }
 
+    public function test_refresh_reopens_input_review_from_nonfailed_states_and_replays_without_a_second_transition(): void
+    {
+        foreach (['draft', 'input_review_required', 'ready_to_generate', 'estimate_review_required', 'ready_to_apply'] as $status) {
+            [$actor, $session] = $this->fixture();
+            $session->update(['status' => $status, 'processing_stage' => $status]);
+            $requestId = (string) Str::uuid();
+            $update = app(UpdateEstimatePrerequisites::class);
+            $result = $update->refresh($actor, (int) $session->project_id, (int) $session->id, 0, $requestId);
+            $after = $session->fresh();
+            self::assertSame('input_review_required', $after->status->value);
+            self::assertSame('input_review_required', $after->processing_stage);
+            self::assertFalse($after->input_payload['input_confirmed']);
+            self::assertArrayNotHasKey('confirmed_evaluation', $after->input_payload);
+            self::assertSame(['retained' => 'draft'], $after->draft_payload);
+            self::assertSame(1, $after->state_version);
+            self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode(
+                $update->refresh($actor, (int) $session->project_id, (int) $session->id, 0, $requestId)));
+            self::assertSame(1, $session->fresh()->state_version);
+            $this->assertNoPaidEffects();
+        }
+    }
+
+    public function test_refresh_preserves_failed_recovery_status_and_retained_draft(): void
+    {
+        foreach (['generating' => 'validate_draft', 'applying' => 'applying', 'processing_documents' => 'processing_documents'] as $resume => $stage) {
+            [$actor, $session] = $this->fixture();
+            $session->update(['resume_status' => $resume, 'processing_stage' => $stage]);
+            app(UpdateEstimatePrerequisites::class)->refresh($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid());
+            $after = $session->fresh();
+            self::assertSame('failed', $after->status->value);
+            self::assertSame($resume, $after->getRawOriginal('resume_status'));
+            self::assertSame($stage, $after->processing_stage);
+            self::assertSame(['retained' => 'draft'], $after->draft_payload);
+            self::assertFalse($after->input_payload['input_confirmed']);
+            self::assertArrayNotHasKey('confirmed_evaluation', $after->input_payload);
+            self::assertSame(1, $after->state_version);
+            $this->assertNoPaidEffects();
+        }
+    }
+
     public function test_measurement_keeps_the_large_source_decimal_without_float_rounding(): void
     {
         [$actor, $session] = $this->fixture();
