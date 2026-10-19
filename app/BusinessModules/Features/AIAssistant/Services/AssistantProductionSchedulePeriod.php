@@ -34,11 +34,13 @@ final class AssistantProductionSchedulePeriod
 
     private const WHOLE_CALENDAR_PERIOD = '(?:за|в|во|на)\s+в(?:есь|с[её]м)\s+(?:\d|'.self::MONTH.'\b|'.self::TIME_UNIT.'\b|'.self::QUARTER_SELECTOR.self::TIME_UNIT.'\b)';
 
-    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
+
+    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -60,6 +62,10 @@ final class AssistantProductionSchedulePeriod
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
+        $withoutRanges = preg_replace('/\b'.self::EXPLICIT_RANGE.'/iu', ' ', $query) ?? $query;
+        if (preg_match_all('/\b'.self::ALL_TIME_PERIOD.'/iu', $withoutRanges, $allTime) > 0) {
+            return count($allTime[0]) === 1 && ! self::hasOtherPeriod($query, $allTime[0][0]) ? $arguments : $unresolved;
+        }
         if (preg_match('/\b'.self::WHOLE_CALENDAR_PERIOD.'/iu', $query) === 1) {
             return $unresolved;
         }

@@ -14,6 +14,29 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_all_time_suffix_is_separate_from_project_name_after_empty_exact_lookup(): void
+    {
+        foreach (['за весь период', 'за всё время', 'за все время'] as $phrase) {
+            $query = 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase;
+            $seen = [];
+            $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => $query,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]], static function (array $arguments) use (&$seen): array {
+                    $seen[] = $arguments;
+
+                    return ['status' => 'success', 'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]];
+                });
+            self::assertSame(['Северный дом '.$phrase, 'Северный дом'], array_column($seen, 'query'));
+            self::assertSame(['exact', 'exact'], array_column($seen, 'name_match'));
+            self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+            $literal = AssistantNamedProjectReadScope::bind(['request' => ['message' => $query]], static fn (): array => ['status' => 'success',
+                'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]));
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase.' и вчера']]));
+        }
+    }
+
     public function test_whole_calendar_modifiers_keep_periods_and_literal_project_name_priority(): void
     {
         foreach (['за весь 2026 год' => ['2026-01-01', '2026-12-31'], 'за весь октябрь 2026' => ['2026-10-01', '2026-10-31'],
