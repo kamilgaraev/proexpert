@@ -817,7 +817,12 @@ final class NormativeWorkItemPlannerService
         $independentFixtureAssertion = $fixtureModifiers.$anyFixture
             .$before($independentPredicate, $predicateBoundary, 80).$independentPredicate
             .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
-        $statements = preg_split('~'.$modifierDefinition.'(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
+        $nominativeFixture = '(?<![\p{L}\p{N}])(?:унитаз|умывальник|душевая\s+кабина|ванна|мойка|раковина|смеситель|писсуар|душ|биде)(?![\p{L}\p{N}])';
+        $independentConjoinedAssertion = $fixtureModifiers.$nominativeFixture
+            .$before($independentPredicate, $predicateBoundary, 80).$independentPredicate
+            .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
+        $statements = preg_split('~'.$modifierDefinition.'(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.')'
+            .'|\s+'.$listConjunction.'\s+(?='.$independentConjoinedAssertion.'))~iu', $text) ?: [];
         $pluralFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ы|ов|ам|ами|ах)|умывальник(?:и|ов|ам|ами|ах)|'
             .'душев(?:ые|ых|ым|ыми)\s+кабин(?:ы|ам|ами|ах)?|ванн(?:ы|ам|ами|ах)?|мойк(?:и|ам|ами|ах)|'
             .'раковин(?:ы|ам|ами|ах)?|смесител(?:и|ей|ям|ями|ях)|писсуар(?:ы|ов|ам|ами|ах)|душ(?:и|ей|ам|ами|ах)|биде)(?![\p{L}\p{N}])';
@@ -828,8 +833,10 @@ final class NormativeWorkItemPlannerService
         $independentPluralAssertion = $pluralFixtureHead
             .$before($fullPredicate, $predicateBoundary, 80).$fullPredicate
             .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
-        $pluralStatementSeparator = '~'.$modifierDefinition.',\s*(?=(?:'.$listConjunction.'\s*)?'.$independentPluralAssertion.')~iu';
+        $pluralStatementSeparator = '~'.$modifierDefinition.'(?:,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentPluralAssertion.')'
+            .'|\s+'.$listConjunction.'\s+(?='.$independentPluralAssertion.'))~iu';
         $priorAssertion = '~(?<![\p{L}\p{N}])(?:'.$action.'|без|кроме|нет|не|'.$exclusionAction.')(?![\p{L}\p{N}])~iu';
+        $priorNegative = '~(?<![\p{L}\p{N}])(?:без|кроме|нет|не|'.$exclusionAction.')(?![\p{L}\p{N}])~iu';
         $preparedStatements = [];
 
         foreach ($statements as $statement) {
@@ -838,7 +845,8 @@ final class NormativeWorkItemPlannerService
                 $separatorStart = $separatorMatch[0][1];
                 $nextOffset = $separatorStart + strlen($separatorMatch[0][0]);
                 $prefix = substr($statement, 0, $separatorStart);
-                if (preg_match($priorAssertion, $prefix) !== 1) {
+                $assertionPattern = str_starts_with(ltrim($separatorMatch[0][0]), ',') ? $priorAssertion : $priorNegative;
+                if (preg_match($assertionPattern, $prefix) !== 1) {
                     $scanOffset = $nextOffset;
 
                     continue;
