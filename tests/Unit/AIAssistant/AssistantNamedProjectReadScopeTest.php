@@ -548,6 +548,42 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         }
     }
 
+    public function test_supported_read_commands_accept_infinitives_after_named_project(): void
+    {
+        foreach ([
+            [['сверить', 'сверь', 'сверьте'], 'выполненные работы с графиком'],
+            [['проверить', 'проверь', 'проверьте'], 'выполненные работы с графиком'],
+            [['показать', 'покажи', 'покажите'], 'выполненные работы и график'],
+            [['рассказать', 'расскажи', 'расскажите'], 'о выполненных работах и графике'],
+            [['сказать', 'скажи', 'скажите'], 'как соотносятся выполненные работы с графиком'],
+            [['указать', 'укажи', 'укажите'], 'выполненные работы и плановые сроки'],
+            [['назвать', 'назови', 'назовите'], 'выполненные работы и плановые сроки'],
+            [['уточнить', 'уточни', 'уточните'], 'выполненные работы и плановые сроки'],
+        ] as [$commands, $tail]) {
+            foreach ($commands as $command) {
+                $predicate = $command.' '.$tail;
+                $query = 'По проекту Альфа '.$predicate;
+                $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+                    self::assertSame(['query' => 'Альфа', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 102]], false);
+                });
+                self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 102]],
+                    AssistantRequiredProjectRead::fromPlan($resolved), $query);
+                self::assertStringContainsString($predicate, AssistantNamedProjectReadScope::semanticQuery($query));
+                $name = 'Альфа '.$predicate;
+                $literal = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «'.$name.'»'),
+                    function (array $arguments) use ($name): array {
+                        self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                        return $this->projectSearchResult([['id' => 95]], false);
+                    });
+                self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 95]],
+                    AssistantRequiredProjectRead::fromPlan($literal));
+            }
+        }
+    }
+
     public function test_unquoted_project_name_excludes_following_question_and_preserves_name_words(): void
     {
         foreach (['Сверь выполненные работы с графиком проекта Северный дом и скажи, что осталось.',
