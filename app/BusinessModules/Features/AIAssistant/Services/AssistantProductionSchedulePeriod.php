@@ -26,11 +26,13 @@ final class AssistantProductionSchedulePeriod
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 
-    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const CALENDAR_WEEK_PERIOD = '(?:за|в|во|на)\s+(эт(?:ой|у)|текущ(?:ей|ую)|прошл(?:ой|ую)|предыдущ(?:ей|ую)|позапрошл(?:ой|ую))\s+недел(?:е|ю)\b';
+
+    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -64,6 +66,18 @@ final class AssistantProductionSchedulePeriod
             $date = \Carbon\CarbonImmutable::now('Europe/Moscow')->subDays($offset)->format('Y-m-d');
 
             return $arguments + ['period_start' => $date, 'period_end' => $date];
+        }
+        if (preg_match_all('/\b'.self::CALENDAR_WEEK_PERIOD.'/iu', $query, $weeks) > 0) {
+            if (count($weeks[0]) !== 1 || self::hasOtherPeriod($query, $weeks[0][0])) {
+                return $unresolved;
+            }
+            $relative = mb_strtolower($weeks[1][0]);
+            $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);
+            $today = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
+            $start = $today->modify('-'.((int) $today->format('N') - 1 + $offset * 7).' days');
+            $end = $offset > 0 ? $start->modify('+6 days') : $today;
+
+            return $arguments + ['period_start' => $start->format('Y-m-d'), 'period_end' => $end->format('Y-m-d')];
         }
         if (preg_match_all('/\b(?:'.self::WEEKS_AGO_PERIOD.'|'.self::DURATION_PERIOD.')/iu', $query, $durations) > 0) {
             if (count($durations[0]) !== 1 || self::hasOtherPeriod($query, $durations[0][0])) {
