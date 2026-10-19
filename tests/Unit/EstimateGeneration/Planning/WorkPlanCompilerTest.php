@@ -457,6 +457,74 @@ final class WorkPlanCompilerTest extends TestCase
         }
     }
 
+    public function test_explicit_residential_equipment_is_planned_without_treating_total_count_as_a_specification(): void
+    {
+        foreach (['house', 'residential', 'коттедж'] as $type) {
+            $payload = $this->compiler()->compile([
+                'object' => ['object_type' => $type],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['equipment']],
+                'document_context' => ['engineering_parameters' => ['equipment_count' => 6]],
+            ], deferNormativePin: true);
+            self::assertSame(['equipment'], array_column($payload['package_plan']['packages'], 'key'));
+            self::assertSame(['equipment'], array_column($payload['local_estimates'], 'key'));
+            $package = $payload['package_plan']['packages'][0];
+            self::assertSame('Оборудование', $package['title']);
+            self::assertSame('engineering', $package['scope_type']);
+            self::assertSame('planned', $package['status']);
+            self::assertSame(0, $package['actual_items_count']);
+            self::assertSame(30, $package['target_items_min']);
+            self::assertSame(80, $package['target_items_max']);
+            self::assertArrayHasKey('totals', $package);
+            self::assertArrayHasKey('quality_summary', $package);
+            $items = array_merge(...array_column($payload['local_estimates'][0]['sections'], 'work_items'));
+            self::assertSame(['equipment.purchase', 'equipment.delivery', 'equipment.install'], array_column(array_column($items, 'metadata'), 'composition_work_key'));
+            self::assertSame(['equipment_purchase', 'delivery', 'installation'], array_column(array_column($items, 'metadata'), 'requirement_key'));
+            self::assertSame(['equipment', 'other', 'work'], array_column(array_column($items, 'metadata'), 'ordinary_item_type'));
+            foreach ($items as $item) {
+                self::assertNull($item['quantity']);
+                self::assertSame('count', $item['unit']);
+                self::assertNull($item['total_cost']);
+                self::assertNull($item['price_source']);
+                self::assertSame('not_calculated', $item['pricing_status']);
+                self::assertSame('quantity_unknown', $item['pricing_blocker']);
+                self::assertTrue($item['skip_normative_matching']);
+                self::assertTrue($item['metadata']['requires_specification']);
+                foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resource) {
+                    self::assertSame([], $item[$resource]);
+                }
+            }
+            $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build(
+                $payload, new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+            self::assertSame(['equipment'], $evaluation['selected_scope']);
+            self::assertFalse($evaluation['can_confirm_for_apply']);
+        }
+    }
+
+    public function test_residential_equipment_requires_explicit_universal_selection_and_preserves_industrial_definitions(): void
+    {
+        foreach ([[], ['mode' => 'universal', 'selected_sections' => ['structures']], ['mode' => 'universal', 'selected_sections' => []]] as $policy) {
+            $payload = $this->compiler()->compile(['object' => ['object_type' => 'house'], 'evaluation_policy' => $policy], deferNormativePin: true);
+            self::assertNotContains('equipment', array_column($payload['package_plan']['packages'], 'key'));
+            self::assertNotContains('equipment', array_column($payload['local_estimates'], 'key'));
+        }
+        foreach (['industrial', 'house'] as $type) {
+            $industrial = $this->compiler()->compile(['object' => ['object_type' => $type],
+                'evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'industrial', 'selected_sections' => ['equipment']]], deferNormativePin: true);
+            self::assertSame(['equipment', 'commissioning'], array_column($industrial['package_plan']['packages'], 'key'));
+            $items = array_merge(...array_column($industrial['local_estimates'][0]['sections'], 'work_items'));
+            self::assertSame(['equipment.units_count', 'equipment.deliveries_count', 'equipment.units_count'], array_column($items, 'quantity_formula'));
+            self::assertSame(['equipment_purchase', 'delivery', 'installation'], array_column(array_column($items, 'metadata'), 'requirement_key'));
+        }
+    }
+
+    public function test_selected_equipment_candidates_obey_the_frozen_work_item_ceiling(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('estimate_work_items_exceed_approved_plan');
+        $this->compiler()->compile(['object' => ['object_type' => 'house'],
+            'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['equipment']]], deferNormativePin: true, workItemLimit: 2);
+    }
+
     public function test_structures_selection_keeps_real_facade_and_mixed_structure_packages(): void
     {
         foreach (['house' => ['facade'], 'mixed_warehouse_office' => ['envelope', 'office_partitions', 'entrance_group']] as $type => $expected) {

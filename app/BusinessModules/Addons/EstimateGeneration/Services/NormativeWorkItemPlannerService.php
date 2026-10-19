@@ -989,6 +989,14 @@ final class NormativeWorkItemPlannerService
         $roofType = $quantityModel['features']['roof_type'] ?? null;
         $definitionKey = $this->packageDefinitionKey($packageKey, $scopeType);
 
+        if ($definitionKey === 'equipment'
+            && ($analysis['evaluation_policy']['mode'] ?? null) === 'universal'
+            && ($analysis['evaluation_policy']['profile_id'] ?? null) !== 'industrial'
+            && in_array('equipment', $analysis['evaluation_policy']['selected_sections'] ?? [], true)
+            && $this->isResidentialAnalysis($analysis)) {
+            return $this->residentialEquipmentDefinitions();
+        }
+
         return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
                 $this->definition('Подготовка строительной площадки', 'site', 'подготовка строительной площадки', 'site.setup'),
@@ -1223,6 +1231,22 @@ final class NormativeWorkItemPlannerService
             ],
             default => [],
         };
+    }
+
+    private function residentialEquipmentDefinitions(): array
+    {
+        $definitions = [];
+        foreach (['purchase' => ['equipment_purchase', 'equipment'], 'delivery' => ['delivery', 'other'], 'install' => ['installation', 'work']] as $key => [$requirement, $ordinaryType]) {
+            $name = trans_message('estimate_generation.residential_equipment.'.$key.'.name');
+            $definitions[] = [...$this->definition(
+                $name, 'engineering', $name, 'equipment.'.$key,
+                operations: [trans_message('estimate_generation.residential_equipment.'.$key.'.operation')],
+                metadata: ['requirement_key' => $requirement, 'ordinary_item_type' => $ordinaryType,
+                    'requires_specification' => true, 'requires_technology_confirmation' => true],
+            ), 'unit' => 'count'];
+        }
+
+        return $definitions;
     }
 
     private function industrialDefinition(string $name, string $category, string $quantityKey, string $unit, string $requirement, string $ordinaryType = 'work'): array

@@ -268,6 +268,13 @@ class PackagePlannerService
         ];
     }
 
+    public function selectedResidentialEquipmentPackage(int $index): array
+    {
+        return $this->packagePayload($this->package(
+            'equipment', trans_message('estimate_generation.selected_package_equipment'), 'engineering', 30, 80,
+        ), $index);
+    }
+
     private function industrialPackages(): array
     {
         return [...$this->warehousePackages(),
