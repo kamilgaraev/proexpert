@@ -308,6 +308,39 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_noninteger_work_durations_require_dates_without_reusing_numeric_tails(): void
+    {
+        foreach (['за последние 1,5 рабочих месяца', 'последние 1.5 календарные недели',
+            'за последние 1,5 месяца', 'за последние 1.5 месяца', 'за 1/2 года', 'за 1 1/2 месяца',
+            'последние 1,5 месяца', '1.5 месяца', '.5 недели', ',5 недели', '-2 недели', '+2 недели',
+            'за 1e3 месяца', 'за 1..5 месяца', 'в течение 0,5 года', 'на протяжении 1/2 года',
+            'за полтора месяца', 'полторы недели', 'за половину месяца', 'за сентябрь 2026 и последние 1,5 месяца'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
+    public function test_explicit_ranges_with_year_suffix_are_not_fractional_durations(): void
+    {
+        foreach (['с 01.10.2026 по 10.10.2026 года', 'с 01/10/2026 по 10/10/2026 года',
+            'с 01-10-2026 по 10-10-2026 года', 'с 2026-10-01 по 2026-10-10 года'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-10'],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
     public function test_relative_forward_offsets_require_dates_and_preserve_literal_project_names(): void
     {
         foreach (['через 1,5 месяца', 'через 1.5 месяца', 'через 0,5 года', 'через .5 недели', 'через ,5 недели',
