@@ -52,7 +52,9 @@ final class AssistantProductionSchedulePeriod
 
     private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы)';
 
-    private const DURATION_PERIOD = '(?:(?:за\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::DURATION_NUMBER.'\s+)?|(?:'.self::DURATION_MODIFIER.'\s+)?'.self::DURATION_NUMBER.'\s+|'.self::DURATION_MODIFIER.'\s+)'.self::DURATION_UNIT.'\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
+    private const INDEFINITE_DURATION_PERIOD = '(?:(?:за|в\s+течение|на\s+протяжении)\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?(?:нескольк(?:о|их)|много|немного|ряд|(?:неизвестное|неопредел[её]нное|некоторое)\s+количество)\s+(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
+
+    private const DURATION_PERIOD = '(?:'.self::INDEFINITE_DURATION_PERIOD.'|(?:за\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::DURATION_NUMBER.'\s+)?|(?:'.self::DURATION_MODIFIER.'\s+)?'.self::DURATION_NUMBER.'\s+|'.self::DURATION_MODIFIER.'\s+)'.self::DURATION_UNIT.'\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 
@@ -90,7 +92,7 @@ final class AssistantProductionSchedulePeriod
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
-        if (preg_match('/\b(?:'.self::SNAPSHOT_PREFIX.'|'.self::SUBDAY_PERIOD.'|'.self::FUTURE_DAY.'\b)/iu', $query) === 1) {
+        if (preg_match('/\b(?:'.self::SNAPSHOT_PREFIX.'|'.self::SUBDAY_PERIOD.'|'.self::INDEFINITE_DURATION_PERIOD.'|'.self::FUTURE_DAY.'\b)/iu', $query) === 1) {
             return $unresolved;
         }
         $withoutRanges = preg_replace('/\b'.self::EXPLICIT_RANGE.'/iu', ' ', $query) ?? $query;

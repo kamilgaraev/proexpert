@@ -285,6 +285,29 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_indefinite_durations_require_dates_and_preserve_literal_project_names(): void
+    {
+        foreach (['несколько месяцев', 'несколько недель', 'несколько лет', 'несколько дней', 'несколько суток',
+            'несколько кварталов', 'последние несколько месяцев', 'за несколько месяцев', 'много лет', 'немного дней',
+            'ряд месяцев', 'неизвестное количество дней', 'неопределённое количество недель',
+            'в течение нескольких месяцев', 'на протяжении нескольких лет', 'несколько часов', 'несколько минут'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
     public function test_counted_quarters_require_dates_and_preserve_named_project_priority(): void
     {
         foreach (['за три квартала', 'за последние три квартала', 'за предыдущие два квартала',
