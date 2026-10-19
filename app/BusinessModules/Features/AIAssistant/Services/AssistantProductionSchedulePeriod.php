@@ -54,6 +54,8 @@ final class AssistantProductionSchedulePeriod
 
     private const MONTH_YEAR = '(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого|предыдущего|позапрошлого|следующего|будущего)\s+года)';
 
+    private const VERBAL_DATE = '(?:'.self::PERIOD_PREFIX.'\s+)?\d{1,2}\s+'.self::MONTH.'\s+'.self::MONTH_YEAR.'\b';
+
     private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::MONTH.'\s+'.self::MONTH_YEAR.'\b';
 
     private const CALENDAR_YEAR_PERIOD = '(?<![\pL\pN.\/-])(?:('.self::PERIOD_PREFIX.')\s+)?'.self::CALENDAR_DETERMINERS.'((?:19|20)\d{2})\b(?![-.\/]\d)(?:\s+(?:год[ау]?|г\.?)(?![\pL\pN]))?';
@@ -123,9 +125,11 @@ final class AssistantProductionSchedulePeriod
         $time = '(?:'.self::SNAPSHOT_PREFIX.'|'.self::CURRENT_SNAPSHOT.'|'.self::EXPLICIT_DATE.'|'.self::ADJECTIVAL_DAY_PERIOD.'|'.self::MONTH_WITH_YEAR.'|'.self::CALENDAR_YEAR_PERIOD.'|'.self::HALF_YEAR_PERIOD.'|'.self::FUTURE_CALENDAR_PERIOD.'|'.self::QUALIFIED_DURATION_PERIOD.'|'.self::UNRESOLVED_NUMERIC_PERIOD.'|'.self::UNRESOLVED_COUNT_PERIOD.'|'.self::FORWARD_OFFSET_PERIOD.'|'.self::SUBDAY_PERIOD.'|'.self::BARE_CALENDAR_PERIOD.'|'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::QUARTER_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|'.self::WHOLE_CALENDAR_PERIOD.'|'.self::ALL_TIME_PERIOD.'|'.self::PERIOD_PREFIX.'\s+(?:'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|'.self::PERIOD_PREFIX.'\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::RELATIVE_DAY.'\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
-        $backwardParts = preg_split('/\s+(?='.self::BACKWARD_OFFSET_PERIOD.')/iu', $name, 2);
-        if (count($backwardParts) > 1 && (count($parts) === 1 || strlen($backwardParts[0]) < strlen($parts[0]))) {
-            $parts = $backwardParts;
+        foreach ([self::BACKWARD_OFFSET_PERIOD, self::VERBAL_DATE] as $pattern) {
+            $candidate = preg_split('/\s+(?='.$pattern.')/iu', $name, 2);
+            if (count($candidate) > 1 && (count($parts) === 1 || strlen($candidate[0]) < strlen($parts[0]))) {
+                $parts = $candidate;
+            }
         }
 
         $head = trim((string) ($parts[0] ?? $name));
@@ -144,8 +148,12 @@ final class AssistantProductionSchedulePeriod
                 return ['project_id' => $projectId, 'period_start' => $dates['period_start'], 'period_end' => $dates['period_end']];
             }
         }
-        $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
+        $query = AssistantNamedProjectReadScope::periodQuery($plan);
+        if (preg_match('/\b'.self::VERBAL_DATE.'/iu', $query) === 1) {
+            return $unresolved;
+        }
+        $query = self::normalizedQuery($query);
         $withoutRanges = preg_replace('/\b'.self::EXPLICIT_RANGE.'/iu', ' ', $query) ?? $query;
         if (preg_match_all('/\b'.self::BACKWARD_OFFSET_PERIOD.'/iu', $withoutRanges, $backward) > 0
             && (count($backward[0]) !== 1 || preg_match('/^'.self::WEEKS_AGO_PERIOD.'$/iu', $backward[0][0]) !== 1)) {

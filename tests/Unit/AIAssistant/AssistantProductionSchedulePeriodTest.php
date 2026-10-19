@@ -14,6 +14,34 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_verbal_dates_with_a_year_require_explicit_bounds_instead_of_a_month(): void
+    {
+        foreach (['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'] as $month) {
+            foreach (['', 'за ', 'на ', 'с ', 'до '] as $prefix) {
+                $phrase = $prefix.'1 '.$month.' 2026';
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        }
+    }
+
+    public function test_verbal_dates_keep_the_whole_suffix_out_of_project_names_after_empty_exact_lookup(): void
+    {
+        foreach (['1 октября 2026', 'за 1 октября 2026', 'на 01 октября 2026 года', 'с 1 октября 2026 по 15 октября 2026',
+            '1 октября текущего года', 'за 1 октября прошлого года', '32 февраля 2026', '1 октября 2026 и за ноябрь 2026'] as $phrase) {
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+            $this->assertPeriodScope($phrase, null, null);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
     public function test_bare_month_with_relative_year_keeps_dates_named_scope_and_literal_priority(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-12-31 21:30:00', 'UTC'));
