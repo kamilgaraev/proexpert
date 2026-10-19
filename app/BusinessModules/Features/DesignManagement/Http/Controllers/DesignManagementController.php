@@ -12,6 +12,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Requests\UpdateDesignPack
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageCollection;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignProjectOverviewQuery;
@@ -65,7 +66,7 @@ final class DesignManagementController extends Controller
             $paginator = ApiQueryMetrics::measureProcessingPhase('list_prepare', fn () => $this->service->listPackages($this->organizationId($request), $validated, $request->user()));
 
             return AdminResponse::paginated(
-                DesignPackageResource::collection($paginator->getCollection()),
+                new DesignPackageCollection($paginator->getCollection()),
                 $this->paginationMeta($paginator),
                 trans_message('design_management.messages.packages_loaded'),
                 summary: ApiQueryMetrics::measureProcessingPhase('list_prepare', fn () => $this->service->packageSummary($this->organizationId($request), $validated, $request->user())),

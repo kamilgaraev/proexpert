@@ -14,6 +14,16 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 final class DesignPackageResource extends JsonResource
 {
+    private ?bool $freshness = null;
+
+    public static function withFreshness(DesignPackage $package, bool $freshness): self
+    {
+        $resource = new self($package);
+        $resource->freshness = $freshness;
+
+        return $resource;
+    }
+
     public function toArray(Request $request): array
     {
         /** @var DesignPackage $package */
@@ -75,7 +85,7 @@ final class DesignPackageResource extends JsonResource
             'document_groups' => $projectStage === 'rd' ? DesignPackageSectionResource::collection($this->whenLoaded('sections')) : null,
             'review_comments' => DesignReviewCommentResource::collection($this->whenLoaded('reviewComments')),
             'workflow_events' => DesignWorkflowEventResource::collection($this->whenLoaded('workflowEvents')),
-            'completeness_is_fresh' => app(\App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService::class)->isFreshForPackage($package, $package->latestCompletenessCheck),
+            'completeness_is_fresh' => $this->freshness ?? app(\App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService::class)->isFreshForPackage($package, $package->latestCompletenessCheck),
             'latest_completeness_check' => new DesignCompletenessCheckResource($this->whenLoaded('latestCompletenessCheck')),
             'current_version' => $currentVersion ? new DesignArtifactVersionResource($currentVersion) : null,
             'viewer_status' => DesignPackageWorkflow::viewerStatus($package),

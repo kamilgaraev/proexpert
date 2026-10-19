@@ -9,6 +9,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewCommentIssueMapping;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\DB;
 
 final class DesignPackageBlockingIssueQuery
@@ -16,6 +17,25 @@ final class DesignPackageBlockingIssueQuery
     public static function forPackage(DesignPackage $package): Builder
     {
         return self::scopedIssues($package);
+    }
+
+    public static function forPackages(array $packages): QueryBuilder
+    {
+        if ($packages === []) {
+            return QualityDefect::query()->select(['id', 'status', 'metadata', 'updated_at'])
+                ->selectRaw('null::bigint as fingerprint_package_id')->whereRaw('false')->toBase();
+        }
+        $bindings = [];
+        foreach ($packages as $package) {
+            array_push($bindings, $package->id, $package->organization_id, $package->project_id);
+        }
+        $issues = self::scopedIssues(null)->select(['id', 'status', 'metadata', 'updated_at'])->toBase();
+
+        return $issues->getConnection()->query()
+            ->fromRaw('(values '.implode(', ', array_fill(0, count($packages), '(?::bigint, ?::bigint, ?::bigint)')).') as design_packages(id, organization_id, project_id)', $bindings)
+            ->joinLateral($issues, 'fingerprint_issues')
+            ->select(['fingerprint_issues.id', 'fingerprint_issues.status', 'fingerprint_issues.metadata', 'fingerprint_issues.updated_at'])
+            ->addSelect('design_packages.id as fingerprint_package_id')->orderBy('fingerprint_issues.id');
     }
 
     public static function withOpenBlockingCount(Builder $packages): Builder

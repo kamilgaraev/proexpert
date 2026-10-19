@@ -190,13 +190,77 @@ final class DesignCompletenessService
         if ($package->composition_revision_id !== null && $revision === null) {
             return false;
         }
+        return $this->matchesMetadata($package, $check, $revision)
+            && ($check->metadata['input_fingerprint'] ?? null) === $this->inputFingerprint($package);
+    }
+
+    public function freshnessForPackages(array $packages): array
+    {
+        if ($packages === []) {
+            return [];
+        }
+        $freshness = [];
+        $defaultConnection = (new DesignPackage)->getConnection()->getName();
+        foreach (array_chunk($packages, 100) as $chunk) {
+            $default = [];
+            $ids = array_map(static fn (DesignPackage $package): int => (int) $package->id, $chunk);
+            $duplicateIds = count(array_unique($ids)) !== count($ids);
+            foreach ($chunk as $package) {
+                $key = spl_object_id($package);
+                $check = $package->latestCompletenessCheck;
+                if ($package->getConnection()->getName() !== $defaultConnection || $duplicateIds) {
+                    $freshness[$key] = $this->isFreshForPackage($package, $check);
+                } elseif ($check === null) {
+                    $freshness[$key] = false;
+                } else {
+                    $default[] = $package;
+                }
+            }
+            $withRevision = array_filter($default, static fn (DesignPackage $package): bool => $package->composition_revision_id !== null);
+            $revisions = $withRevision === [] ? collect() : DesignCompositionRevision::query()
+                ->where('status', 'approved')->where(function ($query) use ($withRevision): void {
+                    foreach ($withRevision as $package) {
+                        $query->orWhere(static fn ($scope) => $scope->whereKey($package->composition_revision_id)
+                            ->where('package_id', $package->id)->where('organization_id', $package->organization_id)
+                            ->where('project_id', $package->project_id));
+                    }
+                })->get()->keyBy('id');
+            $candidates = [];
+            foreach ($default as $package) {
+                $key = spl_object_id($package);
+                $revision = $revisions->get($package->composition_revision_id);
+                if ($revision !== null && ((int) $revision->package_id !== (int) $package->id
+                    || (int) $revision->organization_id !== (int) $package->organization_id
+                    || (int) $revision->project_id !== (int) $package->project_id)) {
+                    $revision = null;
+                }
+                if (($package->composition_revision_id !== null && $revision === null)
+                    || ! $this->matchesMetadata($package, $package->latestCompletenessCheck, $revision)) {
+                    $freshness[$key] = false;
+                } else {
+                    $candidates[] = $package;
+                }
+            }
+            $fingerprints = count($candidates) === 1
+                ? [spl_object_id($candidates[0]) => $this->inputFingerprint($candidates[0])]
+                : app(DesignCompletenessInputQuery::class)->fingerprints($candidates);
+            foreach ($candidates as $package) {
+                $key = spl_object_id($package);
+                $freshness[$key] = ($package->latestCompletenessCheck->metadata['input_fingerprint'] ?? null) === $fingerprints[$key];
+            }
+        }
+
+        return $freshness;
+    }
+
+    private function matchesMetadata(DesignPackage $package, DesignCompletenessCheck $check, ?DesignCompositionRevision $revision): bool
+    {
         $metadata = is_array($check->metadata) ? $check->metadata : [];
 
         return ($metadata['rule_count'] ?? null) === $this->ruleCount()
             && ($metadata['composition_revision_id'] ?? null) === $revision?->id
             && ($metadata['composition_fingerprint'] ?? null) === $revision?->fingerprint
-            && ($metadata['completeness_invalidated_at'] ?? null) === $this->packageInvalidationStamp($package)
-            && ($metadata['input_fingerprint'] ?? null) === $this->inputFingerprint($package);
+            && ($metadata['completeness_invalidated_at'] ?? null) === $this->packageInvalidationStamp($package);
     }
 
     private function approvedCompositionRevision(DesignPackage $package): ?DesignCompositionRevision
@@ -217,19 +281,15 @@ final class DesignCompletenessService
 
     private function inputFingerprint(DesignPackage $package): string
     {
-        $sections = $package->sections()->orderBy('id')->get()->map(static fn ($item): array => ['id' => $item->id, 'code' => $item->code, 'required' => $item->required, 'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id']))])->all();
-        $artifacts = DesignArtifact::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at'])->map(static fn (DesignArtifact $item): array => $item->only(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at']))->all();
-        $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at'])->map(static fn (DesignArtifactVersion $item): array => $item->only(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at']))->all();
-        $sheets = DesignDocumentSheet::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'version_id', 'status', 'revision', 'updated_at'])->map(static fn (DesignDocumentSheet $item): array => $item->only(['id', 'version_id', 'status', 'revision', 'updated_at']))->all();
-        $comments = DesignReviewComment::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'status', 'severity', 'updated_at'])->map(static fn (DesignReviewComment $item): array => $item->only(['id', 'status', 'severity', 'updated_at']))->all();
-        $issues = $this->blockingIssues($package);
-        $exclusions = $package->composition_revision_id === null ? [] : DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->with('exclusions')->first()?->exclusions->map(static fn ($item): array => ['id' => $item->id, 'item_key' => $item->item_key, 'reason' => $item->reason, 'created_at' => $item->created_at?->toISOString()])->all();
-        return hash('sha256', json_encode(['sections' => $sections, 'artifacts' => $artifacts, 'versions' => $versions, 'sheets' => $sheets, 'comments' => $comments, 'issues' => $issues, 'exclusions' => $exclusions], JSON_THROW_ON_ERROR));
-    }
+        $sections = $package->sections()->orderBy('id')->get();
+        $artifacts = DesignArtifact::query()->where('package_id', $package->id)->orderBy('id')->get(DesignCompletenessInputQuery::ARTIFACT_FIELDS);
+        $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(DesignCompletenessInputQuery::VERSION_FIELDS);
+        $sheets = DesignDocumentSheet::query()->where('package_id', $package->id)->orderBy('id')->get(DesignCompletenessInputQuery::SHEET_FIELDS);
+        $comments = DesignReviewComment::query()->where('package_id', $package->id)->orderBy('id')->get(DesignCompletenessInputQuery::COMMENT_FIELDS);
+        $issues = DesignPackageBlockingIssueQuery::forPackage($package)->orderBy('id')->get(['id', 'status', 'metadata', 'updated_at']);
+        $exclusions = $package->composition_revision_id === null ? collect() : DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->with('exclusions')->first()?->exclusions;
 
-    private function blockingIssues(DesignPackage $package): array
-    {
-        return DesignPackageBlockingIssueQuery::forPackage($package)->orderBy('id')->get(['id', 'status', 'metadata', 'updated_at'])->map(static fn ($item): array => ['id' => $item->id, 'status' => $item->status, 'metadata' => $item->metadata, 'updated_at' => $item->updated_at?->toISOString()])->all();
+        return DesignCompletenessInputQuery::fingerprint($sections, $artifacts, $versions, $sheets, $comments, $issues, $exclusions);
     }
 
     public function latestForPackage(DesignPackage $package): ?DesignCompletenessCheck
