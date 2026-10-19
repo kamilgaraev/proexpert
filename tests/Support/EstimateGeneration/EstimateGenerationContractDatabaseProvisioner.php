@@ -45,9 +45,9 @@ final class EstimateGenerationContractDatabaseProvisioner
     ];
 
     private const SUBJECT_DIGEST = [
-        'geometry' => 'ec5098ffe38add22589f3d17dd58b335e395e2a384eede09c50b3f9019698f7c',
-        'pricing' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
-        'training' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
+        'geometry' => '724a3a195ab280c3f87ec1b29064024f6e0208709c3c340a85f6ce9c5983887b',
+        'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
+        'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
         'project-model' => 'b93980b093a0b93119d958ae46216ab51ca7175f8afe6591e965027d4d681b4a',
     ];
 
