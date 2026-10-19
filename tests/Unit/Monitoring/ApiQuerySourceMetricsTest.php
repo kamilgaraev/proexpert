@@ -539,16 +539,20 @@ final class ApiQuerySourceMetricsTest extends TestCase
     public function test_numeric_access_and_acl_phases_survive_production_redaction(): void
     {
         [$request, $metrics] = $this->metrics();
-        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
+        $phases = ['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
             'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
             'access_system_match', 'access_module_match', 'security_emit',
             'access_context_read', 'access_role_read', 'access_context_hierarchy', 'access_conditions',
-            'access_module_roles', 'access_module_entitlement', 'access_module_permission'] as $phase) {
+            'access_module_roles', 'access_module_entitlement', 'access_module_permission',
+            'file_report_list', 'file_report_classify', 'file_report_access',
+            'file_report_storage_exists', 'file_report_storage_url'];
+        foreach ($phases as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
             self::assertNotNull($checkpoint);
             ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
         }
         $summary = $metrics->summary();
+        self::assertSame($phases, array_keys($summary['processing_phases']));
         $summary['authorization'] = 'Bearer private-token';
         $redacted = (new SensitiveDataRedactor)->redact($summary);
         self::assertSame($summary['processing_phases'], $redacted['processing_phases']);
