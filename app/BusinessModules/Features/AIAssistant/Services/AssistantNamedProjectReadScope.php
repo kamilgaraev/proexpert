@@ -100,13 +100,16 @@ final class AssistantNamedProjectReadScope
             return null;
         }
 
-        return $name === '' || (! $quoted && $name !== null && preg_match('/^(?:есть|нет|ещ[её]|уже|сейчас|остал[а-яё]*|задержива[а-яё]*|просрочены|готовы|назначены|приняты|закрыты|завершены|ждут|имеют|действуют|что|кто|где|когда|как|какие|какой|какая|какое|сколько|нужно|надо|можно|не|и|или|но|а|при|без|перед|после|в|во|к|у|под|над|между|о|об|со|через)(?![\pL\pN])/iu', $name) === 1) ? null : $name;
+        return $name === '' || (! $quoted && $name !== null && preg_match('/^(?:есть|нет|ещ[её]|уже|сейчас|остал[а-яё]*|задержива[а-яё]*|просрочены|готовы|назначены|приняты|закрыты|завершены|ждут|имеют|действуют|что|кто|где|когда|как|какие|какой|какая|какое|сколько|нужно|надо|можно|не|и|или|но|а)(?![\pL\pN])/iu', $name) === 1) ? null : $name;
     }
 
     private static function hasImplicitProjectClause(string $query): bool
     {
         $candidate = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
-        if ($candidate !== null && preg_match('/^(?:вчера|позавчера)[.!?]*$/iu', $candidate) === 1) {
+        $periodHead = $candidate === null ? null : AssistantProductionSchedulePeriod::withoutSuffix('текущий '.$candidate);
+        if ($candidate !== null && (preg_match('/^(?:сегодня|вчера|позавчера)[.!?]*$/iu', $candidate) === 1
+            || preg_match('/^с\s+график[а-яё]*(?:\s|[.!?;:,]|$)/iu', $candidate) === 1
+            || ($periodHead !== null && preg_match('/^текущий(?:\s+(?:за|с|со|по|для|на|от|в|во|до))*$/iu', $periodHead) === 1))) {
             return true;
         }
 

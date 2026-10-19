@@ -249,17 +249,19 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertStringNotContainsString('SECRET-FOREIGN-OWNER', json_encode($read, JSON_THROW_ON_ERROR));
     }
 
-    public function test_named_project_lookup_and_reader_recheck_current_assignment_without_ui_fallback(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('namedProjectScopeCases')]
+    public function test_named_project_lookup_and_reader_recheck_current_assignment_without_ui_fallback(string $name, bool $quoted): void
     {
+        $this->project->updateQuietly(['name' => $name]);
         $this->fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'],
             'project-management' => ['projects.view'], 'contract-management' => ['contracts.completed_works.view'], 'schedule-management' => ['schedule.view']]]);
         $ui = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => 'Другой проект']));
         foreach ([$this->project, $ui] as $project) {
             $this->fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
         }
-        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => 'Учебный ПТО']));
-        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id, 'name' => 'Учебный ПТО']));
-        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта «Учебный ПТО».',
+        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => $name]));
+        Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id, 'name' => $name]));
+        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта '.($quoted ? '«'.$name.'»' : $name).'.',
             'context' => ['entity_refs' => [['type' => 'project', 'id' => $ui->id]]]]];
         $policy = app(AssistantDataAccessPolicy::class);
         $search = fn (array $arguments) => $policy->withCurrentChecks($this->fixture->member, $this->fixture->organization->id,
@@ -273,6 +275,11 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertNull(AssistantRequiredProjectRead::fromPlan($denied));
         $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
         app(AssistantProjectProductionScheduleReader::class)->read($this->fixture->member, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+    }
+
+    public static function namedProjectScopeCases(): array
+    {
+        return [['Учебный ПТО', true], ['За рекой', false], ['С видом на парк', false]];
     }
 
     public function test_missing_work_permission_does_not_turn_into_a_zero_works_summary(): void

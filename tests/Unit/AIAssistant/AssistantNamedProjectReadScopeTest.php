@@ -14,17 +14,55 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_leading_prepositions_are_checked_as_full_names_before_any_ui_fallback(): void
+    {
+        foreach (['За рекой', 'за рекой', 'С видом на парк', 'По улице Мира', 'Для детей', 'На берегу', 'От истока', 'В пути', 'У озера', 'Без границ'] as $name) {
+            $query = 'Сверь выполненные работы с графиком проекта '.$name;
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($name): array {
+                self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(102, AssistantRequestProjectScope::fromPlan($literal)->projectId, $name);
+            self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $name);
+            foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
+                self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId, $name);
+                self::assertNull(AssistantRequiredProjectRead::fromPlan($blocked), $name);
+            }
+        }
+        $query = 'Сверь выполненные работы с графиком по проекту за 2026 год';
+        $empty = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+            self::assertSame(['query' => 'за 2026 год', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+            return $this->projectSearchResult([], false);
+        });
+        self::assertSame(['project_id' => 104, 'period_start' => '2026-01-01', 'period_end' => '2026-12-31'], AssistantRequiredProjectRead::fromPlan($empty)['arguments']);
+        $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+        self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+    }
+
     public function test_schedule_comparison_after_project_preserves_intent_and_quoted_name_guards(): void
     {
         foreach (['', '?'] as $ending) {
             $query = 'Сверь выполненные работы по проекту с графиком'.$ending;
             self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)));
             self::assertTrue(AssistantProjectProductionScheduleReader::hasIntent($query));
-            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), static function (): never {
-                self::fail('A schedule complement must not be searched as a project name');
+            $calls = 0;
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls): array {
+                $calls++;
+                self::assertSame(['query' => 'с графиком', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([], false);
             });
+            self::assertSame(1, $calls);
             self::assertArrayNotHasKey('named_project_scope', $resolved);
             self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+            $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102]], false));
+            self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            foreach ([$this->projectSearchResult([], true), ['status' => 'error']] as $result) {
+                self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result))->projectId);
+            }
         }
         $query = 'Сверь выполненные работы с графиком по проекту «С графиком»';
         $literal = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
