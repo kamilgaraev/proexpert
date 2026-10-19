@@ -31,7 +31,7 @@ final class EstimateGenerationRoomIdentityController extends Controller
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session, GetRoomIdentitySources $sources): JsonResponse
     {
-        $input = $request->validate(['search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
+        $input = $request->validate(['search' => ['sometimes', 'nullable', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:50'], 'include_manual' => ['sometimes', 'boolean']]);
 
         return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id,
