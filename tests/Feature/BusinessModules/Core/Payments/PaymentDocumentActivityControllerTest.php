@@ -124,6 +124,33 @@ final class PaymentDocumentActivityControllerTest extends TestCase
         $this->getJson("/api/v1/admin/payments/documents/{$hidden->id}/activity", $headers)->assertNotFound();
     }
 
+    public function test_unknown_activity_action_uses_a_translated_safe_label(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $actor = $fixture->addMember(['payments' => ['payments.transaction.view']]);
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $project->users()->attach($actor->id, ['role' => 'member', 'is_active' => true]);
+        $document = $this->document($project);
+        $this->actingAs($actor);
+        app(PaymentAuditService::class)->log('unknown_technical_event', $document);
+        $this->assertSame('Изменение документа', trans_message('payments.audit.document_changed'));
+        app('translator')->addLines(['payments.audit.document_changed' => 'Учебная подпись изменения'], 'ru');
+
+        $response = $this->getJson("/api/v1/admin/payments/documents/{$document->id}/activity", $this->headers($actor));
+
+        $response->assertOk()->assertJsonPath('data.audit_logs.0.action', 'Учебная подпись изменения');
+    }
+
+    public function test_activity_rejects_invalid_document_identifiers_without_database_conversion_errors(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $actor = $fixture->addMember(['payments' => ['payments.transaction.view']]);
+        $headers = $this->headers($actor);
+
+        foreach (['not-a-number', '0', '-1', '99999999999999999999999999999'] as $id) {
+            $this->getJson("/api/v1/admin/payments/documents/{$id}/activity", $headers)->assertNotFound();
+        }
+    }
     private function document(Project $project): PaymentDocument
     {
         return PaymentDocument::query()->create([

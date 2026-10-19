@@ -6,8 +6,10 @@ namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\User;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 final class PaymentDocumentActivityService
 {
@@ -18,6 +20,11 @@ final class PaymentDocumentActivityService
 
     public function forDocument(int $organizationId, User $actor, int|string $documentId): array
     {
+        $documentId = filter_var($documentId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($documentId === false) {
+            throw (new ModelNotFoundException)->setModel(PaymentDocument::class);
+        }
+
         $permission = 'payments.transaction.view';
         $document = $this->documents->find($organizationId, $actor, $documentId, $permission);
 
@@ -89,7 +96,7 @@ final class PaymentDocumentActivityService
 
         return [
             'id' => $event->id,
-            'action' => $label === $event->action ? 'Изменение документа' : $label,
+            'action' => $label === $event->action ? trans_message('payments.audit.document_changed') : $label,
             'timestamp' => $event->created_at?->toIso8601String(),
             'user' => $event->user_id !== null || $name !== null ? ['id' => $event->user_id, 'name' => $name] : null,
         ];
