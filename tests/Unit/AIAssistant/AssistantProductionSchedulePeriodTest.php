@@ -14,6 +14,32 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_calendar_start_includes_quarters_and_days_with_calendar_boundaries(): void
+    {
+        foreach (['2026-01-01' => ['с начала текущего квартала' => '2026-01-01', 'с начала прошлого квартала' => '2025-10-01',
+            'с начала позапрошлого квартала' => '2025-07-01', 'с начала дня' => '2026-01-01'],
+            '2026-10-21' => ['с начала квартала' => '2026-10-01', 'с начала предыдущего квартала' => '2026-07-01',
+                'с начала текущего дня' => '2026-10-21', 'с начала суток' => '2026-10-21']] as $today => $periods) {
+            \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable($today.' 10:00:00', 'Europe/Moscow'));
+            try {
+                foreach ($periods as $phrase => $start) {
+                    $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $today];
+                    self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                        ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                    $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                        'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]],
+                        static fn (array $arguments): array => ['status' => 'success',
+                            'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                    self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+                }
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком с начала квартала и за прошлый месяц']]));
+            } finally {
+                \Carbon\CarbonImmutable::setTestNow();
+            }
+        }
+    }
+
     public function test_calendar_start_resolves_explicit_and_previous_periods_through_today(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-21 10:00:00', 'Europe/Moscow'));

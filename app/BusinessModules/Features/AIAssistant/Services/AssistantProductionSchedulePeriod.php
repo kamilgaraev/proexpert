@@ -54,7 +54,7 @@ final class AssistantProductionSchedulePeriod
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
-        if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:((?:19|20)\d{2}|этого|текущего|прошлого|предыдущего|позапрошлого|этой|текущей|прошлой|предыдущей|позапрошлой)\s+)?(года|месяца|недели)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $calendarStart) > 0) {
+        if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:((?:19|20)\d{2}|этого|текущего|прошлого|предыдущего|позапрошлого|этой|текущей|прошлой|предыдущей|позапрошлой)\s+)?(года|квартала|месяца|недели|дня|суток)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $calendarStart) > 0) {
             if (count($calendarStart[0]) !== 1 || self::hasOtherPeriod($query, $calendarStart[0][0])) {
                 return $unresolved;
             }
@@ -67,8 +67,10 @@ final class AssistantProductionSchedulePeriod
             $today = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
             $start = match ($unit) {
                 'года' => $today->setDate(ctype_digit($relative) ? (int) $relative : (int) $today->format('Y') - $offset, 1, 1),
+                'квартала' => $today->setDate((int) $today->format('Y'), intdiv((int) $today->format('n') - 1, 3) * 3 + 1, 1)->modify('-'.($offset * 3).' months'),
                 'месяца' => $today->modify('first day of this month')->modify('-'.$offset.' months'),
-                default => $today->modify('-'.((int) $today->format('N') - 1 + $offset * 7).' days'),
+                'недели' => $today->modify('-'.((int) $today->format('N') - 1 + $offset * 7).' days'),
+                default => $today->modify('-'.$offset.' days'),
             };
 
             return $start > $today ? $unresolved : $arguments + ['period_start' => $start->format('Y-m-d'), 'period_end' => $today->format('Y-m-d')];
