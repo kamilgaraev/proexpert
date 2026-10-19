@@ -45,6 +45,11 @@ final class AssistantReportEntityQuery
                 $parts = array_values(array_filter(array_slice($quoted, 1), static fn (string $part): bool => trim($part) !== ''));
                 $name = trim((string) ($parts[0] ?? ''));
             } else {
+                if ($type === 'project' && $names !== []
+                    && preg_match('/\b(?:с|со)\s+начала\s*$/iu', substr($message, 0, $offset)) === 1
+                    && preg_match('/^по\s+(?:сегодня|текущий\s+день)(?![\pL\pN])/iu', $tail) === 1) {
+                    continue;
+                }
                 $parts = preg_split($preservePrepositions
                     ? '/\s+(?:проекта|объекта|склада|сотрудника|подрядчика)\b|\n/iu'
                     : '/\s+(?:за|с|по|для|на|от|проекта|объекта|склада|сотрудника|подрядчика)\b|[,;\n]/iu', $tail, 2);

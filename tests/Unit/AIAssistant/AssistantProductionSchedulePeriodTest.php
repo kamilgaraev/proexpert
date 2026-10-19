@@ -14,6 +14,38 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_supported_neutral_details_keep_period_without_rewriting_new_financial_intent(): void
+    {
+        $message = 'Сверь выполненные работы с графиком проекта «Северный дом» с 2026-10-01 по 2026-10-10';
+        $dates = ['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-10'];
+        $saved = ['last_request' => ['message' => $message,
+            'production_period_override' => $dates + ['message_sha256' => hash('sha256', $message)]]];
+        $service = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class))->newInstanceWithoutConstructor();
+        $matcher = new \ReflectionMethod($service, 'isDetailContinuation');
+        foreach (['а подробнее', 'давай детальнее', 'можно подробнее', 'расскажи подробнее', 'поясни это',
+            'разверни по этому вопросу', 'ещё подробнее', 'Покажи подробнее!', 'Покажите подробнее',
+            'точнее', 'давай конкретнее, а не около', 'какие позиции', 'давай подробнее', 'детальнее',
+            'можно детальнее', 'покажи детали', 'подробнее', 'подробней', 'поясни', 'распиши',
+            'расскажи детальнее', 'расшифруй', 'разверни', 'что именно', 'еще подробнее',
+            "  МОЖНО\nПОДРОБНЕЕ?!  "] as $reply) {
+            self::assertTrue($matcher->invoke($service, $reply), $reply);
+            self::assertSame(['query' => $message] + $dates, AssistantProductionSchedulePeriod::clarification($reply, $saved), $reply);
+            self::assertSame($message, AssistantProjectClarificationIntent::query($reply, [], $saved));
+            self::assertSame($reply, AssistantProjectClarificationIntent::query($reply, ['allow_actions' => true], $saved));
+            $stale = $saved;
+            $stale['last_request']['message'] = 'Другой вопрос';
+            self::assertNull(AssistantProductionSchedulePeriod::clarification($reply, $stale));
+        }
+        foreach (['по деньгам', 'надо по деньгам', 'какие это позиции по смете', 'По деньгам!'] as $reply) {
+            self::assertTrue($matcher->invoke($service, $reply), $reply);
+            self::assertNull(AssistantProductionSchedulePeriod::clarification($reply, $saved));
+            self::assertSame($reply, AssistantProjectClarificationIntent::query($reply, [], $saved));
+        }
+        foreach (['Оплати счета', 'Какие платежи просрочены?', str_repeat('а ', 100).'подробнее'] as $reply) {
+            self::assertNull(AssistantProductionSchedulePeriod::clarification($reply, $saved));
+        }
+    }
+
     public function test_prepositionless_calendar_units_match_explicit_periods_and_named_scope(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));

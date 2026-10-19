@@ -3079,53 +3079,7 @@ class AIAssistantService
 
     private function isDetailContinuation(string $query): bool
     {
-        $normalized = $this->normalizeText(mb_strtolower($query));
-        if ($normalized === '' || mb_strlen($normalized) > 160) {
-            return false;
-        }
-
-        $normalized = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $normalized) ?? $normalized;
-        $normalized = $this->normalizeText($normalized);
-
-        if ($normalized === '') {
-            return false;
-        }
-
-        $exactPhrases = [
-            'надо по деньгам',
-            'по деньгам',
-            'точнее',
-            'давай конкретнее а не около',
-            'какие это позиции по смете',
-            'какие позиции',
-            'а подробнее',
-            'давай детальнее',
-            'давай подробнее',
-            'детальнее',
-            'можно детальнее',
-            'можно подробнее',
-            'покажи детали',
-            'подробнее',
-            'подробней',
-            'поясни',
-            'распиши',
-            'расскажи детальнее',
-            'расскажи подробнее',
-            'расшифруй',
-            'разверни',
-            'что именно',
-            'еще подробнее',
-            'ещё подробнее',
-        ];
-
-        if (in_array($normalized, $exactPhrases, true)) {
-            return true;
-        }
-
-        return preg_match(
-            '/^(?:а\s+)?(?:(?:давай|можно|расскажи|покажи)\s+)?(?:(?:еще|ещё|чуть|более)\s+)?(?:подробнее|подробней|детальнее|поясни|распиши|расшифруй|разверни|детали)(?:\s+(?:это|его|её|ее|их|тут|там|здесь|об\s+этом|в\s+этом|на\s+этом|по\s+(?:этому|нему|ней|ним|этому\s+вопросу|этим\s+данным|этой\s+части|этому\s+пункту)))?$/u',
-            $normalized
-        ) === 1;
+        return AssistantDetailContinuationIntent::matches($query);
     }
 
     private function buildContinuationSearchQuery(string $query, array $previousRequest, array $conversationContext): string

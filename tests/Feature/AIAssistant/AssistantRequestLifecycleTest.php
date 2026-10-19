@@ -1986,7 +1986,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('directProductionPeriods')]
-    public function test_direct_production_period_is_saved_and_older_dates_survive_detail_reply(string $phrase, ?string $start, string $end): void
+    public function test_direct_production_period_is_saved_and_older_dates_survive_detail_reply(string $phrase, ?string $start, string $end, string $reply): void
     {
         $today = \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d');
         $firstStart = $phrase === 'сегодня' ? $today : $start;
@@ -2019,7 +2019,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $expected = ['project_id' => 102, 'period_start' => $firstStart, 'period_end' => $firstEnd,
             'message_sha256' => hash('sha256', $first['message'])];
         $actual = $first['production_period_override'] ?? null;
-        self::assertIsArray($actual);
+        self::assertIsArray($actual, json_encode(array_intersect_key($first, array_flip(['message', 'period', 'context', 'production_period_override'])), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
         ksort($expected);
         ksort($actual);
         self::assertSame($expected, $actual);
@@ -2027,7 +2027,6 @@ final class AssistantRequestLifecycleTest extends TestCase
         $context['last_request']['production_period_override']['period_start'] = $start;
         $context['last_request']['production_period_override']['period_end'] = $end;
         $conversation->update(['context' => $context]);
-        $reply = 'Покажи подробнее';
         $payload = $this->quote(['message' => $reply, 'context' => ['entity_references' => [['entity_type' => 'project', 'entity_id' => 104]]]], conversationId: $conversation->id);
         $service->ask($reply, $this->organization->id, $this->actor, $conversation->id, $payload);
         self::assertSame([$original, $reply], Message::query()->where('role', 'user')->orderBy('id')->pluck('content')->all());
@@ -2040,8 +2039,12 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     public static function directProductionPeriods(): array
     {
-        return [['с начала проекта по сегодня', null, '2026-10-18'], ['сегодня', '2026-10-18', '2026-10-18'],
-            ['за октябрь 2026', '2026-10-01', '2026-10-31']];
+        return [['с начала проекта по сегодня', null, '2026-10-18', 'Покажи подробнее'],
+            ['сегодня', '2026-10-18', '2026-10-18', 'Покажи подробнее'],
+            ['за октябрь 2026', '2026-10-01', '2026-10-31', 'Покажи подробнее'],
+            ['с начала проекта по сегодня', null, '2026-10-18', 'а подробнее'],
+            ['сегодня', '2026-10-18', '2026-10-18', 'давай детальнее'],
+            ['за октябрь 2026', '2026-10-01', '2026-10-31', 'Покажите подробнее']];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

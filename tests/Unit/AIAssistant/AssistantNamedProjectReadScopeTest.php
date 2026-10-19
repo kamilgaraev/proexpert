@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_project_start_period_does_not_add_a_second_project_name(): void
+    {
+        foreach (['с начала проекта по сегодня', 'со начала объекта по текущий день'] as $period) {
+            $query = 'Сверь выполненные работы с графиком проекта «Северный дом» '.$period;
+            self::assertSame('Северный дом', AssistantNamedProjectReadScope::name($this->plan($query)));
+            $calls = 0;
+            $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$calls): array {
+                $calls++;
+                self::assertSame(['query' => 'Северный дом', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(1, $calls);
+            $read = AssistantRequiredProjectRead::fromPlan($bound);
+            self::assertSame(102, $read['arguments']['project_id']);
+            self::assertNull($read['arguments']['period_start']);
+            self::assertSame(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'), $read['arguments']['period_end']);
+        }
+        self::assertSame('По сегодня', \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::extract(
+            'Сверь выполненные работы с начала проекта По сегодня', 'project', preservePrepositions: true));
+        self::assertSame('По сегодня', \App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::extract(
+            'Сверь выполненные работы с начала проекта «По сегодня»', 'project', preservePrepositions: true));
+        foreach (['Сверь графики проекта «Северный дом» и проекта «По сегодня»',
+            'Сверь графики проекта «Северный дом» с начала проекта «По сегодня»',
+            'Сверь графики проекта «Северный дом» и проекта По сегодня'] as $query) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportEntityQuery::hasAmbiguousName($query, 'project', preservePrepositions: true));
+        }
+    }
+
     public function test_introductory_commands_preserve_question_predicate_after_project(): void
     {
         foreach (['Покажи, какие камеры проекта отключены', 'Покажите какие камеры проекта отключены',
