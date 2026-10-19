@@ -31,6 +31,9 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Modules\Core\AccessController;
 use App\Services\Storage\FileService;
+use App\Http\Responses\AdminResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
+use Illuminate\Http\Request;
 use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -550,6 +553,25 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         self::assertSame(DesignPackageResource::collection($packages->keyBy('id'))->response()->getData(true), $collection->response()->getData(true));
         foreach ($packages as $package) {
             self::assertSame($this->previousInputFingerprint($package), $inputQuery->fingerprints($packages->all())[spl_object_id($package)]);
+        }
+        $previousRequest = app('request');
+        $request = Request::create('/api/v1/admin/design-management/packages');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $this->app->instance('request', $request);
+        try {
+            $profiled = AdminResponse::paginated(new DesignPackageCollection($packages), ['total' => 2])->getData(true)['data'];
+        } finally {
+            $this->app->instance('request', $previousRequest);
+        }
+        self::assertSame($actual->values()->all(), $profiled);
+        $phases = $metrics->summary()['processing_phases'];
+        self::assertGreaterThan(0, $phases['design_freshness']['sql_count']);
+        self::assertSame(0, $phases['design_resources']['sql_count']);
+        self::assertSame($phases['design_freshness']['sql_count'], $phases['design_response_build']['sql_count']);
+        self::assertSame(0, $phases['design_response_decode']['sql_count']);
+        foreach (['design_freshness', 'design_resources', 'design_response_build', 'design_response_decode'] as $phase) {
+            self::assertSame(1, $phases[$phase]['count']);
         }
     }
 

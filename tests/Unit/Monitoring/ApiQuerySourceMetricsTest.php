@@ -587,7 +587,8 @@ final class ApiQuerySourceMetricsTest extends TestCase
         ApiQueryMetrics::recordProcessingPhase($request, 'list_encode', hrtime(true));
         self::assertArrayNotHasKey('processing_phases', $other->summary());
         self::assertSame(0, $metrics->summary()['sql_count']);
-        foreach (['journal_load', 'journal_prepare', 'journal_payload', 'journal_encode'] as $name) {
+        foreach (['journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
+            'design_freshness', 'design_resources', 'design_response_build', 'design_response_decode'] as $name) {
             ApiQueryMetrics::recordProcessingPhase($request, $name, hrtime(true));
             self::assertArrayNotHasKey('processing_phases', $other->summary());
             $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
