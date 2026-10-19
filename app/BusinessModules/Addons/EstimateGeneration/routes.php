@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDialogueController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationEvaluationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationFactoryController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationManualFactsController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPrerequisiteController;
@@ -51,6 +52,8 @@ Route::middleware([
         Route::post('/{session}/operations/documents', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCreditController::class, 'startDocuments'])->middleware('authorize:estimate_generation.generate,project,project')->name('operations.documents');
         Route::get('/{session}/operations/{operation}', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCreditController::class, 'show'])->whereUuid('operation')->middleware('authorize:estimate_generation.view,project,project')->name('operations.show');
         Route::get('/{session}/qa-expense', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationExpenseDiagnosticsController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('qa-expense');
+        Route::get('/{session}/factory', [EstimateGenerationFactoryController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('factory.show');
+        Route::post('/{session}/factory/inspections', [EstimateGenerationFactoryController::class, 'inspect'])->middleware('authorize:estimate_generation.review,project,project')->name('factory.inspect');
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
         Route::get('/{session}/geometry-inventory', [EstimateGenerationManualFactsController::class, 'inventory'])->middleware('authorize:estimate_generation.view,project,project')->name('geometry-inventory.show');
         Route::get('/{session}/description-proposals', [EstimateGenerationManualFactsController::class, 'descriptionProposals'])->middleware('authorize:estimate_generation.view,project,project')->name('description-proposals.show');
