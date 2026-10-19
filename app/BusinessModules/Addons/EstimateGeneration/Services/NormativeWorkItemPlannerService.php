@@ -821,7 +821,11 @@ final class NormativeWorkItemPlannerService
         $pluralFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ы|ов|ам|ами|ах)|умывальник(?:и|ов|ам|ами|ах)|'
             .'душев(?:ые|ых|ым|ыми)\s+кабин(?:ы|ам|ами|ах)?|ванн(?:ы|ам|ами|ах)?|мойк(?:и|ам|ами|ах)|'
             .'раковин(?:ы|ам|ами|ах)?|смесител(?:и|ей|ям|ями|ях)|писсуар(?:ы|ов|ам|ами|ах)|душ(?:и|ей|ам|ами|ах)|биде)(?![\p{L}\p{N}])';
-        $independentPluralAssertion = $fixtureModifiers.$pluralFixture
+        $pluralCountModifier = '(?:[2-9]|[1-9]\d{1,2}|(?!од)'.$numberModifier.')(?![\p{L}\p{N}])';
+        $countedFixture = $pluralCountModifier.'\s+'.$fixtureModifiers
+            .'(?:унитаза|умывальника|смесителя|писсуара|душа)(?![\p{L}\p{N}])';
+        $pluralFixtureHead = '(?!(?:(?&fixture_modifier)\s+){4})'.$fixtureModifiers.'(?:'.$pluralFixture.'|'.$countedFixture.')';
+        $independentPluralAssertion = $pluralFixtureHead
             .$before($fullPredicate, $predicateBoundary, 80).$fullPredicate
             .$before($clauseEnd, $anyFixture, 80).$clauseEnd;
         $pluralStatementSeparator = '~'.$modifierDefinition.',\s*(?=(?:'.$listConjunction.'\s*)?'.$independentPluralAssertion.')~iu';
