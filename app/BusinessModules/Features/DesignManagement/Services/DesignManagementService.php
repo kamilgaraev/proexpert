@@ -81,6 +81,11 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
         $relations = self::packageRelations();
         unset($relations['artifacts.currentVersion.derivatives'], $relations['artifacts.currentVersion.readyDerivative']);
+        $relations = array_map(static fn ($relation) => match ($relation) {
+            'artifacts.currentVersion.sheets' => 'artifacts.currentVersion',
+            'sections.artifacts.currentVersion.sheets' => 'sections.artifacts.currentVersion',
+            default => $relation,
+        }, $relations);
         $packages = $this->packageQuery($organizationId, $filters, $actor)
             ->withOpenBlockingCount()
             ->with($relations)
@@ -88,6 +93,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             ->paginate($perPage);
 
         self::reuseCurrentVersionDerivatives($packages);
+        self::reuseCurrentVersionSheets($packages);
 
         return $packages;
     }
@@ -118,6 +124,31 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             $version->setRelation('readyDerivative', $version->derivatives->first(static fn (DesignModelDerivative $derivative): bool => $derivative->status === DesignDerivativeStatusEnum::READY
                 && $derivative->viewer_provider === 'thatopen'
                 && $derivative->derivative_format === 'thatopen_frag'));
+        }
+    }
+
+    private static function reuseCurrentVersionSheets(LengthAwarePaginator $packages): void
+    {
+        $missingVersions = new Collection;
+        foreach ($packages as $package) {
+            $artifacts = $package->artifacts->concat($package->sections->flatMap(
+                static fn (DesignPackageSection $section) => $section->artifacts,
+            ));
+            foreach ($artifacts as $artifact) {
+                $currentVersion = $artifact->currentVersion;
+                if (! $currentVersion instanceof DesignArtifactVersion) {
+                    continue;
+                }
+                $version = $artifact->versions->firstWhere('id', $currentVersion->id);
+                if ($version instanceof DesignArtifactVersion && $version->relationLoaded('sheets')) {
+                    $currentVersion->setRelation('sheets', $version->getRelation('sheets'));
+                } else {
+                    $missingVersions->push($currentVersion);
+                }
+            }
+        }
+        if ($missingVersions->isNotEmpty()) {
+            $missingVersions->load('sheets');
         }
     }
 

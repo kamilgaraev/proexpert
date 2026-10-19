@@ -422,6 +422,110 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         self::assertCount(1, $sheetInputReads);
     }
 
+    public function test_registry_reuses_current_version_sheets_without_changing_history_or_section_payloads(): void
+    {
+        $actor = $this->context(['view']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $expected = [];
+        for ($index = 0; $index < 5; $index++) {
+            $package = $this->package($actor, $project);
+            $section = DesignPackageSection::query()->create([
+                'organization_id' => $actor->organization->id, 'project_id' => $project->id,
+                'package_id' => $package->id, 'code' => 'AR-'.$index, 'title' => 'Sheet fixture', 'project_stage' => 'pd',
+            ]);
+            $current = $this->version($actor, $package, 'text_document', 'pdf');
+            $current->artifact->update(['section_id' => $section->id]);
+            $historical = $current->replicate();
+            $historical->version_number = '0';
+            $historical->is_current = false;
+            $historical->save();
+            if ($index === 4) {
+                $current->update(['is_current' => false]);
+            }
+            $sheets = [];
+            foreach ([$current, $historical] as $version) {
+                $created = [];
+                foreach ([[2, 'B'], [1, 'Z'], [1, 'A']] as [$page, $number]) {
+                    $created[] = DesignDocumentSheet::query()->create([
+                        'organization_id' => $actor->organization->id, 'project_id' => $project->id,
+                        'package_id' => $package->id, 'section_id' => $section->id,
+                        'artifact_id' => $version->artifact_id, 'version_id' => $version->id,
+                        'sheet_number' => $number, 'sheet_title' => 'Sheet '.$number,
+                        'file_page_number' => $page, 'metadata' => ['fixture_version' => $version->id],
+                    ])->id;
+                }
+                $sheets[$version->id] = [$created[2], $created[1], $created[0]];
+            }
+            $expected[$package->id] = ['current_id' => $index === 4 ? null : $current->id, 'sheets' => $sheets];
+        }
+        $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $this->version($actor, $this->package($actor, $otherProject), 'text_document', 'pdf');
+        $otherActor = $this->context(['view']);
+        $foreignProject = Project::factory()->create(['organization_id' => $otherActor->organization->id]);
+        $this->version($otherActor, $this->package($otherActor, $foreignProject), 'text_document', 'pdf');
+
+        DB::enableQueryLog();
+        try {
+            $page = app(DesignManagementService::class)->listPackages(
+                (int) $actor->organization->id, ['project_id' => $project->id, 'per_page' => 100], $actor->user,
+            );
+            $sheetReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_starts_with(
+                $query['query'], 'select * from "design_document_sheets"'
+            ));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(5, $page->total());
+        foreach ($page as $package) {
+            self::assertArrayHasKey($package->id, $expected);
+            $row = DesignPackageResource::withFreshness($package, false)->response()->getData(true)['data'];
+            $oracle = $expected[$package->id];
+            foreach ([$row['artifacts'][0], $row['sections'][0]['artifacts'][0]] as $artifact) {
+                self::assertSame($oracle['current_id'], $artifact['current_version']['id'] ?? null);
+                if ($oracle['current_id'] !== null) {
+                    self::assertSame($oracle['sheets'][$oracle['current_id']], array_column($artifact['current_version']['sheets'], 'id'));
+                }
+                self::assertSame(array_reverse(array_keys($oracle['sheets'])), array_column($artifact['versions'], 'id'));
+                foreach ($artifact['versions'] as $version) {
+                    self::assertSame($oracle['sheets'][$version['id']], array_column($version['sheets'], 'id'));
+                    self::assertSame(array_fill(0, 3, ['fixture_version' => $version['id']]), array_column($version['sheets'], 'metadata'));
+                }
+            }
+        }
+        self::assertCount(2, $sheetReads, 'Current versions must reuse their already loaded history sheets in both registry branches.');
+    }
+
+    public function test_registry_keeps_loaded_current_version_when_it_disappears_before_history_is_read(): void
+    {
+        $actor = $this->context(['view']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $package = $this->package($actor, $project);
+        $current = $this->version($actor, $package, 'text_document', 'pdf');
+        $deletedAfterRead = false;
+        $enabled = true;
+        DB::listen(static function ($query) use ($current, &$deletedAfterRead, &$enabled): void {
+            if ($enabled && ! $deletedAfterRead && str_starts_with($query->sql, 'select * from "design_artifact_versions"')
+                && str_contains($query->sql, '"is_current"')) {
+                $deletedAfterRead = true;
+                DB::table('design_artifact_versions')->where('id', $current->id)->delete();
+            }
+        });
+        try {
+            $page = app(DesignManagementService::class)->listPackages(
+                (int) $actor->organization->id, ['project_id' => $project->id], $actor->user,
+            );
+            $row = DesignPackageResource::withFreshness($page->sole(), false)->response()->getData(true)['data'];
+        } finally {
+            $enabled = false;
+        }
+
+        self::assertTrue($deletedAfterRead);
+        self::assertSame($current->id, $row['artifacts'][0]['current_version']['id']);
+        self::assertSame([], $row['artifacts'][0]['current_version']['sheets']);
+        self::assertSame([], $row['artifacts'][0]['versions']);
+    }
+
     public function test_batch_collection_rechecks_inputs_and_keeps_legacy_collection_semantics(): void
     {
         $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
