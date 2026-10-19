@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\User;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge;
+use Brick\Math\BigDecimal;
+use Brick\Math\Exception\MathException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -31,8 +33,25 @@ class PaymentScheduleService
         return DB::transaction(function () use ($document, $installments, $user, $authorizeLocked): array {
             $document = $this->synchronization->lockForManualChange($document);
             $authorizeLocked?->__invoke($document);
-            $totalScheduleAmount = (float) collect($installments)->sum('amount');
-            if ((float) $document->amount !== $totalScheduleAmount) {
+            $totalScheduleAmount = BigDecimal::zero();
+            foreach ($installments as $index => $installment) {
+                try {
+                    $value = is_float($installment['amount'])
+                        ? json_encode($installment['amount'], JSON_THROW_ON_ERROR)
+                        : (string) $installment['amount'];
+                    $amount = BigDecimal::of($value)->toScale(2);
+                } catch (MathException|\JsonException) {
+                    throw new \DomainException(trans_message('payments.schedule.amount_precision'));
+                }
+
+                if (! $amount->isPositive()) {
+                    throw new \DomainException(trans_message('payments.validation.payment_amount_positive'));
+                }
+
+                $installments[$index]['amount'] = (string) $amount;
+                $totalScheduleAmount = $totalScheduleAmount->plus($amount);
+            }
+            if (! $totalScheduleAmount->isEqualTo((string) $document->amount)) {
                 throw new \DomainException(trans_message('payments.schedule.sum_mismatch'));
             }
 
