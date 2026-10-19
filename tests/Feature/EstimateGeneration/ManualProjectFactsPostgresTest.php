@@ -7,12 +7,16 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationManualFactsController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Mockery;
@@ -727,6 +731,79 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
                 self::assertSame($assertions, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
             }
         }
+    }
+
+    public function test_foundation_http_answer_preserves_element_scope_evidence_replay_and_free_preview(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        config(['estimate-generation.universal_enabled' => true, 'jwt.secret' => str_repeat('test-key', 8), 'jwt.blacklist_enabled' => false]);
+        [$actor, $session] = $this->fixture();
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $project = Project::query()->findOrFail($session->project_id);
+        app(AuthorizationService::class)->allows('can')->with(Mockery::type(User::class), 'estimate_generation.review',
+            Mockery::on(static fn (array $context): bool => $context['project_id'] === (int) $project->id && is_int($context['organization_id'])))
+            ->andReturnTrue();
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session->fresh());
+        $route = '/_contract/foundation/projects/{project}/sessions/{session}';
+        Route::post($route.'/initial-facts', [EstimateGenerationManualFactsController::class, 'store'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        Route::get($route.'/geometry', [EstimateGenerationManualFactsController::class, 'inventory'])->middleware(['auth:api_admin', SubstituteBindings::class]);
+        $url = str_replace(['{project}', '{session}'], [(string) $project->id, (string) $session->id], $route);
+        $this->withToken(auth('api_admin')->login($actor));
+        $outboundBeforeWrites = count(Http::recorded());
+        $initial = ['state_version' => 0, 'request_id' => (string) Str::uuid(), 'entities' => [
+            ['key' => 'beam', 'type' => 'foundation_beam', 'name' => 'Балка Б1', 'parameters' => [
+                'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'measurement'],
+                'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'input']]],
+            ['key' => 'slab', 'type' => 'foundation_slab', 'parameters' => [
+                'area' => ['value' => '40', 'unit' => 'm2', 'basis' => 'measurement'],
+                'thickness' => ['value' => '80', 'unit' => 'mm', 'basis' => 'input']]],
+            $this->entity('site', 'excavation', ['depth' => '0.5']),
+        ]];
+        $missing = $this->postJson($url.'/initial-facts', $initial)->assertOk()->assertJsonPath('data.cost_units', '0')->json('data');
+        self::assertArrayNotHasKey('foundation_volume', $missing['quantities']);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $before = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $beam = array_values(array_filter($before->entities, static fn ($entity): bool => ($entity->attributes['semantic_type'] ?? null) === 'foundation_beam'))[0];
+        $questions = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationParameterQuestionBuilder)->candidates(
+            [['key' => 'concrete', 'work_key' => 'foundation.concrete', 'entity_id' => $beam->id, 'unit' => 'm3', 'quantity' => null]], $before, $missing['warnings']);
+        self::assertSame('height', $questions[0]['answer']['parameter']);
+        self::assertSame('foundation_beam', $questions[0]['answer']['entity_type']);
+        $this->getJson($url.'/geometry?include_manual=1')->assertOk()->assertJsonPath('data.pagination.total', 2);
+        $answer = ['state_version' => 1, 'request_id' => (string) Str::uuid(), 'entities' => [
+            ['key' => 'height-answer', 'type' => 'foundation_beam', 'existing_entity_id' => $beam->id,
+                'parameters' => ['height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'measurement']]],
+        ]];
+        $result = $this->postJson($url.'/initial-facts', $answer)->assertOk()->assertJsonPath('data.cost_units', '0')->json('data');
+        self::assertSame('1', $result['quantities']['quantity:foundation_beam_volume:'.$beam->id]['amount']);
+        self::assertArrayNotHasKey('foundation_volume', $result['quantities']);
+        $replayed = $this->postJson($url.'/initial-facts', $answer)->assertOk()->json('data');
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($replayed));
+        $after = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        self::assertCount(3, $after->entities);
+        $height = array_values(array_filter($after->facts, static fn ($fact): bool => $fact->entityId === $beam->id && $fact->type === 'height'))[0];
+        self::assertSame('400', $height->value);
+        self::assertSame('mm', $height->unit);
+        self::assertSame($beam->sourceVersion, $height->sourceVersion);
+        $proofs = array_column($after->evidence, null, 'id');
+        self::assertSame('user_input', $proofs[$height->evidenceIds[0]]->sourceType);
+        $decision = $models->decisionsForSelectedFacts(...[...$scope, [$height->id]])[0];
+        self::assertSame($height->id, $decision->selectedFactId);
+        self::assertSame('user', $decision->actorType);
+        $assertionCount = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        $wrong = [...$answer, 'state_version' => 2, 'request_id' => (string) Str::uuid()];
+        $wrong['entities'][0]['parameters'] = ['depth' => ['value' => '0.5', 'unit' => 'm', 'basis' => 'assumption']];
+        $this->postJson($url.'/initial-facts', $wrong)->assertUnprocessable();
+        self::assertSame($assertionCount, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+        self::assertSame(2, $session->fresh()->state_version);
+        $foreign = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id, 'is_active' => true]);
+        $this->withToken(auth('api_admin')->login($foreign))->postJson($url.'/initial-facts', [...$answer, 'state_version' => 2, 'request_id' => (string) Str::uuid()])->assertNotFound();
+        self::assertSame(2, $session->fresh()->state_version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($outboundBeforeWrites, count(Http::recorded()));
     }
 
     private function persistWallPreview(array $scope, ProjectModelRepository $models, \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity $wall,

@@ -109,6 +109,17 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertSame('roof', $result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_type']);
     }
 
+    public function test_foundation_elements_supply_structural_context_without_inventing_a_volume(): void
+    {
+        foreach (['foundation_beam', 'foundation_slab'] as $type) {
+            [$draft, $snapshot] = $this->manualFixture($type, 'foundation.concrete', 'structures');
+            $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
+            self::assertSame($type, $result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_type']);
+            self::assertSame('structures', $result['scenarios'][0]['positions'][0]['proposed_entity_context']['section']);
+            self::assertNull($result['scenarios'][0]['positions'][0]['quantity']);
+        }
+    }
+
     public function test_conflicting_identity_names_are_not_selected_arbitrarily(): void
     {
         [$draft, $snapshot] = $this->manualFixture('room', 'finish.floor', 'finishing');
@@ -121,7 +132,7 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertNull($result['scenarios'][0]['positions'][0]['proposed_entity_context']['entity_name']);
     }
 
-    public function test_legacy_planner_work_key_uses_canonical_metadata_only_for_proposed_context(): void
+    public function test_legacy_planner_position_keeps_its_identity_and_uses_the_canonical_work_key(): void
     {
         [$draft, $snapshot] = $this->legacyPlannerFixture();
         $before = hash('sha256', json_encode($draft, JSON_THROW_ON_ERROR));
@@ -131,7 +142,7 @@ final class EvaluationWorkContextTest extends TestCase
         self::assertSame('proposed', $position['proposed_entity_context']['status']);
         self::assertSame('Кухня', $position['proposed_entity_context']['entity_name']);
         self::assertSame('finishing-norm-intent-1', $position['key']);
-        self::assertSame('finishing-norm-intent-1', $position['work_key']);
+        self::assertSame('finish.floor', $position['work_key']);
         self::assertNull($position['entity_id']);
         self::assertNull($position['quantity']);
         self::assertNull($position['price_snapshot']);
@@ -188,6 +199,7 @@ final class EvaluationWorkContextTest extends TestCase
             $result = (new UniversalEvaluationBuilder)->build($draft, $snapshot);
             $position = $result['scenarios'][0]['positions'][0];
             self::assertArrayNotHasKey('proposed_entity_context', $position);
+            self::assertIsString($position['work_key']);
             self::assertNull($position['entity_id']);
             self::assertNull($position['quantity']);
             self::assertNull($position['price_snapshot']);

@@ -82,6 +82,60 @@ final class CurrentDraftQuantityProofPostgresTest extends EstimateGenerationCano
         $this->assertRejected($guard, $scope, $wrong);
     }
 
+    public function test_foundation_apply_proof_requires_each_element_scope_and_current_height(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+            'user_id' => $actor->id, 'state_version' => 0, 'status' => 'draft', 'input_payload' => []]);
+        $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+        $save = app(SaveManualProjectFacts::class);
+        $saved = $save->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            ['key' => 'beam', 'type' => 'foundation_beam', 'parameters' => [
+                'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'input'], 'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'input'],
+                'height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'input']]],
+        ]]);
+        $single = $saved['quantities']['foundation_volume'];
+        $singleItem = ['key' => 'concrete:single', 'quantity' => $single['amount'], 'unit' => 'm3',
+            'metadata' => ['quantity_key' => 'foundation.concrete', 'scope_entity_id' => $single['formula_inputs']['entity_id']], 'quantity_evidence' => $single];
+        $singleDraft = ['local_estimates' => [['sections' => [['work_items' => [$singleItem]]]]]];
+        $guard = app(CurrentDraftQuantityProofGuard::class);
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $singleDraft]));
+        self::addToAssertionCount(1);
+        unset($singleDraft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['scope_entity_id']);
+        $this->assertRejected($guard, $scope, $singleDraft);
+        $saved = $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), ['entities' => [
+            ['key' => 'slab', 'type' => 'foundation_slab', 'parameters' => [
+                'area' => ['value' => '40', 'unit' => 'm2', 'basis' => 'input'], 'thickness' => ['value' => '80', 'unit' => 'mm', 'basis' => 'input']]],
+        ]]);
+        self::assertCount(2, $saved['quantities']);
+        self::assertArrayNotHasKey('foundation_volume', $saved['quantities']);
+        $items = [];
+        foreach ($saved['quantities'] as $basis) {
+            $items[] = ['key' => 'concrete:'.$basis['formula_inputs']['entity_id'], 'quantity' => $basis['amount'], 'unit' => 'm3',
+                'metadata' => ['quantity_key' => 'foundation.concrete', 'scope_entity_id' => $basis['formula_inputs']['entity_id']], 'quantity_evidence' => $basis];
+        }
+        $draft = ['local_estimates' => [['sections' => [['work_items' => $items]]]]];
+        DB::transaction(fn () => $guard->assertCurrent(...[...$scope, $draft]));
+        self::addToAssertionCount(1);
+        $wrong = $draft;
+        $wrong['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['scope_entity_id'] = $items[1]['metadata']['scope_entity_id'];
+        $this->assertRejected($guard, $scope, $wrong);
+        unset($wrong['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['scope_entity_id']);
+        $this->assertRejected($guard, $scope, $wrong);
+        $beam = array_values(array_filter($items, static fn (array $item): bool => $item['quantity_evidence']['formula_key'] === 'foundation_beam_volume'))[0];
+        $save->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), ['entities' => [
+            ['key' => 'new-height', 'type' => 'foundation_beam', 'existing_entity_id' => $beam['metadata']['scope_entity_id'],
+                'parameters' => ['height' => ['value' => '500', 'unit' => 'mm', 'basis' => 'measurement']]],
+        ]]);
+        $this->assertRejected($guard, $scope, $draft);
+    }
+
     private function assertRejected(CurrentDraftQuantityProofGuard $guard, array $scope, array $draft): void
     {
         try {

@@ -26,6 +26,7 @@ final class SaveManualProjectFactsRequest extends FormRequest
             'entities.*.key' => ['required', 'string', 'max:120'],
             'entities.*.name' => ['sometimes', 'required', 'string', 'max:160'],
             'entities.*.type' => ['required', \Illuminate\Validation\Rule::in(['room', 'wall', 'opening', 'site', 'roof', 'roof_facet', 'roof_opening',
+                'foundation_beam', 'foundation_slab',
                 ...\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::engineeringTypes()])],
             'entities.*.floor' => ['nullable', 'string', 'max:120'], 'entities.*.zone' => ['nullable', 'string', 'max:120'],
             'entities.*.parent_key' => ['nullable', 'string', 'max:120'], 'entities.*.parameters' => ['sometimes', 'array', 'max:12'],

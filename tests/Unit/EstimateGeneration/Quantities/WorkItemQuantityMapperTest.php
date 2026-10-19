@@ -126,7 +126,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             $mapper->map('earth.trench', $quantities)?->formulaInputs['scenario_id'],
         );
         self::assertContains('preliminary_structural_from_internal_area:v1', $mapper->map('earth.trench', $quantities)?->assumptions);
-        self::assertSame('16.995000', $mapper->map('foundation.concrete', $quantities)?->amount);
+        self::assertNull($mapper->map('foundation.concrete', $quantities));
         self::assertSame('9.540000', $mapper->map('slabs.concrete', $quantities)?->amount);
         self::assertSame('79.500000', $mapper->map('slabs.formwork', $quantities)?->amount);
         self::assertSame('upper_floor_internal_area', $mapper->map('slabs.concrete', $quantities)?->formulaInputs['source_quantity']['key']);
@@ -363,7 +363,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         $keys = [
             'earth.backfill', 'earth.plan', 'earth.trench',
             'finish.baseboard', 'finish.floor', 'finish.paint',
-            'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
+            'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
             'office.ceiling', 'office.partitions',
             'rough.walls', 'server.room',
             'siteworks.area',
@@ -377,6 +377,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         foreach ($keys as $key) {
             self::assertNotNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
         }
+        self::assertNull((new WorkItemQuantityMapper)->map('foundation.concrete', $quantities));
     }
 
     #[Test]

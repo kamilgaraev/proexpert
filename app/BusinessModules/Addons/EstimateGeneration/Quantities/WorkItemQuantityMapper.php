@@ -9,7 +9,7 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.5.0';
+    public const FORMULA_VERSION = '1.6.0';
 
     public function isKnownWorkKey(string $workKey): bool
     {
@@ -248,7 +248,6 @@ final class WorkItemQuantityMapper
             'foundation.concrete' => [
                 'sources' => [
                     ['key' => 'foundation_volume', 'factor' => '1'],
-                    ['key' => 'first_floor_internal_area', 'factor' => '0.15'],
                 ],
                 'unit' => 'm3',
             ],

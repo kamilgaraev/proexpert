@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
@@ -710,6 +711,44 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         return new Evidence($id, $organizationId, $projectId, $sessionId, $sourceVersion, $sourceArtifactId,
             $document ? 'document' : $sourceType, $page, $region, $nativeReference,
             $document ? 'native_numeric_parser' : $producerName, fingerprint: hash('sha256', $id));
+    }
+
+    #[Test]
+    public function foundation_preview_requires_its_own_height_and_never_invents_a_global_sum(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $entities = [];
+        foreach (['beam' => 'foundation_beam', 'slab' => 'foundation_slab', 'site' => 'site'] as $key => $type) {
+            $entities[] = new Entity($key, 10, 20, 30, self::SOURCE, 'quantity', $key, ['semantic_type' => $type]);
+        }
+        $facts = $proofs = [];
+        foreach ([['beam', 'length', '10', 'm'], ['beam', 'width', '250', 'mm'],
+            ['slab', 'area', '40', 'm2'], ['slab', 'thickness', '80', 'mm'], ['site', 'depth', '0.5', 'm']] as [$entity, $parameter, $value, $unit]) {
+            $id = $entity.':'.$parameter;
+            $proofs[] = $this->nativeEvidence('evidence:'.$id, 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'section:'.$id);
+            $facts[] = $this->nativeFact($id, 10, 20, 30, self::SOURCE, $entity, $parameter, $value, $unit, 1.0, 'document', 'confirmed', ['evidence:'.$id]);
+        }
+        $repository->saveSourceModel($entities, $facts, $proofs);
+        $service = new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory);
+        $missing = $service->previewInput(10, 20, 30);
+        self::assertArrayNotHasKey('foundation_volume', $missing['quantities']);
+        $beamWarning = array_values(array_filter($missing['warnings'], static fn (array $row): bool => ($row['formula'] ?? null) === 'foundation_beam_volume'));
+        self::assertCount(1, $beamWarning);
+        self::assertSame('height', $beamWarning[0]['inputs'][0]['operand']);
+        self::assertSame('operand_missing', $beamWarning[0]['inputs'][0]['code']);
+        self::assertSame(['3.2'], array_values(array_map(static fn (QuantityData $quantity): string => $quantity->amount, $missing['quantities'])));
+
+        $proof = $this->nativeEvidence('evidence:beam-height', 10, 20, 30, self::SOURCE, 'artifact:section', 'cad', 2, null, 'section:height');
+        $height = $this->nativeFact('beam-height', 10, 20, 30, self::SOURCE, 'beam', 'height', '400', 'mm', 1.0, 'document', 'confirmed', [$proof->id]);
+        $repository->saveSourceModel([], [$height], [$proof]);
+        $complete = $service->previewInput(10, 20, 30);
+        self::assertArrayNotHasKey('foundation_volume', $complete['quantities']);
+        $amounts = array_map(static fn (QuantityData $quantity): string => $quantity->amount, $complete['quantities']);
+        sort($amounts);
+        self::assertSame(['1', '3.2'], $amounts);
+        self::assertContains('canonical_quantity_aggregate_unresolved', array_column($complete['warnings'], 'code'));
+        self::assertSame([], $repository->quantities);
+        self::assertSame([], $repository->currentQuantities);
     }
 
     private function makeStageFiveCurrent(

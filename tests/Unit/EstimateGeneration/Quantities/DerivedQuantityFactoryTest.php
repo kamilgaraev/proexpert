@@ -731,6 +731,76 @@ final class DerivedQuantityFactoryTest extends TestCase
         }
     }
 
+    #[Test]
+    public function foundation_volumes_keep_independent_dimensions_and_normalized_lineage(): void
+    {
+        foreach ([
+            ['foundation_beam', 'foundation_beam_volume', ['length' => ['10', 'm'], 'width' => ['250', 'mm'], 'height' => ['40', 'cm']], '1'],
+            ['foundation_slab', 'foundation_slab_volume', ['area' => ['40', 'm2'], 'thickness' => ['80', 'mm']], '3.2'],
+        ] as [$type, $formula, $parameters, $expected]) {
+            $facts = $proofs = $operands = [];
+            foreach ($parameters as $parameter => [$value, $unit]) {
+                $facts[] = $this->fact($parameter, 'foundation:1', $parameter, $value, $unit, ['evidence:'.$parameter]);
+                $proofs[] = $this->evidence('evidence:'.$parameter, 'section:'.$parameter);
+                $operands[$parameter] = $parameter;
+            }
+            $result = (new DerivedQuantityFactory)->derive($this->snapshot([$this->entity('foundation:1', $type)], $facts, $proofs), [],
+                $this->request($formula, 'foundation:1', $operands, 'm3', 3));
+            self::assertSame($expected, $result->quantity?->value);
+            self::assertSame('m3', $result->quantity?->unit);
+            self::assertSame($formula, $result->quantity?->formulaIdentity);
+            self::assertCount(count($parameters), $result->quantity?->operands ?? []);
+            $lineage = array_column($result->quantity?->operands ?? [], null, 'role');
+            foreach ($parameters as $parameter => [$value, $unit]) {
+                self::assertSame($value, $lineage[$parameter]['source_value']);
+                self::assertSame($unit, $lineage[$parameter]['source_unit']);
+                self::assertSame('foundation:1', $lineage[$parameter]['entity_id']);
+                self::assertSame(['evidence:'.$parameter], $lineage[$parameter]['evidence_ids']);
+            }
+        }
+    }
+
+    #[Test]
+    public function foundation_height_cannot_be_filled_by_excavation_depth_or_another_element(): void
+    {
+        $facts = [
+            $this->fact('length', 'beam:1', 'length', '10', 'm', ['evidence:length']),
+            $this->fact('width', 'beam:1', 'width', '250', 'mm', ['evidence:width']),
+            $this->fact('depth', 'beam:1', 'depth', '0.5', 'm', ['evidence:depth']),
+            $this->fact('foreign-height', 'beam:2', 'height', '0.5', 'm', ['evidence:foreign-height']),
+        ];
+        $proofs = array_map(fn (Fact $fact): Evidence => $this->evidence($fact->evidenceIds[0], 'section:'.$fact->id), $facts);
+        $snapshot = $this->snapshot([$this->entity('beam:1', 'foundation_beam'), $this->entity('beam:2', 'foundation_beam')], $facts, $proofs);
+        foreach ([[null, 'operand_missing'], ['depth', 'foundation_measurement_incompatible'], ['foreign-height', 'entity_scope_mismatch']] as [$height, $code]) {
+            $result = (new DerivedQuantityFactory)->derive($snapshot, [], $this->request('foundation_beam_volume', 'beam:1',
+                ['length' => 'length', 'width' => 'width', 'height' => $height], 'm3', 3));
+            self::assertNull($result->quantity);
+            self::assertSame($code, $result->unresolvedInputs[0]['code'] ?? null);
+        }
+        $wrongEntity = (new DerivedQuantityFactory)->derive($this->snapshot([$this->entity('beam:1', 'site')], $facts, $proofs), [],
+            $this->request('foundation_beam_volume', 'beam:1', ['length' => 'length', 'width' => 'width', 'height' => 'depth'], 'm3', 3));
+        self::assertNull($wrongEntity->quantity);
+        self::assertSame('foundation_entity_incompatible', $wrongEntity->unresolvedInputs[0]['code'] ?? null);
+    }
+
+    #[Test]
+    public function foundation_operand_cardinality_and_output_unit_are_strict(): void
+    {
+        $facts = [$this->fact('area', 'slab:1', 'area', '40', 'm2', ['evidence:area']),
+            $this->fact('thickness', 'slab:1', 'thickness', '80', 'mm', ['evidence:thickness'])];
+        $snapshot = $this->snapshot([$this->entity('slab:1', 'foundation_slab')], $facts,
+            [$this->evidence('evidence:area', 'plan:area'), $this->evidence('evidence:thickness', 'section:thickness')]);
+        foreach ([['area' => ['area', 'thickness'], 'thickness' => 'thickness'], ['area' => 'area', 'thickness' => ['thickness', 'area']]] as $operands) {
+            $result = (new DerivedQuantityFactory)->derive($snapshot, [], $this->request('foundation_slab_volume', 'slab:1', $operands, 'm3', 3));
+            self::assertNull($result->quantity);
+            self::assertSame('foundation_operand_cardinality_invalid', $result->unresolvedInputs[0]['code'] ?? null);
+        }
+        $result = (new DerivedQuantityFactory)->derive($snapshot, [],
+            $this->request('foundation_slab_volume', 'slab:1', ['area' => 'area', 'thickness' => 'thickness'], 'm2', 3));
+        self::assertNull($result->quantity);
+        self::assertSame('output_unit_incompatible', $result->unresolvedInputs[0]['code'] ?? null);
+    }
+
     private function request(
         string $formula,
         string $entityId,

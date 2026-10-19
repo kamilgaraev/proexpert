@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
@@ -36,10 +37,13 @@ final readonly class CurrentDraftQuantityProofGuard
                     $fresh = is_string($key) ? $this->mapper->map($key, $quantities) : null;
                     $entity = $basis['formula_inputs']['entity_id'] ?? null;
                     $targetEntity = $item['metadata']['scope_entity_id'] ?? $item['entity_id'] ?? null;
+                    if ($fresh === null && is_string($key) && is_string($targetEntity) && $targetEntity !== '') {
+                        $fresh = $this->mapper->mapForEntity($key, $quantities, $targetEntity);
+                    }
                     if ($fresh === null || $fresh->reviewBlockers !== [] || $fresh->evidenceIds === [] || ! is_string($entity)
                         || ($fresh->formulaInputs['entity_id'] ?? null) !== $entity
                         || ($targetEntity !== null && (! is_string($targetEntity) || $targetEntity === '' || $targetEntity !== $entity))
-                        || (isset(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::engineeringFormulas()[$fresh->formulaKey])
+                        || ((isset(FactVocabulary::engineeringFormulas()[$fresh->formulaKey]) || isset(FactVocabulary::foundationFormulas()[$fresh->formulaKey]))
                             && (! is_string($targetEntity) || $targetEntity === ''))) {
                         $this->reject();
                     }
