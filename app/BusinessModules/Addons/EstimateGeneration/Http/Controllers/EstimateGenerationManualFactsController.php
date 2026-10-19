@@ -27,7 +27,7 @@ final class EstimateGenerationManualFactsController extends Controller
     public function inventory(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetGeometryInventory $inventory): JsonResponse
     {
-        $input = $request->validate(['search' => ['sometimes', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
+        $input = $request->validate(['search' => ['sometimes', 'nullable', 'string', 'max:100'], 'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:50'], 'parent_entity_id' => ['required_with:relation', 'string', 'max:160'],
             'relation' => ['required_with:parent_entity_id', \Illuminate\Validation\Rule::in(array_keys(\App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory::RELATIONS))]]);
         foreach (['page', 'per_page'] as $field) {

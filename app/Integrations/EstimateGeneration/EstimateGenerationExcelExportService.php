@@ -115,9 +115,6 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                     $itemId = $preparedWorkItem['next_item_id'];
                     $sectionTotal += (float) ($preparedWorkItem['item']['total_amount'] ?? 0);
                     $preparedItems[] = $preparedWorkItem['item'];
-                    foreach ($preparedWorkItem['child_items'] as $childItem) {
-                        $preparedItems[] = $childItem;
-                    }
                 }
 
                 $sections[] = [
@@ -232,7 +229,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
         $childItems = [];
         $childPositionIndex = 1;
 
-        foreach (['materials' => 'material', 'machinery' => 'machinery', 'labor' => 'labor'] as $resourceGroup => $itemType) {
+        foreach (['materials' => 'material', 'machinery' => 'machinery', 'labor' => 'labor', 'other_resources' => 'other'] as $resourceGroup => $itemType) {
             foreach ($workItem[$resourceGroup] ?? [] as $resource) {
                 $childItems[] = [
                     'id' => $nextItemId,
@@ -262,6 +259,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                     'coefficient_total' => null,
                     'custom_resources' => null,
                     'metadata' => [
+                        'resource_key' => $resource['key'] ?? null,
                         'source' => $resource['source'] ?? null,
                         'confidence' => $resource['confidence'] ?? null,
                         'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
@@ -317,7 +315,6 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                 'is_not_accounted' => false,
                 'child_items' => $childItems,
             ],
-            'child_items' => $childItems,
         ];
     }
 
