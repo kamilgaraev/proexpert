@@ -32,7 +32,9 @@ final class AssistantProductionSchedulePeriod
 
     private const CALENDAR_WEEK_PERIOD = '(?:за|в|во|на)\s+(эт(?:ой|у)|текущ(?:ей|ую)|прошл(?:ой|ую)|предыдущ(?:ей|ую)|позапрошл(?:ой|ую))\s+недел(?:е|ю)\b';
 
-    private const WHOLE_CALENDAR_PERIOD = '(?:за|в|во|на)\s+в(?:есь|с[её]м)\s+(?:\d|'.self::MONTH.'\b|'.self::TIME_UNIT.'\b|'.self::QUARTER_SELECTOR.self::TIME_UNIT.'\b)';
+    private const WHOLE_PERIOD_PREFIX = '(?:за|в|во|на)\s+в(?:есь|с[её]м|сю|сей|се)\s+';
+
+    private const WHOLE_CALENDAR_PERIOD = self::WHOLE_PERIOD_PREFIX.'(?:\d|'.self::MONTH.'\b|(?:[\pL\pN-]+\s+){0,2}'.self::TIME_UNIT.'\b)';
 
     private const ALL_TIME_PERIOD = 'за\s+(?:весь\s+период|вс[её]\s+время)\b';
 
@@ -319,7 +321,29 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
-        $query = preg_replace('/\b((?:за|в|во|на)\s+)в(?:есь|с[её]м)\s+(?=(?:19|20)\d{2}\b(?![-.\/]\d)|'.self::MONTH.'\b|'.self::QUARTER_NUMBER.'\s+'.self::QUARTER_WORD.'\b)/iu', '$1', $query) ?? $query;
+        $query = preg_replace_callback('/\b'.self::WHOLE_PERIOD_PREFIX.'(эт(?:от|ом|у|ой)|текущ(?:ий|ем|ую|ей)|прошл(?:ый|ом|ую|ой)|предыдущ(?:ий|ем|ую|ей)|позапрошл(?:ый|ом|ую|ой))\s+(год(?:у)?|месяц(?:е)?|квартал(?:е)?|недел(?:ю|е)|день)\b/iu', static function (array $match): string {
+            $relative = mb_strtolower($match[1]);
+            $unit = mb_strtolower($match[2]);
+            $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);
+            $today = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
+            $start = match (true) {
+                str_starts_with($unit, 'год') => $today->setDate((int) $today->format('Y') - $offset, 1, 1),
+                str_starts_with($unit, 'месяц') => $today->modify('first day of this month')->modify('-'.$offset.' months'),
+                str_starts_with($unit, 'квартал') => $today->setDate((int) $today->format('Y'), intdiv((int) $today->format('n') - 1, 3) * 3 + 1, 1)->modify('-'.($offset * 3).' months'),
+                str_starts_with($unit, 'недел') => $today->modify('-'.((int) $today->format('N') - 1 + $offset * 7).' days'),
+                default => $today->modify('-'.$offset.' days'),
+            };
+            $end = match (true) {
+                str_starts_with($unit, 'год') => $start->modify('+1 year')->modify('-1 day'),
+                str_starts_with($unit, 'месяц') => $start->modify('last day of this month'),
+                str_starts_with($unit, 'квартал') => $start->modify('+3 months')->modify('-1 day'),
+                str_starts_with($unit, 'недел') => $start->modify('+6 days'),
+                default => $start,
+            };
+
+            return 'с '.$start->format('Y-m-d').' по '.$end->format('Y-m-d');
+        }, $query) ?? $query;
+        $query = preg_replace('/\b((?:за|в|во|на)\s+)в(?:есь|с[её]м|сю|сей|се)\s+(?=(?:19|20)\d{2}\b(?![-.\/]\d)|'.self::MONTH.'\b|'.self::QUARTER_NUMBER.'\s+'.self::QUARTER_WORD.'\b)/iu', '$1', $query) ?? $query;
         $query = preg_replace_callback('/\b((?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)\s+(этого|текущего|прошлого|предыдущего|позапрошлого)\s+года\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[2]);
             $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);

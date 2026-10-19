@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_whole_relative_calendar_units_resolve_full_boundaries_and_preserve_literal_names(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 00:30:00', 'Europe/Moscow'));
+        try {
+            foreach (['за весь текущий год' => ['2026-01-01', '2026-12-31'], 'за весь прошлый год' => ['2025-01-01', '2025-12-31'],
+                'за весь позапрошлый год' => ['2024-01-01', '2024-12-31'], 'за весь прошлый квартал' => ['2025-10-01', '2025-12-31'],
+                'во всём текущем квартале' => ['2026-01-01', '2026-03-31'], 'за весь текущий месяц' => ['2026-01-01', '2026-01-31'],
+                'за весь предыдущий месяц' => ['2025-12-01', '2025-12-31'], 'за всю текущую неделю' => ['2025-12-29', '2026-01-04'],
+                'за всю прошлую неделю' => ['2025-12-22', '2025-12-28'], 'за весь текущий день' => ['2026-01-01', '2026-01-01']] as $phrase => [$start, $end]) {
+                $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+                $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                    'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+            }
+            foreach (['за весь будущий месяц', 'за все месяцы', 'за всю неделю', 'за весь текущий год и вчера'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_all_time_suffix_is_separate_from_project_name_after_empty_exact_lookup(): void
     {
         foreach (['за весь период', 'за всё время', 'за все время'] as $phrase) {
