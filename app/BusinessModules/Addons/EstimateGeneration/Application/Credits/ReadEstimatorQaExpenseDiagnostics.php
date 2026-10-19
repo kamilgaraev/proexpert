@@ -26,11 +26,16 @@ final readonly class ReadEstimatorQaExpenseDiagnostics
         $session = EstimateGenerationSession::query()->where('organization_id', (int) $actor->current_organization_id)
             ->where('project_id', $projectId)->whereKey($sessionId)->firstOrFail();
         $this->authorization->authorize($actor, $session, 'estimate_generation.view');
-        $runIds = $this->database->table('estimate_generation_credit_operations')
+        $operationRuns = $this->database->table('estimate_generation_credit_operations')
             ->where('organization_id', $session->organization_id)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->whereRaw("processing_plan->'qa_expense_budget'->>'run_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'")
-            ->selectRaw("DISTINCT processing_plan->'qa_expense_budget'->>'run_id' AS run_id")
-            ->limit(33)->pluck('run_id')->filter(static fn (mixed $id): bool => is_string($id) && Str::isUuid($id))->values()->all();
+            ->selectRaw("processing_plan->'qa_expense_budget'->>'run_id' AS run_id");
+        $attemptRuns = $this->database->table('estimate_generation_qa_expense_attempts as attempts')
+            ->join('estimate_generation_vision_physical_attempts as physical', 'physical.attempt_id', '=', 'attempts.attempt_id')
+            ->where('physical.organization_id', $session->organization_id)->where('physical.project_id', $projectId)->where('physical.session_id', $sessionId)
+            ->selectRaw('attempts.run_id::text AS run_id');
+        $runIds = $this->database->query()->fromSub($operationRuns->union($attemptRuns), 'scoped_runs')
+            ->orderBy('run_id')->limit(33)->pluck('run_id')->filter(static fn (mixed $id): bool => is_string($id) && Str::isUuid($id))->values()->all();
         if (count($runIds) > 32) {
             return ['status' => 'too_many_runs', 'runs' => [], 'attempts' => [], 'pagination' => ['page' => $page, 'per_page' => $perPage, 'total' => 0]];
         }

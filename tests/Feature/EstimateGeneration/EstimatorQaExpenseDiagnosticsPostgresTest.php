@@ -138,7 +138,27 @@ final class EstimatorQaExpenseDiagnosticsPostgresTest extends EstimateGeneration
         app(ReadEstimatorQaExpenseDiagnostics::class)->handle($actor, (int) $project->id, (int) $session->id);
     }
 
-    private function fixture(): array
+    public function test_scoped_attempts_created_without_shared_credits_are_included_without_a_credit_operation(): void
+    {
+        [$actor, $project, $session] = $this->fixture(false);
+        config(['estimate-generation.credits.enabled' => false]);
+        $id = $this->attempt($session);
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
+        $before = $this->history();
+        $sent = Http::recorded()->count();
+
+        $result = app(ReadEstimatorQaExpenseDiagnostics::class)->handle($actor, (int) $project->id, (int) $session->id);
+
+        self::assertSame(1, (int) $result['summary']['attempt_count']);
+        self::assertSame(1, (int) $result['summary']['unknown_count']);
+        self::assertSame('90000', $result['summary']['scoped_supplier_exposure_micro_rub']);
+        self::assertSame($id, $result['attempts'][0]['attempt_id']);
+        self::assertCount(1, $result['runs']);
+        self::assertSame($before, $this->history());
+        self::assertSame($sent, Http::recorded()->count());
+    }
+
+    private function fixture(bool $withCreditOperation = true): array
     {
         Http::fake();
         config(['ai-assistant-credits.enforce' => false, 'estimate-generation.credits.enabled' => true,
@@ -158,8 +178,10 @@ final class EstimatorQaExpenseDiagnosticsPostgresTest extends EstimateGeneration
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $actor->id, 'state_version' => 0, 'status' => 'draft', 'input_payload' => []]);
-        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:diagnostics:'.$organization->id);
-        app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, (string) Str::uuid(), 'generation');
+        if ($withCreditOperation) {
+            app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:diagnostics:'.$organization->id);
+            app(EstimatorCreditOperations::class)->quote($actor, (int) $project->id, (int) $session->id, 0, (string) Str::uuid(), 'generation');
+        }
 
         return [$actor, $project, $session];
     }
