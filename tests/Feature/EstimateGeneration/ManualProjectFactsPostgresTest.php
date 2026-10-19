@@ -24,6 +24,128 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_native_question_limits_are_explicit_and_never_trim_facts_or_decisions_to_enable_answers(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        app(SaveManualProjectFacts::class)->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            ['key' => 'beam', 'type' => 'foundation_beam', 'name' => 'Балка без размеров'],
+        ]]);
+        $capture = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001]);
+        $snapshot = $capture['snapshot'];
+        $models = Mockery::mock(ProjectModelRepository::class);
+        $decisions = [];
+        for ($index = 0; $index < 257; $index++) {
+            $fact = $snapshot->facts[0];
+            $decisions[] = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision('decision:'.$index,
+                ...[...$scope, $fact->sourceVersion, 'fact', $fact->id, $fact->id, 'user', (string) $actor->id, 'Проверено', 1]);
+        }
+        $models->shouldReceive('decisionsForSelectedFacts')->once()->with(...[...$scope, array_column($snapshot->facts, 'id')])->andReturn($decisions);
+        $backlog = new \App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog($models,
+            new \App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService($models,
+                new \App\BusinessModules\Addons\EstimateGeneration\Quantities\DerivedQuantityFactory),
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterQuestionProjector);
+        $overDecisions = $backlog->current($session->fresh(), $snapshot, $capture['token']);
+        self::assertFalse($overDecisions['available']);
+        self::assertSame([], $overDecisions['questions']);
+        self::assertSame(['input_budget_exceeded'], $overDecisions['limitations']);
+        $large = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot($snapshot->entities,
+            array_fill(0, 10001, $snapshot->facts[0]), $snapshot->evidence, []);
+        $overFacts = $backlog->current($session->fresh(), $large, $capture['token']);
+        self::assertSame($overDecisions, $overFacts);
+        self::assertSame(1, $session->fresh()->state_version);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_native_backlog_before_draft_answers_once_and_rejects_stale_scope_source_and_changed_questions_for_free(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $writer = app(SaveManualProjectFacts::class);
+        $writer->handle($actor, $scope[1], $scope[2], 0, (string) Str::uuid(), ['entities' => [
+            ['key' => 'beam', 'type' => 'foundation_beam', 'parameters' => [
+                'length' => ['value' => '10', 'unit' => 'm', 'basis' => 'measurement'],
+                'width' => ['value' => '250', 'unit' => 'mm', 'basis' => 'measurement']]],
+        ]]);
+        $backlog = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimatePrerequisiteBacklog::class);
+        $beforeCalls = count(Http::recorded());
+        $before = $backlog->current($session->fresh());
+        self::assertTrue($before['needs_refresh']);
+        self::assertSame([], $before['groups']);
+        self::assertTrue($before['native_questions']['available']);
+        self::assertCount(1, $before['native_questions']['questions']);
+        self::assertSame(1, $session->fresh()->state_version);
+        $question = $before['native_questions']['questions'][0];
+        self::assertSame('height', $question['answer']['parameter']);
+        self::assertSame('m', $question['input_contract']['unit']);
+        self::assertTrue($question['can_answer']);
+        $binding = $question['answer']['native_question'];
+        $answer = ['entities' => [['key' => 'answer', 'type' => 'foundation_beam', 'existing_entity_id' => $question['answer']['entity_id'],
+            'native_question' => $binding, 'parameters' => ['height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'measurement']]]]];
+        $countBefore = DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count();
+        foreach (['legacy', 'missing_scope', 'wrong_section', 'unknown_section'] as $variant) {
+            $payload = $session->fresh()->input_payload;
+            $payload['evaluation_mode'] = $variant === 'legacy' ? 'legacy' : 'universal';
+            $payload['selected_sections'] = match ($variant) {
+                'missing_scope' => [], 'wrong_section' => ['roofing'], 'unknown_section' => ['made_up'], default => ['structures']
+            };
+            $session->update(['input_payload' => $payload]);
+            try {
+                $writer->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $answer);
+                self::fail('A question from another mode or selected scope was accepted.');
+            } catch (ValidationException) {
+                self::assertSame($countBefore, DB::table('estimate_generation_project_model_assertions')->where('session_id', $session->id)->count());
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        $payload = $session->fresh()->input_payload;
+        $payload['evaluation_mode'] = 'universal';
+        $payload['selected_sections'] = ['structures'];
+        $session->update(['input_payload' => $payload]);
+        foreach (['version', 'input_fingerprint', 'entity_source_version'] as $field) {
+            $wrong = $answer;
+            $wrong['entities'][0]['native_question'][$field] = ($field === 'entity_source_version' ? 'sha256:' : '').str_repeat('f', 64);
+            try {
+                $writer->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $wrong);
+                self::fail('Stale native binding accepted.');
+            } catch (ValidationException) {
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        $answer['entities'][0]['native_question'] = array_reverse($binding, true);
+        $request = (string) Str::uuid();
+        $result = $writer->handle($actor, $scope[1], $scope[2], 1, $request, $answer);
+        self::assertSame('1', $result['quantities']['foundation_volume']['amount']);
+        self::assertSame(2, $result['state_version']);
+        self::assertFalse($session->fresh()->input_payload['input_confirmed']);
+        self::assertSame([], $backlog->current($session->fresh())['native_questions']['questions']);
+        $replay = $writer->handle($actor, $scope[1], $scope[2], 1, $request, $answer);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($replay));
+        self::assertSame(2, $session->fresh()->state_version);
+        $answer['entities'][0]['parameters']['height']['value'] = '500';
+        try {
+            $writer->handle($actor, $scope[1], $scope[2], 2, $request, $answer);
+            self::fail('A changed answer reused a frozen receipt.');
+        } catch (ValidationException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        $actor->update(['current_organization_id' => Organization::factory()->create()->id]);
+        try {
+            $writer->handle($actor, $scope[1], $scope[2], 2, (string) Str::uuid(), $answer);
+            self::fail('Foreign organization accepted.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            self::assertSame(2, $session->fresh()->state_version);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($beforeCalls, count(Http::recorded()));
+    }
+
     public function test_description_numeric_proposal_requires_explicit_target_and_current_source_and_replays_for_free(): void
     {
         [$actor, $session] = $this->fixture();
@@ -739,7 +861,7 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         Http::fake();
         config(['estimate-generation.universal_enabled' => true, 'jwt.secret' => str_repeat('test-key', 8), 'jwt.blacklist_enabled' => false]);
         [$actor, $session] = $this->fixture();
-        $session->update(['input_payload' => ['evaluation_mode' => 'universal']]);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'selected_sections' => ['structures']]]);
         $project = Project::query()->findOrFail($session->project_id);
         app(AuthorizationService::class)->allows('can')->with(Mockery::type(User::class), 'estimate_generation.review',
             Mockery::on(static fn (array $context): bool => $context['project_id'] === (int) $project->id && is_int($context['organization_id'])))
@@ -772,10 +894,17 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame('height', $questions[0]['answer']['parameter']);
         self::assertSame('foundation_beam', $questions[0]['answer']['entity_type']);
         $this->getJson($url.'/geometry?include_manual=1')->assertOk()->assertJsonPath('data.pagination.total', 2);
+        $native = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\EstimatePrerequisiteBacklog::class)->current($session->fresh());
+        self::assertCount(1, $native['native_questions']['questions']);
         $answer = ['state_version' => 1, 'request_id' => (string) Str::uuid(), 'entities' => [
             ['key' => 'height-answer', 'type' => 'foundation_beam', 'existing_entity_id' => $beam->id,
+                'native_question' => $native['native_questions']['questions'][0]['answer']['native_question'],
                 'parameters' => ['height' => ['value' => '400', 'unit' => 'mm', 'basis' => 'measurement']]],
         ]];
+        $malformed = $answer;
+        unset($malformed['entities'][0]['native_question']['input_fingerprint']);
+        $this->postJson($url.'/initial-facts', $malformed)->assertUnprocessable();
+        self::assertSame(1, $session->fresh()->state_version);
         $result = $this->postJson($url.'/initial-facts', $answer)->assertOk()->assertJsonPath('data.cost_units', '0')->json('data');
         self::assertSame('1', $result['quantities']['quantity:foundation_beam_volume:'.$beam->id]['amount']);
         self::assertArrayNotHasKey('foundation_volume', $result['quantities']);

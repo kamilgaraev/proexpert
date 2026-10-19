@@ -16,6 +16,27 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function missing_geometry_operands_preserve_every_child_and_parameter(): void
+    {
+        $snapshot = $this->snapshot([$this->entity('wall:1', 'wall'),
+            $this->entity('opening:1', 'opening', ['wall_id' => 'wall:1']), $this->entity('opening:2', 'opening', ['wall_id' => 'wall:1'])],
+            [$this->fact('length', 'wall:1', 'length', '10', 'm', ['evidence:length']),
+                $this->fact('height', 'wall:1', 'height', '3', 'm', ['evidence:height'])],
+            [$this->evidence('evidence:length', 'native:length'), $this->evidence('evidence:height', 'native:height')]);
+        $request = $this->request('wall_net_area', 'wall:1', ['wall_length' => 'length', 'wall_height' => 'height']);
+        $request['geometry_inputs'] = [
+            ['entity_id' => 'opening:1', 'kind' => 'wall_opening', 'operands' => ['width' => null, 'height' => null]],
+            ['entity_id' => 'opening:2', 'kind' => 'wall_opening', 'operands' => ['width' => null, 'height' => null]],
+        ];
+        $result = (new DerivedQuantityFactory)->derive($snapshot, [], $request);
+        self::assertFalse($result->isReady());
+        $issues = array_values(array_filter($result->unresolvedInputs, static fn (array $issue): bool => $issue['code'] === 'geometry_operand_missing'));
+        self::assertCount(4, $issues);
+        self::assertSame(['opening:1', 'opening:1', 'opening:2', 'opening:2'], array_column($issues, 'entity_id'));
+        self::assertSame(['height', 'width', 'height', 'width'], array_column($issues, 'missing_operand'));
+    }
+
+    #[Test]
     public function unresolved_project_conflict_blocks_a_confirmed_operand_until_the_sources_are_resolved(): void
     {
         $version = 'sha256:'.str_repeat('b', 64);

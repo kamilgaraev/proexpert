@@ -855,6 +855,19 @@ return [
             'disturbed_area' => 'Площадь восстановления благоустройства',
         ],
     ],
+    'native_questions' => [
+        'question' => 'Уточните :parameter объекта «:object».',
+        'changed' => 'Исходные данные или вопрос изменились. Обновите список и проверьте ответ.',
+        'parameters' => ['area' => 'площадь', 'length' => 'длину', 'width' => 'ширину', 'height' => 'высоту',
+            'thickness' => 'толщину', 'depth' => 'глубину', 'plan_area' => 'площадь в плане', 'slope_rise' => 'подъём ската',
+            'slope_run' => 'горизонтальную проекцию ската', 'equipment_count' => 'количество оборудования',
+            'pipe_length' => 'длину трубопровода', 'cable_length' => 'длину кабеля', 'duct_length' => 'длину воздуховода'],
+        'entities' => ['room' => 'Помещение', 'wall' => 'Стена', 'opening' => 'Проём в стене', 'site' => 'Участок земляных работ',
+            'roof' => 'Кровля', 'roof_facet' => 'Грань кровли', 'roof_opening' => 'Проём в кровле',
+            'foundation_beam' => 'Фундаментная балка', 'foundation_slab' => 'Фундаментная плита', 'equipment' => 'Оборудование',
+            'radiator' => 'Радиатор', 'water_pipe' => 'Трубопровод водоснабжения', 'sewer_pipe' => 'Трубопровод канализации',
+            'technological_pipeline' => 'Технологический трубопровод', 'electrical_circuit' => 'Кабельная цепь', 'ventilation_duct' => 'Воздуховод'],
+    ],
     'planning' => [
         'blocking_reason' => 'Подготовка сметы остановлена: требуется проверить исходные данные проекта.',
         'technology' => [

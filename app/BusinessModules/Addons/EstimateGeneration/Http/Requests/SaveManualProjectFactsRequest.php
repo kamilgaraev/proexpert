@@ -21,7 +21,12 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice'],
+            'entities.*' => ['required', 'array:key,type,existing_entity_id,name,floor,zone,parent_key,parameters,coverage,coverage_fingerprints,parent_choice,native_question'],
+            'entities.*.native_question' => ['sometimes', 'required', 'array:key,version,input_fingerprint,entity_source_version'],
+            'entities.*.native_question.key' => ['required_with:entities.*.native_question', 'string', 'regex:/\Anative-parameter:[a-f0-9]{64}\z/'],
+            'entities.*.native_question.version' => ['required_with:entities.*.native_question', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'entities.*.native_question.input_fingerprint' => ['required_with:entities.*.native_question', 'string', 'max:160'],
+            'entities.*.native_question.entity_source_version' => ['required_with:entities.*.native_question', 'string', 'max:160'],
             'entities.*.existing_entity_id' => ['sometimes', 'required', 'string', 'max:160'],
             'entities.*.key' => ['required', 'string', 'max:120'],
             'entities.*.name' => ['sometimes', 'required', 'string', 'max:160'],

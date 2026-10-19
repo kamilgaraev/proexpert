@@ -33,6 +33,7 @@ final readonly class SaveManualProjectFacts
         private EvidenceRepository $evidence,
         private EstimateGenerationActionAuthorization $authorization,
         private CurrentProjectDerivedQuantityService $quantities,
+        private \App\BusinessModules\Addons\EstimateGeneration\Application\Review\NativeParameterBacklog $nativeQuestions,
     ) {}
 
     public function handle(User $actor, int $projectId, int $sessionId, int $expectedVersion, string $requestId, array $input): array
@@ -61,10 +62,12 @@ final readonly class SaveManualProjectFacts
             $scope = [(int) $session->organization_id, $projectId, $sessionId];
             $sourceVersion = 'sha256:'.hash('sha256', 'manual-facts:v1:'.$sessionId);
             $previousEntities = $this->models->snapshot(...[...$scope, 10001])->entities;
-            $active = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            $capture = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+            $active = $capture['snapshot'];
             if (count($active->facts) > 10000) {
                 throw ValidationException::withMessages(['entities' => 'Разделите состав: предел фактов сессии превышен.']);
             }
+            $this->nativeQuestions->validateAnswer($session, $active, $capture['token'], $input);
             $activeEntities = array_column($active->entities, null, 'id');
             $descriptionProposals = null;
             $descriptionReasons = [];
