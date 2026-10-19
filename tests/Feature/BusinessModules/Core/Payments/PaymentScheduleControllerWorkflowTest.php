@@ -158,7 +158,75 @@ class PaymentScheduleControllerWorkflowTest extends TestCase
         }
     }
 
-    private function createDocument(AdminApiTestContext $context, int $amount): PaymentDocument
+    public function test_schedule_rejects_fractional_cents_without_replacing_existing_installments(): void
+    {
+        $this->enableImmutableAuditWriter();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context, 1000);
+        $existing = PaymentSchedule::query()->create([
+            'payment_document_id' => $document->id,
+            'installment_number' => 1,
+            'due_date' => now()->addDay()->toDateString(),
+            'amount' => 1000,
+            'status' => 'pending',
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/payments/schedules', [
+                'payment_document_id' => $document->id,
+                'installments' => [
+                    ['installment_number' => 1, 'due_date' => now()->addDay()->toDateString(), 'amount' => 333.3333333333333],
+                    ['installment_number' => 2, 'due_date' => now()->addDays(2)->toDateString(), 'amount' => 333.3333333333333],
+                    ['installment_number' => 3, 'due_date' => now()->addDays(3)->toDateString(), 'amount' => 333.3333333333333],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Укажите суммы платежей с точностью до копейки.');
+
+        $this->assertSame([$existing->id], PaymentSchedule::query()->where('payment_document_id', $document->id)->pluck('id')->all());
+        $this->assertSame('1000.00', $existing->fresh()->amount);
+        $this->assertSame(PaymentDocumentStatus::APPROVED, $document->fresh()->status);
+    }
+
+    public function test_schedule_compares_valid_installments_as_exact_decimal_amounts(): void
+    {
+        $this->enableImmutableAuditWriter();
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+
+        foreach ([
+            ['0.30', [0.1, 0.2], ['0.10', '0.20']],
+            ['1000.00', [333.33, 333.33, 333.34], ['333.33', '333.33', '333.34']],
+            ['0.07', [0.01, 0.06], ['0.01', '0.06']],
+            ['1000000000000.99', [500000000000.49, 500000000000.5], ['500000000000.49', '500000000000.50']],
+        ] as [$amount, $parts, $expectedAmounts]) {
+            $document = $this->createDocument($context, $amount);
+            $installments = [];
+            foreach ($parts as $index => $part) {
+                $installments[] = [
+                    'installment_number' => $index + 1,
+                    'due_date' => now()->addDays($index + 1)->toDateString(),
+                    'amount' => $part,
+                ];
+            }
+
+            $response = $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/payments/schedules', [
+                    'payment_document_id' => $document->id,
+                    'installments' => $installments,
+                ]);
+            $this->assertSame(201, $response->status(), $response->getContent());
+
+            $this->assertSame($expectedAmounts, PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)
+                ->orderBy('installment_number')
+                ->pluck('amount')->all());
+            $this->assertSame(PaymentDocumentStatus::SCHEDULED, $document->fresh()->status);
+        }
+    }
+
+    private function createDocument(AdminApiTestContext $context, int|float|string $amount): PaymentDocument
     {
         return PaymentDocument::query()->create([
             'organization_id' => $context->organization->id,
