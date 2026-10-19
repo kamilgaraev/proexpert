@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
+use App\BusinessModules\Features\Procurement\Http\Requests\ListSupplierProposalsRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\StoreSupplierProposalRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\SupplierProposalResource;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
@@ -23,7 +24,7 @@ class SupplierProposalController extends Controller
         private readonly SupplierProposalService $service
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(ListSupplierProposalsRequest $request): JsonResponse
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
@@ -44,6 +45,11 @@ class SupplierProposalController extends Controller
 
             if ($request->has('supplier_request_id')) {
                 $query->where('supplier_request_id', $request->input('supplier_request_id'));
+            }
+
+            $supplierId = $request->validated('supplier_id');
+            if ($supplierId !== null) {
+                $query->where('supplier_id', (int) $supplierId);
             }
 
             if ($request->has('status')) {
