@@ -16,6 +16,7 @@ final readonly class ProjectPulseRecommendation
         public ?int $projectId,
         public ?string $route,
         public string $source,
+        public ?array $relatedEntity = null,
     ) {
     }
 
@@ -31,6 +32,7 @@ final readonly class ProjectPulseRecommendation
             'project_id' => $this->projectId,
             'route' => $this->route,
             'source' => $this->source,
+            'related_entity' => $this->relatedEntity,
         ];
     }
 }
