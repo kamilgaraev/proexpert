@@ -203,6 +203,7 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
             $session->fresh(), 1, EstimateGenerationEvent::InputConfirmed, $actor,
         );
         self::assertSame('ready_to_generate', $confirmed->status->value);
+        self::assertTrue($confirmed->input_payload['input_confirmed']);
         self::assertSame(2, $confirmed->state_version);
         self::assertNull($confirmed->resume_status);
         self::assertSame(['retained' => 'draft'], $confirmed->draft_payload);

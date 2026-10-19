@@ -42,7 +42,8 @@ final class TransitionEstimateGenerationSession
                 if ((int) $locked->state_version !== $expectedVersion) {
                     throw new StaleEstimateGenerationState((int) $locked->getKey(), $expectedVersion);
                 }
-                $updated = $this->workflow->transition($locked, $event);
+                $updated = $this->workflow->transition($locked, $event, $event === EstimateGenerationEvent::InputConfirmed
+                    ? ['input_payload' => [...($locked->input_payload ?? []), 'input_confirmed' => true]] : []);
                 if ($event === EstimateGenerationEvent::InputConfirmed) {
                     $this->planning->trigger((int) $updated->getKey(), new ActorContext(
                         (int) $updated->organization_id, (int) $updated->project_id, (int) $actor->getKey(),
