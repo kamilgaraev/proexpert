@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
+
 final class AssistantReportEntityQuery
 {
     public static function extract(string $message, string $type, bool $preservePrepositions = false): ?string
@@ -47,7 +49,7 @@ final class AssistantReportEntityQuery
             } else {
                 if ($type === 'project' && $names !== []
                     && preg_match('/\b(?:с|со)\s+начала\s*$/iu', substr($message, 0, $offset)) === 1
-                    && preg_match('/^по\s+(?:сегодня|текущий\s+день)(?![\pL\pN])/iu', $tail) === 1) {
+                    && AssistantProductionSchedulePeriod::withoutSuffix('текущий '.$tail) === 'текущий') {
                     continue;
                 }
                 $parts = preg_split($preservePrepositions

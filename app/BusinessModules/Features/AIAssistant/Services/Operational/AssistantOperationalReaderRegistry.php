@@ -19,7 +19,7 @@ final class AssistantOperationalReaderRegistry
         '/материал[а-яё]*.*(?:жд[её]м|ожида|достав)|(?:жд[её]м|ожида).*материал|поставк[а-яё]*.*просроч|просроч[а-яё]*.*(?:поставк|достав)/iu',
         AssistantProjectActReader::INTENT_PATTERN, AssistantProjectCameraReader::INTENT_PATTERN,
         self::STAFF_TOPIC, '/тендер/iu',
-        '/заявк[а-яё]*.*(?:просроч|ответственн|исполнител)/iu'];
+        '/'.AssistantProjectSiteRequestReader::REQUEST_NOUN.'.*(?:просроч|ответственн|исполнител)/iu'];
 
     public const TOOLS = [
         'get_project_production_schedule_summary' => AssistantProjectProductionScheduleReader::class,

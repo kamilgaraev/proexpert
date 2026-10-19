@@ -14,6 +14,30 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_unsupported_date_boundaries_never_extend_to_today_or_all_time(): void
+    {
+        foreach (['с начала года до 01.10.2026', 'с начала проекта до 2026-10-01',
+            'с начала проекта до 01-10-2026', 'до 01.10.2026', 'от 01.10.2026', 'до вчера', 'от сегодня', 'по вчера', 'с вчера',
+            'с начала квартала до 1 октября 2026', 'с начала года до октября 2026'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            $literalPlan = $plan;
+            $literalPlan['request']['message'] = 'Сверь выполненные работы с графиком проекта «Северный дом '.$phrase.'»';
+            $literal = AssistantNamedProjectReadScope::bind($literalPlan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+    }
+
     public function test_future_relative_days_require_clarification_and_keep_literal_priority(): void
     {
         foreach (['завтра', 'послезавтра', 'за завтра', 'за послезавтра', 'завтра и вчера', 'за октябрь 2026 завтра'] as $phrase) {

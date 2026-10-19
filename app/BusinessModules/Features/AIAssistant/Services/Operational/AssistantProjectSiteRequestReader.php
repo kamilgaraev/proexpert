@@ -12,9 +12,11 @@ readonly class AssistantProjectSiteRequestReader extends AssistantProjectOperati
 {
     public const TYPE = 'live_project_site_request_queue_projection';
 
+    public const REQUEST_NOUN = '(?:заявк[а-яё]*|заявок)';
+
     public static function hasIntent(string $query): bool
     {
-        return preg_match('/заявк/iu', $query) === 1;
+        return preg_match('/'.self::REQUEST_NOUN.'/iu', $query) === 1;
     }
 
     public static function matches(string $query): bool

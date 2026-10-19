@@ -17,6 +17,8 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $tool = 'get_project_production_schedule_summary';
         foreach (['Сверь выполненные работы с графиком и покажи камеры проекта',
             'Сверь выполненные работы с графиком и покажи заявки проекта',
+            'Сверь выполненные работы с графиком и покажи список заявок проекта',
+            'Сверь выполненные работы с графиком и покажи список заявок на материалы',
             'Сверь выполненные работы с графиком и заявки на материалы',
             'Сверь выполненные работы с графиком проекта Северный дом и покажи заявки проекта',
             'Сверь выполненные работы с графиком проекта Северный дом, заявки на материалы',
@@ -42,7 +44,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
             self::assertSame($tool, $registry::intent($query)['name']);
             self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
-        foreach (['Камеры и журналы', 'Заявки', 'Заявки на материалы'] as $name) {
+        foreach (['Камеры и журналы', 'Заявки', 'Заявки на материалы', 'Список заявок'] as $name) {
             $named = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::bind(
                 $this->plan('Сверь выполненные работы с графиком проекта «'.$name.'»'),
                 static fn (): array => ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]]);
@@ -344,6 +346,13 @@ final class AssistantRequiredProjectReadTest extends TestCase
             AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_material_request_queue', $query));
         self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_site_request_queue', $query));
+        foreach (['Покажи список заявок на материалы нашего проекта, которые просрочены',
+            'Покажи список заявок по материалам нашего объекта без ответственного'] as $query) {
+            self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::hasIntent($query));
+            self::assertSame('get_project_material_request_queue', AssistantRequiredProjectRead::fromPlan($this->plan($query))['name'] ?? null);
+            self::assertNotNull(AssistantRequiredProjectRead::decisionReader('get_project_material_request_queue', $query));
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_site_request_queue', $query));
+        }
         foreach (['Какие заявки на материалы нашего объекта просрочены, заявки на технику не включать.',
             'Какие заявки на материалы нашего объекта просрочены? Не учитывать технику.',
             'Какие заявки на материалы нашего объекта просрочены? Технику не учитывать.',
