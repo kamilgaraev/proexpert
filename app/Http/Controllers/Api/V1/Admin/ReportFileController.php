@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\File\ListFilesRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\ReportFile;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Organization\OrganizationContext;
 use App\Services\Storage\FileService;
 use App\Services\Storage\OrganizationStoragePath;
@@ -62,7 +63,7 @@ class ReportFileController extends Controller
                 $query->whereDate('created_at', '<=', $params['date_to']);
             }
 
-            $paginator = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
+            $paginator = ApiQueryMetrics::measureProcessingPhase('file_report_list', fn () => $query->orderBy($sortBy, $sortDir)->paginate($perPage));
             $storage = $this->fileService->disk(OrganizationContext::getOrganization() ?? $user->currentOrganization);
 
             $items = collect($paginator->items())->map(function (ReportFile $file) use ($storage, $organizationId) {
@@ -72,10 +73,10 @@ class ReportFileController extends Controller
 
                 try {
                     $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
-                    if ($access->isAssistantReportPath((string) $file->path)) {
-                        $payload['download_url'] = $access->urlForPath((string) $file->path, request()->user());
-                    } elseif ($storage->exists($file->path)) {
-                        $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
+                    if (ApiQueryMetrics::measureProcessingPhase('file_report_classify', fn () => $access->isAssistantReportPath((string) $file->path))) {
+                        $payload['download_url'] = ApiQueryMetrics::measureProcessingPhase('file_report_access', fn () => $access->urlForPath((string) $file->path, request()->user()));
+                    } elseif (ApiQueryMetrics::measureProcessingPhase('file_report_storage_exists', fn () => $storage->exists($file->path))) {
+                        $payload['download_url'] = ApiQueryMetrics::measureProcessingPhase('file_report_storage_url', fn () => $storage->temporaryUrl($file->path, now()->addHours(1)));
                     }
                 } catch (\Throwable $e) {
                     Log::warning('report_files.temporary_url_failed', [

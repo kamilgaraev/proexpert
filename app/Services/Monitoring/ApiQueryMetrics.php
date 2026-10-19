@@ -246,6 +246,8 @@ final class ApiQueryMetrics
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
             'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
+            'file_report_list', 'file_report_classify', 'file_report_access',
+            'file_report_storage_exists', 'file_report_storage_url',
             'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
             'rag_expected_counts', 'rag_documents', 'rag_finalize',
