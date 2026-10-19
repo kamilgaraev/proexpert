@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CanonicalTechnologyWorkItemPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EquipmentWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomFloorWorkItemExpander;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
@@ -35,6 +36,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
         private CanonicalTechnologyWorkItemPlanner $technologyWorkItems = new CanonicalTechnologyWorkItemPlanner,
         private RoomFloorWorkItemExpander $floorWorkItems = new RoomFloorWorkItemExpander,
+        private EquipmentWorkItemExpander $equipmentWorkItems = new EquipmentWorkItemExpander,
     ) {}
 
     public function stage(): ProcessingStage
@@ -122,6 +124,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $payload = $this->floorWorkItems->expand($payload, $quantities, $workLimit,
             is_array($stage6Context['room_floor_entity_ids'] ?? null) ? $stage6Context['room_floor_entity_ids'] : []);
+        $payload = $this->equipmentWorkItems->expand($payload, $quantities, $workLimit,
+            is_array($stage6Context['equipment_entity_ids'] ?? null) ? $stage6Context['equipment_entity_ids'] : []);
         $this->logProgress($context, 'deterministic_candidates_planned');
         $this->renewAfterProgress($heartbeat);
         \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);

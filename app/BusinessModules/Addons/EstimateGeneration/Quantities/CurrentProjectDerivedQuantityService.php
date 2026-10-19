@@ -219,6 +219,7 @@ final readonly class CurrentProjectDerivedQuantityService
             'context' => [
                 ...$this->context($projectModelToken, $technology, $completeness),
                 'room_floor_entity_ids' => $this->roomFloorEntityIds($snapshot),
+                'equipment_entity_ids' => $this->equipmentEntityIds($snapshot),
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];
@@ -856,6 +857,19 @@ final readonly class CurrentProjectDerivedQuantityService
         ksort($rooms, SORT_STRING);
 
         return array_keys($rooms);
+    }
+
+    private function equipmentEntityIds(ProjectModelSnapshot $snapshot): array
+    {
+        $equipment = [];
+        foreach ($snapshot->entities as $entity) {
+            if (($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type) === 'equipment') {
+                $equipment[$entity->id] = true;
+            }
+        }
+        ksort($equipment, SORT_STRING);
+
+        return array_keys($equipment);
     }
 
     private function isBuildingFloor(?Entity $entity): bool

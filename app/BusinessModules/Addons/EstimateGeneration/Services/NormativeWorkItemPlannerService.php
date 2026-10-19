@@ -1388,6 +1388,7 @@ final class NormativeWorkItemPlannerService
                 $name, 'engineering', $name, 'equipment.'.$key,
                 operations: [trans_message('estimate_generation.residential_equipment.'.$key.'.operation')],
                 metadata: ['requirement_key' => $requirement, 'ordinary_item_type' => $ordinaryType,
+                    'residential_equipment_candidate' => true,
                     'requires_specification' => true, 'requires_technology_confirmation' => true],
             ), 'unit' => 'count'];
         }
