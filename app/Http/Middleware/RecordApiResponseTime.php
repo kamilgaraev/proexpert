@@ -24,7 +24,22 @@ final class RecordApiResponseTime
 
         $startedAt = hrtime(true);
         $previousMetrics = $request->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE);
-        $metrics = new ApiQueryMetrics($request->isMethod('GET') && $request->is(
+        $designDocumentSources = match ($request->method()) {
+            'PUT' => preg_match(
+                '~^api/v1/admin/design-management/document-versions/[^/]+/sheets$~D',
+                $request->path(),
+            ) === 1,
+            'POST' => preg_match(
+                '~^api/v1/admin/design-management/packages/[^/]+/sections/[^/]+/documents$~D',
+                $request->path(),
+            ) === 1,
+            'GET' => preg_match(
+                '~^api/v1/admin/design-management/document-versions/[^/]+/(?:source-file|drawing-strokes)$~D',
+                $request->path(),
+            ) === 1,
+            default => false,
+        };
+        $metrics = new ApiQueryMetrics($designDocumentSources || ($request->isMethod('GET') && $request->is(
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
             'api/v1/admin/permissions',
@@ -43,7 +58,7 @@ final class RecordApiResponseTime
             'api/v1/admin/payments/documents/calendar',
             'api/v1/admin/projects/*/construction-journals',
             'api/v1/admin/construction-journals/*',
-        ));
+        )));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;
         $statusCode = null;

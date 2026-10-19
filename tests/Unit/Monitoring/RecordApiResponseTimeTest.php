@@ -186,6 +186,78 @@ final class RecordApiResponseTimeTest extends TestCase
         }
     }
 
+    public function test_design_document_sources_match_only_selected_methods_and_segments(): void
+    {
+        foreach ([
+            ['PUT', '/api/v1/admin/design-management/document-versions/7/sheets', true],
+            ['POST', '/api/v1/admin/design-management/packages/7/sections/8/documents', true],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/source-file', true],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/drawing-strokes', true],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/sheets', false],
+            ['POST', '/api/v1/admin/design-management/document-versions/7/sheets', false],
+            ['PATCH', '/api/v1/admin/design-management/document-versions/7/sheets', false],
+            ['PUT', '/api/v1/admin/design-management/document-versions/7/extra/sheets', false],
+            ['PUT', '/api/v1/admin/design-management/document-versions//sheets', false],
+            ['PUT', '/api/v1/admin/design-management/document-versions/7/sheets/extra', false],
+            ['POST', '/api/v1/admin/design-management/packages/7/sections/8', false],
+            ['POST', '/api/v1/admin/design-management/packages/7/sections/8/documents/extra', false],
+            ['POST', '/api/v1/admin/design-management/packages/7/extra/sections/8/documents', false],
+            ['GET', '/api/v1/admin/design-management/packages/7/sections/8/documents', false],
+            ['PUT', '/api/v1/admin/design-management/packages/7/sections/8/documents', false],
+            ['POST', '/api/v1/admin/design-management/document-versions/7/source-file', false],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/source-file/extra', false],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/extra/source-file', false],
+            ['POST', '/api/v1/admin/design-management/document-versions/7/drawing-strokes', false],
+            ['GET', '/api/v1/admin/design-management/document-versions/7/drawing-strokes/extra', false],
+            ['GET', '/api/v1/mobile/design-management/document-versions/7/source-file', false],
+        ] as [$method, $path, $expected]) {
+            Facade::clearResolvedInstances();
+            $captured = null;
+            $this->expectLog(static function (array $context) use (&$captured): bool {
+                $captured = $context;
+
+                return true;
+            });
+            $request = Request::create($path.'?token=private-query', $method, ['document_name' => 'private-body']);
+            (new RecordApiResponseTime)->handle($request, static function () use ($request): Response {
+                ApiQueryMetrics::record($request, 2.5);
+
+                return new Response('private-response');
+            });
+
+            self::assertSame(1, $captured['sql_count']);
+            self::assertSame($expected, array_key_exists('sql_sources', $captured), $method.' '.$path);
+            self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+        }
+    }
+
+    public function test_design_source_file_profiling_does_not_consume_the_response_stream(): void
+    {
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+        $request = Request::create('/api/v1/admin/design-management/document-versions/7/source-file', 'GET');
+        $streamConsumed = false;
+        $response = new \Symfony\Component\HttpFoundation\StreamedResponse(static function () use (&$streamConsumed): void {
+            $streamConsumed = true;
+        });
+
+        $returned = (new RecordApiResponseTime)->handle($request, static function () use ($request, $response): Response {
+            ApiQueryMetrics::record($request, 2.5);
+
+            return $response;
+        });
+
+        self::assertSame($response, $returned);
+        self::assertFalse($streamConsumed);
+        self::assertSame(1, $captured['sql_count']);
+        self::assertArrayHasKey('sql_sources', $captured);
+        self::assertArrayNotHasKey('response_bytes', $captured);
+    }
+
     protected function tearDown(): void
     {
         Mockery::close();
