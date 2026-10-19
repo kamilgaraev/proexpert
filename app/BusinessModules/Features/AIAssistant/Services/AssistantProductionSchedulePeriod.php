@@ -20,13 +20,17 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_SELECTOR = '(?:'.self::QUARTER_NUMBER.'|'.self::DURATION_NUMBER.'|\d+(?:-?[а-яё]+)?|[ivx]+|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*)(?:\s+(?:и\s+)?(?:\d+|'.self::DURATION_NUMBER.'))?\s+';
 
-    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
+    private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|последний\s+)'.self::QUARTER_WORD.'\b';
 
     private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток)';
 
     private const DURATION_NUMBER = '(?:\d{1,2}|один|одна|одну|два|две|пара|пару|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)';
 
-    private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
+    private const DURATION_MODIFIER = '(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))';
+
+    private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы)';
+
+    private const DURATION_PERIOD = '(?:(?:за\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::DURATION_NUMBER.'\s+)?|(?:'.self::DURATION_MODIFIER.'\s+)?'.self::DURATION_NUMBER.'\s+|'.self::DURATION_MODIFIER.'\s+)'.self::DURATION_UNIT.'\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 
@@ -280,7 +284,7 @@ final class AssistantProductionSchedulePeriod
             return $unresolved;
         }
         $years = preg_match_all('/\b(?:19|20)\d{2}\b/u', $query);
-        if ($years === 0 && preg_match('/\bза\s+(?:последний\s+)?квартал\b/iu', $query, $rolling) === 1) {
+        if ($years === 0 && preg_match('/\b(?:за\s+(?:последний\s+)?|последний\s+)квартал\b/iu', $query, $rolling) === 1) {
             if (self::hasOtherPeriod($query, $rolling[0])) {
                 return $unresolved;
             }
@@ -318,12 +322,12 @@ final class AssistantProductionSchedulePeriod
     {
         $remainder = str_replace($phrase, ' ', $query);
 
-        return preg_match('/\b(?:'.self::TIME_START.'|'.self::QUARTER_PERIOD.')/iu', $remainder) === 1;
+        return preg_match('/\b'.self::TIME_START.'/iu', $remainder) === 1;
     }
 
     private static function normalizedQuery(string $query): string
     {
-        $query = preg_replace('/\bза\s+предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;
+        $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::WHOLE_PERIOD_PREFIX.'(эт(?:от|ом|у|ой)|текущ(?:ий|ем|ую|ей)|прошл(?:ый|ом|ую|ой)|предыдущ(?:ий|ем|ую|ей)|позапрошл(?:ый|ом|ую|ой))\s+(год(?:у)?|месяц(?:е)?|квартал(?:е)?|недел(?:ю|е)|день)\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);
             $unit = mb_strtolower($match[2]);
@@ -358,7 +362,7 @@ final class AssistantProductionSchedulePeriod
 
             return str_starts_with($relative, 'позапрошл') ? 'позавчера' : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 'вчера' : 'сегодня');
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\bза\s+(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
+        $query = preg_replace_callback('/\b(?:за\s+)?(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
             return 'за 1 '.mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
         }, $query) ?? $query;
         $query = preg_replace_callback('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {

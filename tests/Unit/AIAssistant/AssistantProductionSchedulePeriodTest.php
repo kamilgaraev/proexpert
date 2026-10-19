@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_prepositionless_durations_keep_resolver_semantics_and_named_scope(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['последние три месяца' => '2026-07-19', 'последний квартал' => '2026-07-19',
+                'три месяца' => '2026-07-19', 'последний месяц' => '2026-09-19',
+                'предыдущие две недели' => '2026-10-05', 'прошедшие два года' => '2024-10-19'] as $phrase => $start) {
+                $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-19'];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+                $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                    'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            }
+            foreach (['последние недели', 'три квартала', 'последние три месяца и вчера', 'последний квартал 2026'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком, сколько дней просрочено?']]));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_counted_quarters_require_dates_and_preserve_named_project_priority(): void
     {
         foreach (['за три квартала', 'за последние три квартала', 'за предыдущие два квартала',
