@@ -102,6 +102,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertSame(26, $data['unassigned_open_tasks']);
         self::assertCount(20, $data['examples']);
         self::assertSame($overdue->id, $data['examples'][0]['id']);
+        self::assertSame([true, ...array_fill(0, 19, false)], array_column($data['examples'], 'is_overdue'));
         self::assertSame('unassigned', $data['examples'][0]['owner_state']);
         self::assertSame('не назначен', $data['examples'][0]['owner']);
         $volumes = collect($data['accepted_volumes'])->keyBy('unit');
@@ -229,6 +230,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
             self::assertSame('2026-10-19', $read['data']['period_end']);
             self::assertSame(1, $read['data']['confirmed_works']);
             self::assertSame(1, $read['data']['overdue_tasks']);
+            self::assertSame([true, false], array_column($read['data']['examples'], 'is_overdue'));
             self::assertStringContainsString('московское время', $read['server_formatted_answer']);
             self::assertTrue($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
             Carbon::setTestNow(new Carbon('2026-10-19 21:30:00', 'UTC'));

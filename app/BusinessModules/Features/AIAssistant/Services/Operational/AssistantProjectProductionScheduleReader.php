@@ -125,7 +125,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
                 'owner' => $row->getRawOriginal('assigned_user_name'),
                 'owner_state' => $row->getRawOriginal('assigned_user_id') === null ? 'unassigned'
                     : ($row->getRawOriginal('assigned_user_name') === null ? 'unavailable' : 'known'),
-                'is_overdue' => (bool) $row->getAttribute('is_overdue'),
+                'is_overdue' => (bool) $row->getRawOriginal('is_overdue'),
             ])->all();
 
         return ['period_start' => $arguments['period_start'] ?? null, 'period_end' => $arguments['period_end'] ?? null,
