@@ -799,13 +799,14 @@ final class NormativeWorkItemPlannerService
             .'(?:[\p{L}-]{2,30}(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими)|[1-9]\d{0,2}|'.$numberModifier.')'
             .'(?![\p{L}\p{N}])))';
         $fixtureModifiers = '(?:(?&fixture_modifier)\s+){0,3}';
-        $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*'.$fixtureModifiers;
+        $listConnector = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*';
+        $listSeparator = $listConnector.$fixtureModifiers;
         $attributeWord = '(?!'.$anyFixture.'|'.$listConjunction.'|(?<![\p{L}\p{N}])(?:не|без|кроме)(?![\p{L}\p{N}]))'
             .'(?:(?&fixture_modifier)|(?!'.$negativeAction.'|'.$exclusionAction.')[\p{L}\p{N}-]{1,32}(?![\p{L}\p{N}]))';
         $instrumentalFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ом|ами)|умывальник(?:ом|ами)|'
             .'душев(?:ой|ыми)\s+кабин(?:ой|ою|ами)|ванн(?:ой|ою|ами)|мойк(?:ой|ою|ами)|раковин(?:ой|ою|ами)|'
             .'смесител(?:ем|ями)|писсуар(?:ом|ами)|душ(?:ем|ами))(?![\p{L}\p{N}])';
-        $fixtureListAttribute = $anyFixture.'\K\s+с(?:о)?\s+'.$attributeWord.'(?:\s+'.$attributeWord.'){0,3}'
+        $fixtureListAttribute = $anyFixture.'\K\s+с(?:о)?\s+'.$attributeWord.'(?:(?:\s+|'.$listConnector.')'.$attributeWord.'){0,3}'
             .'(?='.$listSeparator.'(?!'.$instrumentalFixture.')'.$anyFixture.')';
         $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
         $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
