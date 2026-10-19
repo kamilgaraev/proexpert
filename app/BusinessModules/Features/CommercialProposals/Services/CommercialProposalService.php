@@ -286,17 +286,17 @@ final class CommercialProposalService
             $this->validateCrmDeal($organizationId, $data['crm_deal_id'] ?? null);
 
             $proposal->fill(array_filter([
-                'crm_deal_id' => array_key_exists('crm_deal_id', $data) ? $data['crm_deal_id'] : null,
-                'tender_id' => array_key_exists('tender_id', $data) ? $data['tender_id'] : null,
-                'presale_estimate_id' => array_key_exists('presale_estimate_id', $data) ? $data['presale_estimate_id'] : null,
-                'project_id' => array_key_exists('project_id', $data) ? $data['project_id'] : null,
-                'contract_id' => array_key_exists('contract_id', $data) ? $data['contract_id'] : null,
+                'crm_deal_id' => array_key_exists('crm_deal_id', $data) ? $data['crm_deal_id'] : $proposal->crm_deal_id,
+                'tender_id' => array_key_exists('tender_id', $data) ? $data['tender_id'] : $proposal->tender_id,
+                'presale_estimate_id' => array_key_exists('presale_estimate_id', $data) ? $data['presale_estimate_id'] : $proposal->presale_estimate_id,
+                'project_id' => array_key_exists('project_id', $data) ? $data['project_id'] : $proposal->project_id,
+                'contract_id' => array_key_exists('contract_id', $data) ? $data['contract_id'] : $proposal->contract_id,
                 'title' => $data['title'] ?? null,
-                'customer_name' => array_key_exists('customer_name', $data) ? $data['customer_name'] : null,
-                'customer_email' => array_key_exists('customer_email', $data) ? $data['customer_email'] : null,
-                'customer_phone' => array_key_exists('customer_phone', $data) ? $data['customer_phone'] : null,
+                'customer_name' => array_key_exists('customer_name', $data) ? $data['customer_name'] : $proposal->customer_name,
+                'customer_email' => array_key_exists('customer_email', $data) ? $data['customer_email'] : $proposal->customer_email,
+                'customer_phone' => array_key_exists('customer_phone', $data) ? $data['customer_phone'] : $proposal->customer_phone,
                 'currency' => $data['currency'] ?? null,
-                'valid_until' => array_key_exists('valid_until', $data) ? $data['valid_until'] : null,
+                'valid_until' => array_key_exists('valid_until', $data) ? $data['valid_until'] : $proposal->valid_until,
                 'metadata' => array_key_exists('metadata', $data) ? $data['metadata'] : null,
                 'updated_by_user_id' => $actorUserId,
             ], static fn ($value, string $key): bool => $value !== null || in_array($key, [
@@ -376,6 +376,9 @@ final class CommercialProposalService
         return DB::transaction(function () use ($organizationId, $proposalId, $data, $actorUserId): CommercialProposal {
             $proposal = $this->find($organizationId, $proposalId, true);
             $fromStatus = $this->statusOf($proposal);
+            if (!in_array('create_version', $fromStatus->availableActions(), true)) {
+                $this->block('version_not_allowed');
+            }
             $currentVersion = $this->currentVersion($proposal);
             $content = $this->buildVersionContent($proposal, $data, $currentVersion);
             $nextVersionNumber = ((int) $proposal->versions()->max('version_number')) + 1;

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\CommercialProposals\Http\Requests\CommercialPro
 use App\BusinessModules\Features\CommercialProposals\Http\Requests\CommercialProposalSendRequest;
 use App\BusinessModules\Features\CommercialProposals\Http\Requests\CommercialProposalTemplateRequest;
 use App\BusinessModules\Features\CommercialProposals\Http\Requests\CommercialProposalVersionRequest;
+use App\BusinessModules\Features\CommercialProposals\Http\Requests\CommercialProposalUpdateRequest;
 use App\BusinessModules\Features\CommercialProposals\Http\Requests\UploadCommercialProposalFileRequest;
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalExportResource;
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalFileResource;
@@ -136,7 +137,7 @@ final class CommercialProposalController extends Controller
         }
     }
 
-    public function updateDraft(CommercialProposalVersionRequest $request, string $proposalId): JsonResponse
+    public function updateDraft(CommercialProposalUpdateRequest $request, string $proposalId): JsonResponse
     {
         try {
             return AdminResponse::success(
