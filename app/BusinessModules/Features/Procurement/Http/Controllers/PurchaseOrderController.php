@@ -88,6 +88,15 @@ class PurchaseOrderController extends Controller
             $sortDir = (string) $request->input('sort_dir', 'desc');
 
             $orders = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
+            foreach ($orders->getCollection() as $order) {
+                foreach ($order->receipts as $receipt) {
+                    if (! $receipt->relationLoaded('purchaseOrder')
+                        && (int) $receipt->purchase_order_id === (int) $order->getKey()
+                        && (int) $receipt->organization_id === (int) $order->organization_id) {
+                        $receipt->setRelation('purchaseOrder', $order);
+                    }
+                }
+            }
 
             return AdminResponse::paginated(
                 PurchaseOrderResource::collection($orders->getCollection()),
