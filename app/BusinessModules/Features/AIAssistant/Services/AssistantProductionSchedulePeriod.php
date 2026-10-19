@@ -12,7 +12,7 @@ final class AssistantProductionSchedulePeriod
 
     private const EXPLICIT_RANGE = '(?:(?:за|в)\s+(?:весь\s+)?период\s+)?(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b';
 
-    private const CURRENT_SNAPSHOT_TIME = '(?:сегодняшний\s+день|сегодня|сейчас|текущий\s+(?:момент|день)|текущую\s+дату)';
+    private const CURRENT_SNAPSHOT_TIME = '(?:сегодняшний\s+день|сегодня|сейчас|(?:текущий|данный|настоящий)\s+момент|текущий\s+день|текущую\s+дату)';
 
     private const FUTURE_DAY = '(?:завтра|послезавтра)';
 
