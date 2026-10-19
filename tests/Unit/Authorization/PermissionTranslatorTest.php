@@ -8,6 +8,7 @@ use App\Helpers\PermissionTranslator;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
 use PHPUnit\Framework\TestCase;
@@ -405,6 +406,68 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Получение уведомлений по закупкам', $translated['module_permissions']['notifications']['notifications.receive.procurement']);
         $this->assertStringNotContainsString('notifications.receive.site_requests', $flattenedValues);
         $this->assertStringNotContainsString('notifications.receive.procurement', $flattenedValues);
+    }
+
+    public function test_subject_fallback_preserves_longest_prefix_and_label_rules(): void
+    {
+        Lang::get('permissions', [], 'ru');
+        Lang::addLines([
+            'permissions.subjects' => [
+                'fixture' => 'Общий объект',
+                'fixture.special' => 'Уточнённый объект',
+                'fixture.special.invalid' => null,
+                'fixture.special.empty' => '',
+                '' => 'Пустой объект',
+                123 => 'Числовой ключ',
+                'документ' => 'Документ',
+                'документ.раздел' => 'Раздел документа',
+            ],
+            'permissions.actions' => ['fixture_action' => 'Выполнение'],
+        ], 'ru');
+
+        self::assertSame('Уточнённый объект: Выполнение', PermissionTranslator::getPermissionTranslation('fixture.special.fixture_action'));
+        self::assertSame('Уточнённый объект', PermissionTranslator::getPermissionTranslation('fixture.special'));
+        self::assertSame('Уточнённый объект: Выполнение', PermissionTranslator::getPermissionTranslation('fixture.special.invalid.fixture_action'));
+        self::assertSame('Право доступа: Выполнение', PermissionTranslator::getPermissionTranslation('fixture.special.empty.fixture_action'));
+        self::assertSame('Право доступа: Выполнение', PermissionTranslator::getPermissionTranslation('fixtures.fixture_action'));
+        self::assertSame('Раздел документа: Выполнение', PermissionTranslator::getPermissionTranslation('документ.раздел.fixture_action'));
+        self::assertSame('Пустой объект: Выполнение', PermissionTranslator::getPermissionTranslation('.fixture_action'));
+        self::assertSame('Дополнительное право доступа', PermissionTranslator::getPermissionTranslation('123'));
+    }
+
+    public function test_subject_fallback_observes_current_translation_dictionary(): void
+    {
+        Lang::get('permissions', [], 'ru');
+        Lang::addLines([
+            'permissions.subjects' => ['fixture' => 'Первый объект'],
+            'permissions.actions' => ['fixture_action' => 'Выполнение'],
+        ], 'ru');
+        Lang::setLocale('en');
+
+        self::assertSame('Первый объект: Выполнение', PermissionTranslator::getPermissionTranslation('fixture.fixture_action'));
+
+        Lang::addLines(['permissions.subjects' => ['fixture' => 'Обновлённый объект']], 'ru');
+
+        self::assertSame('Обновлённый объект: Выполнение', PermissionTranslator::getPermissionTranslation('fixture.fixture_action'));
+    }
+
+    public function test_subject_fallback_preserves_every_catalog_label_in_either_insertion_order(): void
+    {
+        $subjects = Lang::get('permissions.subjects', [], 'ru');
+        self::assertIsArray($subjects);
+        self::assertNotEmpty($subjects);
+        Lang::addLines(['permissions.actions.fixture_action' => 'Выполнение'], 'ru');
+
+        foreach ([$subjects, array_reverse($subjects, true)] as $orderedSubjects) {
+            Lang::addLines(['permissions.subjects' => $orderedSubjects], 'ru');
+            foreach ($orderedSubjects as $key => $label) {
+                if (! is_string($key) || ! is_string($label) || $label === '') {
+                    continue;
+                }
+
+                self::assertSame($label.': Выполнение', PermissionTranslator::getPermissionTranslation($key.'.fixture_action'));
+            }
+        }
     }
 
     private function valuesOnly(array $value): array
