@@ -35,7 +35,7 @@ class ConstructionJournalController extends Controller
 
             $visibleIds = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->visiblePerformerIds($request->user(), $project);
             $journals = $project->journals()->whereIn('performing_organization_id', $visibleIds)
-                ->with(['contract', 'createdBy', 'project'])
+                ->with(['contract', 'createdBy', 'project', 'performingOrganization'])
                 ->withCount(ConstructionJournalPayloadService::journalCountRelations())
                 ->when($request->filled('status'), function ($query) use ($request): void {
                     $query->where('status', $request->string('status'));
