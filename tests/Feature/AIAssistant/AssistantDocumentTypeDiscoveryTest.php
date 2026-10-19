@@ -286,9 +286,13 @@ final class AssistantDocumentTypeDiscoveryTest extends TestCase
         self::assertSame(4, $policy->accessibleDocuments($fixture->owner, $organizationId)->count());
         $capture = true;
         $mainQueries = [];
-        DB::listen(static function ($event) use (&$capture, &$mainQueries): void {
+        $retrievalQueries = [];
+        DB::listen(static function ($event) use (&$capture, &$mainQueries, &$retrievalQueries): void {
             if ($capture && str_contains($event->sql, 'assistant_coverage_documents AS MATERIALIZED') && str_contains(strtolower($event->sql), ' as coverage_state')) {
                 $mainQueries[] = ['sql' => $event->sql, 'bindings' => $event->bindings];
+            }
+            if ($capture && str_contains($event->sql, 'assistant_coverage_documents AS MATERIALIZED') && str_contains($event->sql, '"expected_units"')) {
+                $retrievalQueries[] = $event->sql;
             }
         });
         $baseline = $this->read($fixture, $fixture->owner, countersOnly: false);
@@ -313,11 +317,48 @@ final class AssistantDocumentTypeDiscoveryTest extends TestCase
             foreach ($node['Plans'] ?? [] as $child) { $stack[] = $child; }
         }
         self::assertSame([2], $materializedRows);
-        foreach ([[], ['project_id' => (int) $project->id]] as $scope) {
+        $mainQueries = $retrievalQueries = [];
+        $capture = true;
+        $snapshot = $this->read($fixture, $fixture->owner, mode: 'REPEATABLE READ READ ONLY', countersOnly: false);
+        $capture = false;
+        self::assertSame($baseline, $snapshot);
+        self::assertCount(1, $mainQueries);
+        self::assertCount(1, $retrievalQueries);
+        foreach (['crm_import_batches', 'quality_defect_photos'] as $nativeTable) {
+            self::assertStringNotContainsString($nativeTable, $mainQueries[0]['sql']);
+            self::assertStringContainsString($nativeTable, $retrievalQueries[0]);
+        }
+        foreach ([['project_id' => (int) $project->id], [], ['project_id' => (int) $project->id]] as $scope) {
             $full = $this->read($fixture, $fixture->owner, $scope, countersOnly: false);
             self::assertSame($full, $this->read($fixture, $fixture->owner, $scope, 'REPEATABLE READ READ ONLY', false));
             self::assertSame(['document_coverage' => $full['document_coverage']], $this->read($fixture, $fixture->owner, $scope, 'REPEATABLE READ READ ONLY'));
         }
+        $legacyFile = File::withoutEvents(fn () => File::query()->create([
+            'organization_id' => $organizationId, 'user_id' => $fixture->owner->id,
+            'fileable_type' => QualityDefectPhoto::class, 'fileable_id' => $photo->id,
+            'name' => basename($photo->url), 'original_name' => basename($photo->url), 'path' => $photo->url,
+            'disk' => 's3', 'mime_type' => $photo->mime_type, 'size' => strlen($body),
+        ]));
+        $legacyDocument = AIAssistantDocument::withoutEvents(fn () => AIAssistantDocument::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $project->id, 'file_id' => $legacyFile->id,
+            'parent_entity_type' => 'quality_defect_photo', 'parent_entity_id' => (string) $photo->id,
+            'storage_path' => $legacyFile->path, 'filename' => $legacyFile->name, 'mime_type' => $legacyFile->mime_type,
+            'checksum' => hash('sha256', $body), 'size_bytes' => strlen($body), 'status' => 'ready',
+            'coverage_status' => 'full', 'extracted_text' => $body,
+        ]));
+        self::assertTrue($policy->accessibleFiles($fixture->owner, $organizationId, false)->whereKey($legacyFile->id)->exists());
+        self::assertTrue($policy->accessibleDocuments($fixture->owner, $organizationId,
+            AIAssistantDocument::query()->whereNotNull('file_id'))->whereKey($legacyDocument->id)->exists());
+        $legacyBaseline = $this->read($fixture, $fixture->owner, countersOnly: false);
+        self::assertSame($baseline['document_coverage']['total'] + 1, $legacyBaseline['document_coverage']['total']);
+        self::assertSame($baseline['document_coverage']['ready'] + 1, $legacyBaseline['document_coverage']['ready']);
+        self::assertSame($baseline['retrieval_coverage']['expected_units'], $legacyBaseline['retrieval_coverage']['expected_units']);
+        $mainQueries = [];
+        $capture = true;
+        self::assertSame($legacyBaseline, $this->read($fixture, $fixture->owner, mode: 'REPEATABLE READ READ ONLY', countersOnly: false));
+        $capture = false;
+        self::assertCount(1, $mainQueries);
+        self::assertStringContainsString('quality_defect_photos', $mainQueries[0]['sql']);
         UserRoleAssignment::query()->where('user_id', $fixture->owner->id)->update(['is_active' => false]);
         self::assertSame(0, $this->read($fixture, $fixture->owner)['document_coverage']['total']);
         self::assertSame(0, $this->read($fixture, $fixture->owner, mode: 'REPEATABLE READ READ ONLY')['document_coverage']['total']);
