@@ -14,6 +14,53 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_adjectival_relative_days_keep_day_bounds_named_scope_and_literal_priority(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
+        try {
+            foreach (['сегодня' => '2026-10-20', 'вчера' => '2026-10-19', 'позавчера' => '2026-10-18'] as $stem => $date) {
+                foreach ([$stem.'шний день', 'за '.$stem.'шний день', 'в течение '.$stem.'шнего дня', 'на протяжении '.$stem.'шних суток'] as $phrase) {
+                    $expected = ['project_id' => 102, 'period_start' => $date, 'period_end' => $date];
+                    self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                        ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                    $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                        'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                    $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                        'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                    self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+                    $literal = AssistantNamedProjectReadScope::bind($plan, static function (array $arguments) use ($phrase): array {
+                        self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                        return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+                    });
+                    self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+                }
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_adjectival_future_historical_and_mixed_days_require_dates_while_current_snapshot_stays_unfiltered(): void
+    {
+        $phrases = ['на вчерашний день', 'по состоянию на позавчерашний день', 'за октябрь 2026 на вчерашний день',
+            'до вчерашнего дня', 'за сегодняшний день и за вчерашний день'];
+        foreach (['завтра', 'послезавтра'] as $stem) {
+            array_push($phrases, 'за '.$stem.'шний день', $stem.'шний день', 'в течение '.$stem.'шнего дня', 'на протяжении '.$stem.'шних суток');
+        }
+        foreach ($phrases as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+        foreach (['на сегодняшний день', 'по состоянию на сегодняшний день', 'на сегодняшние сутки', 'по состоянию на сегодняшние сутки'] as $phrase) {
+            self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+    }
+
     public function test_unsupported_date_boundaries_never_extend_to_today_or_all_time(): void
     {
         foreach (['с начала года до 01.10.2026', 'с начала проекта до 2026-10-01',
