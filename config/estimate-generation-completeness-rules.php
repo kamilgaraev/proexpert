@@ -44,7 +44,7 @@ $rule = static function (
 ) use ($package): array {
     return [
         'id' => $id,
-        'version' => '1.0.0',
+        'version' => '1.1.0',
         'applicability_fact_types' => array_values(array_unique(array_column($conditions, 'fact_type'))),
         'conditions' => $conditions,
         'satisfaction_fact_type' => $satisfaction,
@@ -81,7 +81,7 @@ $basePreparation['work_package']['variants'] = [
 ];
 
 return [
-    'version' => '2026.08.11-v1',
+    'version' => '2026.10.19-v2',
     'rules' => [
         $rule('site_leveling', [['fact_type' => 'site_work', 'operator' => '=', 'value' => true]], 'site_leveling_specification', 'document_missing', 'site_area', 'm2'),
         $basePreparation,

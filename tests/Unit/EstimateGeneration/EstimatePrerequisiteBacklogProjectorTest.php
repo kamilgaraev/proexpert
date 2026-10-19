@@ -49,6 +49,41 @@ final class EstimatePrerequisiteBacklogProjectorTest extends TestCase
         self::assertSame($formulas, $finding->workPackage->quantityFormulas);
     }
 
+    public function test_a_real_unique_scope_exposes_a_typed_target_without_enabling_an_unimplemented_writer(): void
+    {
+        $target = ['entity_id' => 'entity:roof', 'entity_source_version' => 'sha256:'.str_repeat('a', 64)];
+        $finding = $this->finding([
+            ['id' => 'formula:roof', 'unit' => 'm2', 'unresolved_inputs' => ['roof_area']],
+        ], inputScope: ['status' => 'single_entity', 'target' => $target]);
+        $question = $this->projector()->project($finding, $this->projection())['questions'][0];
+
+        self::assertSame('entity', $question['scope']);
+        self::assertSame($target, $question['target']);
+        self::assertSame(['type' => 'positive_decimal', 'unit' => 'm2', 'basis' => ['input', 'measurement', 'assumption']], $question['input_contract']);
+        self::assertSame('review_sources', $question['answer_action']);
+        self::assertArrayNotHasKey('fact_id', $question);
+        self::assertArrayNotHasKey('value', $question);
+
+        $other = $this->finding($finding->workPackage->quantityFormulas,
+            inputScope: ['status' => 'single_entity', 'target' => [...$target, 'entity_id' => 'entity:other-roof']]);
+        self::assertNotSame($question['key'], $this->projector()->project($other, $this->projection())['questions'][0]['key']);
+    }
+
+    public function test_ambiguous_missing_or_invalid_scope_never_invents_a_target(): void
+    {
+        foreach ([[], ['status' => 'ambiguous', 'entity_count' => 2],
+            ['status' => 'single_entity', 'target' => ['entity_id' => 'entity:roof', 'entity_source_version' => 'invalid']],
+        ] as $inputScope) {
+            $finding = $this->finding([
+                ['id' => 'formula:roof', 'unit' => 'm2', 'unresolved_inputs' => ['roof_area']],
+            ], inputScope: $inputScope);
+            $question = $this->projector()->project($finding, $this->projection())['questions'][0];
+            self::assertSame('rule', $question['scope']);
+            self::assertArrayNotHasKey('target', $question);
+            self::assertArrayNotHasKey('input_contract', $question);
+        }
+    }
+
     public function test_revision_changes_with_source_or_rule_versions_but_not_formula_order(): void
     {
         $formulas = [
@@ -124,11 +159,11 @@ final class EstimatePrerequisiteBacklogProjectorTest extends TestCase
             'rule_catalog_version' => 'rules:v1', 'rule_catalog_hash' => str_repeat('e', 64)];
     }
 
-    private function finding(array $formulas, string $status = 'unknown', string $ruleHash = ''): CompletenessFinding
+    private function finding(array $formulas, string $status = 'unknown', string $ruleHash = '', array $inputScope = []): CompletenessFinding
     {
         return new CompletenessFinding('roof', '1.0.0', $ruleHash ?: str_repeat('a', 64), 'finding:roof', 1,
             'technology_required', $status, 'warning', 'Проверить кровлю', 0.75,
             ['fact:roof-type'], ['entity:roof'], ['roof_type'], ['status' => 'applicable'], [], null,
-            new TechnologyWorkPackage('package:roof', [], [], [], [], $formulas, [], [], [], [], []));
+            new TechnologyWorkPackage('package:roof', [], [], [], [], $formulas, [], [], [], [], ['input_scope' => $inputScope]));
     }
 }
