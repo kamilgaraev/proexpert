@@ -17,6 +17,7 @@ use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
 use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use App\Repositories\UserRepository;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\User\UserService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -212,47 +213,54 @@ class CustomUserManagementController extends Controller
         }
 
         try {
-            $adminPanelOnly = $this->isAdminPanelRoleScope($request);
-            $adminPanelRoleSlugs = [];
+            $payload = ApiQueryMetrics::measureProcessingPhase('list_prepare', function () use ($request, $organizationId): array {
+                $adminPanelOnly = $this->isAdminPanelRoleScope($request);
+                $adminPanelRoleSlugs = [];
 
-            if ($adminPanelOnly) {
-                $adminPanelRoleSlugs = array_flip($this->adminPanelAccessHelper->getAdminPanelRoles(
-                    (int) $organizationId,
-                    (string) $request->query('current_interface', 'lk'),
-                    true
-                ));
-            }
+                if ($adminPanelOnly) {
+                    $adminPanelRoleSlugs = array_flip($this->adminPanelAccessHelper->getAdminPanelRoles(
+                        (int) $organizationId,
+                        (string) $request->query('current_interface', 'lk'),
+                        true
+                    ));
+                }
 
-            $systemRoles = $this->roleScanner->getAllRoles()
-                ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
-                ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
-                ->filter(fn (array $role, string $slug): bool => ! $adminPanelOnly || isset($adminPanelRoleSlugs[$slug]))
-                ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
-                ->sortBy('name', SORT_NATURAL)
-                ->values()
-                ->toArray();
-            $customRoles = collect([]);
-
-            try {
-                $customRoles = $this->customRoleService->getOrganizationRoles($organizationId);
-            } catch (\Throwable $e) {
-                Log::warning('Custom roles not available yet', ['error' => $e->getMessage()]);
-            }
-
-            if ($adminPanelOnly) {
-                $customRoles = $customRoles
-                    ->filter(fn ($role): bool => isset($adminPanelRoleSlugs[$role->slug]))
-                    ->values();
-            }
-
-            return LandingResponse::success([
-                'system_roles' => $systemRoles,
-                'custom_roles' => $customRoles
-                    ->map(fn ($role): array => $this->rolePayloadFormatter->formatCustomRole($role))
+                $systemRoles = $this->roleScanner->getAllRoles()
+                    ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
+                    ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
+                    ->filter(fn (array $role, string $slug): bool => ! $adminPanelOnly || isset($adminPanelRoleSlugs[$slug]))
+                    ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
+                    ->sortBy('name', SORT_NATURAL)
                     ->values()
-                    ->toArray(),
-                'organization_id' => $organizationId,
-            ], trans_message('landing.custom_users.roles_loaded'));
+                    ->toArray();
+                $customRoles = collect([]);
+
+                try {
+                    $customRoles = $this->customRoleService->getOrganizationRoles($organizationId);
+                } catch (\Throwable $e) {
+                    Log::warning('Custom roles not available yet', ['error' => $e->getMessage()]);
+                }
+
+                if ($adminPanelOnly) {
+                    $customRoles = $customRoles
+                        ->filter(fn ($role): bool => isset($adminPanelRoleSlugs[$role->slug]))
+                        ->values();
+                }
+
+                return [
+                    'system_roles' => $systemRoles,
+                    'custom_roles' => $customRoles
+                        ->map(fn ($role): array => $this->rolePayloadFormatter->formatCustomRole($role))
+                        ->values()
+                        ->toArray(),
+                    'organization_id' => $organizationId,
+                ];
+            });
+
+            return ApiQueryMetrics::measureProcessingPhase('list_encode', fn (): JsonResponse => LandingResponse::success(
+                $payload,
+                trans_message('landing.custom_users.roles_loaded'),
+            ));
         } catch (\Throwable $e) {
             Log::error('Error getting available roles', [
                 'error' => $e->getMessage(),
