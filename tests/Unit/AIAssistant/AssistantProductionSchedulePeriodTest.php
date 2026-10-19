@@ -14,6 +14,43 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_calendar_year_determiners_are_removed_with_the_whole_period_after_exact_lookup(): void
+    {
+        foreach (['весь 2026 год', 'полный 2026 год', 'целый 2026 год', 'календарный 2026 год', 'полный календарный 2026 год',
+            'весь 2026', 'весь 2026 г.', 'во всём 2026 году', 'за полный 2026 год', 'на протяжении полного 2026 года'] as $phrase) {
+            $this->assertCalendarDeterminerScope($phrase, '2026-01-01', '2026-12-31');
+        }
+    }
+
+    public function test_calendar_month_determiners_are_removed_with_the_whole_period_after_exact_lookup(): void
+    {
+        foreach (['весь октябрь 2026', 'полный октябрь 2026', 'целый октябрь 2026', 'календарный октябрь 2026',
+            'полный календарный октябрь 2026', 'за полный октябрь 2026', 'во всём октябре 2026', 'весь февраль 2026'] as $phrase) {
+            $february = str_contains($phrase, 'февраль');
+            $this->assertCalendarDeterminerScope($phrase, $february ? '2026-02-01' : '2026-10-01', $february ? '2026-02-28' : '2026-10-31');
+        }
+    }
+
+    private function assertCalendarDeterminerScope(string $phrase, string $start, string $end): void
+    {
+        $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
+        self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+            ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+            'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+        $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+            'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+        self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+        $literalPlan = $plan;
+        $literalPlan['request']['message'] = 'Сверь выполненные работы с графиком проекта «Северный дом '.$phrase.'»';
+        $literal = AssistantNamedProjectReadScope::bind($literalPlan, static function (array $arguments) use ($phrase): array {
+            self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+            return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+        });
+        self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+    }
+
     public function test_bare_calendar_years_keep_dates_named_scope_and_literal_project_priority(): void
     {
         foreach (['2026', '1900', '1999', '2000', '2024', '2099'] as $year) {

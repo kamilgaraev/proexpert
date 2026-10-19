@@ -50,9 +50,11 @@ final class AssistantProductionSchedulePeriod
 
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
-    private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::MONTH.'\s+(?:19|20)\d{2}\b';
+    private const CALENDAR_DETERMINERS = '(?:(?:весь|всего|вс[её]м|полный|полного|полном|целый|целого|целом|календарный|календарного|календарном)\s+){0,3}';
 
-    private const CALENDAR_YEAR_PERIOD = '(?<![\pL\pN.\/-])(?:('.self::PERIOD_PREFIX.')\s+)?((?:19|20)\d{2})\b(?![-.\/]\d)(?:\s+(?:год[ау]?|г\.?)(?![\pL\pN]))?';
+    private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::MONTH.'\s+(?:19|20)\d{2}\b';
+
+    private const CALENDAR_YEAR_PERIOD = '(?<![\pL\pN.\/-])(?:('.self::PERIOD_PREFIX.')\s+)?'.self::CALENDAR_DETERMINERS.'((?:19|20)\d{2})\b(?![-.\/]\d)(?:\s+(?:год[ау]?|г\.?)(?![\pL\pN]))?';
 
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
 
