@@ -73,6 +73,14 @@ final class AssistantDataAccessPolicy
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
         $authorization = $this->authorization->forCurrentChecks(true);
         ApiQueryMetrics::recordAccessRead('policy_enter', $this, null, $organizationId);
+        $boundary = match (true) {
+            $this->batchIdentity === null => $fresh ? 'policy_outer_fresh' : 'policy_outer',
+            $fresh => $this->batchIdentity === $identity ? 'policy_nested_fresh_same' : 'policy_nested_fresh_changed',
+            $this->batchIdentity[0] !== $identity[0] && $this->batchIdentity[1] !== $identity[1] => 'policy_nested_identity_changed',
+            $this->batchIdentity[0] !== $identity[0] => 'policy_nested_actor_changed',
+            default => 'policy_nested_org_changed',
+        };
+        ApiQueryMetrics::recordAccessRead($boundary, $this, null, $organizationId);
         $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint, $this->pendingEntityReads];
         $this->batchIdentity = $identity;
         $this->batchAuthorization = $authorization;
