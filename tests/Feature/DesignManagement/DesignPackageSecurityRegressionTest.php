@@ -11,6 +11,12 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevisi
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
+use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentSheet;
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageCollection;
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
+use App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessInputQuery;
+use App\BusinessModules\Features\DesignManagement\Services\DesignPackageBlockingIssueQuery;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignCompositionService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
@@ -386,6 +392,173 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         $this->withHeaders($actor->authHeaders())->patchJson($url, ['title' => 'Запертая правка', 'expected_updated_at' => $package->updated_at->toIso8601String()])->assertConflict();
     }
 
+    public function test_registry_reads_freshness_inputs_once_for_the_authorized_page(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        for ($index = 0; $index < 3; $index++) {
+            $package = $this->readyPackage($actor, $project);
+            self::assertSame($this->previousInputFingerprint($package), $package->latestCompletenessCheck->metadata['input_fingerprint']);
+        }
+
+        DB::enableQueryLog();
+        try {
+            $response = $this->withHeaders($actor->authHeaders())->getJson(
+                '/api/v1/admin/design-management/packages?project_id='.$project->id.'&per_page=3'
+            );
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $response->assertOk()->assertJsonCount(3, 'data')->assertJsonPath('meta.total', 3);
+        foreach ($response->json('data') as $row) {
+            self::assertTrue($row['completeness_is_fresh']);
+        }
+        $sheetInputReads = array_filter($queries, static fn (array $query): bool => str_starts_with(
+            $query['query'], 'select "id", "version_id", "status", "revision", "updated_at"'
+        ) && str_contains($query['query'], 'from "design_document_sheets"'));
+        self::assertCount(1, $sheetInputReads);
+    }
+
+    public function test_batch_collection_rechecks_inputs_and_keeps_legacy_collection_semantics(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $first = $this->readyPackage($actor, $project);
+        $second = $this->readyPackage($actor, $project);
+        $packages = app(DesignManagementService::class)->listPackages(
+            (int) $actor->organization->id, ['project_id' => $project->id], $actor->user
+        )->getCollection();
+        $collection = new DesignPackageCollection($packages);
+        self::assertSame(DesignPackageResource::collection($packages)->response()->getData(true), $collection->response()->getData(true));
+        $inputQuery = app(DesignCompletenessInputQuery::class);
+        foreach ($packages as $package) {
+            self::assertSame($this->previousInputFingerprint($package), $inputQuery->fingerprints([$package])[spl_object_id($package)]);
+        }
+        $artifact = DesignArtifact::query()->where('package_id', $first->id)->sole();
+        $artifact->timestamps = false;
+        $artifact->update(['metadata' => ['source' => 'changed without timestamp']]);
+        $actual = collect($collection->response()->getData(true)['data'])->keyBy('id');
+        self::assertFalse($actual[$first->id]['completeness_is_fresh']);
+        self::assertTrue($actual[$second->id]['completeness_is_fresh']);
+        self::assertSame(DesignPackageResource::collection($packages->keyBy('id'))->response()->getData(true), $collection->response()->getData(true));
+        foreach ($packages as $package) {
+            self::assertSame($this->previousInputFingerprint($package), $inputQuery->fingerprints($packages->all())[spl_object_id($package)]);
+        }
+    }
+
+    public function test_bulk_fingerprints_preserve_shared_resolved_and_soft_deleted_issue_scope(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $first = $this->readyPackage($actor, $project);
+        $second = $this->readyPackage($actor, $project);
+        $packages = [$first, $second];
+        $inputQuery = app(DesignCompletenessInputQuery::class);
+        $before = $inputQuery->fingerprints($packages);
+        $versionIds = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query
+            ->whereIn('package_id', [$first->id, $second->id]))->orderBy('id')->pluck('id')->all();
+        $shared = QualityDefect::query()->create([
+            'organization_id' => $first->organization_id, 'project_id' => $first->project_id,
+            'kind' => 'project', 'created_by' => $actor->user->id, 'defect_number' => 'BULK-SHARED',
+            'title' => 'Shared input', 'description' => 'Fingerprint scope', 'status' => 'resolved',
+            'metadata' => ['blocking' => ['active' => false], 'design_issue_context' => [
+                'elements' => array_map(static fn ($id): array => ['version_id' => $id], $versionIds),
+            ]],
+        ]);
+        $withShared = $inputQuery->fingerprints($packages);
+        foreach ($packages as $package) {
+            $key = spl_object_id($package);
+            self::assertNotSame($before[$key], $withShared[$key]);
+            self::assertSame($this->previousInputFingerprint($package), $withShared[$key]);
+        }
+        $deleted = QualityDefect::query()->create([
+            'organization_id' => $second->organization_id, 'project_id' => $second->project_id,
+            'kind' => 'project', 'created_by' => $actor->user->id, 'defect_number' => 'BULK-DELETED',
+            'title' => 'Deleted input', 'description' => 'Second UNION branch', 'status' => 'ready_for_review',
+            'metadata' => ['design_issue_context' => ['package_id' => $second->id]],
+        ]);
+        $deleted->delete();
+        self::assertSame($withShared, $inputQuery->fingerprints($packages));
+        $shared->timestamps = false;
+        $shared->update(['status' => 'ready_for_review']);
+        $changed = $inputQuery->fingerprints($packages);
+        foreach ($packages as $package) {
+            $key = spl_object_id($package);
+            self::assertNotSame($withShared[$key], $changed[$key]);
+            self::assertSame($this->previousInputFingerprint($package), $changed[$key]);
+        }
+        DesignPackageSection::query()->create([
+            'organization_id' => $first->organization_id, 'project_id' => $first->project_id,
+            'package_id' => $first->id, 'code' => 'ZZ', 'title' => 'First in input order',
+            'project_stage' => 'pd', 'sort_order' => -1,
+            'metadata' => ['readiness_status' => 'ignored', 'readiness_results' => [], 'readiness_check_id' => 123],
+        ]);
+        self::assertSame($this->previousInputFingerprint($first), $inputQuery->fingerprints($packages)[spl_object_id($first)]);
+    }
+
+    public function test_batch_freshness_keeps_strict_metadata_and_approved_revision_scope(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $first = $this->readyPackage($actor, $project);
+        $second = $this->readyPackage($actor, $project);
+        $check = $first->latestCompletenessCheck;
+        $metadata = $check->metadata;
+        $service = app(DesignCompletenessService::class);
+        foreach (['rule_count', 'composition_revision_id', 'composition_fingerprint', 'completeness_invalidated_at', 'input_fingerprint'] as $field) {
+            $check->metadata = array_replace($metadata, [$field => is_int($metadata[$field] ?? null) ? (string) $metadata[$field] : 'different']);
+            $actual = $service->freshnessForPackages([$first, $second]);
+            self::assertFalse($actual[spl_object_id($first)]);
+            self::assertTrue($actual[spl_object_id($second)]);
+            self::assertSame($service->isFreshForPackage($first, $check), $actual[spl_object_id($first)]);
+        }
+        $check->metadata = $metadata;
+        $revisionId = $first->composition_revision_id;
+        foreach ([$second->composition_revision_id, 999999999] as $invalidRevisionId) {
+            $first->composition_revision_id = $invalidRevisionId;
+            $actual = $service->freshnessForPackages([$first, $second]);
+            self::assertFalse($actual[spl_object_id($first)]);
+            self::assertTrue($actual[spl_object_id($second)]);
+            self::assertFalse($service->isFreshForPackage($first, $check));
+        }
+        $first->composition_revision_id = $revisionId;
+        $first->setRelation('latestCompletenessCheck', null);
+        self::assertFalse($service->freshnessForPackages([$first, $second])[spl_object_id($first)]);
+    }
+
+    public function test_bulk_fingerprints_keep_exclusion_order_and_missing_revision_distinct_from_empty(): void
+    {
+        $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $payload = $this->payload($project);
+        foreach (['EXTRA-A', 'EXTRA-B'] as $code) {
+            $payload['composition']['sections'][] = [
+                'code' => $code, 'title' => $code,
+                'documents' => [['document_code' => $code.'-01', 'document_title' => $code, 'required' => true]],
+            ];
+        }
+        $package = app(DesignManagementService::class)->createPackage((int) $actor->organization->id, (int) $actor->user->id, $payload);
+        $composition = app(DesignCompositionService::class);
+        $revision = DesignCompositionRevision::query()->findOrFail($package->composition_revision_id);
+        $first = $composition->exclude($revision, $actor->user, ['item_key' => 'EXTRA-A', 'reason' => 'First excluded section']);
+        $second = $composition->exclude($revision->fresh(), $actor->user, ['item_key' => 'EXTRA-B', 'reason' => 'Second excluded section']);
+        $composition->approve($revision->fresh(), $actor->user);
+        self::assertSame([$second->id, $first->id], $revision->fresh()->exclusions->pluck('id')->all());
+        $other = $this->package($actor, $project);
+        $query = app(DesignCompletenessInputQuery::class);
+        $packages = [$package->fresh(), $other];
+        $before = $query->fingerprints($packages);
+        foreach ($packages as $item) {
+            self::assertSame($this->previousInputFingerprint($item), $before[spl_object_id($item)]);
+        }
+        $other->composition_revision_id = 999999999;
+        $after = $query->fingerprints($packages);
+        self::assertNotSame($before[spl_object_id($other)], $after[spl_object_id($other)]);
+        self::assertSame($this->previousInputFingerprint($other), $after[spl_object_id($other)]);
+    }
+
     public function test_legacy_comment_create_update_and_delete_invalidate_sql_readiness_and_resource_freshness(): void
     {
         $this->freezeTime();
@@ -464,6 +637,19 @@ final class DesignPackageSecurityRegressionTest extends TestCase
             'status' => $status, 'derivative_file_path' => 'org-' . $version->organization_id . '/pir/model.frag',
             'metadata' => ['prepared_on' => 'server', 'converter_version' => $converterVersion],
         ]);
+    }
+
+    private function previousInputFingerprint(DesignPackage $package): string
+    {
+        $sections = $package->sections()->orderBy('id')->get()->map(static fn ($item): array => ['id' => $item->id, 'code' => $item->code, 'required' => $item->required, 'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id']))])->all();
+        $artifacts = DesignArtifact::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at'])->map(static fn (DesignArtifact $item): array => $item->only(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at']))->all();
+        $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at'])->map(static fn (DesignArtifactVersion $item): array => $item->only(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at']))->all();
+        $sheets = DesignDocumentSheet::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'version_id', 'status', 'revision', 'updated_at'])->map(static fn (DesignDocumentSheet $item): array => $item->only(['id', 'version_id', 'status', 'revision', 'updated_at']))->all();
+        $comments = DesignReviewComment::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'status', 'severity', 'updated_at'])->map(static fn (DesignReviewComment $item): array => $item->only(['id', 'status', 'severity', 'updated_at']))->all();
+        $issues = DesignPackageBlockingIssueQuery::forPackage($package)->orderBy('id')->get(['id', 'status', 'metadata', 'updated_at'])->map(static fn ($item): array => ['id' => $item->id, 'status' => $item->status, 'metadata' => $item->metadata, 'updated_at' => $item->updated_at?->toISOString()])->all();
+        $exclusions = $package->composition_revision_id === null ? [] : DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->with('exclusions')->first()?->exclusions->map(static fn ($item): array => ['id' => $item->id, 'item_key' => $item->item_key, 'reason' => $item->reason, 'created_at' => $item->created_at?->toISOString()])->all();
+
+        return hash('sha256', json_encode(['sections' => $sections, 'artifacts' => $artifacts, 'versions' => $versions, 'sheets' => $sheets, 'comments' => $comments, 'issues' => $issues, 'exclusions' => $exclusions], JSON_THROW_ON_ERROR));
     }
 
     private function readyPackage(AdminApiTestContext $actor, Project $project): DesignPackage
