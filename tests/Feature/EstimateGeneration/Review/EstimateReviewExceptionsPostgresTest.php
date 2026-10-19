@@ -40,7 +40,10 @@ final class EstimateReviewExceptionsPostgresTest extends EstimateGenerationCanon
         $models = app(ProjectModelRepository::class);
         $models->saveSourceModel([
             new Entity('entity:foundation', ...[...$scope, $source, 'quantity', 'entity:foundation', ['semantic_type' => 'quantity']]),
+            new Entity('entity:other-foundation', ...[...$scope, $source, 'quantity', 'entity:other-foundation', ['semantic_type' => 'quantity']]),
         ], [
+            new Fact('fact:other-foundation-area', ...[...$scope, $source, 'entity:other-foundation', 'foundation_area',
+                '900', 'm2', 0.0, 'user_assumption', 'confirmed', []]),
             new Fact('fact:foundation-type', ...[...$scope, $source, 'entity:foundation', 'foundation_type',
                 'slab', null, 0.0, 'user_assumption', 'confirmed', []]),
         ], []);
@@ -65,6 +68,10 @@ final class EstimateReviewExceptionsPostgresTest extends EstimateGenerationCanon
         self::assertSame('Площадь основания фундамента', $backlog['questions'][0]['label']);
         self::assertSame($source, $backlog['provenance']['source_version']);
         self::assertSame($rules->contentHash, $backlog['provenance']['rule_catalog_hash']);
+        self::assertSame('entity', $backlog['questions'][0]['scope']);
+        self::assertSame(['entity_id' => 'entity:foundation', 'source_version' => $source], $backlog['questions'][0]['target']);
+        self::assertSame(['type' => 'positive_decimal', 'unit' => 'm2', 'basis' => ['input', 'measurement', 'assumption']], $backlog['questions'][0]['input_contract']);
+        self::assertSame('review_sources', $backlog['questions'][0]['answer_action']);
         self::assertSame($backlog, $service->handle($session, ['origin' => 'stage5'])['items'][array_search($finding['id'], array_column($first['items'], 'id'), true)]['recommendation']['prerequisites']);
 
         $foreignOrganization = Organization::factory()->create();
@@ -86,6 +93,10 @@ final class EstimateReviewExceptionsPostgresTest extends EstimateGenerationCanon
         $current = array_values(array_filter($updated['items'], static fn (array $item): bool => in_array('base_preparation', $item['codes'], true)))[0]['recommendation']['prerequisites'];
         self::assertSame([], $current['questions']);
         self::assertNotSame($backlog['version'], $current['version']);
+        $package = array_values(array_filter($models->currentCompleteness(...$scope)['findings'],
+            static fn ($finding): bool => $finding->ruleId === 'base_preparation'))[0]->workPackage;
+        self::assertSame('40', $package->quantityFormulas[0]['resolved_value']);
+        self::assertSame('fact:foundation-area', $package->quantityFormulas[0]['operands'][0]['fact_id']);
         Http::assertNothingSent();
         self::assertSame(0, DB::table('estimate_generation_qa_expense_attempts')->count());
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());

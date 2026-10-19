@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
@@ -22,7 +23,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_all_mandatory_scenarios_are_classified_with_evidence_and_versioned_rules(): void
     {
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('site_work', true),
             $this->fact('foundation_type', 'slab'),
             $this->fact('below_grade_structure', true),
@@ -62,7 +63,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
                 require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php',
             )->contentHash,
         ];
-        $baseline = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $baseline = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
         ], [], []), [], [], $projection)->finding('base_preparation');
@@ -73,7 +74,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             '7',
             'Основание выполнено ранее',
         ), origin: 'user_assumption');
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
             $exclusion,
@@ -90,7 +91,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
         $staleProjection = $projection;
         $staleProjection['input_fingerprint'] = str_repeat('d', 64);
-        $stale = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $stale = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
             $exclusion,
@@ -105,7 +106,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $updatedAnalyzer = new ProjectCompletenessAnalyzer(
             CompletenessRuleCatalog::fromArray($updatedRules), $this->builder(), 50, 50, 200,
         );
-        $updated = $updatedAnalyzer->analyze(new ProjectModelSnapshot([], [
+        $updated = $updatedAnalyzer->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
             $exclusion,
@@ -115,19 +116,19 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         )], $projection);
         self::assertSame('proven_missing', $updated->finding('base_preparation')?->status);
 
-        $unverified = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $unverified = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $exclusion,
         ], [], []), [$this->roofRecommendation()]);
         self::assertSame('unknown', $unverified->finding('base_preparation')?->status);
 
-        $withoutExclusion = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $withoutExclusion = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
         ], [], []), [$this->roofRecommendation()]);
         self::assertSame('proven_missing', $withoutExclusion->finding('base_preparation')?->status);
 
-        $unknown = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $unknown = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('below_grade_structure', false),
         ], [], []), [$this->roofRecommendation()]);
@@ -201,7 +202,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         }
 
         $this->expectException(InvalidArgumentException::class);
-        new ProjectModelSnapshot([], [
+        new ProjectModelSnapshot([$this->entity()], [
             $applicability,
             $target,
             $this->scopedFact(
@@ -215,7 +216,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_work_packages_are_complete_deduplicated_and_never_guess_quantities(): void
     {
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('roof_type', 'pitched'),
             $this->fact('roof_area', '120.50', 'm2'),
         ], [], []), [$this->roofRecommendation()]);
@@ -246,7 +247,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_missing_quantity_inputs_are_explicit_and_dependency_cycles_fail_closed(): void
     {
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('roof_type', 'pitched'),
         ], [], []), [$this->roofRecommendation()]);
         self::assertSame(['roof_area'], $result->finding('fasteners')?->workPackage?->quantityFormulas[0]['unresolved_inputs']);
@@ -275,7 +276,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             maxPackages: 2,
             maxEvidence: 16,
         );
-        $result = $analyzer->analyze(new ProjectModelSnapshot([], [
+        $result = $analyzer->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('below_grade_structure', true),
             $this->fact('roof_type', 'pitched'),
@@ -380,7 +381,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         $data = require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php';
         $reversed = $data;
         $reversed['rules'] = array_reverse($reversed['rules']);
-        $snapshot = new ProjectModelSnapshot([], [
+        $snapshot = new ProjectModelSnapshot([$this->entity()], [
             $this->fact('site_work', true),
             $this->fact('external_site_disturbance', true),
         ], [], []);
@@ -463,7 +464,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_typed_conditions_distinguish_flat_roof_low_height_null_zero_and_false(): void
     {
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('roof_type', 'flat'),
             $this->fact('work_height_m', 1, 'm'),
             $this->fact('foundation_type', 'slab'),
@@ -477,13 +478,13 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         self::assertSame('unknown', $result->finding('base_preparation')?->status);
 
         foreach ([0, '0'] as $value) {
-            $satisfied = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $satisfied = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
                 $this->fact('foundation_type', 'slab'),
                 $this->fact('foundation_base_preparation', $value),
             ], [], []), []);
             self::assertSame('satisfied', $satisfied->finding('base_preparation')?->status);
         }
-        $missing = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $missing = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('foundation_type', 'slab'),
             $this->fact('foundation_base_preparation', false),
         ], [], []), []);
@@ -494,7 +495,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
     {
         $ids = [];
         foreach (['slab', 'strip', 'pile', 'columnar'] as $type) {
-            $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+            $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
                 $this->fact('foundation_type', $type),
             ], [], []), []);
             $ids[] = $result->finding('base_preparation')?->workPackage?->id;
@@ -510,7 +511,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_conditional_or_missing_recommendation_never_creates_required_fastener_package(): void
     {
-        $snapshot = new ProjectModelSnapshot([], [$this->fact('roof_type', 'pitched')], [], []);
+        $snapshot = new ProjectModelSnapshot([$this->entity()], [$this->fact('roof_type', 'pitched')], [], []);
         $without = $this->analyzer()->analyze($snapshot, []);
         $conditional = $this->analyzer()->analyze($snapshot, [$this->roofRecommendation(includeSlope: false)]);
 
@@ -528,7 +529,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
             'system_id' => 'pitched_roof.standing_seam',
             'decision_key' => 'roof_covering_system.1234567890abcdef12345678',
         ], origin: 'user_assumption');
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('roof_type', 'pitched'),
             $selected,
         ], [], []), []);
@@ -539,13 +540,18 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
 
     public function test_user_assumption_does_not_hide_a_missing_required_document(): void
     {
-        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([], [
+        $result = $this->analyzer()->analyze(new ProjectModelSnapshot([$this->entity()], [
             $this->fact('engineering_system', 'heating'),
             $this->fact('test_program', true, origin: 'user_assumption'),
         ], [], []), []);
 
         self::assertSame('document_missing', $result->finding('system_testing')?->classification);
         self::assertSame('unknown', $result->finding('system_testing')?->status);
+    }
+
+    private function entity(): Entity
+    {
+        return new Entity('entity:project', 10, 20, 30, self::SOURCE_VERSION, 'quantity', 'entity:project');
     }
 
     private function analyzer(): ProjectCompletenessAnalyzer
@@ -573,7 +579,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         return (new TechnologyRecommendationService(
             TechnologySystemCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-technology-systems.php'),
             static fn (string $key): string => $key,
-        ))->recommend(new ProjectModelSnapshot([], $facts, [], []), $target, new OrganizationPreferenceContext(10, []));
+        ))->recommend(new ProjectModelSnapshot([$this->entity()], $facts, [], []), $target, new OrganizationPreferenceContext(10, []));
     }
 
     private function builder(): TechnologyWorkPackageBuilder
@@ -639,7 +645,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
     private function exclusionFor(Fact $applicability, Fact $target, array $projection): array
     {
         $baseline = $this->analyzer()->analyze(
-            new ProjectModelSnapshot([], [$applicability, $target], [], []),
+            new ProjectModelSnapshot([$this->entity()], [$applicability, $target], [], []),
             [],
             [],
             $projection,
@@ -675,7 +681,7 @@ final class ProjectCompletenessAnalyzerTest extends TestCase
         array $projection,
     ): \App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding {
         $finding = $this->analyzer()->analyze(
-            new ProjectModelSnapshot([], [...$facts, $exclusion], [], []),
+            new ProjectModelSnapshot([$this->entity()], [...$facts, $exclusion], [], []),
             [],
             [$decision],
             $projection,

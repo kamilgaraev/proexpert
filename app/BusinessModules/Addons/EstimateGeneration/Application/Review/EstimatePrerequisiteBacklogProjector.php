@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Review;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessFinding;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\PrerequisiteInputDefinition;
 use Closure;
 
 final readonly class EstimatePrerequisiteBacklogProjector
@@ -74,14 +75,28 @@ final readonly class EstimatePrerequisiteBacklogProjector
             if ($label === '' || $label === $labelKey) {
                 $label = ($this->translate)('estimate_generation.prerequisites.unknown_parameter');
             }
+            $contract = count($quantityUnits) === 1 ? PrerequisiteInputDefinition::contract($input, $quantityUnits[0]) : null;
+            $inputScope = $finding->workPackage?->provenance['input_scope'] ?? [];
+            $target = $contract !== null && ($inputScope['status'] ?? null) === 'single_entity'
+                ? ($inputScope['target'] ?? null) : null;
+            if (! is_array($target) || ! is_string($target['entity_id'] ?? null)
+                || preg_match('/\A[a-z][a-z0-9._:-]{1,191}\z/D', $target['entity_id']) !== 1
+                || ! is_string($target['source_version'] ?? null)
+                || preg_match('/\Asha256:[a-f0-9]{64}\z/D', $target['source_version']) !== 1) {
+                $target = null;
+            } else {
+                $target = ['entity_id' => $target['entity_id'], 'source_version' => $target['source_version']];
+            }
             $questions[] = [
                 'key' => 'prerequisite:'.hash('sha256', CanonicalPipelineJson::encode([
                     $finding->ruleId, $finding->ruleVersion, $finding->ruleHash, $input,
+                    ...($target === null ? [] : [$target]),
                 ])),
                 'input_fact_type' => $input,
                 'label' => $label,
-                'scope' => 'rule',
+                'scope' => $target === null ? 'rule' : 'entity',
                 'answer_action' => 'review_sources',
+                ...($target === null ? [] : ['target' => $target, 'input_contract' => $contract]),
                 'formula_ids' => $formulaIds,
                 'quantity_units' => $quantityUnits,
             ];

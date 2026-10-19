@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Planning;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog;
@@ -39,7 +40,8 @@ final class PlanningTranslationContractTest extends TestCase
                     'foundation_type', 'slab', null, 1.0, 'document', 'confirmed', ['evidence:1'],
                 )],
             ] : [];
-            $package = $builder->build($rule, $facts);
+            $package = $builder->build($rule, $facts, [new Entity('entity:project', 10, 20, 30, 'sha256:'.str_repeat('a', 64), 'quantity', 'entity:project')]);
+            self::assertNotNull($package);
             foreach ([...$package->works, ...$package->materials, ...$package->machinery] as $item) {
                 self::assertNotSame($item['name_key'], $item['label']);
                 self::assertMatchesRegularExpression('/[А-Яа-яЁё]/u', $item['label']);

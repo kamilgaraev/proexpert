@@ -72,6 +72,7 @@ final readonly class ProjectCompletenessAnalyzer
             }
         }
         $findings = [];
+        $entitiesById = array_column($snapshot->entities, null, 'id');
         $evidenceCount = 0;
         $evidenceBytes = 0;
         $packageCount = 0;
@@ -146,7 +147,11 @@ final readonly class ProjectCompletenessAnalyzer
             }
             $workPackage = null;
             if (in_array($status, ['unknown', 'proven_missing'], true) && $applicable && $packageCount < $this->maxPackages) {
-                $workPackage = $this->packages->build($rule, $factsByType);
+                $scopeEntities = $this->packageScope($rule, $applicableEntityIds, $entitiesById, $factsByType);
+                $workPackage = $scopeEntities !== [] ? $this->packages->build($rule, $factsByType, $scopeEntities) : null;
+                if ($workPackage === null) {
+                    $limitations[] = 'completeness_package_scope_unresolved';
+                }
                 $packageCount++;
             } elseif (in_array($status, ['unknown', 'proven_missing'], true)) {
                 $limitations[] = 'completeness_package_budget_reached';
@@ -163,19 +168,43 @@ final readonly class ProjectCompletenessAnalyzer
         return new ProjectCompletenessResult($this->catalog->version, $this->catalog->contentHash, $findings, array_values(array_unique($limitations)));
     }
 
+    private function packageScope(CompletenessRule $rule, array $entityIds, array $entitiesById, array $factsByType): array
+    {
+        $entities = [];
+        foreach ($entityIds as $id) {
+            if (! isset($entitiesById[$id])) {
+                return [];
+            }
+            $entities[$id] = $entitiesById[$id];
+        }
+        $scopeFacts = [];
+        foreach ($rule->conditions as $condition) {
+            $type = (string) $condition['fact_type'];
+            $scopeFacts[$type] = array_values(array_filter($factsByType[$type] ?? [], static function (Fact $fact) use ($entities): bool {
+                $entity = $entities[$fact->entityId] ?? null;
+
+                return $entity !== null && $fact->sourceVersion === $entity->sourceVersion;
+            }));
+        }
+        [$status, , $currentIds] = $this->evaluateConditions($rule->conditions, $scopeFacts);
+
+        return $status === 'applicable' && $currentIds === $entityIds ? array_values($entities) : [];
+    }
+
     private function evaluateConditions(array $conditions, array $factsByType): array
     {
         $evidence = [];
-        $matchedEntities = [];
+        $matchedEntities = null;
         $unknown = false;
         foreach ($conditions as $condition) {
             $facts = $factsByType[(string) ($condition['fact_type'] ?? '')] ?? [];
             if ($facts === []) {
                 sort($evidence, SORT_STRING);
 
-                return ['unknown', array_values(array_unique($evidence)), array_keys($matchedEntities)];
+                return ['unknown', array_values(array_unique($evidence)), []];
             }
             $matched = false;
+            $conditionEntities = [];
             foreach ($facts as $fact) {
                 $evidence[] = $fact->id;
                 if ($fact->value === null) {
@@ -197,24 +226,25 @@ final readonly class ProjectCompletenessAnalyzer
                 };
                 if ($factMatches) {
                     $matched = true;
-                    $matchedEntities[$fact->entityId] = true;
+                    $conditionEntities[$fact->entityId] = true;
                 }
             }
             if (! $matched && ! $unknown) {
                 sort($evidence, SORT_STRING);
 
-                return ['not_applicable', array_values(array_unique($evidence)), array_keys($matchedEntities)];
+                return ['not_applicable', array_values(array_unique($evidence)), []];
             }
             if (! $matched) {
                 $unknown = true;
             }
+            $matchedEntities = $matchedEntities === null ? $conditionEntities : array_intersect_key($matchedEntities, $conditionEntities);
         }
 
         sort($evidence, SORT_STRING);
-        $entities = array_keys($matchedEntities);
+        $entities = array_keys($matchedEntities ?? []);
         sort($entities, SORT_STRING);
 
-        return [$unknown ? 'unknown' : 'applicable', array_values(array_unique($evidence)), $entities];
+        return [$unknown || $entities === [] ? 'unknown' : 'applicable', array_values(array_unique($evidence)), $entities];
     }
 
     /** @param list<Fact> $facts */

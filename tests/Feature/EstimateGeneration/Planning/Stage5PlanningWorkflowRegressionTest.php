@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Planning;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectCompletenessCoordinator;
@@ -11,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPl
 use App\BusinessModules\Addons\EstimateGeneration\Application\Planning\ProjectPlanningPipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
@@ -38,6 +40,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage
 use App\BusinessModules\Addons\EstimateGeneration\Services\Billing\AiEstimateQuotaService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\Models\User;
+use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Bus\Dispatcher;
 use PHPUnit\Framework\TestCase;
@@ -58,8 +62,20 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         parent::setUp();
         $this->previousContainer = Container::getInstance();
         $container = new Container;
+        $container->instance('config', new Repository(['estimate-generation' => ['credits' => ['enabled' => false], 'universal_enabled' => false]]));
         $this->dispatcher = new PlanningWorkflowRecordingDispatcher;
         $container->instance(Dispatcher::class, $this->dispatcher);
+        $container->instance(CompleteEstimatorDocumentOperation::class,
+            (new ReflectionClass(CompleteEstimatorDocumentOperation::class))->newInstanceWithoutConstructor());
+        $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
+        $authorization->method('authorize')->willReturnCallback(static function ($actor, $session, $permission): void {
+            self::assertSame(40, (int) $actor->getKey());
+            self::assertSame(10, (int) $actor->current_organization_id);
+            self::assertSame(10, (int) $session->organization_id);
+            self::assertSame(20, (int) $session->project_id);
+            self::assertSame('estimate_generation.generate', $permission);
+        });
+        $container->instance(EstimateGenerationActionAuthorization::class, $authorization);
         Container::setInstance($container);
     }
 
@@ -166,7 +182,7 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
             },
             static fn (): string => 'retry-attempt',
         );
-        $command = new RetryEstimateGenerationSessionCommand(30, 10, 20, 3);
+        $command = $this->retryCommand(3);
 
         $blockedAgain = $retry->handle($command);
 
@@ -189,12 +205,7 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         }
 
         $repository->understandingWithinBudget = true;
-        $recovered = $retry->handle(new RetryEstimateGenerationSessionCommand(
-            30,
-            10,
-            20,
-            $blockedAgain->state_version,
-        ));
+        $recovered = $retry->handle($this->retryCommand($blockedAgain->state_version));
 
         self::assertSame(EstimateGenerationStatus::Generating, $recovered->status);
         self::assertArrayNotHasKey('planning_review', $recovered->input_payload);
@@ -245,7 +256,7 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         );
 
         try {
-            $retry->handle(new RetryEstimateGenerationSessionCommand(30, 10, 20, 3));
+            $retry->handle($this->retryCommand(3));
             self::fail('Expected immediate reconcile failure.');
         } catch (RuntimeException $exception) {
             self::assertSame('Immediate reconcile failed.', $exception->getMessage());
@@ -266,6 +277,14 @@ final class Stage5PlanningWorkflowRegressionTest extends TestCase
         $replayed = $canonicalReconciler->reconcile($recovered);
         self::assertSame($recovered->state_version, $replayed->state_version);
         self::assertCount(1, $this->dispatcher->jobs);
+    }
+
+    private function retryCommand(int $version): RetryEstimateGenerationSessionCommand
+    {
+        $actor = new User;
+        $actor->forceFill(['id' => 40, 'current_organization_id' => 10]);
+
+        return new RetryEstimateGenerationSessionCommand(30, 10, 20, $version, $actor);
     }
 
     private function makeSession(): EstimateGenerationSession
