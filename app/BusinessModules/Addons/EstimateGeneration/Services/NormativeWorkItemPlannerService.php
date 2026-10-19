@@ -753,22 +753,34 @@ final class NormativeWorkItemPlannerService
     private function hasLocalSanitaryFixtureStatement(string $text, string $quantityKey): bool
     {
         $statements = preg_split('~(?:[.!?;]+|\R+)~u', $text) ?: [];
-        $fixture = match ($quantityKey) {
+        $fixturePatterns = [
             'sanitary.toilets' => 'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?',
             'sanitary.washbasins' => 'умывальник(?:а|у|е|и|ов|ом|ам|ами|ах)?',
             'sanitary.showers' => 'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?',
-            default => null,
-        };
+        ];
+        $fixture = $fixturePatterns[$quantityKey] ?? null;
         if ($fixture === null) {
             return false;
         }
         $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
         $exclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ены|ается|аются)|отмен(?:ить|ён|ен|ена|ено|ены|яется|яются)|отсутств(?:ует|уют))';
-        $local = '[^,;.!?\r\n]{0,60}';
+        $anyFixture = '(?<![\p{L}\p{N}])(?:'.implode('|', $fixturePatterns)
+            .'|ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|мойк\p{L}*|раковин\p{L}*|смесител\p{L}*|биде|писсуар\p{L}*|душ(?:а|у|е|ем|и|ей|ам|ами|ах)?)'
+            .'(?![\p{L}\p{N}])';
+        $separateAssertion = '(?<![\p{L}\p{N}])(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|включ\p{L}*|будет|будут)(?![\p{L}\p{N}])';
+        $negativePredicate = '(?:не\s+'.$negativeAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
+        $beforeNegative = '(?=[^,;.!?\r\n]{0,60}'.$negativePredicate.')'
+            .'(?:(?!'.$anyFixture.')[^,;.!?\r\n])*?';
+        $beforeFixture = '(?=[^,;.!?\r\n]{0,60}'.$fixture.')'
+            .'(?:(?!'.$anyFixture.'|'.$separateAssertion.')[^,;.!?\r\n])*?';
+        $beforeNegatedFixture = '(?=[^,;.!?\r\n]{0,60}'.$fixture.')'
+            .'(?:(?!'.$anyFixture.'|'.$separateAssertion.'|(?<![\p{L}\p{N}])(?:и|но|а|зато)(?![\p{L}\p{N}]))[^,;.!?\r\n])*?';
+        $sharedNegative = $anyFixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){1,7}'
+            .$beforeNegative.$negativePredicate;
         $negative = '(?<![\p{L}\p{N}])(?:'
-            .'(?:без|кроме|'.$exclusionAction.')(?![\p{L}\p{N}])'.$local.$fixture.'|'
-            .'не\s+'.$negativeAction.$local.$fixture.'|'
-            .$fixture.$local.'(?:не\s+'.$negativeAction.'|'.$exclusionAction.')'
+            .'(?:без|кроме|'.$exclusionAction.')(?![\p{L}\p{N}])'.$beforeFixture.$fixture.'|'
+            .'не\s+'.$negativeAction.$beforeNegatedFixture.$fixture.'|'
+            .$fixture.$beforeNegative.$negativePredicate
             .')(?![\p{L}\p{N}])';
         $action = '(?:'
             .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
@@ -787,7 +799,9 @@ final class NormativeWorkItemPlannerService
                 ' ',
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
-            $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutLocativeRoomReference) ?? '';
+            $withoutSharedNegative = preg_replace('~'.$sharedNegative.'~iu', ' ', $withoutLocativeRoomReference) ?? '';
+            $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutSharedNegative) ?? '';
+            $positiveFixtureStatement = preg_replace('~(?<![\p{L}\p{N}])не\s+'.$negativeAction.'(?![\p{L}\p{N}])~iu', ' ', $positiveFixtureStatement) ?? '';
 
             if (preg_match(
                 '~(?<![\p{L}\p{N}])(?:'.$action.'.{0,80}'.$fixture.'|'.$fixture.'.{0,80}'.$action.')'
