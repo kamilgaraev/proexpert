@@ -61,14 +61,14 @@ final class RagCoverageService
             $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
                 ->groupBy('accessible_sources.source_type')
                 ->selectRaw('accessible_sources.source_type, pg_catalog.SUM(accessible_sources.stored_count) AS stored_count, pg_catalog.SUM(accessible_sources.chunk_count) AS chunk_count, pg_catalog.SUM(accessible_sources.indexed_count) AS indexed_count');
-            $batches = $policy->aggregateSourceIdentityBatches($sources, $actor, $organizationId,
+            $policy->aggregateSourceIdentityBatches($sources, $actor, $organizationId,
                 ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
-                $aggregate, $checkpoint, $aggregateBranch);
-            foreach ($batches as $scoped) {
-                if ($checkpoint !== null) { $checkpoint(); }
-                $progress?->__invoke('source_counts');
-                $counts = $counts->merge($scoped->get()->keyBy('source_type'));
-            }
+                $aggregate, $checkpoint, $aggregateBranch, function (\Illuminate\Database\Query\Builder $scoped) use ($checkpoint, $progress, &$counts): void {
+                    if ($checkpoint !== null) { $checkpoint(); }
+                    $progress?->__invoke('source_counts');
+                    $counts = $counts->merge($scoped->get()->keyBy('source_type'));
+                    $progress?->__invoke('source_acl');
+                });
         } else {
             foreach ($policy->sourceIdentityQueries($sources, $actor, $organizationId, $checkpoint) as $accessible) {
                 $scoped = $accessible->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'])->toBase();
@@ -274,7 +274,8 @@ final class RagCoverageService
 
     private function queueRefresh(int $organizationId, ?int $projectId, ?string $sourceType, string $key): void
     {
-        if (DB::connection()->transactionLevel() > 0) {
+        $transactionLevel = DB::connection()->transactionLevel();
+        if ($transactionLevel > 0 && ! app('db.transactions')->afterCommitCallbacksShouldBeExecuted($transactionLevel)) {
             DB::afterCommit(fn () => $this->queueRefresh($organizationId, $projectId, $sourceType, $key));
 
             return;

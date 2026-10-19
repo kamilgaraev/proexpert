@@ -651,9 +651,9 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds)[0] ?? null;
     }
 
-    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $aggregateBranch = null): array
+    public function aggregateSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, ?callable $aggregateBranch = null, ?callable $consume = null): array
     {
-        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch);
+        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8, aggregateBranch: $aggregateBranch, consume: $consume);
     }
 
     public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null): array
@@ -661,13 +661,13 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8);
     }
 
-    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null): array
+    private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null, ?callable $aggregateBranch = null, ?callable $consume = null): array
     {
         if ($expectedProjection) { $this->sourceQueries->assertExpectedSourceQuery($query); }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_source_aggregate_during_query_compilation'); }
 
         $compiled = [];
-        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, $aggregateBranch, &$compiled): ?Builder {
+        $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, $aggregateBranch, $consume, &$compiled): ?Builder {
             $metricsRequest = app()->bound('request') ? app('request') : null;
             $processingPhase = 'rag_acl_discovery';
             $processingCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -755,6 +755,8 @@ final class AssistantDataAccessPolicy
                             ApiQueryMetrics::recordProcessingPhase($metricsRequest, 'rag_acl_finish', $finishCheckpoint['started_at'], $finishCheckpoint);
                         }
                     }
+                    $nextProcessingPhase(null);
+                    if ($consume !== null) { $consume($compiled[array_key_last($compiled)]); }
                 }
 
                 return null;

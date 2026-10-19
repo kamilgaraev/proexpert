@@ -8,6 +8,10 @@ use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
@@ -16,6 +20,8 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
+use App\Services\Monitoring\ApiQueryMetrics;
+use Illuminate\Http\Request;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Mockery;
@@ -255,6 +261,113 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
         $this->assertSame([], $optimized->get()->pluck('id')->all());
         $this->assertSame([], $batchIds());
+    }
+
+    private function streamingCounterFixture(): array
+    {
+        $estimate = Estimate::withoutEvents(fn () => Estimate::create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'number' => 'stream-scope-'.$this->organization->id, 'name' => 'Estimate', 'estimate_date' => today(),
+        ]));
+        $this->source($this->organization->id, $this->visible->id, 'estimate', 'estimate', $estimate->id);
+        $file = \App\Models\File::withoutEvents(fn () => \App\Models\File::create([
+            'organization_id' => $this->organization->id, 'user_id' => $this->actor->id,
+            'fileable_type' => Project::class, 'fileable_id' => $this->visible->id,
+            'name' => 'Stream.pdf', 'original_name' => 'Stream.pdf', 'path' => 'org-'.$this->organization->id.'/stream.pdf',
+            'disk' => 's3', 'mime_type' => 'application/pdf', 'size' => 100,
+        ]));
+        $document = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::withoutEvents(fn () => \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->visible->id, 'file_id' => $file->id,
+            'parent_entity_type' => 'project', 'parent_entity_id' => (string) $this->visible->id,
+            'storage_path' => $file->path, 'filename' => 'Stream.pdf', 'mime_type' => 'application/pdf',
+            'checksum' => hash('sha256', 'stream-document'), 'size_bytes' => 100, 'status' => 'ready',
+        ]));
+        $this->source($this->organization->id, $this->visible->id, 'file_document', 'assistant_document', $document->id);
+        $columns = ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'];
+        $aggregate = static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')->groupBy('accessible_sources.source_type')
+            ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count');
+
+        return [$columns, $aggregate];
+    }
+
+    private function streamingMetrics(): ApiQueryMetrics
+    {
+        $request = Request::create('/api/v1/admin/ai-assistant/rag/status', 'GET');
+        $request->setUserResolver(fn () => $this->actor);
+        $request->attributes->set('current_organization_id', $this->organization->id);
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $this->app->instance('request', $request);
+
+        return $metrics;
+    }
+
+    public function test_counter_batch_consumer_preserves_counts_and_stops_compiling_after_failure(): void
+    {
+        [$columns, $aggregate] = $this->streamingCounterFixture();
+        $query = fn () => RagSource::query()->from('ai_rag_status_sources as ai_rag_sources');
+        $expected = [];
+        $batches = $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate);
+        self::assertCount(2, $batches);
+        foreach ($batches as $batch) { foreach ($batch->get() as $row) { $expected[$row->source_type] = (int) $row->stored_count; } }
+        self::assertSame(['file_document' => 1, 'estimate' => 1], $expected);
+        $consumer = new class
+        {
+            public array $counts = [];
+
+            public function consume(\Illuminate\Database\Query\Builder $batch): void
+            {
+                foreach ($batch->get() as $row) { $this->counts[$row->source_type] = (int) $row->stored_count; }
+            }
+        };
+        $returned = $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate, null, null,
+            [$consumer, 'consume']);
+        self::assertCount(2, $returned);
+        self::assertSame($expected, $consumer->counts);
+        $metrics = $this->streamingMetrics();
+        $failure = new \RuntimeException('stop_after_first_real_batch');
+        $executed = [];
+        $compilationBeforeConsumer = null;
+        try {
+            $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate, null, null,
+                static function ($batch) use (&$executed, &$compilationBeforeConsumer, $metrics, $failure): void {
+                    $compilationBeforeConsumer = $metrics->summary()['processing_phases']['rag_acl_batch_compile'] ?? null;
+                    foreach ($batch->get() as $row) { $executed[$row->source_type] = (int) $row->stored_count; }
+                    throw $failure;
+                });
+            self::fail('consumer_exception_was_not_propagated');
+        } catch (\RuntimeException $caught) { self::assertSame($failure, $caught); }
+        self::assertSame(['file_document' => 1], $executed);
+        $summary = $metrics->summary();
+        self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);
+        self::assertSame($compilationBeforeConsumer, $summary['processing_phases']['rag_acl_batch_compile']);
+        self::assertNotContains('estimate', array_column($summary['rag_entity_builds'], 'entity_type'));
+        self::assertCount(2, $this->policy->aggregateSourceIdentityBatches($query(), $this->actor, $this->organization->id, $columns, $aggregate));
+    }
+
+    public function test_counts_only_coverage_stops_before_compiling_the_next_batch(): void
+    {
+        $this->streamingCounterFixture();
+        $metrics = $this->streamingMetrics();
+        $collectors = [];
+        foreach (['file_document', 'estimate'] as $type) {
+            $collector = Mockery::mock(RagSourceCollectorInterface::class);
+            $collector->shouldReceive('sourceType')->andReturn($type);
+            $collector->shouldReceive('enabled')->andReturnTrue();
+            $collectors[] = $collector;
+        }
+        $service = new RagCoverageService(new RagSourceRegistry($collectors), Mockery::mock(RagIndexer::class), $this->policy);
+        $failure = new \RuntimeException('stop_before_first_source_query');
+        try {
+            $service->coverageForActor($this->organization->id, $this->actor, countsOnly: true, progress: static function (string $phase) use ($failure): void {
+                if ($phase === 'source_counts') { throw $failure; }
+            });
+            self::fail('coverage_progress_exception_was_not_propagated');
+        } catch (\RuntimeException $caught) { self::assertSame($failure, $caught); }
+        $summary = $metrics->summary();
+        self::assertSame(1, $summary['processing_phases']['rag_acl_batch_compile']['count']);
+        self::assertNotContains('estimate', array_column($summary['rag_entity_builds'], 'entity_type'));
+        self::assertNotNull($this->policy->entityQuery($this->actor, $this->organization->id, 'estimate'));
     }
 
     public function test_counter_batches_carry_scoped_rows_without_reading_sources_twice(): void
