@@ -549,6 +549,12 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ['Без унитаза, а также умывальника предусмотрена установка душевой кабины.', ['sanitary.showers']],
             ['Унитаз, умывальник предусмотрены.', ['sanitary.toilets', 'sanitary.washbasins']],
             ['Установка унитаза, а также умывальника предусмотрена.', ['sanitary.toilets', 'sanitary.washbasins']],
+            ['Установка унитаза, умывальник не предусмотрен.', ['sanitary.toilets']],
+            ['Установка унитаза, а также умывальник не требуется.', ['sanitary.toilets']],
+            ['Установка унитаза, умывальник отсутствует.', ['sanitary.toilets']],
+            ['Унитаз, умывальник не предусмотрены.', []],
+            ['Монтаж унитаза рядом с умывальником, душевая кабина не предусмотрена.', ['sanitary.toilets']],
+            ['Предусмотрена установка унитаза, а также умывальник не включён в смету.', ['sanitary.toilets']],
             ['Не предусмотрена установка унитаза, а также умывальника.', []],
             ['Без унитаза, умывальник предусмотрен.', ['sanitary.washbasins']],
             ['Без унитаза, умывальник — 1 шт.', ['sanitary.washbasins']],
@@ -593,6 +599,34 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 $items = array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
                     static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.'));
                 self::assertSame([], array_values($items), $key.' '.$invalid);
+            }
+        }
+    }
+
+    public function test_singular_source_ref_stays_bound_to_its_sanitary_takeoff(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        $estimate['source_refs'] = [['type' => 'drawing', 'filename' => 'unrelated-section.pdf', 'page_number' => 99]];
+        $estimate['sections'][0]['source_refs'] = $estimate['source_refs'];
+
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            foreach (['missing', 'empty', 'invalid'] as $plural) {
+                $takeoff = $this->confirmedTakeoff($key, 2, 'шт');
+                unset($takeoff['source_refs']);
+                if ($plural !== 'missing') {
+                    $takeoff['source_refs'] = $plural === 'empty' ? [] : ['invalid'];
+                }
+                $takeoff['source_ref'] = ['type' => 'drawing', 'filename' => $key.'.pdf', 'page_number' => 4];
+                $analysis = ['object' => ['object_type' => 'house'],
+                    'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                    'document_context' => ['quantity_takeoffs' => [$takeoff]]];
+                $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+                self::assertSame([$key], array_column($items, 'quantity_formula'));
+                self::assertSame('2', $items[0]['quantity']);
+                self::assertCount(1, $items[0]['source_refs']);
+                self::assertSame($key.'.pdf', $items[0]['source_refs'][0]['filename']);
+                self::assertSame(4, $items[0]['source_refs'][0]['page_number']);
             }
         }
     }

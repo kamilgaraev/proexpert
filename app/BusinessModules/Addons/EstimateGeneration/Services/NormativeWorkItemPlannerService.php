@@ -800,9 +800,12 @@ final class NormativeWorkItemPlannerService
             .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
             .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
         $clauseEnd = '(?:[,;.!?]|$)';
-        $independentAction = '(?:предусмотр(?:ен|ена|ено)|'.$countAction.')(?![\p{L}\p{N}])';
+        $independentAction = '(?:предусмотр(?:ен|ена|ено)|'.$countAction.')';
+        $independentNegativeAction = '(?:предусмотр(?:ен|ена|ено)|требуется|планируется|запланирован(?:а|о)?|нуж(?:ен|на|но)|входит|включ(?:ён|ен)(?:а|о)?|установлен(?:а|о)?|устанавливается|подключ(?:ён|ен)(?:а|о)?|подключается)';
+        $independentPredicate = '(?:'.$independentAction.'|не\s+'.$independentNegativeAction
+            .'|исключ(?:ён|ен|ена|ено)|отмен(?:ён|ен|ена|ено)|отсутствует)(?![\p{L}\p{N}])';
         $independentFixtureAssertion = $anyFixture
-            .$before($independentAction, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentAction
+            .$before($independentPredicate, $anyFixture.'|(?<![\p{L}\p{N}])не(?![\p{L}\p{N}])', 80).$independentPredicate
             .$before($clauseEnd, $anyFixture.'|'.$action, 80).$clauseEnd;
         $statements = preg_split('~(?:[.!?;]+|\R+|,\s*(?=(?:'.$listConjunction.'\s*)?'.$independentFixtureAssertion.'))~iu', $text) ?: [];
 
@@ -1631,7 +1634,7 @@ final class NormativeWorkItemPlannerService
                 unit: (string) ($takeoff['unit'] ?? $payload['unit'] ?? 'ед'),
                 basis: (string) ($takeoff['name'] ?? $takeoff['label'] ?? $takeoff['formula'] ?? 'Количество извлечено из проектной документации.'),
                 confidence: (float) ($takeoff['confidence'] ?? 0.76),
-                sourceRefs: is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [],
+                sourceRefs: $this->sourceRefsFromEvidence($takeoff),
                 reviewRequired: (bool) ($payload['review_required'] ?? $takeoff['review_required'] ?? false)
             );
             $quantities[$quantityKey] = isset($quantities[$quantityKey])
@@ -2155,7 +2158,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param  array<string, mixed>  $inference
+     * @param  array<string, mixed>  $evidence
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefsFromEvidence(array $evidence): array
