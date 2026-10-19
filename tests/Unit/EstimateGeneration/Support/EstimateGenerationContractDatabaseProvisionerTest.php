@@ -241,12 +241,14 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
         );
         $subjectDigests = $reflection->getConstant('SUBJECT_DIGEST');
         self::assertIsArray($subjectDigests);
-        self::assertSame(
-            $subjectDigests['project-model'],
-            EstimateGenerationContractDatabaseProvisioner::inventoryDigest(
-                $root,
-                EstimateGenerationContractDatabaseProvisioner::subjectInventory('project-model'),
-            ),
-        );
+        foreach (['geometry', 'pricing', 'training', 'project-model'] as $phase) {
+            self::assertSame(
+                $subjectDigests[$phase],
+                EstimateGenerationContractDatabaseProvisioner::inventoryDigest(
+                    $root,
+                    EstimateGenerationContractDatabaseProvisioner::subjectInventory($phase, $root),
+                ),
+            );
+        }
     }
 }
