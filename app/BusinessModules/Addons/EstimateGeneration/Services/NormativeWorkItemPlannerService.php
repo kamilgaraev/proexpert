@@ -780,7 +780,9 @@ final class NormativeWorkItemPlannerService
         $beforeAnyFixture = $before($anyFixture, $fixtureBoundary);
         $beforeExcludedFixture = $before($fixture, $excludedBoundary);
         $beforeAnyExcludedFixture = $before($anyFixture, $excludedBoundary);
-        $fixtureList = $anyFixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){1,7}';
+        $listConjunction = '(?:(?:(?:а|и)\s+)?(?:также|ещ[её])|и|плюс)(?![\p{L}\p{N}])';
+        $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*';
+        $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
         $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
             .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'
             .'(?<![\p{L}\p{N}])(?:'.$exclusionAction.'|не\s+'.$negativeAction.')(?![\p{L}\p{N}])'
@@ -796,8 +798,8 @@ final class NormativeWorkItemPlannerService
             .'комплект\p{L}*|количеств\p{L}*|'
             .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
         $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
-            .'(?:'.$anyFixture.'\s*(?:,|и)\s*){0,7}'.$fixture.'|'
-            .$fixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
+            .'(?:'.$anyFixture.$listSeparator.'){0,7}'.$fixture.'|'
+            .$fixture.'(?:'.$listSeparator.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
 
         foreach ($statements as $statement) {
             $withoutRoomPhrases = preg_replace(
