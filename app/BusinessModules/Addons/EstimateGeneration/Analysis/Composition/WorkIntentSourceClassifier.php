@@ -152,14 +152,6 @@ final class WorkIntentSourceClassifier
             return [];
         }
 
-        return match ($entityType) {
-            'roof', 'roof_facet', 'roof_opening' => ['roofing'],
-            'room', 'wall', 'opening' => ['finishing', 'structures'],
-            'site' => ['earthworks'],
-            'foundation_beam', 'foundation_slab' => ['structures'],
-            'equipment' => ['equipment'], 'radiator' => ['heating'], 'water_pipe' => ['water_supply'], 'sewer_pipe' => ['sewerage'],
-            'technological_pipeline' => ['technological_pipelines'], 'electrical_circuit' => ['electricity'], 'ventilation_duct' => ['ventilation'],
-            default => [],
-        };
+        return FactVocabulary::entitySections($entityType);
     }
 }

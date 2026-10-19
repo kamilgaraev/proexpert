@@ -19,6 +19,7 @@ final readonly class EstimatePrerequisiteBacklog
         private EstimatePrerequisiteBacklogProjector $projector,
         private TechnologySystemCatalog $catalog,
         private CompletenessRuleCatalog $rules,
+        private NativeParameterBacklog $native,
     ) {}
 
     public static function editable(EstimateGenerationSession $session): bool
@@ -80,6 +81,7 @@ final readonly class EstimatePrerequisiteBacklog
 
         return ['contract_version' => 'estimate-prerequisite-backlog:v1', 'session_id' => (int) $session->id,
             'state_version' => (int) $session->state_version, 'needs_refresh' => ! $current,
-            'can_refresh' => self::editable($session), 'groups' => $groups, 'cost_units' => '0'];
+            'can_refresh' => self::editable($session), 'groups' => $groups,
+            'native_questions' => $this->native->current($session, $snapshot, $capture['token']), 'cost_units' => '0'];
     }
 }
