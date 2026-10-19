@@ -792,8 +792,11 @@ final class NormativeWorkItemPlannerService
         $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*'.$fixtureModifiers;
         $attributeWord = '(?!'.$anyFixture.'|'.$listConjunction.'|(?<![\p{L}\p{N}])(?:не|без|кроме)(?![\p{L}\p{N}]))'
             .'(?:(?&fixture_modifier)|(?!'.$negativeAction.'|'.$exclusionAction.')[\p{L}\p{N}-]{1,32}(?![\p{L}\p{N}]))';
+        $instrumentalFixture = '(?<![\p{L}\p{N}])(?:унитаз(?:ом|ами)|умывальник(?:ом|ами)|'
+            .'душев(?:ой|ыми)\s+кабин(?:ой|ою|ами)|ванн(?:ой|ою|ами)|мойк(?:ой|ою|ами)|раковин(?:ой|ою|ами)|'
+            .'смесител(?:ем|ями)|писсуар(?:ом|ами)|душ(?:ем|ами))(?![\p{L}\p{N}])';
         $fixtureListAttribute = $anyFixture.'\K\s+с(?:о)?\s+'.$attributeWord.'(?:\s+'.$attributeWord.'){0,3}'
-            .'(?='.$listSeparator.$anyFixture.')';
+            .'(?='.$listSeparator.'(?!'.$instrumentalFixture.')'.$anyFixture.')';
         $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
         $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
             .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'

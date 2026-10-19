@@ -603,6 +603,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ['Монтаж унитаза с бачком рядом с умывальником и душевой кабиной.', ['sanitary.toilets']],
             ['Монтаж унитаза с бачком и умывальник не предусмотрен.', ['sanitary.toilets']],
             ['Установка унитаза и умывальника с тумбой и душевой кабины.', ['sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins']],
+            ['Монтаж унитаза с бачком и умывальником.', ['sanitary.toilets']],
+            ['Монтаж унитаза со встроенным бачком и подвесным умывальником.', ['sanitary.toilets']],
             ['Без унитаза и умывальник предусмотрен.', ['sanitary.washbasins']],
             ['Без ванны и подвесной унитаз предусмотрен.', ['sanitary.toilets']],
             ['Без унитаза а также умывальник предусмотрен.', ['sanitary.washbasins']],
