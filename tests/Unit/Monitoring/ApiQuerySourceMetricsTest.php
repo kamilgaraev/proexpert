@@ -884,6 +884,31 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame(5, $source['count']);
     }
 
+    public function test_project_pulse_phases_remain_numeric_opt_in_and_request_local(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        foreach (['pulse_actor', 'pulse_current', 'pulse_facts', 'pulse_access', 'pulse_rules',
+            'pulse_synthesis', 'pulse_finance', 'pulse_write', 'pulse_format'] as $name) {
+            $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+            self::assertNotNull($checkpoint);
+            ApiQueryMetrics::record($request, 2.5);
+            ApiQueryMetrics::recordProcessingPhase($request, $name, $checkpoint['started_at'], $checkpoint);
+            $phase = $metrics->summary()['processing_phases'][$name];
+            self::assertSame(1, $phase['count']);
+            self::assertSame(1, $phase['sql_count']);
+            self::assertSame(2.5, $phase['sql_total_ms']);
+            self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+            self::assertArrayNotHasKey('metrics', $phase);
+        }
+        ApiQueryMetrics::recordProcessingPhase($request, 'pulse_private-summary', hrtime(true));
+        self::assertStringNotContainsString('private', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        [$otherRequest, $otherMetrics] = $this->metrics(false);
+        ApiQueryMetrics::recordProcessingPhase($otherRequest, 'pulse_facts', hrtime(true));
+        self::assertArrayNotHasKey('processing_phases', $otherMetrics->summary());
+        self::assertSame(0, $otherMetrics->summary()['sql_count']);
+        self::assertSame(9, $metrics->summary()['sql_count']);
+    }
+
     private function metrics(bool $capture = true): array
     {
         $request = Request::create('/api/v1/admin/ai-assistant/conversations', 'GET');

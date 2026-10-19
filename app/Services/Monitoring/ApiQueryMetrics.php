@@ -257,6 +257,8 @@ final class ApiQueryMetrics
             'access_system_match', 'access_module_match', 'security_emit', 'security_prepare', 'security_write',
             'access_context_read', 'access_role_read', 'access_context_hierarchy', 'access_conditions',
             'access_module_roles', 'access_module_entitlement', 'access_module_permission',
+            'pulse_actor', 'pulse_current', 'pulse_facts', 'pulse_access', 'pulse_rules',
+            'pulse_synthesis', 'pulse_finance', 'pulse_write', 'pulse_format',
         ], true)) {
             return;
         }

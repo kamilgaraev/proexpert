@@ -186,6 +186,43 @@ final class RecordApiResponseTimeTest extends TestCase
         }
     }
 
+    public function test_project_pulse_sources_match_only_the_current_get_and_generate_post(): void
+    {
+        foreach ([
+            ['GET', '/api/v1/admin/ai-assistant/project-pulse/current', true],
+            ['POST', '/api/v1/admin/ai-assistant/project-pulse/generate', true],
+            ['POST', '/api/v1/admin/ai-assistant/project-pulse/current', false],
+            ['GET', '/api/v1/admin/ai-assistant/project-pulse/generate', false],
+            ['PUT', '/api/v1/admin/ai-assistant/project-pulse/generate', false],
+            ['GET', '/api/v1/admin/ai-assistant/project-pulse/current/extra', false],
+            ['POST', '/api/v1/admin/ai-assistant/project-pulse/generate/extra', false],
+            ['GET', '/api/v1/admin/ai-assistant/project-pulse/reports', false],
+            ['POST', '/api/v1/admin/ai-assistant/project-pulse/reports', false],
+            ['POST', '/api/v1/mobile/ai-assistant/project-pulse/generate', false],
+        ] as [$method, $path, $expected]) {
+            Facade::clearResolvedInstances();
+            $captured = null;
+            $this->expectLog(static function (array $context) use (&$captured): bool {
+                $captured = $context;
+
+                return true;
+            });
+            $request = Request::create($path.'?token=private-query', $method, ['summary' => 'private-body']);
+            $response = new JsonResponse(['summary' => 'private-response']);
+            $returned = (new RecordApiResponseTime)->handle($request, static function () use ($request, $response): Response {
+                ApiQueryMetrics::record($request, 2.5);
+
+                return $response;
+            });
+
+            self::assertSame($response, $returned);
+            self::assertSame(1, $captured['sql_count']);
+            self::assertSame($expected, array_key_exists('sql_sources', $captured), $method.' '.$path);
+            self::assertArrayNotHasKey('response_bytes', $captured);
+            self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+        }
+    }
+
     public function test_design_document_sources_match_only_selected_methods_and_segments(): void
     {
         foreach ([

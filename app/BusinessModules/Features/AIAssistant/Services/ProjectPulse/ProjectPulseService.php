@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use App\Services\Monitoring\ApiQueryMetrics;
 
 class ProjectPulseService
 {
@@ -25,60 +26,69 @@ class ProjectPulseService
 
     public function current(ProjectPulseContext $context): ?array
     {
-        $actor = $this->actor($context->organizationId, $context->userId, $context->projectId);
-        $query = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project_pulse_report');
-        if ($query === null) { throw new AccessDeniedHttpException(); }
-        $existing = $query
-            ->forOrganization($context->organizationId)
-            ->forProject($context->projectId)
-            ->whereDate('report_date', $context->date->toDateString())
-            ->where('period_preset', $context->period)
-            ->latest('generated_at')
-            ->first();
+        $actor = ApiQueryMetrics::measureProcessingPhase('pulse_actor', fn () => $this->actor($context->organizationId, $context->userId, $context->projectId));
+        $existing = ApiQueryMetrics::measureProcessingPhase('pulse_current', function () use ($actor, $context) {
+            $query = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project_pulse_report');
+            if ($query === null) { throw new AccessDeniedHttpException(); }
 
-        return $existing ? $this->formatter->format($existing) : null;
+            return $query
+                ->forOrganization($context->organizationId)
+                ->forProject($context->projectId)
+                ->whereDate('report_date', $context->date->toDateString())
+                ->where('period_preset', $context->period)
+                ->latest('generated_at')
+                ->first();
+        });
+
+        return $existing ? ApiQueryMetrics::measureProcessingPhase('pulse_format', fn () => $this->formatter->format($existing)) : null;
     }
 
     public function generate(ProjectPulseContext $context): array
     {
-        $actor = $this->actor($context->organizationId, $context->userId, $context->projectId);
-        $facts = $this->factCollector->collect($context);
-        $policy = app(AssistantDataAccessPolicy::class);
-        $domains = ['reports', 'projects'];
-        foreach (['contracts', 'finance', 'warehouse', 'people', 'procurement', 'schedule', 'documents', 'quality', 'safety', 'change_management', 'handover_acceptance', 'machinery', 'production_labor', 'site_requests'] as $domain) {
-            if ($policy->canReadDomain($actor, $context->organizationId, $domain)) {
-                $domains[] = $domain;
+        $actor = ApiQueryMetrics::measureProcessingPhase('pulse_actor', fn () => $this->actor($context->organizationId, $context->userId, $context->projectId));
+        $facts = ApiQueryMetrics::measureProcessingPhase('pulse_facts', fn () => $this->factCollector->collect($context));
+        [$domains, $refs, $facts] = ApiQueryMetrics::measureProcessingPhase('pulse_access', function () use ($actor, $context, $facts): array {
+            $policy = app(AssistantDataAccessPolicy::class);
+            $domains = ['reports', 'projects'];
+            foreach (['contracts', 'finance', 'warehouse', 'people', 'procurement', 'schedule', 'documents', 'quality', 'safety', 'change_management', 'handover_acceptance', 'machinery', 'production_labor', 'site_requests'] as $domain) {
+                if ($policy->canReadDomain($actor, $context->organizationId, $domain)) {
+                    $domains[] = $domain;
+                }
             }
-        }
-        $refs = app(AssistantReportAccessService::class)->scopeReferences($actor, $context->organizationId, $context->projectId);
-        $referenceForFact = static function ($fact): ?array {
-            $ref = $fact->relatedEntity;
-            if (! is_array($ref) || ! isset($ref['type'], $ref['id'])) { return null; }
-            $type = match ($ref['type']) { 'contract_performance_act' => 'performance_act', 'warehouse_allocation' => 'warehouse_project_allocation', 'project_schedule_task' => 'schedule_task', default => $ref['type'] };
-            return ['entity_type' => $type, 'entity_id' => (string) $ref['id']];
-        };
-        $facts = $facts->filter(static function ($fact) use ($referenceForFact, $policy, $actor, $context): bool {
-            $ref = $referenceForFact($fact);
-            return $ref !== null && $policy->canReadReference($actor, $context->organizationId, $ref);
-        })->values();
-        foreach ($facts as $fact) {
-            $refs[] = $referenceForFact($fact);
-        }
-        $categories = $this->ruleEngine->categories($facts);
-        $groups = $this->ruleEngine->groups($facts);
-        $nextActions = $this->ruleEngine->nextActions($facts);
-        $ruleRecommendations = $this->ruleEngine->recommendations($facts);
-        $synthesis = $this->aiSynthesizer->synthesize(
+            $refs = app(AssistantReportAccessService::class)->scopeReferences($actor, $context->organizationId, $context->projectId);
+            $referenceForFact = static function ($fact): ?array {
+                $ref = $fact->relatedEntity;
+                if (! is_array($ref) || ! isset($ref['type'], $ref['id'])) { return null; }
+                $type = match ($ref['type']) { 'contract_performance_act' => 'performance_act', 'warehouse_allocation' => 'warehouse_project_allocation', 'project_schedule_task' => 'schedule_task', 'rfi' => 'change_management_rfi', default => $ref['type'] };
+                return ['entity_type' => $type, 'entity_id' => (string) $ref['id']];
+            };
+            $facts = $facts->filter(static function ($fact) use ($referenceForFact, $policy, $actor, $context): bool {
+                $ref = $referenceForFact($fact);
+                return $ref !== null && $policy->canReadReference($actor, $context->organizationId, $ref);
+            })->values();
+            foreach ($facts as $fact) {
+                $refs[] = $referenceForFact($fact);
+            }
+
+            return [$domains, $refs, $facts];
+        });
+        [$categories, $groups, $nextActions, $ruleRecommendations] = ApiQueryMetrics::measureProcessingPhase('pulse_rules', fn (): array => [
+            $this->ruleEngine->categories($facts),
+            $this->ruleEngine->groups($facts),
+            $this->ruleEngine->nextActions($facts),
+            $this->ruleEngine->recommendations($facts),
+        ]);
+        $synthesis = ApiQueryMetrics::measureProcessingPhase('pulse_synthesis', fn () => $this->aiSynthesizer->synthesize(
             $facts,
             $ruleRecommendations,
             $context->useAi,
             $categories,
             $nextActions,
             $context,
-        );
+        ));
         $status = $this->ruleEngine->status($facts);
 
-        $report = ProjectPulseReport::create([
+        $attributes = [
             'organization_id' => $context->organizationId,
             'project_id' => $context->projectId,
             'scope_type' => $context->projectId ? 'project' : 'organization',
@@ -93,7 +103,7 @@ class ProjectPulseService
             'metrics' => $categories,
             'urgent_actions' => $nextActions,
             'risk_groups' => $groups,
-            'finance' => $this->factCollector->finance($context),
+            'finance' => ApiQueryMetrics::measureProcessingPhase('pulse_finance', fn () => $this->factCollector->finance($context)),
             'activity' => $this->ruleEngine->activity($facts),
             'recommendations' => $synthesis['recommendations'],
             'source_refs' => $refs,
@@ -101,9 +111,10 @@ class ProjectPulseService
             'raw_facts' => $facts->map->toArray()->values()->all(),
             'created_by_user_id' => $context->userId,
             'generated_at' => now(),
-        ]);
+        ];
+        $report = ApiQueryMetrics::measureProcessingPhase('pulse_write', static fn () => ProjectPulseReport::create($attributes));
 
-        return $this->formatter->format($report);
+        return ApiQueryMetrics::measureProcessingPhase('pulse_format', fn () => $this->formatter->format($report));
     }
 
     public function list(int $organizationId, array $filters, ?User $actor = null): LengthAwarePaginator
