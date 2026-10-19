@@ -21,7 +21,7 @@ final class AssistantNamedProjectReadScope
         $name = self::name($plan);
         $ambiguous = AssistantReportEntityQuery::hasAmbiguousName($query, 'project', preservePrepositions: true);
         $implicitQuestion = false;
-        if ($name === null && ! $ambiguous && self::hasLowercaseQuestionClause($query)) {
+        if ($name === null && ! $ambiguous && self::hasImplicitProjectClause($query)) {
             $name = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
             $name = $name === null ? null : preg_replace('/[.!?]+$/u', '', $name);
             $implicitQuestion = $name !== null;
@@ -83,7 +83,7 @@ final class AssistantNamedProjectReadScope
             return null;
         }
         $quoted = self::hasQuotedName($query);
-        if (! $quoted && self::hasLowercaseQuestionClause($query)) {
+        if (! $quoted && self::hasImplicitProjectClause($query)) {
             return null;
         }
         $name = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
@@ -103,9 +103,12 @@ final class AssistantNamedProjectReadScope
         return $name === '' || (! $quoted && $name !== null && preg_match('/^(?:есть|нет|ещ[её]|уже|сейчас|остал[а-яё]*|задержива[а-яё]*|просрочены|готовы|назначены|приняты|закрыты|завершены|ждут|имеют|действуют|что|кто|где|когда|как|какие|какой|какая|какое|сколько|нужно|надо|можно|не|и|или|но|а|при|без|перед|после|в|во|к|у|под|над|между|о|об|со|через)(?![\pL\pN])/iu', $name) === 1) ? null : $name;
     }
 
-    private static function hasLowercaseQuestionClause(string $query): bool
+    private static function hasImplicitProjectClause(string $query): bool
     {
         $candidate = AssistantReportEntityQuery::extract($query, 'project', preservePrepositions: true);
+        if ($candidate !== null && preg_match('/^(?:вчера|позавчера)[.!?]*$/iu', $candidate) === 1) {
+            return true;
+        }
 
         return $candidate !== null
             && (preg_match('/^\s*(?:(?:а|и)\s+)?(?:какие|какой|какая|какое|каков[а-яё]*|кто|что|где|когда|сколько|почему)(?![\pL\pN])/iu', $query) === 1 || preg_match('/\?\s*$/u', $query) === 1)

@@ -14,6 +14,38 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_relative_day_after_project_uses_ui_only_after_an_empty_exact_lookup(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['вчера' => '2026-10-18', 'позавчера' => '2026-10-17', 'ВЧЕРА' => '2026-10-18'] as $phrase => $date) {
+                foreach (['', '?'] as $ending) {
+                    $query = 'Сверь выполненные работы с графиком по проекту '.$phrase.$ending;
+                    $calls = 0;
+                    $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use ($phrase, &$calls): array {
+                        $calls++;
+                        self::assertSame(['query' => $phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                        return $this->projectSearchResult([], false);
+                    });
+                    self::assertSame(1, $calls);
+                    self::assertArrayNotHasKey('named_project_scope', $resolved);
+                    self::assertSame(['project_id' => 104, 'period_start' => $date, 'period_end' => $date],
+                        AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+                    $literal = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $this->projectSearchResult([['id' => 102, 'name' => $phrase]], false));
+                    self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+                    foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                        self::assertNull(AssistantRequestProjectScope::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result))->projectId);
+                    }
+                }
+                $quoted = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком по проекту «'.$phrase.'»'), fn (): array => $this->projectSearchResult([], false));
+                self::assertNull(AssistantRequestProjectScope::fromPlan($quoted)->projectId);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_indeclinable_camera_states_use_ui_scope_after_empty_exact_name_lookup(): void
     {
         foreach (['онлайн', 'офлайн', 'оффлайн', 'online', 'offline'] as $state) {
