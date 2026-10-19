@@ -87,17 +87,39 @@ final readonly class EstimatorRetainedAuditBudget
             || ! is_int($documents) || $documents < 0 || $documents >= $maximum) {
             throw new DomainException('estimator_retained_audit_preflight_unavailable');
         }
-        $required = BigInteger::of($perCall)->multipliedBy(count($parts));
+        $roles = $plan['roles'] ?? [];
+        if (count($roles) !== 2 || array_diff(array_keys($roles), ['estimate_audit', 'estimate_composer_correction']) !== []) {
+            throw new DomainException('estimator_retained_audit_preflight_unavailable');
+        }
+        $required = BigInteger::zero();
+        $roleCosts = [];
+        foreach ($roles as $role => $limits) {
+            $calls = $limits['max_calls'] ?? null;
+            $cost = $limits['maximum_cost_micro_rub'] ?? null;
+            if (! is_int($calls) || $calls < count($parts) || $calls > 10000 || ! is_int($cost) || $cost < 1) {
+                throw new DomainException('estimator_retained_audit_preflight_unavailable');
+            }
+            $roleCosts[$role] = BigInteger::of($cost)->multipliedBy($calls);
+            $required = $required->plus($roleCosts[$role]);
+        }
         $available = BigInteger::of($maximum)->minus($documents);
         if ($required->isGreaterThan($available)) {
             throw new DomainException('estimator_retained_audit_budget_insufficient');
         }
+        $roleBudgets = [];
+        foreach ($roleCosts as $role => $cost) {
+            $roleBudgets[$role] = ['maximum_calls' => $roles[$role]['max_calls'],
+                'per_call_maximum_cost_micro_rub' => $roles[$role]['maximum_cost_micro_rub'],
+                'maximum_cost_micro_rub' => $cost->toInt()];
+        }
 
-        return ['contract_version' => 'estimator-retained-audit-preflight:v1',
+        return ['contract_version' => 'estimator-retained-audit-preflight:v2',
             'source_operation_id' => $prefix['source_operation_id'], 'source_artifact_version' => $preview['artifact_version'],
             'initial_audit_parts' => count($parts), 'per_call_maximum_cost_micro_rub' => $perCall,
-            'maximum_initial_audit_cost_micro_rub' => $required->toInt(),
+            'maximum_initial_audit_cost_micro_rub' => BigInteger::of($perCall)->multipliedBy(count($parts))->toInt(),
+            'maximum_remaining_cycle_cost_micro_rub' => $required->toInt(), 'role_budgets' => $roleBudgets,
             'available_provider_cost_micro_rub' => $available->toInt(),
-            'corrections_included' => false, 'completion_guaranteed' => false];
+            'corrections_included' => true, 'retries_included' => true,
+            'replay_discount_micro_rub' => 0, 'completion_guaranteed' => false];
     }
 }
