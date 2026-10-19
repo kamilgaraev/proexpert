@@ -82,7 +82,6 @@ final class CfoCommandCenterService
             planFactItems: is_array($planFact['items'] ?? null) ? $planFact['items'] : [],
             user: $user,
             generatedAt: $generatedAt,
-            skipDataMartMeta: $skipDataMartMeta,
         );
 
         $items = [
@@ -534,16 +533,15 @@ final class CfoCommandCenterService
         array $planFactItems,
         ?User $user,
         string $generatedAt,
-        bool $skipDataMartMeta,
     ): array {
         try {
             $projects = $this->portfolioProjects($filters);
             $marginReport = $this->projectMarginReportService->report(
-                $this->withDataMartSkip($this->projectPortfolioMarginInput($filters), $skipDataMartMeta),
+                $this->withDataMartSkip($this->projectPortfolioMarginInput($filters), true),
                 $user,
             );
             $wipReport = $this->wipForecastReportService->report(
-                $this->withDataMartSkip($this->projectPortfolioWipInput($filters), $skipDataMartMeta),
+                $this->withDataMartSkip($this->projectPortfolioWipInput($filters), true),
                 $user,
             );
             $portfolio = $this->projectPortfolioAggregator->build(
