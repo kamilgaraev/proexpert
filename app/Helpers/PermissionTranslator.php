@@ -176,16 +176,23 @@ class PermissionTranslator
     private static function findSubject(string $permission): array
     {
         $subjects = self::dictionary('subjects');
-        uksort($subjects, static fn (string $left, string $right): int => strlen($right) <=> strlen($left));
+        $subjectKey = $permission;
 
-        foreach ($subjects as $key => $label) {
-            if (!is_string($label)) {
-                continue;
+        while (true) {
+            $label = $subjects[$subjectKey] ?? null;
+            if (is_string($label)) {
+                $key = array_key_first([$subjectKey => null]);
+                if ($permission === $key || str_starts_with($permission, "{$key}.")) {
+                    return ['key' => $key, 'label' => $label];
+                }
             }
 
-            if ($permission === $key || str_starts_with($permission, "{$key}.")) {
-                return ['key' => $key, 'label' => $label];
+            $separator = strrpos($subjectKey, '.');
+            if ($separator === false) {
+                break;
             }
+
+            $subjectKey = substr($subjectKey, 0, $separator);
         }
 
         return ['key' => null, 'label' => null];
