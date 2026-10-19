@@ -168,6 +168,44 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
     }
 
+    public function test_production_read_uses_moscow_snapshot_date_and_deadline_cutoff_with_utc_application_timezone(): void
+    {
+        $previousTimezone = date_default_timezone_get();
+        date_default_timezone_set('UTC');
+        config(['app.timezone' => 'UTC']);
+        Carbon::setTestNow(new Carbon('2026-10-18 21:30:00', 'UTC'));
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-18 21:30:00', 'UTC'));
+        try {
+            self::assertSame('2026-10-18', today()->toDateString());
+            $this->work('0.1000', 'м²', ['completion_date' => '2026-10-19']);
+            $this->work('999.0000', 'м²', ['completion_date' => '2026-10-18']);
+            $schedule = $this->schedule();
+            $this->task($schedule, 'Вчерашний срок по Москве', ['planned_end_date' => '2026-10-18']);
+            $this->task($schedule, 'Сегодняшняя задача', ['planned_end_date' => '2026-10-19']);
+            self::assertSame(0, ScheduleTask::query()->where('schedule_id', $schedule->id)->overdue()->count());
+            self::assertSame(1, ScheduleTask::query()->where('schedule_id', $schedule->id)
+                ->overdue(new \DateTimeImmutable('2026-10-19 00:30:00', new \DateTimeZone('Europe/Moscow')))->count());
+            $arguments = \App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod::arguments((int) $this->project->id,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком сегодня']]);
+            $reader = app(AssistantProjectProductionScheduleReader::class);
+            $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $arguments);
+            self::assertSame('2026-10-19', $read['data']['as_of_date']);
+            self::assertSame('2026-10-19', $read['data']['period_start']);
+            self::assertSame('2026-10-19', $read['data']['period_end']);
+            self::assertSame(1, $read['data']['confirmed_works']);
+            self::assertSame(1, $read['data']['overdue_tasks']);
+            self::assertStringContainsString('московское время', $read['server_formatted_answer']);
+            self::assertTrue($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+            Carbon::setTestNow(new Carbon('2026-10-19 21:30:00', 'UTC'));
+            \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
+            self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+        } finally {
+            date_default_timezone_set($previousTimezone);
+            Carbon::setTestNow();
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_unresolved_period_requests_dates_without_showing_all_time_totals(): void
     {
         $this->work('999.0000', 'м²');

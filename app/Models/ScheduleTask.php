@@ -502,9 +502,9 @@ class ScheduleTask extends Model
         return $query->where('is_critical', true);
     }
 
-    public function scopeOverdue($query)
+    public function scopeOverdue($query, ?\DateTimeInterface $asOf = null)
     {
-        return $query->where('planned_end_date', '<', now())
+        return $query->where('planned_end_date', '<', $asOf ?? now())
                     ->where('progress_percent', '<', 100)
                     ->whereNotIn('status', [TaskStatusEnum::COMPLETED->value, TaskStatusEnum::CANCELLED->value]);
     }

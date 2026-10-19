@@ -10,9 +10,9 @@ use Illuminate\Database\Query\JoinClause;
 
 final class AssistantScheduleTaskReportProjection
 {
-    public function apply(Builder $tasks, Builder $schedules, int $organizationId): Builder
+    public function apply(Builder $tasks, Builder $schedules, int $organizationId, ?\DateTimeInterface $asOf = null): Builder
     {
-        $overdue = (clone $tasks)->overdue()->select('schedule_tasks.id');
+        $overdue = (clone $tasks)->overdue($asOf)->select('schedule_tasks.id');
         $assignee = User::query()->select('users.name')->whereColumn('users.id', 'schedule_tasks.assigned_user_id')
             ->where('users.is_active', true)->whereHas('organizations', static fn (Builder $organizations): Builder => $organizations->where('organizations.id', $organizationId)->where('organization_user.is_active', true))->limit(1);
         $tasks->select('schedule_tasks.*')

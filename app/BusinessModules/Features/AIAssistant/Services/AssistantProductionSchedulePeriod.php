@@ -244,6 +244,9 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace_callback('/\bза\s+(?:(?:последн|крайн)(?:ий|юю)\s+(день|неделю|месяц|год)|(?:последн|крайн)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
+            return 'за 1 '.mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
+        }, $query) ?? $query;
         $query = preg_replace_callback('/\b(?:в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+(год(?:у)?|месяц(?:е)?)\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);
             $adjective = str_starts_with($relative, 'эт') ? 'этот' : (str_starts_with($relative, 'текущ') ? 'текущий' : 'прошлый');

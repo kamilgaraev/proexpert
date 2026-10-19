@@ -17,7 +17,7 @@ final readonly class AssistantCustomReportSource
 {
     public function __construct(private AssistantDomainCatalog $catalog, private AssistantDataAccessPolicy $policy) {}
 
-    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId): array
+    public function resolve(User $actor, int $organizationId, string $domain, string $entityType, ?int $projectId, ?\DateTimeInterface $asOf = null): array
     {
         $definition = $this->catalog->definition($domain);
         if ($definition === null || ! in_array($entityType, $definition->entityTypes, true)) {
@@ -133,7 +133,7 @@ final readonly class AssistantCustomReportSource
                 $fields['assigned_user_id']['label'] = trans_message('ai_custom_reports.assignee_id');
                 $fields['assigned_user_name'] = ['type' => 'string', 'label' => trans_message('ai_assistant_facts.fields.assigned_user_id')];
             }
-            $query = (new AssistantScheduleTaskReportProjection)->apply($query, $schedules, $organizationId);
+            $query = (new AssistantScheduleTaskReportProjection)->apply($query, $schedules, $organizationId, $asOf);
         }
         if ($entityType === 'contract') {
             $fields['counterparty_name'] = ['type' => 'string', 'label' => trans_message('ai_custom_reports.counterparty_name')];

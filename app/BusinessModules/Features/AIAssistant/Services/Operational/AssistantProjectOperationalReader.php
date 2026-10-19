@@ -32,6 +32,16 @@ abstract readonly class AssistantProjectOperationalReader
         return $this->collect($actor, $organizationId, $arguments['project_id']);
     }
 
+    protected function readTime(): \DateTimeImmutable
+    {
+        return \DateTimeImmutable::createFromInterface(now());
+    }
+
+    protected function collectAt(User $actor, int $organizationId, array $arguments, \DateTimeImmutable $asOf): array
+    {
+        return $this->collectForArguments($actor, $organizationId, $arguments);
+    }
+
     public function read(User $actor, int $organizationId, array $arguments): array
     {
         $projectId = $arguments['project_id'] ?? null;
@@ -49,7 +59,8 @@ abstract readonly class AssistantProjectOperationalReader
             if ($project === null) {
                 throw new AuthorizationException;
             }
-            $data = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => today()->toDateString()] + $this->collectForArguments($actor, $organizationId, $arguments);
+            $asOf = $this->readTime();
+            $data = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => $asOf->format('Y-m-d')] + $this->collectAt($actor, $organizationId, $arguments, $asOf);
             $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'type' => static::TYPE, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'data' => $data]);
             $ref = ['entity_type' => static::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];

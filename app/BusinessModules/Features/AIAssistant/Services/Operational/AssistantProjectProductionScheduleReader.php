@@ -53,13 +53,18 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
         return AssistantProductionSchedulePeriod::validArguments($arguments);
     }
 
-    protected function collectForArguments(User $actor, int $organizationId, array $arguments): array
+    protected function readTime(): \DateTimeImmutable
+    {
+        return parent::readTime()->setTimezone(new \DateTimeZone('Europe/Moscow'));
+    }
+
+    protected function collectAt(User $actor, int $organizationId, array $arguments, \DateTimeImmutable $asOf): array
     {
         if (array_key_exists('period_start', $arguments) && $arguments['period_start'] === null && $arguments['period_end'] === null) {
             return ['period_unresolved' => true];
         }
 
-        return $this->collect($actor, $organizationId, $arguments['project_id'], $arguments);
+        return $this->collect($actor, $organizationId, $arguments['project_id'], $arguments, $asOf);
     }
 
     public function verifiedAnswer(array $result, User $actor, int $organizationId): ?array
@@ -73,7 +78,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
         return $answer;
     }
 
-    protected function collect(User $actor, int $organizationId, int $projectId, array $arguments = []): array
+    protected function collect(User $actor, int $organizationId, int $projectId, array $arguments = [], ?\DateTimeImmutable $asOf = null): array
     {
         $works = $this->reports->resolve($actor, $organizationId, 'works', 'completed_work', $projectId)['query']->confirmed();
         if (isset($arguments['period_start'])) {
@@ -82,7 +87,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
         if (isset($arguments['period_end'])) {
             $works->where('completed_works.completion_date', '<=', $arguments['period_end']);
         }
-        $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId)['query'];
+        $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId, $asOf ?? $this->readTime())['query'];
         $schedules = $this->projectQuery($actor, $organizationId, $projectId, 'schedule');
         $project = $this->projectQuery($actor, $organizationId, $projectId, 'project')?->whereKey($projectId)->first(['id', 'end_date']);
         if ($schedules === null || $project === null) {

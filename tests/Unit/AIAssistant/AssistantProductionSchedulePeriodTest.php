@@ -14,6 +14,26 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_singular_last_durations_resolve_as_one_unit_and_plural_unknown_quantities_stay_unresolved(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за последний день' => '2026-10-18', 'за последние сутки' => '2026-10-18',
+                'за последнюю неделю' => '2026-10-12', 'за крайний день' => '2026-10-18',
+                'за крайнюю неделю' => '2026-10-12', 'за последний месяц' => '2026-09-19',
+                'за последний год' => '2025-10-19'] as $phrase => $start) {
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-19'],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+            foreach (['за последние дни', 'за последние недели', 'за последние годы'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_resolver_supported_durations_never_become_all_time_or_part_of_the_project_name(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
