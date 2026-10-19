@@ -195,7 +195,7 @@ final readonly class EstimatorCreditOperations
         $complex = count($manifest) > 1 || ($session->input_payload['profile_id'] ?? null) === 'industrial';
         $known = in_array($kind, ['documents', 'dialogue'], true) ? null : $this->knownInputs->capture($session, $complex,
             localEstimateKey: $parameters['local_estimate_key'] ?? null);
-        $workItems = max($workItems, $known['known_work_count'] ?? 0);
+        $workItems = max($workItems + ($known['equipment_work_scope']['expansion_delta'] ?? 0), $known['known_work_count'] ?? 0);
         $plan = $this->plans->build($kind, $rasterUnits, $workItems, $complex, $tariff,
             ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true, $known['part_limits'] ?? []);
         if ($known !== null) {

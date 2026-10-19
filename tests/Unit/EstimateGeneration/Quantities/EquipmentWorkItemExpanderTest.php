@@ -145,7 +145,8 @@ final class EquipmentWorkItemExpanderTest extends TestCase
 
     private function expand(array $draft, array $quantities, ?int $limit, ?array $entities = null): array
     {
-        return (new EquipmentWorkItemExpander)->expand($draft, $quantities, $limit, $entities ?? $this->entities());
+        return (new EquipmentWorkItemExpander)->expand($draft, $quantities, $limit,
+            array_fill_keys($entities ?? $this->entities(), 'include_supply_and_installation'));
     }
 
     private function entities(): array

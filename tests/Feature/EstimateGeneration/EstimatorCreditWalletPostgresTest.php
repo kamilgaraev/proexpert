@@ -498,6 +498,114 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(49400, $credits->balance($organization)['reserved_minor']);
     }
 
+    public function test_equipment_expansion_is_planned_in_a_free_quote_before_reservation(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(17);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $stored = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($stored->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(64, $plan['work_item_limit']);
+        self::assertSame(32, $plan['known_context']['equipment_work_scope']['expansion_delta']);
+        self::assertSame(34, $plan['known_context']['equipment_work_scope']['operation_count']);
+        self::assertGreaterThanOrEqual(35, $plan['audit_part_limit']);
+        self::assertSame($quote['quote_id'], $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation')['quote_id']);
+        self::assertSame($stored->processing_plan, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'));
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_changed_equipment_scope_with_the_same_count_requires_a_new_quote_without_mutating_the_frozen_plan(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(16);
+        foreach ([18, 19] as $index) {
+            $this->saveKnownQuoteEquipment($scope, $index, ['estimate_scope' => 'requires_confirmation', 'visual_inventory_category' => 'sanitary_fixture']);
+            $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:visual-quote-'.$index,
+                $scope->organizationId, $scope->projectId, $scope->sessionId, 'sha256:'.str_repeat('a', 64), 'equipment:quote-'.$index,
+                'sanitary_fixture', 'Прибор '.$index, null, 0.7, 'document', 'candidate', []);
+            app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)->saveSourceModel([], [$fact], []);
+            $this->answerEquipmentQuoteScope($scope, $index, $index === 18 ? 'installation_only' : 'exclude');
+        }
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $stored = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        $plan = json_decode($stored->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(33, $plan['known_context']['equipment_work_scope']['operation_count']);
+        self::assertSame(63, $plan['work_item_limit']);
+        $this->answerEquipmentQuoteScope($scope, 18, 'exclude');
+        $this->answerEquipmentQuoteScope($scope, 19, 'installation_only');
+        $current = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorKnownContextSnapshot::class)->capture($session, false);
+        self::assertSame(33, $current['equipment_work_scope']['operation_count']);
+        self::assertNotSame($plan['known_context']['equipment_work_scope']['fingerprint'], $current['equipment_work_scope']['fingerprint']);
+        try {
+            DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+            self::fail('A changed equipment scope must require a new free quote.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_known_context_changed', $error->getMessage());
+        }
+        self::assertEquals($stored, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_oversized_equipment_expansion_requires_a_split_before_an_operation_or_reservation_exists(): void
+    {
+        [$organization, $actor, $scope, $session, $operations] = $this->equipmentQuoteFixture(256);
+        $id = (string) Str::uuid();
+        try {
+            $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+            self::fail('An oversized equipment expansion must fail before paid generation.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_processing_plan_requires_section_split', $error->getMessage());
+        }
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->count());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    private function equipmentQuoteFixture(int $count): array
+    {
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'profile_id' => 'construction',
+            'object_type' => 'house', 'selected_sections' => ['equipment']]]);
+        for ($index = 1; $index <= $count; $index++) {
+            $this->saveKnownQuoteEquipment($scope, $index);
+        }
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:equipment-quote');
+
+        return [$organization, $actor, $scope, $session, app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)];
+    }
+
+    private function saveKnownQuoteEquipment(EstimatorCreditRequest $scope, int $index, array $properties = []): void
+    {
+        $source = 'sha256:'.str_repeat('a', 64);
+        $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('equipment:quote-'.$index,
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $source, 'equipment', 'equipment:quote-'.$index,
+            ['name' => 'Оборудование '.$index, 'equipment_code' => 'quote:equipment-'.$index,
+                'properties' => ['semantic_type' => 'equipment', ...$properties]]);
+        $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:equipment-quote-'.$index,
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $source, $entity->id, 'equipment_count', '1', 'count',
+            0.0, 'user_assumption', 'confirmed', []);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)->saveSourceModel([$entity], [$fact], []);
+    }
+
+    private function answerEquipmentQuoteScope(EstimatorCreditRequest $scope, int $index, string $choice): void
+    {
+        app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ApplyProjectModelDecision::class)->applyClarificationChoice(
+            $scope->organizationId, $scope->projectId, $scope->sessionId, 'sha256:'.str_repeat('a', 64), 'fact:visual-quote-'.$index,
+            'project_question_visual'.$index, 'selected', $choice, $choice, null, str_repeat('c', 64),
+            ['conflict_id' => 'visual-inventory:quote-'.$index, 'fact_ids' => ['fact:visual-quote-'.$index]],
+            (string) $scope->actorUserId, 'Подтверждение области оборудования', 'decision:'.Str::uuid());
+    }
+
     public function test_a_quote_reserves_the_real_known_composer_parts_even_with_one_selected_section(): void
     {
         [$organization, $actor, $scope] = $this->fixture();

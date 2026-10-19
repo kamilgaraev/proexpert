@@ -81,6 +81,9 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         foreach ([
             ['equipment:z', 'equipment', ['semantic_type' => 'equipment'], '1'],
             ['equipment:a', 'equipment', ['properties' => ['semantic_type' => 'equipment']], '2'],
+            ['equipment:bed', 'equipment', ['properties' => ['estimate_scope' => 'contextual_only', 'visual_inventory_category' => 'equipment']], '1'],
+            ['equipment:excluded', 'equipment', ['estimate_scope' => 'excluded_by_document_note'], '1'],
+            ['equipment:visual', 'equipment', ['properties' => ['estimate_scope' => 'requires_confirmation', 'visual_inventory_category' => 'sanitary_fixture']], '1'],
             ['radiator:a', 'equipment', ['semantic_type' => 'radiator'], '3'],
             ['unclassified', 'quantity', [], '4'],
         ] as [$id, $type, $attributes, $count]) {

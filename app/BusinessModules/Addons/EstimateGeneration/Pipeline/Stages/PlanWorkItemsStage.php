@@ -125,7 +125,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $payload = $this->floorWorkItems->expand($payload, $quantities, $workLimit,
             is_array($stage6Context['room_floor_entity_ids'] ?? null) ? $stage6Context['room_floor_entity_ids'] : []);
         $payload = $this->equipmentWorkItems->expand($payload, $quantities, $workLimit,
-            is_array($stage6Context['equipment_entity_ids'] ?? null) ? $stage6Context['equipment_entity_ids'] : []);
+            is_array($stage6Context['equipment_estimate_scopes'] ?? null) ? $stage6Context['equipment_estimate_scopes'] : []);
         $this->logProgress($context, 'deterministic_candidates_planned');
         $this->renewAfterProgress($heartbeat);
         \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\FrozenWorkItemLimit::assertDraft($payload, $workLimit);

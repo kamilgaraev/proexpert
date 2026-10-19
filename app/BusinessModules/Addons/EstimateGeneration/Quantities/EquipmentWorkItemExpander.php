@@ -10,9 +10,10 @@ final readonly class EquipmentWorkItemExpander
 {
     public function __construct(private WorkItemQuantityMapper $mapper = new WorkItemQuantityMapper) {}
 
-    public function expand(array $draft, array $quantities, ?int $workLimit, array $equipmentEntityIds = []): array
+    public function expand(array $draft, array $quantities, ?int $workLimit, array $equipmentScopes = []): array
     {
-        $equipment = array_fill_keys($equipmentEntityIds, true);
+        $equipment = array_filter($equipmentScopes, static fn (mixed $mode): bool => in_array($mode,
+            [EquipmentEstimateScope::SUPPLY_AND_INSTALLATION, EquipmentEstimateScope::INSTALLATION_ONLY], true));
         ksort($equipment, SORT_STRING);
         $limit = min($workLimit ?? 10000, 10000);
         $count = 0;
@@ -59,7 +60,9 @@ final readonly class EquipmentWorkItemExpander
 
                         continue;
                     }
-                    $newScopes = array_diff_key($equipment, $existingScopes[$work] ?? []);
+                    $workEquipment = $work === 'equipment.install' ? $equipment : array_filter($equipment,
+                        static fn (string $mode): bool => $mode === EquipmentEstimateScope::SUPPLY_AND_INSTALLATION);
+                    $newScopes = array_diff_key($workEquipment, $existingScopes[$work] ?? []);
                     $count += count($newScopes) - 1;
                     FrozenWorkItemLimit::assertCount($count, $limit);
                     foreach (array_keys($newScopes) as $entity) {

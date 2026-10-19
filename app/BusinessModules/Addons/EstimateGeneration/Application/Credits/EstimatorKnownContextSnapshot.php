@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EquipmentEstimateScope;
 use DomainException;
 use InvalidArgumentException;
 
@@ -127,6 +128,20 @@ final readonly class EstimatorKnownContextSnapshot
         }
         $measured = $this->parts->measure($composerInput, $auditInput, $complex ? $synthesisInput : null, $links, $questions,
             $wirePolicy, $roleLimits);
+        $equipmentScope = [];
+        if (($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && in_array('equipment', $session->input_payload['selected_sections'] ?? [], true)
+            && ($session->input_payload['profile_id'] ?? null) !== 'industrial') {
+            $answerIds = EquipmentEstimateScope::answerFactIds($snapshot);
+            $scopes = EquipmentEstimateScope::select($snapshot, $answerIds === [] ? []
+                : $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $answerIds));
+            if ($scopes !== []) {
+                $operationCount = EquipmentEstimateScope::workCount($scopes);
+                $equipmentScope = ['equipment_work_scope' => ['version' => 'equipment-estimate-scope:v1',
+                    'fingerprint' => hash('sha256', CanonicalPipelineJson::encode($scopes)),
+                    'operation_count' => $operationCount, 'expansion_delta' => max(0, $operationCount - 2)]];
+            }
+        }
         $this->assertWithinBudget($organizationId, $projectId, $sessionId);
         $verified = $this->models->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $this->budget->maxFacts + 1);
         if (! hash_equals((string) $capture['token'], (string) $verified['token'])) {
@@ -134,7 +149,8 @@ final readonly class EstimatorKnownContextSnapshot
         }
 
         return [...$measured, 'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
-            'model_snapshot' => $capture['token'], 'parts' => $measured['fingerprint'], 'saved_draft' => $draft])),
+            'model_snapshot' => $capture['token'], 'parts' => $measured['fingerprint'], 'saved_draft' => $draft, ...$equipmentScope])),
+            ...$equipmentScope,
             'known_candidate_count' => count($candidates), 'known_fact_count' => count($snapshot->facts),
             'known_work_count' => $workCount, 'known_quantity_count' => count($quantities),
             'draft_context_status' => $draft === [] ? 'absent' : ($staleDraft ? 'recomposition_required' : 'current'),
