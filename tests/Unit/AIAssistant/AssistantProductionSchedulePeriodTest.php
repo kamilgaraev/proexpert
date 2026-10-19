@@ -238,6 +238,44 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
+    public function test_bare_named_month_with_year_keeps_calendar_bounds_and_literal_project_priority(): void
+    {
+        $cases = [];
+        foreach ([10 => ['октябрь', 'октября', 'октябре'], 1 => ['январь', 'января', 'январе'],
+            2 => ['февраль', 'февраля', 'феврале'], 3 => ['март', 'марта', 'марте'], 4 => ['апрель', 'апреля', 'апреле'],
+            5 => ['май', 'мая', 'мае'], 6 => ['июнь', 'июня', 'июне'], 7 => ['июль', 'июля', 'июле'],
+            8 => ['август', 'августа', 'августе'], 9 => ['сентябрь', 'сентября', 'сентябре'],
+            11 => ['ноябрь', 'ноября', 'ноябре'], 12 => ['декабрь', 'декабря', 'декабре']] as $month => $forms) {
+            $start = sprintf('2026-%02d-01', $month);
+            foreach ($forms as $form) {
+                $cases[$form.' 2026'] = [$start, (new \DateTimeImmutable($start))->format('Y-m-t')];
+            }
+        }
+        $cases['октябрь 2026 года'] = $cases['октябрь 2026 г.'] = ['2026-10-01', '2026-10-31'];
+        foreach ($cases as $phrase => [$start, $end]) {
+            $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $bound = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            $literalPlan = $plan;
+            $literalPlan['request']['message'] = 'Сверь выполненные работы с графиком проекта «Северный дом '.$phrase.'»';
+            $literal = AssistantNamedProjectReadScope::bind($literalPlan, static function (array $arguments) use ($phrase): array {
+                self::assertSame(['query' => 'Северный дом '.$phrase, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['has_more' => false]];
+            });
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments'], $phrase);
+        }
+        foreach (['с октября 2026', 'до октября 2026', 'октябрь 2025 и 2026', 'октябрь 2026 и сентябрь 2026'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
     public function test_named_month_with_multiple_years_requires_dates_and_keeps_literal_name_priority(): void
     {
         foreach (['за октябрь 2025 и 2026', 'за октябрь 2025 или 2026', 'в октябре 2025–2026', 'за октябрь 2025, 2026'] as $phrase) {
