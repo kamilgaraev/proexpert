@@ -64,6 +64,46 @@ final class EstimateExportReadbackTest extends TestCase
         self::assertSame(30480.0, $data['totals']['total_amount']);
     }
 
+    #[\PHPUnit\Framework\Attributes\TestWith([true])]
+    #[\PHPUnit\Framework\Attributes\TestWith([false])]
+    public function test_resources_are_exported_once_with_or_without_their_parent_work(bool $includeWorks): void
+    {
+        $estimate = $this->fixture();
+        $section = $estimate->sections->first();
+        $child = clone $section->items[0];
+        $child->id = 901;
+        $child->parent_work_id = 900;
+        $parent = clone $section->items[0];
+        $parent->id = 900;
+        $parent->item_type = 'work';
+        $parent->setRelation('childItems', new Collection([$child]));
+        $section->setRelation('items', new Collection([$parent, $child]));
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate, ['include_works' => $includeWorks]);
+        self::assertCount(1, $data['sections'][0]['items']);
+        $item = $data['sections'][0]['items'][0];
+        self::assertSame($includeWorks ? 900 : 901, $item['id']);
+        self::assertSame($includeWorks ? [901] : [], array_column($item['child_items'] ?? [], 'id'));
+    }
+
+    public function test_other_resources_are_preserved_when_typed_resources_are_excluded(): void
+    {
+        $estimate = $this->fixture();
+        $section = $estimate->sections->first();
+        $child = clone $section->items[0];
+        $child->id = 901;
+        $child->parent_work_id = 900;
+        $child->item_type = 'other';
+        $parent = clone $section->items[0];
+        $parent->id = 900;
+        $parent->item_type = 'work';
+        $parent->setRelation('childItems', new Collection([$child]));
+        $section->setRelation('items', new Collection([$parent, $child]));
+        $data = $this->app->make(EstimateExportService::class)->prepareExportData($estimate,
+            ['include_materials' => false, 'include_machinery' => false, 'include_labor' => false, 'include_resources' => true]);
+        self::assertSame([900, 901], array_column($data['sections'][0]['items'], 'id'));
+        self::assertArrayNotHasKey('child_items', $data['sections'][0]['items'][0]);
+    }
+
     public function test_excel_rows_and_import_metadata_preserve_material_quantities(): void
     {
         $estimate = $this->fixture();

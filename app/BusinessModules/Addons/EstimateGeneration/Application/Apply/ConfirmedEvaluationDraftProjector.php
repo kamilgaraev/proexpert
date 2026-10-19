@@ -68,6 +68,14 @@ final readonly class ConfirmedEvaluationDraftProjector
         if (! hash_equals($selection['scenario_hash'], $selected['scenario_hash'])) {
             $this->reject();
         }
+        $projection = $this->projectVerifiedSelection($fresh, $selected, $selection);
+        $this->quantities->assertCurrent(...[...$scope, $projection]);
+
+        return $projection;
+    }
+
+    public function projectVerifiedSelection(array $fresh, array $selected, array $selection): array
+    {
         $positions = array_column($selected['scenario']['positions'], null, 'key');
         $consumed = [];
         $localEstimates = [];
@@ -141,8 +149,6 @@ final readonly class ConfirmedEvaluationDraftProjector
         if (isset($projection['totals']['contingency'])) {
             $projection['totals']['contingency'] = ['kind' => 'fixed', 'amount' => $projection['contingency_amount']];
         }
-        $this->quantities->assertCurrent(...[...$scope, $projection]);
-
         return (new BuildMostEstimateDraft)->seal($projection);
     }
 

@@ -26,16 +26,21 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationSer
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\PDFEstimateBuilder;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Integrations\EstimateGeneration\EstimateGenerationExcelExportService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
@@ -140,6 +145,8 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
             }
             $items[] = $item;
         }
+        $sections = array_map(static fn (array $works, int $index): array => ['key' => 'floor:'.$index, 'title' => 'Пол: зона '.($index + 1),
+            'source_refs' => [], 'work_items' => $works], array_chunk($items, (int) ceil(count($items) / ($case['section_count'] ?? 1))), range(0, ($case['section_count'] ?? 1) - 1));
         $draft = ['title' => $lighting ? 'Смета освещения' : 'Смета выбранного пола', 'source_input_version' => $base, 'input_snapshot_hash' => $capture['token'],
             'supplementary_materials' => $supplementaryMaterials,
             'scope_identity' => ['organization_id' => $scope[0], 'project_id' => $scope[1], 'session_id' => $scope[2], 'source_version' => $sourceVersion],
@@ -148,7 +155,7 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
             'rule_identity' => ['version' => $completeness['rule_catalog_version'], 'hash' => $completeness['rule_catalog_hash'], 'run_id' => $completeness['run_id'], 'status' => 'current'],
             'regional_context' => $catalog['context'], 'vat_rate' => '20', 'contingency' => ['kind' => 'fixed', 'amount' => $case['contingency']], 'contingency_amount' => $case['contingency'],
             'local_estimates' => [['key' => 'local:floor', 'title' => 'Работы на измеренной площади', 'status' => 'ready_for_review', 'source_refs' => [], 'confidence' => 1.0,
-                'sections' => [['key' => 'floor', 'title' => 'Пол', 'source_refs' => [], 'work_items' => $items]]]]];
+                'sections' => $sections]]];
         app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $draft, $base);
         $persisted = $session->packages()->firstOrFail()->items()->orderBy('id')->firstOrFail();
         self::assertSame($lighting ? 'supplementary_project_material:v5' : 'semantic_project_resource:v9', $persisted->price_snapshot['coefficients']['pricing_formula_version']);
@@ -214,6 +221,16 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
             self::assertSame($case['with_vat'], (string) \Brick\Math\BigDecimal::of((string) $export['total_amount_with_vat'])->toScale(2));
             self::assertSame($case['contingency'], $export['contingency_amount']);
         }
+        $exporter = Mockery::mock(EstimateExportService::class, [app(ExcelEstimateBuilder::class), app(PDFEstimateBuilder::class), Mockery::mock(FileService::class)])
+            ->makePartial()->shouldAllowMockingProtectedMethods();
+        $exporter->shouldReceive('saveToS3')->once()->with(Mockery::on(static fn (Estimate $value): bool => $value->id === $estimate->id),
+            Mockery::type('string'), Mockery::type('string'), 'xlsx')->andReturn('org-'.$organization->id.'/estimates/offline.xlsx');
+        $appliedFile = $exporter->exportToExcel($estimate->fresh());
+        self::assertStringEndsWith('.xlsx', $appliedFile['filename']);
+        self::assertSame('org-'.$organization->id.'/estimates/offline.xlsx', $appliedFile['s3_path']);
+        $this->assertActualXlsx($appliedFile['content'], $case, 'applied');
+        $nativeFile = app(EstimateGenerationExcelExportService::class)->export($session->fresh());
+        $this->assertActualXlsx($nativeFile['content'], $case, 'native');
         $session->refresh()->update(['status' => 'estimate_review_required']);
         $beforeUsage = DB::table('estimate_generation_ai_usage')->count();
         $quantityReceipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)
@@ -285,7 +302,7 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
                 'total' => '0.02', 'with_vat' => '0.02', 'revised_work' => '0.26', 'revised_total' => '0.26',
             ]],
             'many_physical_work_rows_with_half_kopeck_resources' => [[
-                'rooms' => 40, 'length' => '1', 'width' => '1', 'resources' => 5, 'price' => '0.0050',
+                'rooms' => 40, 'section_count' => 10, 'length' => '1', 'width' => '1', 'resources' => 5, 'price' => '0.0050',
                 'resource_total' => '0.01', 'work_direct' => '0.05', 'historical_work' => '0.03', 'direct' => '2.00', 'contingency' => '0.00',
                 'total' => '2.00', 'with_vat' => '2.40', 'revised_work' => '0.65', 'revised_total' => '2.60',
             ]],
@@ -295,6 +312,61 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
                 'total' => '0.03', 'with_vat' => '0.04', 'revised_work' => '0.39', 'revised_total' => '0.39',
             ]],
         ];
+    }
+
+    private function assertActualXlsx(string $content, array $case, string $kind): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-native-writer-export-');
+        self::assertNotFalse($path);
+        $book = null;
+        try {
+            file_put_contents($path, $content);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            self::assertNotNull($sheet, $kind);
+            $totals = [];
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                $label = (string) $sheet->getCell('F'.$row)->getValue();
+                if (in_array($label, ['Прямые затраты:', 'Резерв на непредвиденные расходы:', 'ИТОГО без НДС:', 'ВСЕГО С НДС:'], true)) {
+                    $totals[$label][] = (string) \Brick\Math\BigDecimal::of(str_replace(' ', '', (string) $sheet->getCell('G'.$row)->getValue()))->toScale(2);
+                }
+            }
+            self::assertSame([$case['direct']], $totals['Прямые затраты:'] ?? [], $kind);
+            self::assertSame([$case['total']], $totals['ИТОГО без НДС:'] ?? [], $kind);
+            self::assertSame([$case['with_vat']], $totals['ВСЕГО С НДС:'] ?? [], $kind);
+            if ($case['contingency'] !== '0.00') {
+                self::assertSame([$case['contingency']], $totals['Резерв на непредвиденные расходы:'] ?? [], $kind);
+            }
+            $metadataSheet = $book->getSheetByName('_METADATA_');
+            self::assertNotNull($metadataSheet, $kind);
+            $metadata = json_decode((string) $metadataSheet->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
+            if (($metadata['encoding'] ?? null) === 'utf8-json-chunks') {
+                $json = '';
+                for ($index = 2; $index <= $metadata['chunk_count'] + 1; $index++) {
+                    $json .= (string) $metadataSheet->getCell('A'.$index)->getValue();
+                }
+                self::assertSame($metadata['sha256'], hash('sha256', $json), $kind);
+                $metadata = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+            }
+            $works = array_values(array_filter($metadata['items'], static fn (array $item): bool => $item['parent_work_id'] === null));
+            $resources = array_values(array_filter($metadata['items'], static fn (array $item): bool => $item['parent_work_id'] !== null));
+            self::assertCount($case['rooms'], $works, $kind);
+            self::assertCount($case['rooms'] * ($case['resources'] + (($case['lighting'] ?? false) ? 1 : 0)), $resources, $kind);
+            self::assertCount(count($metadata['items']), array_unique(array_column($metadata['items'], 'id')), $kind);
+            $workIds = array_column($works, 'id');
+            $sum = \Brick\Math\BigDecimal::zero();
+            foreach ($resources as $resource) {
+                self::assertContains($resource['parent_work_id'], $workIds, $kind);
+                self::assertNotEmpty($resource['measurement_unit'], $kind);
+                self::assertNotEmpty($resource['normative_rate_code'], $kind);
+                self::assertGreaterThan(0, $resource['quantity_total'], $kind);
+                $sum = $sum->plus((string) $resource['total_amount']);
+            }
+            self::assertSame($case['direct'], (string) $sum->toScale(2), $kind);
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($path);
+        }
     }
 
     private function catalog(int $resourceCount, string $resourcePrice, bool $lighting): array

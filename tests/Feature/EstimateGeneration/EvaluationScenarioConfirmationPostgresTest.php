@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetCurrentEvaluation;
@@ -20,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\CataloguePriceSnapshotReader;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Integrations\EstimateGeneration\EstimateGenerationExcelExportService;
 use App\Models\EstimatePositionCatalog;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
@@ -29,6 +31,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 final class EvaluationScenarioConfirmationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
@@ -374,6 +377,12 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $session->refresh();
         self::assertSame($payable, $session->draft_payload['evaluation_result']['scenarios'][1]['total_by_currency']['RUB']);
         self::assertCount(2, $session->draft_payload['evaluation_result']['scenarios'][1]['positions']);
+        $beforeExport = $session->getRawOriginal();
+        $exportSession = app(ReadConfirmedEvaluationExport::class)->read($actor, (int) $session->project_id, (int) $session->id);
+        self::assertNotSame($session, $exportSession);
+        self::assertSame($beforeExport, $session->fresh()->getRawOriginal());
+        self::assertSame(UniversalDraftProjector::CONTRACT, $session->fresh()->draft_payload['generation_contract']);
+        $this->assertConfirmedXlsx(app(EstimateGenerationExcelExportService::class)->export($exportSession)['content'], $totalNet, $payable, $reserveNet);
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
             (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
@@ -396,6 +405,85 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
             self::assertSame($reserveNet, (string) \Brick\Math\BigDecimal::of((string) $export['contingency_amount'])->toScale(2));
         }
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_universal_xlsx_rejects_unconfirmed_stale_and_cross_organization_sources_without_generation(): void
+    {
+        \Illuminate\Support\Facades\Http::fake([]);
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        [$actor, $session, , $input] = $this->fixture();
+        $reader = app(ReadConfirmedEvaluationExport::class);
+        try {
+            app(EstimateGenerationExcelExportService::class)->export($session);
+            self::fail('The formatter must reject an unconfirmed universal draft without a verified projection.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('draft', $exception->errors());
+        }
+        try {
+            $reader->read($actor, (int) $session->project_id, (int) $session->id);
+            self::fail('An unconfirmed scenario must not be exported as a payable estimate.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('draft', $exception->errors());
+        }
+        $other = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
+        try {
+            $reader->read($other, (int) $session->project_id, (int) $session->id);
+            self::fail('Cross-organization export must be rejected.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            self::addToAssertionCount(1);
+        }
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $confirmed = $session->fresh();
+        $before = $confirmed->getRawOriginal();
+        $revisionCount = DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count();
+        $reader->read($actor, (int) $session->project_id, (int) $session->id);
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame($revisionCount, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        $price = EstimatePositionCatalog::query()->where('organization_id', $session->organization_id)->firstOrFail();
+        $price->update(['unit_price' => '101']);
+        try {
+            $reader->read($actor, (int) $session->project_id, (int) $session->id);
+            self::fail('A changed source price must invalidate the payable export.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('draft', $exception->errors());
+        }
+        self::assertSame($before, $session->fresh()->getRawOriginal());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    private function assertConfirmedXlsx(string $content, string $net, string $gross, string $reserve): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-confirmed-scenario-export-');
+        self::assertNotFalse($path);
+        $book = null;
+        try {
+            file_put_contents($path, $content);
+            $book = IOFactory::load($path);
+            $sheet = $book->getSheetByName('Смета');
+            self::assertNotNull($sheet);
+            $values = [];
+            for ($row = 1; $row <= $sheet->getHighestRow(); $row++) {
+                $label = (string) $sheet->getCell('F'.$row)->getValue();
+                if (in_array($label, ['Резерв на непредвиденные расходы:', 'ИТОГО без НДС:', 'ВСЕГО С НДС:', 'НДС по подтверждённым источникам:'], true)) {
+                    $values[$label][] = (string) \Brick\Math\BigDecimal::of(str_replace(' ', '', (string) $sheet->getCell('G'.$row)->getValue()))->toScale(2);
+                }
+            }
+            self::assertSame([$net], $values['ИТОГО без НДС:'] ?? []);
+            self::assertSame([$gross], $values['ВСЕГО С НДС:'] ?? []);
+            self::assertSame([(string) \Brick\Math\BigDecimal::of($gross)->minus($net)->toScale(2)], $values['НДС по подтверждённым источникам:'] ?? []);
+            self::assertSame($reserve === '0.00' ? [] : [$reserve], $values['Резерв на непредвиденные расходы:'] ?? []);
+            $metadata = json_decode((string) $book->getSheetByName('_METADATA_')->getCell('A1')->getValue(), true, 64, JSON_THROW_ON_ERROR);
+            self::assertCount(2, $metadata['items']);
+            foreach ($metadata['items'] as $item) {
+                self::assertNotEmpty($item['metadata']['source_money']);
+                self::assertNotEmpty($item['metadata']['evaluation_confirmation']);
+                self::assertNotEmpty($item['metadata']['price_snapshot']['source_hash']);
+            }
+        } finally {
+            $book?->disconnectWorksheets();
+            unlink($path);
+        }
     }
 
     public static function reserveCases(): array

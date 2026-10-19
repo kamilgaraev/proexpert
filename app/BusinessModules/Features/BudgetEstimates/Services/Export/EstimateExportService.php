@@ -37,7 +37,7 @@ class EstimateExportService
             $data = $this->prepareExportData($estimate, $options);
 
             // Build Excel file
-            $result = $this->excelBuilder->build($estimate, $data, $options);
+            $result = $this->excelBuilder->build($estimate, $data, $data['options']);
             $content = $result['content'];
             $filename = $result['filename'];
 
@@ -217,8 +217,14 @@ class EstimateExportService
             ];
 
             // Add items if needed
-            if ($options['include_works'] || $options['include_materials'] || $options['include_machinery']) {
+            if ($options['include_works'] || $options['include_materials'] || $options['include_machinery'] || $options['include_labor'] || $options['include_resources']) {
+                $itemsById = $section->items->keyBy('id');
                 foreach ($section->items as $item) {
+                    $parent = $item->parent_work_id === null ? null : $itemsById->get($item->parent_work_id);
+                    if ($parent !== null && $this->shouldIncludeItem($parent, $options)
+                        && ($options['include_materials'] || $options['include_machinery'] || $options['include_labor'])) {
+                        continue;
+                    }
                     if ($this->shouldIncludeItem($item, $options)) {
                         $sectionData['items'][] = $this->prepareItemData($item, $options);
                     }

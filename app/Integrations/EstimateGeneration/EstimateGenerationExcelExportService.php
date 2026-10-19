@@ -5,10 +5,20 @@ declare(strict_types=1);
 namespace App\Integrations\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\EstimateContingencyCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
+use App\BusinessModules\Features\BudgetEstimates\Services\SourceMoneyVatBasis;
 use App\Models\Estimate;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+use Illuminate\Validation\ValidationException;
 
 final class EstimateGenerationExcelExportService implements EstimateGenerationExporter
 {
@@ -24,6 +34,11 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
     public function export(EstimateGenerationSession $session): array
     {
         $draft = $session->draft_payload ?? [];
+        if ((($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            || ($draft['generation_contract'] ?? null) === UniversalDraftProjector::CONTRACT)
+            && ($draft['generation_contract'] ?? null) !== ConfirmedEvaluationDraftProjector::CONTRACT) {
+            throw ValidationException::withMessages(['draft' => [trans_message('estimate_generation.export_not_ready')]]);
+        }
         $estimate = $this->makeVirtualEstimate($session, $draft);
         $data = $this->prepareExportData($session, $draft);
 
@@ -65,7 +80,9 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
         $sections = [];
         $sectionId = 1;
         $itemId = 1;
-        $exportTotal = 0.0;
+        $exportTotal = BigDecimal::zero();
+        $confirmed = ($draft['generation_contract'] ?? null) === ConfirmedEvaluationDraftProjector::CONTRACT;
+        $sourceMoney = [];
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimateIndex => $localEstimate) {
             if (! is_array($localEstimate)) {
@@ -74,7 +91,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
 
             $localEstimateSectionId = $sectionId++;
             $localEstimateSectionIndex = count($sections);
-            $localEstimateTotal = 0.0;
+            $localEstimateTotal = BigDecimal::zero();
 
             $sections[] = [
                 'id' => $localEstimateSectionId,
@@ -84,7 +101,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                 'name' => $localEstimate['title'] ?? ('Локальная смета '.($localEstimateIndex + 1)),
                 'description' => $this->buildLocalEstimateDescription($localEstimate),
                 'is_summary' => true,
-                'section_total_amount' => round($localEstimateTotal, 2),
+                'section_total_amount' => 0.0,
                 'items' => [],
             ];
 
@@ -95,7 +112,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
 
                 $currentSectionId = $sectionId++;
                 $fullSectionNumber = (string) ($localEstimateIndex + 1).'.'.($sectionIndex + 1);
-                $sectionTotal = 0.0;
+                $sectionTotal = BigDecimal::zero();
                 $preparedItems = [];
                 $visibleWorkIndex = 1;
 
@@ -113,7 +130,10 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                     $visibleWorkIndex++;
 
                     $itemId = $preparedWorkItem['next_item_id'];
-                    $sectionTotal += (float) ($preparedWorkItem['item']['total_amount'] ?? 0);
+                    $sectionTotal = $sectionTotal->plus((string) ($workItem['total_cost'] ?? '0'));
+                    if ($confirmed) {
+                        $sourceMoney[] = $workItem['accepted_source_money'] ?? [];
+                    }
                     $preparedItems[] = $preparedWorkItem['item'];
                 }
 
@@ -125,14 +145,36 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                     'name' => $section['title'] ?? ($localEstimate['title'] ?? 'Раздел'),
                     'description' => $this->buildSectionDescription($localEstimate, $section),
                     'is_summary' => false,
-                    'section_total_amount' => round($sectionTotal, 2),
+                    'section_total_amount' => (float) OrdinaryEstimateDecimal::money($sectionTotal),
                     'items' => $preparedItems,
                 ];
-                $localEstimateTotal += $sectionTotal;
+                $localEstimateTotal = $localEstimateTotal->plus($sectionTotal);
             }
 
-            $sections[$localEstimateSectionIndex]['section_total_amount'] = round($localEstimateTotal, 2);
-            $exportTotal += $localEstimateTotal;
+            $sections[$localEstimateSectionIndex]['section_total_amount'] = (float) OrdinaryEstimateDecimal::money($localEstimateTotal);
+            $exportTotal = $exportTotal->plus($localEstimateTotal);
+        }
+
+        $ordinary = ($draft['generation_contract'] ?? null) === BuildMostEstimateDraft::CONTRACT;
+        $contingency = $ordinary ? (new EstimateContingencyCalculator)->amount($draft, (string) $exportTotal) : '0.00';
+        $vatRate = BigDecimal::of($ordinary ? (string) ($draft['vat_rate'] ?? '0') : '0');
+        if ($vatRate->isLessThan(0) || $vatRate->isGreaterThan(100)) {
+            throw new \DomainException('generated_estimate_vat_rate_invalid');
+        }
+        $net = BigDecimal::of(OrdinaryEstimateDecimal::money($exportTotal->plus($contingency)));
+        $gross = BigDecimal::of(OrdinaryEstimateDecimal::money($net->multipliedBy(BigDecimal::one()->plus($vatRate->withPointMovedLeft(2)))));
+        if ($confirmed) {
+            $contingency = (string) ($draft['source_contingency_money']['net_amount'] ?? '0.00');
+            if (isset($draft['source_contingency_money'])) {
+                $sourceMoney[] = $draft['source_contingency_money'];
+            }
+            $acceptedTotals = (new SourceMoneyVatBasis)->totals($sourceMoney);
+            $net = BigDecimal::of($acceptedTotals['net_amount']);
+            $gross = BigDecimal::of($acceptedTotals['gross_amount']);
+            if ($sourceMoney === [] || ! $net->isEqualTo($exportTotal->plus($contingency))
+                || ! $gross->isEqualTo($draft['accepted_payable_total'] ?? '-1')) {
+                throw new \DomainException('generated_evaluation_payable_total_mismatch');
+            }
         }
 
         return [
@@ -163,15 +205,17 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
             ],
             'sections' => $sections,
             'totals' => [
-                'total_direct_costs' => round($exportTotal, 2),
+                'total_direct_costs' => (float) OrdinaryEstimateDecimal::money($exportTotal),
                 'total_overhead_costs' => 0.0,
                 'total_estimated_profit' => 0.0,
-                'total_amount' => round($exportTotal, 2),
-                'total_amount_with_vat' => round($exportTotal, 2),
-                'vat_rate' => 0.0,
+                'contingency_amount' => $contingency,
+                'total_amount' => (float) (string) $net,
+                'total_amount_with_vat' => (float) (string) $gross,
+                'vat_rate' => (float) (string) $vatRate,
                 'overhead_rate' => 0.0,
                 'profit_rate' => 0.0,
-                'vat_amount' => 0.0,
+                'vat_amount' => (float) (string) $gross->minus($net),
+                'vat_calculation_method' => $confirmed ? EstimateSourceVatCalculator::METHOD : 'global-rate',
             ],
             'metadata' => [
                 'organization_id' => $session->organization_id,
@@ -179,7 +223,8 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                 'calculation_settings' => [
                     'overhead_rate' => 0.0,
                     'profit_rate' => 0.0,
-                    'vat_rate' => 0.0,
+                    'vat_rate' => (float) (string) $vatRate,
+                    'vat_calculation_method' => $confirmed ? EstimateSourceVatCalculator::METHOD : 'global-rate',
                     'calculation_method' => 'commercial_ai',
                 ],
                 'draft_traceability' => $draft['traceability'] ?? [],
@@ -214,7 +259,8 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
      */
     private function isEstimateWorkItem(array $workItem): bool
     {
-        return $this->finalWorkItemGuard()->isFinalEstimateWorkItem($workItem);
+        return ConfirmedEvaluationDraftProjector::isPersistableCommercialItem($workItem)
+            || $this->finalWorkItemGuard()->isFinalEstimateWorkItem($workItem);
     }
 
     private function finalWorkItemGuard(): EstimateGenerationFinalWorkItemGuard
@@ -280,7 +326,7 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                 'section_id' => $sectionId,
                 'parent_work_id' => null,
                 'catalog_item_id' => null,
-                'item_type' => 'work',
+                'item_type' => ($workItem['item_type'] ?? null) === 'confirmed_commercial_work' ? ($workItem['metadata']['ordinary_item_type'] ?? 'work') : 'work',
                 'position_number' => $positionNumber,
                 'name' => $workItem['name'] ?? 'Работа',
                 'description' => $this->buildWorkDescription($workItem),
@@ -303,6 +349,10 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                 'coefficient_total' => null,
                 'custom_resources' => null,
                 'metadata' => [
+                    'work_item_key' => $workItem['key'] ?? null,
+                    'quantity_evidence_id' => $workItem['quantity_evidence_id'] ?? null,
+                    'quantity_evidence_fingerprint' => $workItem['quantity_evidence_fingerprint'] ?? null,
+                    'quantity_evidence_source_version' => $workItem['quantity_evidence_source_version'] ?? null,
                     'quantity_formula' => $workItem['quantity_formula'] ?? null,
                     'source_refs' => $workItem['source_refs'] ?? [],
                     'validation_flags' => $workItem['validation_flags'] ?? [],
@@ -310,6 +360,11 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
                     'normative_dataset' => $workItem['normative_dataset'] ?? null,
                     'normative_match' => $workItem['normative_match'] ?? null,
                     'normative_candidates' => $workItem['normative_candidates'] ?? [],
+                    ...isset($workItem['accepted_source_money']) ? [
+                        'source_money' => $workItem['accepted_source_money'],
+                        'evaluation_confirmation' => $workItem['metadata']['evaluation_confirmation'] ?? null,
+                        'price_snapshot' => $workItem['accepted_evaluation_price_snapshot'] ?? $workItem['commercial_price_snapshot'] ?? null,
+                    ] : [],
                 ],
                 'is_manual' => false,
                 'is_not_accounted' => false,
@@ -320,14 +375,14 @@ final class EstimateGenerationExcelExportService implements EstimateGenerationEx
 
     protected function resolveUnitPrice(array $workItem): float
     {
-        $quantity = (float) ($workItem['quantity'] ?? 0);
-        $totalCost = (float) ($workItem['total_cost'] ?? 0);
+        $quantity = BigDecimal::of((string) ($workItem['quantity'] ?? '0'));
+        $totalCost = BigDecimal::of((string) ($workItem['total_cost'] ?? '0'));
 
-        if ($quantity <= 0.0) {
+        if ($quantity->isLessThanOrEqualTo(0)) {
             return 0.0;
         }
 
-        return round($totalCost / $quantity, 2);
+        return (float) (string) $totalCost->dividedBy($quantity, 4, RoundingMode::HalfUp);
     }
 
     protected function buildSectionDescription(array $localEstimate, array $section): ?string
