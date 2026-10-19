@@ -790,6 +790,10 @@ final class NormativeWorkItemPlannerService
             .'(?![\p{L}\p{N}])))';
         $fixtureModifiers = '(?:(?&fixture_modifier)\s+){0,3}';
         $listSeparator = '\s*(?:,\s*(?:'.$listConjunction.')?|'.$listConjunction.')\s*'.$fixtureModifiers;
+        $attributeWord = '(?!'.$anyFixture.'|'.$listConjunction.'|(?<![\p{L}\p{N}])(?:не|без|кроме)(?![\p{L}\p{N}]))'
+            .'(?:(?&fixture_modifier)|(?!'.$negativeAction.'|'.$exclusionAction.')[\p{L}\p{N}-]{1,32}(?![\p{L}\p{N}]))';
+        $fixtureListAttribute = $anyFixture.'\K\s+с(?:о)?\s+'.$attributeWord.'(?:\s+'.$attributeWord.'){0,3}'
+            .'(?='.$listSeparator.$anyFixture.')';
         $fixtureList = $anyFixture.'(?:'.$listSeparator.$anyFixture.'){1,7}';
         $sharedNegative = '(?:'.$fixtureList.$beforeNegative.$negativePredicate.'|'
             .'(?<![\p{L}\p{N}])(?:без|кроме)(?![\p{L}\p{N}])'.$beforeAnyExcludedFixture.$fixtureList.'|'
@@ -870,12 +874,17 @@ final class NormativeWorkItemPlannerService
                 ' ',
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
+            $withoutFixtureListAttributes = preg_replace(
+                '~'.$modifierDefinition.$fixtureListAttribute.'~iu',
+                '',
+                $withoutLocativeRoomReference
+            ) ?? $withoutLocativeRoomReference;
             $withoutFixtureLocation = preg_replace(
                 '~'.$modifierDefinition.'(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$fixtureModifiers.$anyFixture
                 .'(?:'.$listSeparator.$anyFixture.'){0,7}~iu',
                 ' ',
-                $withoutLocativeRoomReference
-            ) ?? $withoutLocativeRoomReference;
+                $withoutFixtureListAttributes
+            ) ?? $withoutFixtureListAttributes;
             $withoutSharedNegative = preg_replace('~'.$modifierDefinition.$sharedNegative.'~iu', ' ', $withoutFixtureLocation) ?? '';
             $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutSharedNegative) ?? '';
             $positiveFixtureStatement = preg_replace('~(?<![\p{L}\p{N}])не\s+'.$negativeAction.'(?![\p{L}\p{N}])~iu', ' ', $positiveFixtureStatement) ?? '';
