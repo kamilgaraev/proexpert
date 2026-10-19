@@ -770,7 +770,7 @@ final class NormativeWorkItemPlannerService
             .'(?![\p{L}\p{N}])';
         $separateAssertion = '(?<![\p{L}\p{N}])(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|включ\p{L}*|будет|будут)(?![\p{L}\p{N}])';
         $negativePredicate = '(?:не\s+'.$negativeFixtureAction.'|'.$exclusionAction.')(?![\p{L}\p{N}])';
-        $before = static fn (string $target, string $boundary): string => '(?=[^,;.!?\r\n]{0,60}'.$target.')'
+        $before = static fn (string $target, string $boundary, int $maxDistance = 60): string => '(?=[^,;.!?\r\n]{0,'.$maxDistance.'}'.$target.')'
             .'(?:(?!'.$boundary.')[^,;.!?\r\n])*?';
         $fixtureBoundary = $anyFixture.'|'.$separateAssertion;
         $excludedBoundary = $fixtureBoundary.'|(?<![\p{L}\p{N}])(?:установка|установку|монтаж|подключение)(?![\p{L}\p{N}])';
@@ -795,6 +795,9 @@ final class NormativeWorkItemPlannerService
             .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
             .'комплект\p{L}*|количеств\p{L}*|'
             .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
+        $positiveFixture = '(?:'.$action.$before($anyFixture, $anyFixture, 80)
+            .'(?:'.$anyFixture.'\s*(?:,|и)\s*){0,7}'.$fixture.'|'
+            .$fixture.'(?:\s*(?:,|и)\s*'.$anyFixture.'){0,7}'.$before($action, $anyFixture, 80).$action.')';
 
         foreach ($statements as $statement) {
             $withoutRoomPhrases = preg_replace(
@@ -808,12 +811,17 @@ final class NormativeWorkItemPlannerService
                 ' ',
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
-            $withoutSharedNegative = preg_replace('~'.$sharedNegative.'~iu', ' ', $withoutLocativeRoomReference) ?? '';
+            $withoutFixtureLocation = preg_replace(
+                '~(?<![\p{L}\p{N}])(?:рядом\s+с|возле|около|вместо)\s+'.$anyFixture.'~iu',
+                ' ',
+                $withoutLocativeRoomReference
+            ) ?? $withoutLocativeRoomReference;
+            $withoutSharedNegative = preg_replace('~'.$sharedNegative.'~iu', ' ', $withoutFixtureLocation) ?? '';
             $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutSharedNegative) ?? '';
             $positiveFixtureStatement = preg_replace('~(?<![\p{L}\p{N}])не\s+'.$negativeAction.'(?![\p{L}\p{N}])~iu', ' ', $positiveFixtureStatement) ?? '';
 
             if (preg_match(
-                '~(?<![\p{L}\p{N}])(?:'.$action.'.{0,80}'.$fixture.'|'.$fixture.'.{0,80}'.$action.')'
+                '~(?<![\p{L}\p{N}])'.$positiveFixture
                 .'(?![\p{L}\p{N}])~iu',
                 $positiveFixtureStatement
             ) === 1) {
