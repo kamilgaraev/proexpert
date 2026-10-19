@@ -24,11 +24,13 @@ final class AssistantProductionSchedulePeriod
 
     private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|(?:прошедш|минувш)(?:ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
-    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
+    private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
+
+    private const TIME_START = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|(?:за|в|во|на|с|со|по)\s+(?:\d|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|позапрошл)[а-яё]*\s+(?:\d+\s+)?(?:'.self::TIME_UNIT.'|'.self::MONTH.')\b|начал[а-яё]*\b|конец\b|период\b)|сегодня\b|вчера\b|позавчера\b)';
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::DURATION_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/]\d{1,2}[.\/]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -63,8 +65,12 @@ final class AssistantProductionSchedulePeriod
 
             return $arguments + ['period_start' => $date, 'period_end' => $date];
         }
-        if (preg_match_all('/\b'.self::DURATION_PERIOD.'/iu', $query, $durations) > 0) {
+        if (preg_match_all('/\b(?:'.self::WEEKS_AGO_PERIOD.'|'.self::DURATION_PERIOD.')/iu', $query, $durations) > 0) {
             if (count($durations[0]) !== 1 || self::hasOtherPeriod($query, $durations[0][0])) {
+                return $unresolved;
+            }
+            if (preg_match('/\b'.self::WEEKS_AGO_PERIOD.'/iu', $durations[0][0]) === 1
+                && preg_match('/^(?:за\s+)?\d{1,2}\s+/iu', $durations[0][0]) !== 1) {
                 return $unresolved;
             }
             $period = (new AssistantPeriodResolver)->resolve($query);

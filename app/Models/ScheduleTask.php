@@ -504,7 +504,7 @@ class ScheduleTask extends Model
 
     public function scopeOverdue($query, ?\DateTimeInterface $asOf = null)
     {
-        return $query->where('planned_end_date', '<', $asOf ?? now())
+        return $query->where('planned_end_date', '<', ($asOf ?? now())->format('Y-m-d'))
                     ->where('progress_percent', '<', 100)
                     ->whereNotIn('status', [TaskStatusEnum::COMPLETED->value, TaskStatusEnum::CANCELLED->value]);
     }
