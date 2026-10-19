@@ -22,6 +22,14 @@ final class FactVocabulary
         'duct_length' => ['entities' => ['ventilation_duct'], 'parameter' => 'duct_length', 'group' => 'length', 'unit' => 'm', 'purpose' => 'ventilation.duct'],
     ];
 
+    public static function foundationFormulas(): array
+    {
+        return [
+            'foundation_beam_volume' => ['entity' => 'foundation_beam', 'parameters' => ['length', 'width', 'height']],
+            'foundation_slab_volume' => ['entity' => 'foundation_slab', 'parameters' => ['area', 'thickness']],
+        ];
+    }
+
     public static function engineeringFormulas(): array
     {
         return self::ENGINEERING_MEASUREMENTS;
@@ -140,6 +148,8 @@ final class FactVocabulary
         'wall' => ['length', 'height', 'thickness'],
         'opening' => ['width', 'height', 'area'],
         'site' => ['area', 'depth'],
+        'foundation_beam' => ['length', 'width', 'height'],
+        'foundation_slab' => ['area', 'thickness'],
         'roof' => ['plan_area', 'slope_rise', 'slope_run'],
         'roof_facet' => ['plan_area', 'slope_rise', 'slope_run'],
         'roof_opening' => ['area'],

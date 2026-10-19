@@ -12,6 +12,47 @@ use PHPUnit\Framework\TestCase;
 final class WorkItemQuantityResolverTest extends TestCase
 {
     #[Test]
+    public function foundation_sources_require_the_exact_element_and_never_use_floor_area_as_beam_height(): void
+    {
+        $resolver = new WorkItemQuantityResolver;
+        foreach (['foundation_beam_volume', 'foundation_slab_volume'] as $formula) {
+            $source = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData(
+                key: 'foundation_volume', unit: 'm3', amount: '3.2', formulaKey: $formula, formulaVersion: '1',
+                formulaInputs: ['entity_id' => 'entity:slab', 'operands' => [['fact_id' => 'fact:slab']], 'snapshot_identity' => ['input_fingerprint' => 'current']],
+                source: QuantitySource::Evidenced, evidenceIds: ['evidence:1'], modelVersion: 'current');
+            $item = ['unit' => 'm3', 'metadata' => ['quantity_key' => 'foundation.concrete']];
+            self::assertNull($resolver->resolve($item, [$source->key => $source]));
+            $item['metadata']['scope_entity_id'] = 'entity:beam';
+            self::assertNull($resolver->resolve($item, [$source->key => $source]));
+            $item['metadata']['scope_entity_id'] = 'entity:slab';
+            self::assertSame('3.2', $resolver->resolve($item, [$source->key => $source])?->amount);
+            self::assertSame('entity:slab', $resolver->resolve($item, [$source->key => $source])?->formulaInputs['entity_id']);
+        }
+    }
+
+    #[Test]
+    public function multiple_foundation_elements_are_mapped_individually_without_a_global_alias(): void
+    {
+        $quantities = [];
+        foreach (['beam' => 'foundation_beam_volume', 'slab' => 'foundation_slab_volume'] as $entity => $formula) {
+            $key = 'quantity:'.$formula.':'.$entity;
+            $quantities[$key] = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData(
+                key: $key, unit: 'm3', amount: $entity === 'beam' ? '1' : '3.2', formulaKey: $formula, formulaVersion: '1',
+                formulaInputs: ['entity_id' => $entity], source: QuantitySource::Evidenced, evidenceIds: ['evidence:'.$entity], modelVersion: 'current');
+        }
+        $resolver = new WorkItemQuantityResolver;
+        $item = ['unit' => 'm3', 'metadata' => ['quantity_key' => 'foundation.concrete']];
+        self::assertNull($resolver->resolve($item, $quantities));
+        foreach (['beam' => '1', 'slab' => '3.2'] as $entity => $expected) {
+            $item['metadata']['scope_entity_id'] = $entity;
+            self::assertSame($expected, $resolver->resolve($item, $quantities)?->amount);
+        }
+        unset($quantities['quantity:foundation_beam_volume:beam']);
+        $item['metadata']['scope_entity_id'] = 'beam';
+        self::assertNull($resolver->resolve($item, $quantities));
+    }
+
+    #[Test]
     public function canonical_engineering_alias_cannot_supply_another_entity_or_an_unscoped_work(): void
     {
         $source = new \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData(

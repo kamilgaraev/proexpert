@@ -76,11 +76,13 @@ final readonly class UniversalEvaluationBuilder
                     } else {
                         $entityScope[$sectionKey][] = $entityId;
                     }
+                    $workKey = $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'];
+                    $workKey = is_string($workKey) ? $workKey : $item['key'];
                     $position = ['key' => $item['key'], 'name' => $item['name'] ?? $item['key'], 'section' => $sectionKey,
                         'package_key' => $estimate['key'], 'entity_id' => $entityId, 'unit' => $item['unit'] ?? null,
-                        'work_key' => $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key'],
+                        'work_key' => $workKey,
                         'coverage_requirement' => $item['metadata']['requirement_key']
-                            ?? ScopeCompletenessEvaluator::workRequirement($sectionKey, $item['work_key'] ?? $item['metadata']['composition_work_key'] ?? $item['key']),
+                            ?? ScopeCompletenessEvaluator::workRequirement($sectionKey, $workKey),
                         'quantity' => $item['quantity'] ?? null, 'quantity_status' => $item['quantity_status'] ?? 'unknown',
                         'quantity_formula' => $quantity['formula_key'] ?? null, 'quantity_basis' => $quantity,
                         'quantity_evidence_details' => $this->quantityEvidenceDetails($quantity, $factsById, $proofsById),

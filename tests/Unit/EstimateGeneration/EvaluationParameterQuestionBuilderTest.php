@@ -104,4 +104,23 @@ final class EvaluationParameterQuestionBuilderTest extends TestCase
         self::assertNotContains('quantity:plaster', array_column($result['priority_questions'], 'key'));
         self::assertNull($result['scenarios'][0]['positions'][0]['quantity']);
     }
+
+    public function test_foundation_questions_keep_height_and_thickness_scoped_to_their_elements(): void
+    {
+        foreach ([['foundation_beam', 'foundation_beam_volume', 'height'], ['foundation_slab', 'foundation_slab_volume', 'thickness']] as [$type, $formula, $parameter]) {
+            $entity = new Entity('foundation:1', 1, 2, 3, 'sha256:'.str_repeat('a', 64), 'quantity', 'foundation:1', ['semantic_type' => $type]);
+            $position = ['key' => 'concrete', 'work_key' => 'foundation.concrete', 'entity_id' => $entity->id, 'quantity' => null, 'unit' => 'm3'];
+            $warning = ['code' => 'canonical_quantity_unresolved', 'entity_id' => $entity->id, 'formula' => $formula,
+                'inputs' => [['code' => 'operand_missing', 'operand' => $parameter]]];
+            $questions = (new EvaluationParameterQuestionBuilder)->candidates([$position], new ProjectModelSnapshot([$entity], [], [], []), [$warning]);
+            self::assertCount(1, $questions);
+            self::assertSame('parameter:foundation:1:'.$parameter, $questions[0]['key']);
+            self::assertSame($type, $questions[0]['answer']['entity_type']);
+            self::assertSame($parameter, $questions[0]['answer']['parameter']);
+            self::assertSame('m', $questions[0]['answer']['unit']);
+            self::assertTrue($questions[0]['correctness_blocker']);
+            self::assertTrue($questions[0]['cost_blocker']);
+            self::assertNull($position['quantity']);
+        }
+    }
 }

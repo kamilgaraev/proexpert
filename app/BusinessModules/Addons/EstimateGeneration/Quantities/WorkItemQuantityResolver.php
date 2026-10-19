@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+
 final readonly class WorkItemQuantityResolver
 {
     public function __construct(
@@ -13,15 +15,19 @@ final readonly class WorkItemQuantityResolver
 
     public function resolve(array $workItem, array $quantities, array $generationIdentity = []): ?QuantityData
     {
+        $entity = $workItem['metadata']['scope_entity_id'] ?? $workItem['entity_id'] ?? null;
+        $key = (string) ($workItem['metadata']['quantity_key'] ?? '');
         $quantity = $this->directTakeoff->make($workItem, $generationIdentity)
-            ?? $this->mapper->map((string) ($workItem['metadata']['quantity_key'] ?? ''), $quantities);
+            ?? $this->mapper->map($key, $quantities);
+        if ($quantity === null && is_string($entity) && $entity !== '') {
+            $quantity = $this->mapper->mapForEntity($key, $quantities, $entity);
+        }
         if ($quantity === null) {
             return null;
         }
-        $entity = $workItem['metadata']['scope_entity_id'] ?? $workItem['entity_id'] ?? null;
         $sourceEntity = $quantity->formulaInputs['entity_id'] ?? null;
         if (($entity !== null && (! is_string($entity) || $entity === '' || $sourceEntity !== $entity))
-            || (isset(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::engineeringFormulas()[$quantity->formulaKey])
+            || ((isset(FactVocabulary::engineeringFormulas()[$quantity->formulaKey]) || isset(FactVocabulary::foundationFormulas()[$quantity->formulaKey]))
                 && (! is_string($entity) || $entity === ''))) {
             return null;
         }

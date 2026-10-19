@@ -40,7 +40,7 @@ final class GeometryInventory
             $documentCurrent = $documentVersions === null ? isset($documents[$entity->id][$entity->sourceVersion])
                 : (($documentVersions[$entity->id]['source_version'] ?? null) === $entity->sourceVersion);
             if (($manual ? isset($current[$entity->id][$entity->sourceVersion]) : $documentCurrent)
-                && in_array(self::type($entity), ['room', 'wall', 'opening', 'roof', 'roof_facet', 'roof_opening'], true)) {
+                && in_array(self::type($entity), ['room', 'wall', 'opening', 'roof', 'roof_facet', 'roof_opening', 'foundation_beam', 'foundation_slab'], true)) {
                 $entities[$entity->id] = $entity;
             }
         }

@@ -21,6 +21,8 @@ final readonly class CurrentProjectDerivedQuantityService
         'wall_net_area' => 'net_wall_area',
         'sloped_roof_area' => 'roof_area',
         'earthwork_volume' => 'earthwork_volume',
+        'foundation_beam_volume' => 'foundation_volume',
+        'foundation_slab_volume' => 'foundation_volume',
     ];
 
     public static function formulaPurpose(string $formula): ?string
@@ -267,6 +269,16 @@ final readonly class CurrentProjectDerivedQuantityService
         $requests = [];
         foreach ($snapshot->entities as $entity) {
             $semanticType = (string) ($entity->attributes['semantic_type'] ?? $entity->attributes['properties']['semantic_type'] ?? $entity->type);
+            foreach (FactVocabulary::foundationFormulas() as $formula => $definition) {
+                if ($semanticType !== $definition['entity']) {
+                    continue;
+                }
+                $operands = [];
+                foreach ($definition['parameters'] as $parameter) {
+                    $operands[$parameter] = $this->oneFact($facts, $entity->id, $parameter)?->id;
+                }
+                $requests[] = $this->request($formula, $entity->id, $operands, $token, $technology, $completeness, 'm3', 3);
+            }
             foreach (FactVocabulary::engineeringFormulas() as $formula => $definition) {
                 if (! in_array($semanticType, $definition['entities'], true)) {
                     continue;

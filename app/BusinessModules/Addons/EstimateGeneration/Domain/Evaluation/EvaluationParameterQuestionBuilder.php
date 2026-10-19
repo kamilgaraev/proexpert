@@ -19,6 +19,7 @@ final class EvaluationParameterQuestionBuilder
 
     private const ENTITIES = ['room' => 'Помещение', 'wall' => 'Стена', 'opening' => 'Проём в стене',
         'site' => 'Участок земляных работ', 'roof' => 'Кровля', 'roof_facet' => 'Грань кровли', 'roof_opening' => 'Проём в кровле',
+        'foundation_beam' => 'Фундаментная балка', 'foundation_slab' => 'Фундаментная плита',
         'equipment' => 'Оборудование', 'radiator' => 'Радиатор', 'water_pipe' => 'Трубопровод водоснабжения',
         'sewer_pipe' => 'Трубопровод канализации', 'technological_pipeline' => 'Технологический трубопровод',
         'electrical_circuit' => 'Кабельная цепь', 'ventilation_duct' => 'Воздуховод'];

@@ -37,7 +37,8 @@ final class DerivedQuantityFactory
         }
         $formula = is_string($request['formula_identity'] ?? null) ? $request['formula_identity'] : '';
         $engineering = FactVocabulary::engineeringFormulas()[$formula] ?? null;
-        $roles = self::FORMULAS[$formula] ?? ($engineering !== null ? ['measurement'] : null);
+        $foundation = FactVocabulary::foundationFormulas()[$formula] ?? null;
+        $roles = self::FORMULAS[$formula] ?? $foundation['parameters'] ?? ($engineering !== null ? ['measurement'] : null);
         if ($roles === null) {
             return $this->unresolved('formula_unknown', 'formula');
         }
@@ -115,6 +116,10 @@ final class DerivedQuantityFactory
         $target = $entities[$entityId] ?? null;
         if (! $target instanceof Entity) {
             return $this->unresolved('entity_missing', 'entity', $entityId);
+        }
+        if ($foundation !== null
+            && ($target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type) !== $foundation['entity']) {
+            return $this->unresolved('foundation_entity_incompatible', 'entity', $entityId);
         }
         if ($engineering !== null) {
             $semantic = (string) ($target->attributes['semantic_type'] ?? $target->attributes['properties']['semantic_type'] ?? $target->type);
@@ -194,9 +199,24 @@ final class DerivedQuantityFactory
 
                 continue;
             }
+            if ($foundation !== null && count($ids) !== 1) {
+                $issues[] = $this->issue('foundation_operand_cardinality_invalid', $role);
+
+                continue;
+            }
             foreach ($ids as $id) {
                 if (! is_string($id) || ! isset($facts[$id])) {
                     $issues[] = $this->issue('fact_missing', $role, is_string($id) ? $id : null);
+
+                    continue;
+                }
+                if ($foundation !== null && $facts[$id]->entityId !== $target->id) {
+                    $issues[] = $this->issue('entity_scope_mismatch', $role, $id);
+
+                    continue;
+                }
+                if ($foundation !== null && FactVocabulary::parameter($facts[$id]->type) !== $role) {
+                    $issues[] = $this->issue('foundation_measurement_incompatible', $role, $id);
 
                     continue;
                 }
@@ -978,6 +998,9 @@ final class DerivedQuantityFactory
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
+            'foundation_beam_volume' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0]))
+                ->multipliedBy($this->decimal($resolved['height'][0])),
+            'foundation_slab_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['thickness'][0])),
             'direct_floor_area', 'direct_quantity' => $this->decimal($resolved['measurement'][0]),
             'technology_work_package' => $technologyOperation === 'identity'
                 ? $this->decimal($resolved['base_quantity'][0])
@@ -1022,7 +1045,7 @@ final class DerivedQuantityFactory
         }
 
         return match ($formula) {
-            'earthwork_volume' => 'm3',
+            'earthwork_volume', 'foundation_beam_volume', 'foundation_slab_volume' => 'm3',
             'technology_work_package' => $resolved['base_quantity'][0]['unit'],
             'direct_quantity' => $resolved['measurement'][0]['unit'],
             default => 'm2',
