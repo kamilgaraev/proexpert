@@ -156,7 +156,7 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         [$actor, $session] = $this->fixture();
         [$id, $quote] = $this->quote($actor, $session);
         self::assertArrayHasKey('retained_pipeline_prefix', $this->plan($id));
-        if ($change === 'old_work_plan_schema') {
+        if (in_array($change, ['old_work_plan_schema', 'old_quantity_schema'], true)) {
             $outputs = \Mockery::mock(PipelineOutputRepository::class);
             $outputs->shouldReceive('priorOutputs')->once()
                 ->andThrow(new \InvalidArgumentException('Persisted pipeline output schema is stale.'));
@@ -176,12 +176,13 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
 
     public static function changedSourcesAfterQuote(): array
     {
-        return [['invalidated'], ['old_work_plan_schema']];
+        return [['invalidated'], ['old_work_plan_schema'], ['old_quantity_schema']];
     }
 
-    public function test_previous_work_plan_schema_is_not_reused_or_reserved_by_a_fresh_quote(): void
+    #[DataProvider('previousSchemas')]
+    public function test_previous_schema_is_not_reused_or_reserved_by_a_fresh_quote(string $change): void
     {
-        [$actor, $session, $sourceId] = $this->fixture('old_work_plan_schema');
+        [$actor, $session, $sourceId] = $this->fixture($change);
         $sourceBefore = DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole();
         $reservationsBefore = DB::table('ai_credit_reservations')->count();
         [$id] = $this->quote($actor, $session);
@@ -191,6 +192,11 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         self::assertEquals($sourceBefore, DB::table('estimate_generation_credit_operations')->where('operation_id', $sourceId)->sole());
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         Http::assertNothingSent();
+    }
+
+    public static function previousSchemas(): array
+    {
+        return [['old_work_plan_schema'], ['old_quantity_schema']];
     }
 
     #[DataProvider('insufficientCycleBudgets')]
@@ -513,7 +519,12 @@ final class RetainedPipelinePrefixPostgresTest extends EstimateGenerationCanonic
         $graph = PipelineDefinitionGraph::standard();
         if ($change === 'old_work_plan_schema') {
             $graph = new PipelineDefinitionGraph(array_map(static fn (StageDefinition $definition): StageDefinition => $definition->stage === ProcessingStage::PlanWorkItems
-                ? new StageDefinition($definition->stage, 88, $definition->dependencies, $definition->maxArtifactBytes)
+                ? new StageDefinition($definition->stage, 89, $definition->dependencies, $definition->maxArtifactBytes)
+                : $definition, $graph->ordered()));
+        }
+        if ($change === 'old_quantity_schema') {
+            $graph = new PipelineDefinitionGraph(array_map(static fn (StageDefinition $definition): StageDefinition => $definition->stage === ProcessingStage::ExtractQuantities
+                ? new StageDefinition($definition->stage, 18, $definition->dependencies, $definition->maxArtifactBytes)
                 : $definition, $graph->ordered()));
         }
         $results = new StageResultFactory($artifacts, $graph);

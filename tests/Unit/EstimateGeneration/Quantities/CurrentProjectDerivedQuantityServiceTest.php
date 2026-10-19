@@ -73,6 +73,35 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     }
 
     #[Test]
+    public function equipment_context_uses_server_entity_types_instead_of_the_presence_of_a_count(): void
+    {
+        $repository = new InMemoryProjectModelRepository;
+        $entities = [new Entity('equipment:missing', 10, 20, 30, self::SOURCE, 'equipment', 'equipment:missing')];
+        $facts = $evidence = [];
+        foreach ([
+            ['equipment:z', 'equipment', ['semantic_type' => 'equipment'], '1'],
+            ['equipment:a', 'equipment', ['properties' => ['semantic_type' => 'equipment']], '2'],
+            ['equipment:bed', 'equipment', ['properties' => ['estimate_scope' => 'contextual_only', 'visual_inventory_category' => 'equipment']], '1'],
+            ['equipment:excluded', 'equipment', ['estimate_scope' => 'excluded_by_document_note'], '1'],
+            ['equipment:visual', 'equipment', ['properties' => ['estimate_scope' => 'requires_confirmation', 'visual_inventory_category' => 'sanitary_fixture']], '1'],
+            ['radiator:a', 'equipment', ['semantic_type' => 'radiator'], '3'],
+            ['unclassified', 'quantity', [], '4'],
+        ] as [$id, $type, $attributes, $count]) {
+            $entities[] = new Entity($id, 10, 20, 30, self::SOURCE, $type, $id, $attributes);
+            $proof = $this->nativeEvidence('evidence:'.$id, 10, 20, 30, self::SOURCE,
+                'artifact:spec', 'document', 1, null, 'xlsx:sheet:Spec!C2');
+            $evidence[] = $proof;
+            $facts[] = $this->nativeFact('fact:'.$id, 10, 20, 30, self::SOURCE, $id,
+                'equipment_count', $count, 'count', 0.0, 'document', 'confirmed', [$proof->id]);
+        }
+        $repository->saveSourceModel($entities, $facts, $evidence);
+        $this->makeStageFiveCurrent($repository);
+        $result = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+        self::assertSame(['equipment:a', 'equipment:missing', 'equipment:z'], $result['context']['equipment_entity_ids'] ?? []);
+        self::assertSame([], $result['context']['room_floor_entity_ids']);
+    }
+
+    #[Test]
     public function engineering_measurements_are_exact_per_entity_and_never_use_floor_area(): void
     {
         $repository = new InMemoryProjectModelRepository;

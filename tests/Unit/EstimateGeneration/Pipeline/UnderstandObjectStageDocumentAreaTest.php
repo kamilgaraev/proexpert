@@ -55,6 +55,11 @@ final class UnderstandObjectStageDocumentAreaTest extends TestCase
         {
             public function __construct(private array $area) {}
 
+            public function documentsForScope(int $organizationId, int $projectId, int $sessionId): array
+            {
+                return [];
+            }
+
             public function manifest(PipelineContext $context): array
             {
                 return ['base_input_version' => $context->baseInputVersion, 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null];

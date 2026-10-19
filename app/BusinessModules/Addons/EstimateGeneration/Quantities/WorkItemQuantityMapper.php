@@ -58,6 +58,8 @@ final class WorkItemQuantityMapper
             if ($quantity === null || ! is_string($purpose) || ($quantity->formulaInputs['entity_id'] ?? null) !== $entityId
                 || $quantity->reviewBlockers !== [] || ($quantity->source === QuantitySource::Estimated && $quantity->assumptions === [])
                 || ($workKey === 'rough.floor' && $quantity->source !== QuantitySource::Evidenced)
+                || ($purpose === 'equipment.count' && in_array($workKey, ['equipment.purchase', 'equipment.install'], true)
+                    && BigDecimal::of($quantity->amount)->isLessThanOrEqualTo(0))
                 || ! $this->acceptsExactSource($workKey, $purpose, $quantity->unit)) {
                 continue;
             }

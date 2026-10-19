@@ -50,13 +50,32 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
     public function source(PipelineContext $context): array
     {
         $session = $this->session($context);
+        $documents = $this->documentsForScope($context->organizationId, $context->projectId, $context->sessionId);
+        $projectModel = $this->projectModel->forScope(
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+        );
+
+        return [
+            'input' => $this->json($session->input_payload),
+            'documents' => $documents,
+            'user_id' => $session->user_id === null ? null : (int) $session->user_id,
+            'effective_project_model_values' => $projectModel['effective_values'],
+            'project_model_snapshot_token' => $projectModel['token'],
+        ];
+    }
+
+    public function documentsForScope(int $organizationId, int $projectId, int $sessionId): array
+    {
         $documents = [];
         $bytes = 0;
         $columns = [
             'id', 'filename', 'checksum_sha256', 'source_version', 'status', 'facts_summary',
             'quality_score', 'quality_level', 'quality_flags',
         ];
-        $selectedDocuments = $this->documentQuery($context)->select([...$columns, 'extracted_text'])
+        $selectedDocuments = $this->scoped($this->database->connection()->table('estimate_generation_documents'), $organizationId, $projectId, $sessionId)
+            ->orderBy('id')->select([...$columns, 'extracted_text'])
             ->limit(self::MAX_DOCUMENTS + 1);
         // Keep oversized TOAST text in PostgreSQL rather than materializing an unbounded source in PHP.
         $textBytes = "SUM(octet_length(COALESCE(extracted_text, ''))) OVER ()";
@@ -90,7 +109,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
 
         $rows = 0;
         foreach ($this->relationDefinitions() as [$table, $target, $columns]) {
-            $query = $this->scoped($this->database->connection()->table($table), $context)
+            $query = $this->scoped($this->database->connection()->table($table), $organizationId, $projectId, $sessionId)
                 ->select($columns)->orderBy('id');
             foreach ($query->cursor() as $row) {
                 if (++$rows > self::MAX_SOURCE_ROWS) {
@@ -106,19 +125,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             }
         }
 
-        $projectModel = $this->projectModel->forScope(
-            $context->organizationId,
-            $context->projectId,
-            $context->sessionId,
-        );
-
-        return [
-            'input' => $this->json($session->input_payload),
-            'documents' => array_values($documents),
-            'user_id' => $session->user_id === null ? null : (int) $session->user_id,
-            'effective_project_model_values' => $projectModel['effective_values'],
-            'project_model_snapshot_token' => $projectModel['token'],
-        ];
+        return array_values($documents);
     }
 
     private function session(PipelineContext $context): stdClass
@@ -148,15 +155,15 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
     {
         return $this->scoped(
             $this->database->connection()->table('estimate_generation_documents'),
-            $context,
+            $context->organizationId, $context->projectId, $context->sessionId,
         )->orderBy('id');
     }
 
-    private function scoped(Builder $query, PipelineContext $context): Builder
+    private function scoped(Builder $query, int $organizationId, int $projectId, int $sessionId): Builder
     {
-        return $query->where('organization_id', $context->organizationId)
-            ->where('project_id', $context->projectId)
-            ->where('session_id', $context->sessionId);
+        return $query->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId);
     }
 
     /** @return list<array{string, string, list<string>}> */

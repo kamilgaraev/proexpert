@@ -15,6 +15,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\EquipmentEstimateScope;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
+use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use DomainException;
 use InvalidArgumentException;
 
@@ -24,12 +30,18 @@ final readonly class EstimatorKnownContextSnapshot
     public function __construct(private ProjectModelRepository $models, private EstimateComposerInputFactory $composer,
         private EstimateAuditInputFactory $audit, private ProjectSynthesisInputFactory $synthesis,
         private EstimateCompositionProjector $projection, private TargetedConflictResolver $conflicts,
-        private ProjectUnderstandingBudget $budget, private EstimatorKnownContextParts $parts) {}
+        private ProjectUnderstandingBudget $budget, private EstimatorKnownContextParts $parts,
+        private GenerationPipelineDataGateway $gateway) {}
 
     public function capture(EstimateGenerationSession $session, bool $complex, ?array $wirePolicy = null, ?string $localEstimateKey = null, ?array $roleLimits = null): array
     {
         try {
             return $this->captureCurrent($session, $complex, $wirePolicy, $localEstimateKey, $roleLimits);
+        } catch (PipelineStageException $error) {
+            if ($error->safeCode !== 'pipeline_source_too_large') {
+                throw $error;
+            }
+            throw new DomainException('estimator_known_context_requires_source_split', previous: $error);
         } catch (InvalidArgumentException $error) {
             $code = match ($error->getMessage()) {
                 'estimate_composer_snapshot_changed', 'estimate_audit_snapshot_changed', 'estimate_composer_candidate_source_invalid',
@@ -127,6 +139,27 @@ final readonly class EstimatorKnownContextSnapshot
         }
         $measured = $this->parts->measure($composerInput, $auditInput, $complex ? $synthesisInput : null, $links, $questions,
             $wirePolicy, $roleLimits);
+        $equipmentScope = [];
+        if (($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && in_array('equipment', $session->input_payload['selected_sections'] ?? [], true)
+            && ($session->input_payload['profile_id'] ?? null) !== 'industrial') {
+            $answerIds = EquipmentEstimateScope::answerFactIds($snapshot);
+            $scopes = EquipmentEstimateScope::select($snapshot, $answerIds === [] ? []
+                : $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $answerIds));
+            $objectProfile = '';
+            if ($scopes !== []) {
+                $analysis = (new ConstructionSemanticParser)->parse($session->input_payload,
+                    $this->gateway->documentsForScope($organizationId, $projectId, $sessionId));
+                $analysis['evaluation_policy'] = ['profile_id' => $session->input_payload['profile_id'] ?? 'construction'];
+                $objectProfile = (new PackagePlannerService)->profileFromAnalysis($analysis)->objectType;
+            }
+            if ($scopes !== [] && ObjectTypeSignalClassifier::isResidential($objectProfile)) {
+                $operationCount = EquipmentEstimateScope::workCount($scopes);
+                $equipmentScope = ['equipment_work_scope' => ['version' => 'equipment-estimate-scope:v2',
+                    'fingerprint' => hash('sha256', CanonicalPipelineJson::encode(['object_profile' => $objectProfile, 'entities' => $scopes])),
+                    'operation_count' => $operationCount, 'expansion_delta' => max(0, $operationCount - 2)]];
+            }
+        }
         $this->assertWithinBudget($organizationId, $projectId, $sessionId);
         $verified = $this->models->snapshotForUnderstanding($organizationId, $projectId, $sessionId, $this->budget->maxFacts + 1);
         if (! hash_equals((string) $capture['token'], (string) $verified['token'])) {
@@ -134,7 +167,8 @@ final readonly class EstimatorKnownContextSnapshot
         }
 
         return [...$measured, 'fingerprint' => hash('sha256', CanonicalPipelineJson::encode([
-            'model_snapshot' => $capture['token'], 'parts' => $measured['fingerprint'], 'saved_draft' => $draft])),
+            'model_snapshot' => $capture['token'], 'parts' => $measured['fingerprint'], 'saved_draft' => $draft, ...$equipmentScope])),
+            ...$equipmentScope,
             'known_candidate_count' => count($candidates), 'known_fact_count' => count($snapshot->facts),
             'known_work_count' => $workCount, 'known_quantity_count' => count($quantities),
             'draft_context_status' => $draft === [] ? 'absent' : ($staleDraft ? 'recomposition_required' : 'current'),

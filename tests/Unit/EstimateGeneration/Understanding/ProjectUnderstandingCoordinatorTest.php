@@ -21,6 +21,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\EloquentEstimateClarificationSource;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ProjectUnderstandingQuestionProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Questions\ResolveCurrentEstimateClarification;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -28,6 +31,46 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class ProjectUnderstandingCoordinatorTest extends TestCase
 {
+    #[Test]
+    public function confirming_a_visual_asset_count_preserves_the_published_scope_question_and_its_visual_target(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $entity = new Entity('equipment:wc', 1, 2, 3, $source, 'equipment', 'equipment:wc', [
+            'name' => 'Унитаз', 'properties' => ['visual_inventory_category' => 'sanitary_fixture',
+                'estimate_scope' => 'requires_confirmation', 'room_key' => 'room:bathroom'],
+        ]);
+        $visual = new Fact('fact:visual', 1, 2, 3, $source, $entity->id, 'sanitary_fixture', 'Унитаз', null,
+            0.7, 'document', 'unresolved', ['evidence:visual']);
+        $count = new Fact('fact:count', 1, 2, 3, $source, $entity->id, 'equipment_count', '1', 'count',
+            1.0, 'user_assumption', 'confirmed', []);
+        $models->saveSourceModel([$entity], [$visual, $count], [new Evidence('evidence:visual', 1, 2, 3, $source, 'document:1', 'document', 1)]);
+        $factory = new RecordingArbitratorFactory;
+        $coordinator = $this->coordinator($models, $factory);
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 1, allowModelCalls: false);
+        self::assertCount(1, $result->questions);
+        self::assertSame(['fact:visual'], $result->questions[0]['fact_ids']);
+        self::assertSame($result->questions, $models->currentUnderstanding(1, 2, 3)['questions']);
+        $catalog = new EloquentEstimateClarificationSource($models,
+            new ResolveCurrentEstimateClarification(new ProjectUnderstandingQuestionProjector(static fn (string $key): string => 'Дополнительный ответ')), 10_001);
+        $published = $catalog->allCurrent(1, 2, 3);
+        self::assertCount(1, $published);
+        self::assertSame($visual->id, $published[0]->targetFactId);
+        self::assertNotNull($catalog->findCurrent(1, 2, 3, $published[0]->question->code));
+        $answer = new Fact('answer:scope', 1, 2, 3, $source, $entity->id, $visual->type, [
+            'question_key' => $published[0]->question->code, 'question_fingerprint' => str_repeat('c', 64),
+            'response' => 'selected', 'choice_value' => 'installation_only',
+            'source_locator' => $published[0]->question->sourceLocator,
+        ], null, 1.0, 'user_assumption', 'confirmed', $visual->evidenceIds, 2, $visual->id);
+        $models->applyDecision(new Decision('decision:scope', 1, 2, 3, $source, 'fact', $visual->id, $answer->id,
+            'user', '1', 'Учесть только монтаж', 2), $answer);
+        $answered = $coordinator->refresh(1, 2, 3, $this->token(), 2, allowModelCalls: false);
+        self::assertSame([], $answered->questions);
+        self::assertSame([], $catalog->allCurrent(1, 2, 3));
+        self::assertSame(0, $factory->calls);
+        self::assertSame('1', $models->fact(1, 2, 3, $count->id)->value);
+    }
+
     #[Test]
     public function mixed_description_and_document_sources_use_an_aggregate_understanding_version_without_rewriting_facts(): void
     {
@@ -590,6 +633,9 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
             $budget ?? ProjectUnderstandingBudget::defaults(),
             $synthesis ?? new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
             $allowance ?? new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance,
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\VisualInventoryQuestionBuilder(
+                static fn (string $key, array $replace = []): string => $replace['items'] ?? 'Подтвердите состав оборудования',
+            ),
         );
     }
 

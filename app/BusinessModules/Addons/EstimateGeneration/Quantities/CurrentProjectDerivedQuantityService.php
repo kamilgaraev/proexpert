@@ -60,10 +60,10 @@ final readonly class CurrentProjectDerivedQuantityService
         if (count($decisionIds) > 256) {
             return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
         }
-        $assumptionFactIds = array_values(array_map(
+        $assumptionFactIds = array_values(array_unique([...array_map(
             static fn (Fact $fact): string => $fact->id,
             array_filter($snapshot->facts, static fn (Fact $fact): bool => in_array($fact->origin, ['user_assumption', 'user_input'], true)),
-        ));
+        ), ...EquipmentEstimateScope::answerFactIds($snapshot)]));
         if (count($assumptionFactIds) > self::MAX_FACTS) {
             return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
         }
@@ -210,6 +210,7 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings,
             array_column($snapshot->facts, null, 'id'), array_column($snapshot->entities, null, 'id'));
+        $equipmentScopes = EquipmentEstimateScope::select($snapshot, $decisions);
 
         return [
             'derived' => $derived,
@@ -219,6 +220,8 @@ final readonly class CurrentProjectDerivedQuantityService
             'context' => [
                 ...$this->context($projectModelToken, $technology, $completeness),
                 'room_floor_entity_ids' => $this->roomFloorEntityIds($snapshot),
+                'equipment_entity_ids' => array_keys($equipmentScopes),
+                'equipment_estimate_scopes' => $equipmentScopes,
                 'work_packages' => $this->workPackageContext($completeness, $requests, $decisions),
             ],
         ];

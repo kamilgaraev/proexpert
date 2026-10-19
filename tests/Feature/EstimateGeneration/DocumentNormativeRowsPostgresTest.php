@@ -11,15 +11,19 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMo
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
@@ -31,19 +35,24 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\MatchNormativesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCalculationResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -52,6 +61,143 @@ use Tests\Support\EstimateGeneration\InMemoryAiRoleRunRepository;
 
 final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_actual_plan_stage_binds_six_residential_assets_to_persisted_accepted_count_assumptions(): void
+    {
+        Http::preventStrayRequests();
+        [$context, $session] = $this->fixture();
+        $actor = User::query()->findOrFail($session->user_id);
+        $actor->update(['current_organization_id' => $session->organization_id, 'is_active' => true]);
+        $actor->organizations()->attach($session->organization_id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $session->update(['state_version' => 0, 'status' => 'draft', 'input_payload' => [
+            ...$session->input_payload, 'object_type' => 'house', 'description' => 'Строительство жилого дома',
+            'evaluation_mode' => 'universal',
+        ]]);
+        $entities = [];
+        foreach (['bath', 'basin', 'wc', 'kitchen-sink', 'geyser-150-l', 'switchboard'] as $key) {
+            $entities[] = ['key' => $key, 'type' => 'equipment', 'parameters' => [
+                'equipment_count' => ['value' => '1', 'unit' => 'count', 'basis' => 'assumption'],
+            ]];
+        }
+        $entities[] = ['key' => 'radiators', 'type' => 'radiator', 'parameters' => [
+            'equipment_count' => ['value' => '3', 'unit' => 'count', 'basis' => 'assumption'],
+        ]];
+        app(SaveManualProjectFacts::class)->handle($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid(), ['entities' => $entities]);
+        $session->refresh();
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $capture = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $sourceVersion = $capture['snapshot']->entities[0]->sourceVersion;
+        self::assertTrue($models->replaceTechnologyRecommendations(...[...$scope, $sourceVersion, $capture['token'], 'technology:v1', str_repeat('c', 64), [], []]));
+        self::assertTrue($models->replaceCompleteness(...[...$scope, $sourceVersion, $capture['token'], 'technology:v1', str_repeat('c', 64), 'rules:v1', str_repeat('d', 64), [], []]));
+        $derived = app(CurrentProjectDerivedQuantityService::class)->derive(...$scope);
+        self::assertCount(6, $derived['context']['equipment_entity_ids']);
+        $countFacts = [];
+        foreach ($capture['snapshot']->facts as $fact) {
+            if ($fact->type === 'equipment_count') {
+                self::assertSame('user_assumption', $fact->origin);
+                $countFacts[$fact->entityId] = $fact->id;
+            }
+        }
+        self::assertCount(7, $countFacts);
+        $session->update(['status' => 'generating']);
+        $source = app(EloquentGenerationPipelineDataGateway::class)->source($context);
+        $analysis = app(ConstructionSemanticParser::class)->parse($source['input'], $source['documents']);
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'selected_sections' => ['equipment'], 'price_policy' => 'catalog', 'profile_id' => 'construction'];
+        $graph = PipelineDefinitionGraph::standard();
+        $model = new class implements EstimateComposerModel
+        {
+            public function compose(EstimateComposerInput $input, callable $onPhysicalAttemptReserved): array
+            {
+                $onPhysicalAttemptReserved('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+
+                return ['work_intents' => array_map(static fn (array $candidate): array => [
+                    'kind' => 'existing', 'candidate_id' => $candidate['candidate_id'], 'work_key' => null,
+                    'name' => null, 'derived_quantity_id' => null, 'source_fact_ids' => $candidate['source_fact_ids'],
+                    'technology_package_candidate' => $candidate['technology_package_candidate'],
+                    'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [],
+                ], $input->candidates)];
+            }
+        };
+        $this->app->instance(RunEstimateComposer::class, new RunEstimateComposer(new InMemoryAiRoleRunRepository, $model, 'openai/gpt-6-luna'));
+        $this->app->instance(StageResultFactory::class, new StageResultFactory(new InMemoryPipelineArtifactStore, $graph));
+        $quantityOutput = ['quantity_learning_hints' => [], 'quantity_coverage_warnings' => $derived['warnings'],
+            'building_quantities' => (new QuantityCalculationResult($derived['quantities'], []))->toArray(),
+            'stage6_generation_context' => $derived['context']];
+        $planContext = $this->planContext($session, $analysis, $graph, $quantityOutput);
+        $result = app(PlanWorkItemsStage::class)->execute($planContext);
+        $items = [];
+        foreach ($result->transientData['local_estimates'] as $local) {
+            foreach ($local['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    if (($item['metadata']['residential_equipment_candidate'] ?? null) === true) {
+                        $items[] = $item;
+                    }
+                }
+            }
+        }
+        self::assertCount(13, $items);
+        $identities = [];
+        $evidenceIds = [];
+        foreach ($items as $item) {
+            self::assertTrue($item['skip_normative_matching']);
+            if ($item['metadata']['composition_work_key'] === 'equipment.delivery') {
+                self::assertArrayNotHasKey('entity_id', $item);
+                self::assertArrayNotHasKey('quantity_evidence', $item);
+                self::assertArrayNotHasKey('quantity', $item);
+
+                continue;
+            }
+            $entity = $item['entity_id'];
+            self::assertContains($entity, $derived['context']['equipment_entity_ids']);
+            self::assertSame('1', $item['quantity']);
+            self::assertSame('estimated', $item['quantity_evidence']['source']);
+            self::assertSame($entity, $item['quantity_evidence']['formula_inputs']['entity_id']);
+            self::assertSame($capture['token'], $item['quantity_evidence']['model_version']);
+            self::assertContains($countFacts[$entity], array_column($item['source_refs'], 'fact_id'));
+            self::assertContains($countFacts[$entity], $item['quantity_evidence']['assumptions']);
+            self::assertTrue($item['metadata']['requires_specification']);
+            self::assertTrue($item['metadata']['requires_technology_confirmation']);
+            foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resourceType) {
+                self::assertSame([], $item[$resourceType]);
+            }
+            self::assertNull($item['total_cost']);
+            $node = app(EvidenceRepository::class)->node(...[...$scope, $item['quantity_evidence_id']]);
+            self::assertNotNull($node);
+            self::assertSame($planContext->baseInputVersion, $node->sourceVersion);
+            self::assertSame($node->fingerprint, $item['quantity_evidence_fingerprint']);
+            self::assertSame($node->sourceVersion, $item['quantity_evidence_source_version']);
+            $identities[] = $item['metadata']['composition_work_key'].'@'.$entity;
+            $evidenceIds[] = $node->id;
+        }
+        self::assertCount(12, array_unique($identities));
+        self::assertCount(12, array_unique($evidenceIds));
+        $workflow = $this->createMock(NormativeMatchingWorkflow::class);
+        $workflow->expects(self::never())->method('match');
+        $matcher = $this->createMock(ResourceAssemblyService::class);
+        $matcher->expects(self::never())->method('assembleFromDecision');
+        $results = app(StageResultFactory::class);
+        $matching = new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results);
+        foreach (['not_required', 'pinned'] as $pinStatus) {
+            $plan = $result->transientData;
+            $plan['normative_context_pin'] = ['status' => $pinStatus, 'dataset_version' => 'test-equipment-dataset', 'applicability_date' => '2026-10-20'];
+            $output = $results->make($planContext, ProcessingStage::PlanWorkItems, $plan)->output;
+            self::assertNotNull($output);
+            $dependencies = [ProcessingStage::PlanWorkItems->value => $output->version];
+            $matchContext = new PipelineContext($planContext->sessionId, $planContext->organizationId, $planContext->projectId,
+                $planContext->stateVersion, PipelineInputVersion::for($graph->get(ProcessingStage::MatchNormatives), $planContext->baseInputVersion, $dependencies),
+                $planContext->sessionStatus, priorOutputs: new PipelinePriorOutputs([ProcessingStage::PlanWorkItems->value => $output],
+                    [ProcessingStage::PlanWorkItems->value => $plan]), generationAttemptId: $planContext->generationAttemptId,
+                baseInputVersion: $planContext->baseInputVersion, stage: ProcessingStage::MatchNormatives, dependencyVersions: $dependencies);
+            $matched = $matching->execute($matchContext);
+            self::assertSame($plan['local_estimates'], $matched->transientData['local_estimates']);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        Http::assertNothingSent();
+    }
+
     #[DataProvider('observedDocumentRows')]
     public function test_actual_plan_stage_keeps_observed_amounts_for_review_without_accepting_quantity_evidence(array $quantities, string $name, string $unit, string $package): void
     {
@@ -532,9 +678,9 @@ final class DocumentNormativeRowsPostgresTest extends EstimateGenerationCanonica
         return $items;
     }
 
-    private function planContext(EstimateGenerationSession $session, array $analysis, PipelineDefinitionGraph $graph): PipelineContext
+    private function planContext(EstimateGenerationSession $session, array $analysis, PipelineDefinitionGraph $graph, ?array $quantities = null): PipelineContext
     {
-        $quantities = ['quantity_learning_hints' => [], 'quantity_coverage_warnings' => [], 'building_quantities' => [], 'stage6_generation_context' => []];
+        $quantities ??= ['quantity_learning_hints' => [], 'quantity_coverage_warnings' => [], 'building_quantities' => [], 'stage6_generation_context' => []];
         $payloads = [ProcessingStage::UnderstandObject->value => ['analysis' => $analysis], ProcessingStage::ExtractQuantities->value => $quantities];
         $outputs = [];
         foreach ([ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities] as $stage) {

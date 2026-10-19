@@ -11,4 +11,6 @@ interface GenerationPipelineDataGateway
 
     /** @return array{input: array<string, mixed>, documents: list<array<string, mixed>>, user_id: int|null, effective_project_model_values?: list<array<string, mixed>>, document_total_area?: array{amount: string, evidence_id: int, confidence: float, floor_count: int}|null} */
     public function source(PipelineContext $context): array;
+
+    public function documentsForScope(int $organizationId, int $projectId, int $sessionId): array;
 }
