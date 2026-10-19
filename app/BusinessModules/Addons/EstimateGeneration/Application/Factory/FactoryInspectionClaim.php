@@ -18,5 +18,7 @@ final readonly class FactoryInspectionClaim
         public string $modelToken,
         public EstimateGenerationSession $session,
         public ProjectModelSnapshot $snapshot,
+        public string $stepKind = 'inspect_input',
+        public ?string $sourceCheckpointId = null,
     ) {}
 }

@@ -6,7 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\InspectFactoryInputs;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Factory\InspectFactoryPlanning;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\InspectEstimateFactoryPlanningRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\InspectEstimateFactoryRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
@@ -29,6 +31,17 @@ final class EstimateGenerationFactoryController extends Controller
         try {
             return AdminResponse::success($inspect->handle($request->user(), (int) $project->id, (int) $session->id,
                 (int) $input['state_version'], $input['request_id']))->header('Cache-Control', 'private, no-store');
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.factory.changed'), 409);
+        }
+    }
+
+    public function planning(InspectEstimateFactoryPlanningRequest $request, Project $project, EstimateGenerationSession $session, InspectFactoryPlanning $inspect): JsonResponse
+    {
+        $input = $request->validated();
+        try {
+            return AdminResponse::success($inspect->handle($request->user(), (int) $project->id, (int) $session->id,
+                (int) $input['state_version'], $input['request_id'], $input['source_checkpoint_id']))->header('Cache-Control', 'private, no-store');
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.factory.changed'), 409);
         }

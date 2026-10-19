@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '2b08cfa6d3bd7b3c273701fabce34d0b508dd5c317eee326cf269449fd11a788',
-        'training' => '0f37d5bd825e459fefe51ad76b5fad62d10f6a556e769b99e20234dc2d5d66d7',
-        'pricing' => '0f37d5bd825e459fefe51ad76b5fad62d10f6a556e769b99e20234dc2d5d66d7',
+        'geometry' => 'ec5098ffe38add22589f3d17dd58b335e395e2a384eede09c50b3f9019698f7c',
+        'training' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
+        'pricing' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '58ef8c33c317f7bd19a25570676db6890b72f93ca609a51f1a1e11d9fbdfa1eb';
+    private const FRESH_INVENTORY_DIGEST = '56b1fefe7a7e78a2ea635aa704dc73b63e2c017aefca1590e628a10c892147eb';
 
     private const SUBJECT = [
         'geometry' => [
@@ -45,9 +45,9 @@ final class EstimateGenerationContractDatabaseProvisioner
     ];
 
     private const SUBJECT_DIGEST = [
-        'geometry' => '724a3a195ab280c3f87ec1b29064024f6e0208709c3c340a85f6ce9c5983887b',
-        'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
-        'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
+        'geometry' => 'ec5098ffe38add22589f3d17dd58b335e395e2a384eede09c50b3f9019698f7c',
+        'pricing' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
+        'training' => 'fcef450792f44ca6709c0e11b42a9bfb0c66a1edf437b8613ce34a536e0ca758',
         'project-model' => 'b93980b093a0b93119d958ae46216ab51ca7175f8afe6591e965027d4d681b4a',
     ];
 
@@ -288,6 +288,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_19_000100_allow_exact_user_measurement_evidence.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_19_110000_allow_foundation_dimension_entities.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_19_120000_create_estimate_factory_inspections.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_19_130000_add_factory_planning_checkpoints.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

@@ -784,10 +784,20 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput(
                 $app->make('db')->connection(), $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             ));
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryPlanningInput::class,
+            fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryPlanningInput(
+                $app->make('db')->connection(), $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\CompletenessRuleCatalog::class),
+            ));
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionStore::class,
             fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionStore(
                 $app->make('db')->connection(), $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInspectionInput::class),
                 $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryPlanningInput::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryPlanningInspector::class),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Review\UpdateEstimatePrerequisites::class),
             ));
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class);
