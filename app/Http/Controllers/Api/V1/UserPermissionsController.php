@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\ModulePermissionCatalog;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -233,10 +234,16 @@ class UserPermissionsController extends Controller
         }
 
         if (isset($permissions['modules'])) {
+            $catalog = get_class($this) === self::class
+                ? app(ModulePermissionCatalog::class)->load($permissions['modules'])
+                : null;
             foreach ($permissions['modules'] as $module => $modulePermissions) {
                 foreach ($modulePermissions as $permission) {
                     if ($permission === '*') {
-                        $flat = array_merge($flat, $this->normalizePermissions($this->getModulePermissions($module)));
+                        $moduleCatalog = $catalog === null
+                            ? $this->getModulePermissions($module)
+                            : $this->resolveModulePermissions($module, static fn (string $slug) => $catalog[$slug] ?? null);
+                        $flat = array_merge($flat, $this->normalizePermissions($moduleCatalog));
                     } else {
                         $normalizedPermission = $this->normalizePermission($permission);
                         if ($normalizedPermission !== null) {
@@ -281,12 +288,14 @@ class UserPermissionsController extends Controller
 
     protected function getModulePermissions(string $moduleSlug): array
     {
+        return $this->resolveModulePermissions($moduleSlug, static fn (string $slug) => \App\Models\Module::where('slug', $slug)->first());
+    }
+
+    private function resolveModulePermissions(string $moduleSlug, callable $lookup): array
+    {
         try {
-            $moduleSlug = match ($moduleSlug) {
-                'estimate-generation' => 'ai-estimates',
-                default => $moduleSlug,
-            };
-            $module = \App\Models\Module::where('slug', $moduleSlug)->first();
+            $moduleSlug = ModulePermissionCatalog::canonicalSlug($moduleSlug);
+            $module = $lookup($moduleSlug);
             if ($module && $module->permissions) {
                 return $this->normalizePermissions($module->permissions);
             }
