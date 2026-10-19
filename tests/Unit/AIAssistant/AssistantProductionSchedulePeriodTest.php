@@ -14,6 +14,50 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_current_snapshot_date_does_not_replace_physical_work_period(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['по состоянию на сегодня', 'по состоянию на сегодняшний день', 'на сегодняшний день'] as $phrase) {
+                self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+                $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 102], AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+                $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                    'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+            }
+            foreach (['за вчера по состоянию на сегодня' => ['2026-10-18', '2026-10-18'],
+                'за сегодня по состоянию на сегодня' => ['2026-10-19', '2026-10-19'],
+                'с 2025-12-01 по 2026-01-01 по состоянию на сегодня' => ['2025-12-01', '2026-01-01']] as $phrase => [$start, $end]) {
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_subday_periods_require_date_bounds_without_silent_all_time_fallback(): void
+    {
+        foreach (['за последние 24 часа', 'последние 24 часа', 'за час', 'за последние три часа', 'за 90 минут',
+            'за последнюю минуту', 'за 30 секунд', 'за текущий час', 'за 120 часов'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+        }
+    }
+
     public function test_named_month_with_multiple_years_requires_dates_and_keeps_literal_name_priority(): void
     {
         foreach (['за октябрь 2025 и 2026', 'за октябрь 2025 или 2026', 'в октябре 2025–2026', 'за октябрь 2025, 2026'] as $phrase) {
