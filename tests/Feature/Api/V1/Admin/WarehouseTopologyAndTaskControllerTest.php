@@ -987,6 +987,7 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             'available_quantity' => 100,
             'reserved_quantity' => 2,
             'unit_price' => 18,
+            'last_movement_at' => '2026-10-18 00:10:14',
         ]);
         WarehouseBalance::query()->create([
             'organization_id' => $context->organization->id,
@@ -997,6 +998,7 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             'reserved_quantity' => 1,
             'unit_price' => 18,
             'batch_number' => 'QA-BATCH-001',
+            'last_movement_at' => '2026-10-19 00:10:14',
         ]);
         $this->allowAdminAccess();
 
@@ -1006,6 +1008,7 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             ->assertJsonPath('data.0.available_quantity', 101)
             ->assertJsonPath('data.0.reserved_quantity', 3)
             ->assertJsonPath('data.0.total_quantity', 104)
+            ->assertJsonPath('data.0.last_movement_at', '2026-10-19T00:10:14+00:00')
             ->assertJsonPath('data.0.addressed_quantity', 2)
             ->assertJsonPath('data.0.unlocated_quantity', 102)
             ->assertJsonPath('data.0.has_unlocated_quantity', true)
