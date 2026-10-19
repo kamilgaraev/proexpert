@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Http\Mappers\PurchaseOrderListMapper;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
@@ -32,7 +33,9 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -253,6 +256,50 @@ final class ProcurementChainControllerTest extends TestCase
         $response->assertJsonPath('data.0.receipts.0.id', $receipt->id);
         $this->assertSame($expected, $response->json('data.0.receipts.0.procurement_chain_summary'));
         $this->assertSame($dispatcher, PurchaseReceipt::getEventDispatcher());
+    }
+
+    public function test_purchase_order_list_mapper_preserves_scope_explicit_relations_and_pagination_without_queries(): void
+    {
+        $order = (new PurchaseOrder)->forceFill(['id' => 11, 'organization_id' => 21]);
+        $otherParent = (new PurchaseOrder)->forceFill(['id' => 12, 'organization_id' => 21]);
+        $matching = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $differentOrder = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 12, 'organization_id' => 21]);
+        $differentOrganization = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 22]);
+        $explicitNull = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $explicitNull->setRelation('purchaseOrder', null);
+        $explicitParent = (new PurchaseReceipt)->forceFill(['purchase_order_id' => 11, 'organization_id' => 21]);
+        $explicitParent->setRelation('purchaseOrder', $otherParent);
+        $order->setRelation('receipts', new EloquentCollection([
+            $matching, $differentOrder, $differentOrganization, $explicitNull, $explicitParent,
+        ]));
+        $missingIdentity = (new PurchaseOrder)->forceFill(['organization_id' => 21]);
+        $missingParentId = (new PurchaseReceipt)->forceFill(['organization_id' => 21]);
+        $missingIdentity->setRelation('receipts', new EloquentCollection([$missingParentId]));
+        $page = new LengthAwarePaginator(new EloquentCollection([$order, $otherParent, $missingIdentity]), 13, 3, 2);
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $prepared = (new PurchaseOrderListMapper)->prepare($page);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertSame($page, $prepared);
+        $this->assertSame(13, $prepared->total());
+        $this->assertSame(3, $prepared->perPage());
+        $this->assertSame(2, $prepared->currentPage());
+        $this->assertSame($order, $matching->getRelation('purchaseOrder'));
+        $this->assertFalse($differentOrder->relationLoaded('purchaseOrder'));
+        $this->assertFalse($differentOrganization->relationLoaded('purchaseOrder'));
+        $this->assertTrue($explicitNull->relationLoaded('purchaseOrder'));
+        $this->assertNull($explicitNull->getRelation('purchaseOrder'));
+        $this->assertSame($otherParent, $explicitParent->getRelation('purchaseOrder'));
+        $this->assertFalse($otherParent->relationLoaded('receipts'));
+        $this->assertFalse($missingParentId->relationLoaded('purchaseOrder'));
+        $this->assertSame([], $queries);
     }
 
     public function test_partially_delivered_order_chain_uses_receipt_and_payment_state(): void

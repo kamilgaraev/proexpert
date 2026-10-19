@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 use App\BusinessModules\Features\Procurement\Exceptions\IncomingUpdAttachmentException;
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptIdempotencyConflictException;
 use App\BusinessModules\Features\Procurement\Exceptions\PurchaseReceiptPaymentException;
+use App\BusinessModules\Features\Procurement\Http\Mappers\PurchaseOrderListMapper;
 use App\BusinessModules\Features\Procurement\Http\Requests\CancelPurchaseOrderRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReceivePurchaseOrderMaterialsRequest;
 use App\BusinessModules\Features\Procurement\Http\Requests\ReturnPurchaseReceiptLineRequest;
@@ -42,7 +43,8 @@ class PurchaseOrderController extends Controller
     public function __construct(
         private readonly PurchaseOrderService $service,
         private readonly PurchaseReceiptDocumentPdfService $receiptDocumentPdfService,
-        private readonly ProcurementChainService $procurementChainService
+        private readonly ProcurementChainService $procurementChainService,
+        private readonly PurchaseOrderListMapper $listMapper
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -87,16 +89,7 @@ class PurchaseOrderController extends Controller
             $sortBy = (string) $request->input('sort_by', 'created_at');
             $sortDir = (string) $request->input('sort_dir', 'desc');
 
-            $orders = $query->orderBy($sortBy, $sortDir)->paginate($perPage);
-            foreach ($orders->getCollection() as $order) {
-                foreach ($order->receipts as $receipt) {
-                    if (! $receipt->relationLoaded('purchaseOrder')
-                        && (int) $receipt->purchase_order_id === (int) $order->getKey()
-                        && (int) $receipt->organization_id === (int) $order->organization_id) {
-                        $receipt->setRelation('purchaseOrder', $order);
-                    }
-                }
-            }
+            $orders = $this->listMapper->prepare($query->orderBy($sortBy, $sortDir)->paginate($perPage));
 
             return AdminResponse::paginated(
                 PurchaseOrderResource::collection($orders->getCollection()),
