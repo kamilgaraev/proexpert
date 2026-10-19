@@ -113,7 +113,7 @@ final class RecordApiResponseTimeTest extends TestCase
         self::assertStringNotContainsString('secret_table', json_encode($summary, JSON_THROW_ON_ERROR));
     }
 
-    public function test_source_diagnostics_are_limited_to_selected_assistant_get_routes(): void
+    public function test_source_diagnostics_are_limited_to_selected_get_routes(): void
     {
         foreach ([['GET', '/api/v1/admin/ai-assistant/conversations', true], ['POST', '/api/v1/admin/ai-assistant/conversations', false],
             ['GET', '/api/v1/admin/ai-assistant/rag/status', true], ['POST', '/api/v1/admin/ai-assistant/rag/status', false],
@@ -132,6 +132,11 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/executive-documentation/references/1', false],
             ['GET', '/api/v1/admin/personal-files', true], ['POST', '/api/v1/admin/personal-files', false],
             ['GET', '/api/v1/admin/personal-files/1', false],
+            ['GET', '/api/v1/admin/payments/documents/calendar', true],
+            ['POST', '/api/v1/admin/payments/documents/calendar', false],
+            ['GET', '/api/v1/admin/payments/documents/calendar/extra', false],
+            ['GET', '/api/v1/admin/payments/documents/1', false],
+            ['GET', '/api/v1/admin/payments/documents', false],
             ['GET', '/api/v1/admin/projects/17/construction-journals', true],
             ['POST', '/api/v1/admin/projects/17/construction-journals', false],
             ['GET', '/api/v1/admin/construction-journals/1', true],
