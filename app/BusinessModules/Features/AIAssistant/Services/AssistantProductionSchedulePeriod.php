@@ -156,7 +156,8 @@ final class AssistantProductionSchedulePeriod
             return $arguments;
         }
         $monthCount = preg_match_all('/\b'.self::MONTH.'\b/iu', $query);
-        if ($monthCount > 1 || ($monthCount === 1 && preg_match('/\bза\s+'.self::MONTH.'\s+(?:(?:19|20)\d{2}\b|(?:этого|текущего|прошлого)\s+года\b)/iu', $query) !== 1)) {
+        if ($monthCount > 1 || ($monthCount === 1 && (preg_match_all('/\b(?:19|20)\d{2}\b/u', $query) > 1
+            || preg_match('/\bза\s+'.self::MONTH.'\s+(?:(?:19|20)\d{2}\b|(?:этого|текущего|прошлого)\s+года\b)/iu', $query) !== 1))) {
             return $unresolved;
         }
         $resolver = new AssistantPeriodResolver;

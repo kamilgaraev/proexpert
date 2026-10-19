@@ -80,14 +80,16 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     protected function collect(User $actor, int $organizationId, int $projectId, array $arguments = [], ?\DateTimeImmutable $asOf = null): array
     {
-        $works = $this->reports->resolve($actor, $organizationId, 'works', 'completed_work', $projectId)['query']->confirmed();
+        $asOf ??= $this->readTime();
+        $works = $this->reports->resolve($actor, $organizationId, 'works', 'completed_work', $projectId)['query']->confirmed()
+            ->where('completed_works.completion_date', '<=', $asOf->format('Y-m-d'));
         if (isset($arguments['period_start'])) {
             $works->where('completed_works.completion_date', '>=', $arguments['period_start']);
         }
         if (isset($arguments['period_end'])) {
             $works->where('completed_works.completion_date', '<=', $arguments['period_end']);
         }
-        $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId, $asOf ?? $this->readTime())['query'];
+        $tasks = $this->reports->resolve($actor, $organizationId, 'schedule', 'schedule_task', $projectId, $asOf)['query'];
         $schedules = $this->projectQuery($actor, $organizationId, $projectId, 'schedule');
         $project = $this->projectQuery($actor, $organizationId, $projectId, 'project')?->whereKey($projectId)->first(['id', 'end_date']);
         if ($schedules === null || $project === null) {
@@ -133,7 +135,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
         }
         $unknownDate = trans_message('ai_assistant_operational.not_recorded');
         $lines = [trans_message('ai_assistant_production_schedule.scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']]),
-            trans_message('ai_assistant_production_schedule.works', ['count' => $data['confirmed_works']])];
+            trans_message('ai_assistant_production_schedule.works', ['count' => $data['confirmed_works'], 'date' => $data['as_of_date']])];
         if ($data['period_start'] !== null) {
             array_splice($lines, 1, 0, [trans_message('ai_assistant_production_schedule.period', ['from' => $data['period_start'], 'to' => $data['period_end']])]);
         } elseif ($data['period_end'] !== null) {

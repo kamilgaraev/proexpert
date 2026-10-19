@@ -14,6 +14,22 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_named_month_with_multiple_years_requires_dates_and_keeps_literal_name_priority(): void
+    {
+        foreach (['за октябрь 2025 и 2026', 'за октябрь 2025 или 2026', 'в октябре 2025–2026', 'за октябрь 2025, 2026'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+        }
+    }
+
     public function test_past_quarter_aliases_share_rolling_period_and_reject_ambiguous_years(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));

@@ -119,8 +119,39 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->owner, $this->fixture->organization->id, $fresh['source_refs']));
     }
 
+    public function test_current_summary_excludes_future_confirmed_works_with_and_without_period(): void
+    {
+        $this->work('0.1000', 'м²', ['completion_date' => '2026-10-17']);
+        $this->work('0.2000', 'м²', ['completion_date' => '2026-10-18']);
+        $future = $this->work('999.0000', 'м²', ['completion_date' => '2026-10-19']);
+        $reader = app(AssistantProjectProductionScheduleReader::class);
+        $first = null;
+        foreach ([[], ['period_start' => null, 'period_end' => '2026-10-31'],
+            ['period_start' => '2026-10-01', 'period_end' => '2026-10-31'],
+            ['period_start' => '2026-10-19', 'period_end' => '2026-10-31']] as $period) {
+            $arguments = ['project_id' => $this->project->id] + $period;
+            $read = $reader->read($this->fixture->owner, $this->fixture->organization->id, $arguments);
+            $first ??= $read;
+            $onlyFuture = ($period['period_start'] ?? null) === '2026-10-19';
+            self::assertSame('2026-10-18', $read['data']['as_of_date']);
+            self::assertSame($onlyFuture ? 0 : 2, $read['data']['confirmed_works']);
+            self::assertSame($onlyFuture ? [] : ['0.3000'], array_column($read['data']['accepted_volumes'], 'quantity'));
+            self::assertStringContainsString('не позднее 2026-10-18', $read['server_formatted_answer']);
+            self::assertTrue($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $read['source_refs'][0]));
+            self::assertNotNull($reader->verifiedAnswer($read, $this->fixture->owner, $this->fixture->organization->id));
+            self::assertSame($period['period_end'] ?? null, $read['data']['period_end']);
+        }
+        self::assertSame('2026-10-19', $future->fresh()->getRawOriginal('completion_date'));
+        Carbon::setTestNow('2026-10-19 10:00:00');
+        self::assertFalse($reader->matchesReference($this->fixture->owner, $this->fixture->organization->id, $first['source_refs'][0]));
+        $nextDay = $reader->read($this->fixture->owner, $this->fixture->organization->id, ['project_id' => $this->project->id]);
+        self::assertSame(3, $nextDay['data']['confirmed_works']);
+        self::assertSame('999.3000', $nextDay['data']['accepted_volumes'][0]['quantity']);
+    }
+
     public function test_period_filters_physical_work_dates_and_survives_reference_recheck(): void
     {
+        Carbon::setTestNow('2026-11-02 10:00:00');
         $this->work('0.1000', 'м²', ['completion_date' => '2026-10-01']);
         $this->work('0.2000', 'м²', ['completion_date' => '2026-10-31']);
         $outside = $this->work('100.0000', 'м²', ['completion_date' => '2026-09-30']);
