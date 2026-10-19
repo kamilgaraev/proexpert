@@ -60,7 +60,7 @@ final class AssistantProductionSchedulePeriod
 
     private const INDEFINITE_DURATION_PERIOD = '(?:(?:за|в\s+течение|на\s+протяжении)\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?'.self::INDEFINITE_DURATION_NUMBER.'\s+(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
-    private const OFFSET_NUMBER = '(?:[+-]?\d+|'.self::DURATION_NUMBER.'|'.self::INDEFINITE_DURATION_NUMBER.'|[\pL]+(?:надцать|дцать|десят|сот)|сорок|сто|девяносто|двести|триста|четыреста|(?:тысяч|миллион|миллиард)[а-яё]*|полтора|полторы)';
+    private const OFFSET_NUMBER = '(?:[+-]?(?:\d[\d.,\/eE_+-]*|[.,]\d+)|'.self::DURATION_NUMBER.'|'.self::INDEFINITE_DURATION_NUMBER.'|[\pL]+(?:надцать|дцать|десят|сот)|сорок|сто|девяносто|двести|триста|четыреста|(?:тысяч|миллион|миллиард)[а-яё]*|половин[а-яё]*|полтора|полторы)';
 
     private const FORWARD_OFFSET_PERIOD = '(?:через|спустя)\s+(?:(?:'.self::DURATION_MODIFIER.'|'.self::BARE_CALENDAR_SELECTOR.')\s+)?(?:'.self::OFFSET_NUMBER.'(?:[\s—–-]+'.self::OFFSET_NUMBER.'){0,5}(?:\s+с\s+половиной)?\s+)?(?:(?:календарн|рабоч|полн)[а-яё]*\s+)?(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.'|полгода)\b';
 
