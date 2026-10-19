@@ -763,11 +763,12 @@ final class NormativeWorkItemPlannerService
             return false;
         }
         $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
-        $installation = '(?:устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
+        $exclusionAction = '(?:исключ(?:ить|ая|ён|ен|ена|ено|ены|ается|аются)|отмен(?:ить|ён|ен|ена|ено|ены|яется|яются)|отсутств(?:ует|уют))';
+        $local = '[^,;.!?\r\n]{0,60}';
         $negative = '(?<![\p{L}\p{N}])(?:'
-            .'(?:без|кроме|исключ\p{L}*)\s+(?:'.$installation.'\s+)?'.$fixture.'|'
-            .'не\s+'.$negativeAction.'\s+(?:'.$installation.'\s+)?'.$fixture.'|'
-            .$fixture.'[\s:—-]+(?:не\s+'.$negativeAction.'|исключ\p{L}*|отмен\p{L}*|отсутств\p{L}*)'
+            .'(?:без|кроме|'.$exclusionAction.')(?![\p{L}\p{N}])'.$local.$fixture.'|'
+            .'не\s+'.$negativeAction.$local.$fixture.'|'
+            .$fixture.$local.'(?:не\s+'.$negativeAction.'|'.$exclusionAction.')'
             .')(?![\p{L}\p{N}])';
         $action = '(?:'
             .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
