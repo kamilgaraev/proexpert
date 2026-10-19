@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditFi
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditTableWireProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use PHPUnit\Framework\TestCase;
@@ -89,7 +90,8 @@ final class EstimateAuditFieldWireProjectionTest extends TestCase
         self::assertSame(hash('sha256', CanonicalPipelineJson::encode($source)), $input->fingerprint());
         $findings = [['finding_id' => 'finding:1']];
         $correction = new EstimateComposerCorrectionInput($input, $findings);
-        self::assertSame(hash('sha256', json_encode(['audit_input' => $source, 'findings' => $findings], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)), $correction->fingerprint());
+        self::assertSame(hash('sha256', json_encode(['audit_input' => $source, 'findings' => $findings,
+            'correction_contract' => RunEstimateComposerCorrection::PROMPT_CONTRACT], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)), $correction->fingerprint());
         self::assertSame($input->canonicalPayload(), $correction->canonicalPayload()['audit_input']);
     }
 

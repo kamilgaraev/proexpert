@@ -329,6 +329,64 @@ final class EstimateAuditTest extends TestCase
         self::assertNotSame('finding:omission', $result['draft']['audit_review_items'][0]['finding_id']);
     }
 
+    public function test_correction_context_supplies_exact_replacement_targets_for_unprojected_and_projected_rows(): void
+    {
+        $plain = $this->item('electrical-norm-intent-1');
+        $projected = $this->item('electrical-norm-intent-2');
+        $projected['quantity_basis_details'] = ['formula_key' => 'main_cable', 'amount' => '180'];
+        $projected['quantity_evidence'] = $projected['quantity_basis_details'];
+        $audit = $this->input($this->draft([$plain, $projected]));
+        $original = $audit->draft;
+        $input = new EstimateComposerCorrectionInput($audit, [$this->finding('finding:cable', 'quantity_mismatch')]);
+
+        self::assertSame([
+            $plain['key'] => ApplyComposerCorrectionCycle::itemFingerprint($plain),
+            $projected['key'] => ApplyComposerCorrectionCycle::itemFingerprint($projected),
+        ], $input->canonicalPayload()['replacement_targets'] ?? null);
+        self::assertSame($original, $audit->draft);
+        self::assertArrayNotHasKey('quantity:foundation', $input->canonicalPayload()['replacement_targets']);
+
+        $changed = $plain;
+        $changed['quantity'] = '181';
+        $next = new EstimateComposerCorrectionInput($audit->withDraft($this->draft([$changed, $projected]), 0), $input->findings);
+        self::assertNotSame($input->canonicalPayload()['replacement_targets'][$plain['key']], $next->canonicalPayload()['replacement_targets'][$plain['key']]);
+        self::assertNotSame($input->fingerprint(), $next->fingerprint());
+    }
+
+    public function test_correction_contract_does_not_replay_the_previous_prompt_response(): void
+    {
+        $audit = $this->input($this->draft([$this->item('work:a')]));
+        $input = new EstimateComposerCorrectionInput($audit, [$this->finding('finding:cable', 'quantity_mismatch')]);
+        $legacy = ['audit_input' => $audit->canonicalPayload(false), 'findings' => $input->findings];
+        $legacy['audit_input']['derived_quantities'] = $audit->derivedQuantities;
+        $legacyFingerprint = hash('sha256', json_encode($legacy, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+        self::assertNotSame($legacyFingerprint, $input->fingerprint());
+    }
+
+    public function test_correction_still_rejects_a_quantity_identifier_or_wrong_fingerprint_as_target(): void
+    {
+        $item = $this->item('electrical-norm-intent-1');
+        $finding = $this->finding('finding:cable', 'quantity_mismatch');
+        foreach ([
+            ['quantity:foundation', ApplyComposerCorrectionCycle::itemFingerprint($item)],
+            [$item['key'], 'work:'.ApplyComposerCorrectionCycle::itemFingerprint($item)],
+            [$item['key'], str_repeat('0', 64)],
+        ] as [$key, $fingerprint]) {
+            $correction = ['operation' => 'replace_quantity', 'finding_id' => $finding['finding_id'],
+                'target_item_key' => $key, 'expected_target_fingerprint' => $fingerprint,
+                'derived_quantity_id' => 'quantity:foundation'];
+            $runs = new InMemoryAiRoleRunRepository;
+            $corrector = new RunEstimateComposerCorrection($runs, new RecordedEstimateComposerCorrectionModel([$correction]), 'openai/gpt-6-luna');
+            try {
+                $corrector->run(new EstimateComposerCorrectionInput($this->input($this->draft([$item])), [$finding]));
+                self::fail('An invalid replacement target was accepted.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_correction_replacement_invalid', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_composer_correction_applies_omission_quantity_and_unit_changes_before_reaudit(): void
     {
         foreach (['add_work', 'replace_quantity', 'replace_unit'] as $operation) {
@@ -819,6 +877,11 @@ final class EstimateAuditTest extends TestCase
         self::assertSame('json', $wire->options['profile']);
         self::assertArrayNotHasKey('fallback_models', $wire->options);
         self::assertStringContainsString('точечные исправления', $wire->messages[0]['content']);
+        self::assertStringContainsString('replacement_targets', $wire->messages[0]['content']);
+        self::assertStringContainsString('без префикса', $wire->messages[0]['content']);
+        $sent = json_decode($wire->messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(ApplyComposerCorrectionCycle::itemFingerprint($input->audit->draft['local_estimates'][0]['sections'][0]['work_items'][0]),
+            $sent['correction_context']['replacement_targets']['work:a']);
         self::assertSame('estimate_composer_correction', $prices->context?->operation);
         self::assertCount(1, $usage->records);
     }

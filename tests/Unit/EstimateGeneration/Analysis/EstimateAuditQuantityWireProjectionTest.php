@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditDr
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditQuantityWireProjection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerCorrectionInput;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use PHPUnit\Framework\TestCase;
@@ -46,7 +47,8 @@ final class EstimateAuditQuantityWireProjectionTest extends TestCase
         $findings = [['finding_id' => 'finding:wall', 'type' => 'quantity_mismatch']];
         $correction = new EstimateComposerCorrectionInput($input, $findings);
         $legacyPayload['draft'] = EstimateAuditDraftWireProjection::project($draft, $quantities);
-        self::assertSame(hash('sha256', json_encode(['audit_input' => $legacyPayload, 'findings' => $findings], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)), $correction->fingerprint());
+        self::assertSame(hash('sha256', json_encode(['audit_input' => $legacyPayload, 'findings' => $findings,
+            'correction_contract' => RunEstimateComposerCorrection::PROMPT_CONTRACT], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)), $correction->fingerprint());
 
         $changed = $quantities;
         $changed[0]['quantity_basis']['formula_inputs']['operands'][7]['decision_reason'] .= ' changed';
