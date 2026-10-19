@@ -14,6 +14,40 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_numbered_backward_offsets_never_become_a_rolling_duration(): void
+    {
+        foreach (['2 месяца назад', 'за 2 месяца назад', 'два месяца назад', '2 месяца тому назад', '2 мес. назад',
+            '3 дня назад', '10 дн. назад', '2 суток назад', '2 сут. назад', '1 год назад', '2 г. назад',
+            '2 календарных месяца назад', '1.5 месяца назад', 'сто месяцев назад', 'через 2 месяца назад',
+            '2 месяца назад и за октябрь 2026', '2 месяца назад и 3 недели назад', 'два полугодия назад'] as $phrase) {
+            $this->assertPeriodScope($phrase, null, null);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+    }
+
+    public function test_backward_offsets_without_a_number_require_dates_and_keep_literal_project_priority(): void
+    {
+        foreach (['месяц назад', 'за месяц назад', 'месяц тому назад', 'день назад', 'сутки назад', 'год назад',
+            'полгода назад', 'квартал назад', 'неделю назад', 'за неделю назад', 'час назад', 'минуту назад',
+            'мес. назад', 'нед. назад', 'за мес. назад', 'несколько месяцев назад', 'прошлый месяц назад', 'полугодие назад',
+            'за текущий день назад', 'за сегодняшний день назад', 'за прошлый месяц тому назад'] as $phrase) {
+            $this->assertPeriodScope($phrase, null, null);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+    }
+
+    public function test_supported_numbered_weeks_ago_keep_their_existing_interval_with_abbreviations(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['2 недели назад', 'за 2 недели назад', '2 нед. назад', 'за 2 нед. назад'] as $phrase) {
+                $this->assertPeriodScope($phrase, '2026-09-30', '2026-10-07');
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_abbreviation_dots_keep_word_boundaries_between_requested_periods(): void
     {
         foreach (['за последние 2 г.и за 4 мес.', 'за последние 6 мес.и за 2 нед.',
@@ -126,7 +160,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         }
     }
 
-    private function assertPeriodScope(string $phrase, string $start, string $end): void
+    private function assertPeriodScope(string $phrase, ?string $start, ?string $end): void
     {
         $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
         self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
