@@ -14,6 +14,33 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_schedule_comparison_after_project_preserves_intent_and_quoted_name_guards(): void
+    {
+        foreach (['', '?'] as $ending) {
+            $query = 'Сверь выполненные работы по проекту с графиком'.$ending;
+            self::assertNull(AssistantNamedProjectReadScope::name($this->plan($query)));
+            self::assertTrue(AssistantProjectProductionScheduleReader::hasIntent($query));
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), static function (): never {
+                self::fail('A schedule complement must not be searched as a project name');
+            });
+            self::assertArrayNotHasKey('named_project_scope', $resolved);
+            self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan($resolved));
+        }
+        $query = 'Сверь выполненные работы с графиком по проекту «С графиком»';
+        $literal = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+            self::assertSame(['query' => 'С графиком', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+            return $this->projectSearchResult([['id' => 102, 'name' => 'С графиком']], false);
+        });
+        self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($literal));
+        foreach ([$this->projectSearchResult([], false), $this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false),
+            $this->projectSearchResult([['id' => '102']], false), ['status' => 'success', 'results' => []], ['status' => 'error']] as $result) {
+            $blocked = AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result);
+            self::assertNull(AssistantRequestProjectScope::fromPlan($blocked)->projectId);
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($blocked));
+        }
+    }
+
     public function test_relative_day_after_project_uses_ui_only_after_an_empty_exact_lookup(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 10:00:00', 'Europe/Moscow'));
