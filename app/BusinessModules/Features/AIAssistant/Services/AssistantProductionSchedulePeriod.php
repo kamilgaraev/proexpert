@@ -66,13 +66,15 @@ final class AssistantProductionSchedulePeriod
 
     private const QUARTER_PERIOD = '(?:(?:за|в|во|на)\s+(?:'.self::QUARTER_SELECTOR.')?|(?:с|со|по|до)\s+'.self::QUARTER_SELECTOR.'|'.self::QUARTER_SELECTOR.')'.self::QUARTER_WORD.'\b';
 
-    private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток)';
+    private const ABBREVIATED_UNIT = '(?:мес|нед|дн)';
+
+    private const TIME_UNIT = '(?:недел(?:я|ю|е|и|ь|ей|ям|ями|ях)|месяц(?:а|у|ем|е|ы|ев|ам|ами|ах)?|'.self::QUARTER_WORD.'|год(?:а|у|ом|е|ы|ов|ам|ами|ах)?|лет|день|дня|дни|дней|сутки|суток|'.self::ABBREVIATED_UNIT.')';
 
     private const DURATION_NUMBER = '(?:\d{1,2}|один|одна|одну|два|две|пара|пару|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)';
 
     private const DURATION_MODIFIER = '(?:последн(?:ий|яя|ие|их|юю)|крайн(?:ий|яя|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ая|ую|ие|их))';
 
-    private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделя|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы)';
+    private const DURATION_UNIT = '(?:день|дня|дней|сутки|неделя|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет|квартала|кварталов|кварталы|'.self::ABBREVIATED_UNIT.')';
 
     private const INDEFINITE_DURATION_NUMBER = '(?:нескольк(?:о|их)|много|немного|ряд|(?:неизвестное|неопредел[её]нное|некоторое)\s+количество)';
 
@@ -401,6 +403,7 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace_callback('/\b('.self::ABBREVIATED_UNIT.')\b\.?/iu', static fn (array $match): string => ['мес' => 'месяц', 'нед' => 'неделю', 'дн' => 'день'][mb_strtolower($match[1])], $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::ADJECTIVAL_DAY.'\b/iu', static fn (array $match): string => mb_strtolower($match[1]), $query) ?? $query;
         $query = preg_replace('/\b'.self::CURRENT_SNAPSHOT.'/iu', ' ', $query) ?? $query;
         $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;

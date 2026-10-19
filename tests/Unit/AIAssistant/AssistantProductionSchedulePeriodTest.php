@@ -14,6 +14,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_abbreviated_duration_units_keep_dates_named_scope_and_literal_priority(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за последние 6 мес.' => ['2026-04-20', '2026-10-20'], 'за последние 6 мес' => ['2026-04-20', '2026-10-20'],
+                '6 мес.' => ['2026-04-20', '2026-10-20'], 'за 2 нед.' => ['2026-10-06', '2026-10-20'],
+                'за крайние 2 нед.' => ['2026-10-06', '2026-10-20'], 'за последние две нед.' => ['2026-10-06', '2026-10-20'],
+                'за 10 дн.' => ['2026-10-10', '2026-10-20'], 'за нед.' => ['2026-10-13', '2026-10-20'],
+                'за последний мес.' => ['2026-09-20', '2026-10-20'], 'за прошлый мес.' => ['2026-09-01', '2026-09-30'],
+                'на текущей нед.' => ['2026-10-19', '2026-10-20'], 'за текущий мес.' => ['2026-10-01', '2026-10-20']] as $phrase => [$start, $end]) {
+                $this->assertPeriodScope($phrase, $start, $end);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_abbreviated_units_do_not_hide_unsupported_or_mixed_periods(): void
+    {
+        foreach (['за последние 100 мес.', 'за последние сто нед.', 'за 1.5 нед.', 'за несколько дн.',
+            'через 2 нед.', 'за будущий мес.', 'за последние 6 мес. и за октябрь 2026'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+        }
+        self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+            ['request' => ['message' => 'Сверь выполненные работы с месячным и недельным графиком']]));
+    }
+
     public function test_calendar_half_years_require_dates_instead_of_expanding_to_the_whole_year(): void
     {
         foreach (['за первое полугодие 2026', 'за второе полугодие 2026', 'в первом полугодии 2026 года',
@@ -47,7 +76,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
     {
         foreach (['весь 2026 год', 'полный 2026 год', 'целый 2026 год', 'календарный 2026 год', 'полный календарный 2026 год',
             'весь 2026', 'весь 2026 г.', 'во всём 2026 году', 'за полный 2026 год', 'на протяжении полного 2026 года'] as $phrase) {
-            $this->assertCalendarDeterminerScope($phrase, '2026-01-01', '2026-12-31');
+            $this->assertPeriodScope($phrase, '2026-01-01', '2026-12-31');
         }
     }
 
@@ -56,11 +85,11 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
         foreach (['весь октябрь 2026', 'полный октябрь 2026', 'целый октябрь 2026', 'календарный октябрь 2026',
             'полный календарный октябрь 2026', 'за полный октябрь 2026', 'во всём октябре 2026', 'весь февраль 2026'] as $phrase) {
             $february = str_contains($phrase, 'февраль');
-            $this->assertCalendarDeterminerScope($phrase, $february ? '2026-02-01' : '2026-10-01', $february ? '2026-02-28' : '2026-10-31');
+            $this->assertPeriodScope($phrase, $february ? '2026-02-01' : '2026-10-01', $february ? '2026-02-28' : '2026-10-31');
         }
     }
 
-    private function assertCalendarDeterminerScope(string $phrase, string $start, string $end): void
+    private function assertPeriodScope(string $phrase, string $start, string $end): void
     {
         $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $end];
         self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
