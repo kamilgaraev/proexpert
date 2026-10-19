@@ -134,7 +134,7 @@ final class AssistantDocumentCoverageService
         }
         foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(pg_catalog.SUM('.$metric.'), 0) AS '.$metric);
         if ($checkpoint !== null) { $checkpoint(); }
-        $result = $this->withVisibleDocuments($aggregate, $visibleDocuments)->first();
+        $result = $this->withVisibleDocuments($aggregate, (clone $visibleDocuments)->whereNotNull('ai_assistant_documents.file_id'))->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
         $nativeCandidates = $this->nativeCandidateTypes($organizationId, $actor, $checkpoint, $guard);
         $nativeCoverage = [];
