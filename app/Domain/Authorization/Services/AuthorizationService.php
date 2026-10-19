@@ -54,6 +54,7 @@ class AuthorizationService
         if ($scope->readCache !== null) {
             $scope->permissionResolver = $scope->permissionResolver->forReadScope($scope->readCache);
         }
+        ApiQueryMetrics::recordAccessRead($memoizeReads ? 'scope_memoized' : 'scope_plain', $scope, $scope->readCache);
         return $scope;
     }
 
@@ -64,6 +65,7 @@ class AuthorizationService
         try {
             if ($this->trustedDecisionInputs !== []) { $context = array_replace($this->trustedDecisionInputs, $context ?? []); }
             $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
+            ApiQueryMetrics::recordAccessRead($scope === $this ? 'current_reuse' : 'current_plain', $scope, $scope->readCache);
             $result = $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
                 fn (): bool => ApiQueryMetrics::measureProcessingPhase('current_access_evaluate',
                     fn (): bool => $scope->checkPermission($user, $permission, $context)));

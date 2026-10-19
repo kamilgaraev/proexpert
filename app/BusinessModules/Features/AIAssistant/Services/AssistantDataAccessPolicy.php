@@ -61,6 +61,7 @@ final class AssistantDataAccessPolicy
     {
         $identity = [(int) $actor->id, $organizationId];
         if (! $fresh && $this->batchIdentity === $identity) {
+            ApiQueryMetrics::recordAccessRead('policy_reuse', $this, null, $organizationId);
             $previousCheckpoint = $this->currentCheckpoint;
             if ($checkpoint !== null) { $this->currentCheckpoint = \Closure::fromCallable($checkpoint); }
             try {
@@ -71,6 +72,7 @@ final class AssistantDataAccessPolicy
         }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
         $authorization = $this->authorization->forCurrentChecks(true);
+        ApiQueryMetrics::recordAccessRead('policy_enter', $this, null, $organizationId);
         $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint, $this->pendingEntityReads];
         $this->batchIdentity = $identity;
         $this->batchAuthorization = $authorization;
@@ -84,6 +86,7 @@ final class AssistantDataAccessPolicy
             [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint, $this->pendingEntityReads] = $previous;
             if ($this->batchIdentity !== null) {
                 $this->batchAuthorization = $this->authorization->forCurrentChecks(true);
+                ApiQueryMetrics::recordAccessRead('policy_restore', $this, null, (int) $this->batchIdentity[1]);
                 $this->batchDecisions = [];
                 $this->batchEntityQueries = [];
             }
@@ -557,7 +560,9 @@ final class AssistantDataAccessPolicy
 
     private function currentEffectiveModuleSlugs(User $user, int $organizationId, ?string $candidate = null): array
     {
+        ApiQueryMetrics::recordAccessRead('policy_module_lookup', $this, null, $organizationId);
         $loadModules = function () use ($organizationId, $candidate): array {
+            ApiQueryMetrics::recordAccessRead('policy_module_load', $this, null, $organizationId);
             $source = $this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class);
 
             return $candidate !== null && $this->batchIdentity === null && $this->aclCompiler === null

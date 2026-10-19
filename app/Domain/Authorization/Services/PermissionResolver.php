@@ -283,11 +283,14 @@ class PermissionResolver
             }
             $isActive = $this->measureCurrentAccessPhase('access_module_entitlement', fn () => $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
+                    ApiQueryMetrics::recordAccessRead($this->readCache === null ? 'module_lookup_plain' : 'module_lookup_memoized', $this, $this->readCache, $organizationId);
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
                         function () use ($organizationId, $moduleToCheck): array {
                             $source = $this->currentEntitlementSource ?? app(OrganizationEntitlementService::class);
+                            $matching = $this->readCache === null && get_class($source) === OrganizationEntitlementService::class;
+                            ApiQueryMetrics::recordAccessRead($matching ? 'module_load_matching' : 'module_load_full', $this, $this->readCache, $organizationId);
 
-                            return $this->readCache === null && get_class($source) === OrganizationEntitlementService::class
+                            return $matching
                                 ? $source->getEffectiveModuleSlugsMatching($organizationId, $moduleToCheck)
                                 : $source->getEffectiveModuleSlugs($organizationId);
                         });

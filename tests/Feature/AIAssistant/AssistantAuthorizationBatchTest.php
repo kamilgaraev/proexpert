@@ -163,6 +163,34 @@ final class AssistantAuthorizationBatchTest extends TestCase
         self::assertFalse($access->canReadDomain($actor, $organizationId, 'assistant'));
     }
 
+    public function test_scope_diagnostics_count_restored_outer_organization_and_keep_original_exception(): void
+    {
+        $metrics = new \App\Services\Monitoring\ApiQueryMetrics(true);
+        request()->attributes->set(\App\Services\Monitoring\ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $access = app(AssistantDataAccessPolicy::class);
+        $actor = new \App\Models\User;
+        $actor->id = 71;
+        $failure = new RuntimeException('private-scope-failure');
+        $access->withCurrentChecks($actor, 101, function () use ($access, $actor, $failure): void {
+            $access->withCurrentChecks($actor, 102, static fn (): bool => true);
+            try {
+                $access->withCurrentChecks($actor, 103, static function () use ($failure): never { throw $failure; });
+                self::fail('Expected original exception');
+            } catch (RuntimeException $actual) {
+                self::assertSame($failure, $actual);
+            }
+            self::assertTrue($access->withCurrentChecks($actor, 101, static fn (): bool => true));
+        });
+        $reads = $metrics->summary()['access_reads'];
+        self::assertSame(2, $reads['policy_restore']['count']);
+        self::assertSame(1, $reads['policy_restore']['organizations']);
+        self::assertSame(1, $reads['policy_restore']['frames']);
+        self::assertSame(3, $reads['policy_enter']['organizations']);
+        self::assertSame(1, $reads['policy_reuse']['count']);
+        self::assertSame(5, $reads['scope_memoized']['count']);
+        self::assertStringNotContainsString('private', json_encode($reads, JSON_THROW_ON_ERROR));
+    }
+
     public function test_nested_actors_and_exception_cleanup_never_leak_role_or_organization_decisions(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
