@@ -39,10 +39,12 @@ class UserPermissionsControllerTest extends TestCase
 
         $this->assertContains('admin_viewer', $roles);
         $this->assertContains('admin', $interfaces);
-        $this->assertNotContains('mobile', $interfaces);
+        $this->assertContains('mobile', $interfaces);
+        $this->assertNotContains('customer', $interfaces);
         $this->assertContains('admin.projects.view', $permissions);
         $this->assertContains('projects.view', $permissions);
         $this->assertNotContains('projects.create', $permissions);
+        $response->assertJsonPath('data.meta.total_permissions', count($permissions));
     }
 
     public function test_check_uses_current_context_and_denies_ungranted_or_foreign_permissions(): void
