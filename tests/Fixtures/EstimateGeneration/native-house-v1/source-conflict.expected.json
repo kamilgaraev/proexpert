@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "expected_model_schema_version": "benchmark-expected:v1",
+  "expected": {
+    "sheet_type": "native_house_candidates",
+    "room_cells": [],
+    "wall_cells": [],
+    "opening_ids": [],
+    "areas": [],
+    "quantities": {
+      "slab:foundation_slab_volume": "3.2",
+      "site:earthwork_volume": "20",
+      "water:water_pipe_length": "35",
+      "sewer:sewer_pipe_length": "20",
+      "cable:cable_length": "180",
+      "duct:duct_length": "6",
+      "radiator:radiator_count": "3",
+      "equipment:equipment_count": "6"
+    },
+    "work_ids": [
+      "foundation:foundation-section-1:foundation.concrete",
+      "foundation:foundation-section-1:foundation.formwork",
+      "rough_finishing:rough_finishing-section-1:rough.floor",
+      "finish_finishing:finish_finishing-section-1:finish.floor",
+      "roof:roof-section-1:roof.covering",
+      "earthworks:earthworks-section-1:earth.trench",
+      "earthworks:earthworks-section-1:earth.backfill",
+      "plumbing:plumbing-section-1:plumbing.pipe",
+      "sewerage:sewerage-section-1:sewerage.pipe",
+      "sewerage:sewerage-section-1:sewerage.outlet_route",
+      "electrical:electrical-section-1:electrical.main_cable",
+      "electrical:electrical-section-1:electrical.panel",
+      "heating:heating-section-1:heating.radiators",
+      "heating:heating-section-1:heating.pipe",
+      "ventilation:ventilation-section-1:ventilation.air_exchange",
+      "ventilation:ventilation-section-1:ventilation.distribution_devices"
+    ],
+    "normative_rankings": {},
+    "costs": [],
+    "applicable_item_ids": [],
+    "evidence_ids_by_item": {},
+    "review_codes": [
+      "canonical_quantity_unresolved"
+    ],
+    "unknown_numeric_fields": [
+      "areas",
+      "costs"
+    ]
+  }
+}

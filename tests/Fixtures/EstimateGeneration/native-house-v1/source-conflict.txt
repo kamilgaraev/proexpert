@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "provenance": "synthetic:documented-native-house:v1",
+  "selected_sections": [
+    "structures",
+    "finishing",
+    "roofing",
+    "earthworks",
+    "water_supply",
+    "sewerage",
+    "heating",
+    "ventilation",
+    "electricity",
+    "equipment"
+  ],
+  "entities": [
+    {
+      "id": "beam",
+      "semantic_type": "foundation_beam",
+      "measurements": [
+        [
+          "length",
+          "10",
+          "m",
+          "sheet-a"
+        ],
+        [
+          "width",
+          "250",
+          "mm",
+          "sheet-a"
+        ],
+        [
+          "height",
+          "400",
+          "mm",
+          "sheet-a"
+        ],
+        [
+          "height",
+          "600",
+          "mm",
+          "sheet-b"
+        ]
+      ]
+    },
+    {
+      "id": "slab",
+      "semantic_type": "foundation_slab",
+      "measurements": [
+        [
+          "area",
+          "40",
+          "m2",
+          "sheet-a"
+        ],
+        [
+          "thickness",
+          "80",
+          "mm",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "site",
+      "semantic_type": "site",
+      "measurements": [
+        [
+          "area",
+          "40",
+          "m2",
+          "sheet-a"
+        ],
+        [
+          "depth",
+          "0.5",
+          "m",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "water",
+      "semantic_type": "water_pipe",
+      "measurements": [
+        [
+          "pipe_length",
+          "35",
+          "m",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "sewer",
+      "semantic_type": "sewer_pipe",
+      "measurements": [
+        [
+          "pipe_length",
+          "20",
+          "m",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "cable",
+      "semantic_type": "electrical_circuit",
+      "measurements": [
+        [
+          "cable_length",
+          "180",
+          "m",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "duct",
+      "semantic_type": "ventilation_duct",
+      "measurements": [
+        [
+          "duct_length",
+          "6",
+          "m",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "radiator",
+      "semantic_type": "radiator",
+      "measurements": [
+        [
+          "equipment_count",
+          "3",
+          "count",
+          "sheet-a"
+        ]
+      ]
+    },
+    {
+      "id": "equipment",
+      "semantic_type": "equipment",
+      "measurements": [
+        [
+          "equipment_count",
+          "6",
+          "count",
+          "sheet-a"
+        ]
+      ]
+    }
+  ],
+  "conflicts": [
+    [
+      "beam:height:sheet-a",
+      "beam:height:sheet-b"
+    ]
+  ]
+}
