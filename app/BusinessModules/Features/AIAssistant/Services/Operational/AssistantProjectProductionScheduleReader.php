@@ -16,6 +16,10 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 {
     public const TYPE = 'live_project_production_schedule_projection';
 
+    private const COMPLETED_WORK_PARTICIPLE = '(?:выполнен[аоы]?|принят[аоы]?)';
+
+    private const COMPLETED_WORK_FORM = '(?:'.self::COMPLETED_WORK_PARTICIPLE.'|выполненн(?:ая|ое|ый|ые|ую|ого|ой|ому|ым|ом|ых|ыми)|выполнил[аои]?|принят(?:ая|ое|ый|ые|ую|ого|ой|ому|ым|ом|ых|ыми)|принял[аои]?)';
+
     public function __construct(AssistantDataAccessPolicy $access, private AssistantCustomReportSource $reports, private StableReportingSourceView $stableView)
     {
         parent::__construct($access);
@@ -24,8 +28,9 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
     public static function hasIntent(string $query): bool
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
+        $query = preg_replace('/\b(?:буд(?:у|ешь|ет|ем|ете|ут)|долж(?:ен|на|но|ны)|нужно|надо|следует|необходимо|предстоит)(?:\s+(?:быть|полностью|уже|своевременно|фактически|окончательно|обязательно|сегодня|завтра)){0,3}\s+'.self::COMPLETED_WORK_PARTICIPLE.'\b/iu', ' ', $query) ?? $query;
 
-        return preg_match('/(?:выполненн|принят)[а-яё]*\s+работ|работ[а-яё]*.*(?:выполн|принят|принял)/iu', $query) === 1
+        return preg_match('/\b(?:'.self::COMPLETED_WORK_FORM.'\s+работ[а-яё]*|работ[а-яё]*.*\b'.self::COMPLETED_WORK_FORM.')\b/iu', $query) === 1
             && preg_match('/график|планов[а-яё]*\s+срок/iu', $query) === 1;
     }
 

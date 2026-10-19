@@ -11,6 +11,30 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_planned_work_infinitives_do_not_force_a_completed_production_summary(): void
+    {
+        $reader = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader::class;
+        $tool = 'get_project_production_schedule_summary';
+        foreach (['Какие работы по графику нужно выполнить сегодня?', 'Какие работы нужно принять по графику сегодня?',
+            'Нужно принять работы по графику сегодня', 'Какие работы по графику будем выполнять сегодня?',
+            'Какие работы будут выполнены сегодня по графику?', 'Когда будут приняты работы по графику?',
+            'Какие работы по графику должны быть выполнены сегодня?', 'Работы должны быть полностью приняты по графику сегодня'] as $query) {
+            self::assertFalse($reader::hasIntent($query), $query);
+            self::assertFalse($reader::matches($query), $query);
+            self::assertNotSame($tool, \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query)['name'] ?? null, $query);
+            self::assertNotSame($tool, AssistantRequiredProjectRead::fromPlan($this->plan($query))['name'] ?? null, $query);
+        }
+        foreach (['Сверь выполненные работы с графиком', 'Сверь принятые работы с графиком',
+            'Сверь работы, которые выполнили, с графиком', 'Какие работы выполнены по графику?',
+            'Какие работы приняли по графику?', 'Какие работы приняты по графику?',
+            'Нужно сверить выполненные работы с графиком', 'Нужно выяснить, какие работы выполнены по графику',
+            'Сверь выполненные работы с графиком: что нужно выполнить сегодня?',
+            'Сверь выполненные работы с графиком: когда будут приняты остальные работы?'] as $query) {
+            self::assertTrue($reader::hasIntent($query), $query);
+            self::assertSame($tool, AssistantRequiredProjectRead::fromPlan($this->plan($query))['name'] ?? null, $query);
+        }
+    }
+
     public function test_production_schedule_summary_does_not_hide_competing_operational_topics(): void
     {
         $registry = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::class;
