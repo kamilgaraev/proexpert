@@ -53,6 +53,7 @@ final class TechnologyWorkPackageBuilder
                 'operands' => $resolved ? [[
                     'fact_id' => $fact->id,
                     'fact_type' => $input,
+                    'source_version' => $fact->sourceVersion,
                     'value' => (string) $fact->value,
                     'unit' => $fact->unit,
                     'version' => $fact->version,
@@ -75,7 +76,7 @@ final class TechnologyWorkPackageBuilder
             risks: $package['risks'] ?? [],
             provenance: ['rule_id' => $rule->id, 'rule_version' => $rule->version, 'rule_hash' => $rule->contentHash,
                 'input_scope' => count($entities) === 1 ? ['status' => 'single_entity', 'target' => [
-                    'entity_id' => $entities[0]->id, 'source_version' => $entities[0]->sourceVersion,
+                    'entity_id' => $entities[0]->id, 'entity_source_version' => $entities[0]->sourceVersion,
                 ]] : ['status' => $entities === [] ? 'unavailable' : 'ambiguous', 'entity_count' => count($entities)]],
         );
     }
@@ -88,8 +89,8 @@ final class TechnologyWorkPackageBuilder
             $entity = $byId[$fact->entityId] ?? null;
 
             return $entity instanceof Entity && $fact->status === 'confirmed'
-                && [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
-                    === [$entity->organizationId, $entity->projectId, $entity->sessionId, $entity->sourceVersion];
+                && [$fact->organizationId, $fact->projectId, $fact->sessionId]
+                    === [$entity->organizationId, $entity->projectId, $entity->sessionId];
         }));
     }
 

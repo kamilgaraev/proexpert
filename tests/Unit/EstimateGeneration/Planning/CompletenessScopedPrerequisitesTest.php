@@ -30,7 +30,7 @@ final class CompletenessScopedPrerequisitesTest extends TestCase
     }
 
     #[DataProvider('invalidOperands')]
-    public function test_wrong_dimension_source_status_or_numeric_kind_remains_unresolved(mixed $value, ?string $unit, string $source, string $status): void
+    public function test_wrong_dimension_status_or_numeric_kind_remains_unresolved(mixed $value, ?string $unit, string $source, string $status): void
     {
         $finding = $this->finding([$this->fact('type', 'a', 'foundation_type', 'slab'),
             $this->fact('area', 'a', 'foundation_area', $value, $unit, $source, $status)]);
@@ -46,12 +46,12 @@ final class CompletenessScopedPrerequisitesTest extends TestCase
         return [
             'volume is not area' => ['40', 'm3', 'a', 'confirmed'],
             'missing unit' => ['40', null, 'a', 'confirmed'],
-            'another source version' => ['40', 'm2', 'b', 'confirmed'],
             'unconfirmed' => ['40', 'm2', 'a', 'candidate'],
             'boolean' => [true, 'm2', 'a', 'confirmed'],
             'negative' => ['-40', 'm2', 'a', 'confirmed'],
             'zero' => ['0', 'm2', 'a', 'confirmed'],
             'scientific notation' => ['4e1', 'm2', 'a', 'confirmed'],
+            'nonfinite number' => [INF, 'm2', 'a', 'confirmed'],
         ];
     }
 
@@ -62,6 +62,8 @@ final class CompletenessScopedPrerequisitesTest extends TestCase
                 $this->fact('area-2', 'a', 'foundation_area', '50', 'm2')],
             [$this->fact('type', 'a', 'foundation_type', 'slab'), $this->fact('type-2', 'b', 'foundation_type', 'slab'),
                 $this->fact('area', 'a', 'foundation_area', '40', 'm2'), $this->fact('area-2', 'b', 'foundation_area', '50', 'm2')],
+            [$this->fact('type', 'a', 'foundation_type', 'slab'), $this->fact('area', 'a', 'foundation_area', '40', 'm2', source: 'b'),
+                $this->fact('area-2', 'a', 'foundation_area', '50', 'm2', source: 'c')],
         ] as $facts) {
             foreach ([$facts, array_reverse($facts)] as $ordered) {
                 $formula = $this->finding($ordered)->workPackage->quantityFormulas[0];
@@ -96,14 +98,28 @@ final class CompletenessScopedPrerequisitesTest extends TestCase
         self::assertSame(['pile_count'], $finding->workPackage->quantityFormulas[0]['unresolved_inputs']);
     }
 
-    public function test_an_obsolete_applicability_source_or_missing_entity_cannot_supply_an_answer_target(): void
+    public function test_current_fact_sources_are_preserved_instead_of_being_replaced_by_the_latest_entity_version(): void
     {
-        foreach ([
-            [$this->fact('type', 'a', 'foundation_type', 'slab', source: 'b'), $this->fact('area', 'a', 'foundation_area', '40', 'm2')],
-            [$this->fact('type', 'missing', 'foundation_type', 'slab'), $this->fact('area', 'missing', 'foundation_area', '40', 'm2')],
-        ] as $facts) {
-            self::assertNull($this->finding($facts)->workPackage);
-        }
+        $finding = $this->finding([$this->fact('type', 'a', 'foundation_type', 'slab', source: 'b'),
+            $this->fact('area', 'a', 'foundation_area', '40', 'm2', source: 'c')]);
+
+        self::assertNotNull($finding->workPackage);
+        self::assertSame('40', $finding->workPackage->quantityFormulas[0]['resolved_value']);
+        self::assertSame('sha256:'.str_repeat('c', 64), $finding->workPackage->quantityFormulas[0]['operands'][0]['source_version']);
+    }
+
+    public function test_a_missing_entity_cannot_supply_an_answer_target(): void
+    {
+        self::assertNull($this->finding([$this->fact('type', 'missing', 'foundation_type', 'slab'),
+            $this->fact('area', 'missing', 'foundation_area', '40', 'm2')])->workPackage);
+    }
+
+    public function test_a_confirmed_native_numeric_value_is_not_reasked_due_to_its_php_representation(): void
+    {
+        $finding = $this->finding([$this->fact('type', 'a', 'foundation_type', 'slab'),
+            $this->fact('area', 'a', 'foundation_area', 40.5, 'm2')]);
+
+        self::assertSame('40.5', $finding->workPackage->quantityFormulas[0]['resolved_value']);
     }
 
     public function test_conditions_on_different_entities_do_not_establish_a_shared_scope(): void
@@ -139,6 +155,24 @@ final class CompletenessScopedPrerequisitesTest extends TestCase
         self::assertSame(['foundation_area'], $package->quantityFormulas[0]['unresolved_inputs']);
         self::assertSame(['status' => 'ambiguous', 'entity_count' => 5000], $package->provenance['input_scope']);
         self::assertLessThan(512, strlen(json_encode($package->provenance, JSON_THROW_ON_ERROR)));
+    }
+
+    public function test_an_unbuilt_ambiguous_package_does_not_consume_the_budget_of_a_later_proven_package(): void
+    {
+        $catalog = CompletenessRuleCatalog::fromArray(require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php');
+        $analyzer = new ProjectCompletenessAnalyzer($catalog, new TechnologyWorkPackageBuilder(static fn (string $key): string => 'Название'), 100, 1, 1000);
+        $snapshot = new ProjectModelSnapshot([
+            new Entity('entity:a', 38, 104, 85, 'sha256:'.str_repeat('a', 64), 'quantity', 'entity:a'),
+            new Entity('entity:b', 38, 104, 85, 'sha256:'.str_repeat('a', 64), 'quantity', 'entity:b'),
+        ], [$this->fact('type', 'a', 'foundation_type', 'slab'), $this->fact('type-2', 'b', 'foundation_type', 'pile'),
+            $this->fact('disturbance', 'a', 'external_site_disturbance', true), $this->fact('area', 'a', 'disturbed_area', '5', 'm2')], [], []);
+
+        $result = $analyzer->analyze($snapshot, []);
+
+        self::assertNull($result->finding('base_preparation')->workPackage);
+        self::assertNotNull($result->finding('landscaping_restoration')->workPackage);
+        self::assertSame('5', $result->finding('landscaping_restoration')->workPackage->quantityFormulas[0]['resolved_value']);
+        self::assertNotContains('completeness_package_budget_reached', $result->limitations);
     }
 
     private function finding(array $facts, ?array $conditions = null): CompletenessFinding

@@ -81,11 +81,11 @@ final readonly class EstimatePrerequisiteBacklogProjector
                 ? ($inputScope['target'] ?? null) : null;
             if (! is_array($target) || ! is_string($target['entity_id'] ?? null)
                 || preg_match('/\A[a-z][a-z0-9._:-]{1,191}\z/D', $target['entity_id']) !== 1
-                || ! is_string($target['source_version'] ?? null)
-                || preg_match('/\Asha256:[a-f0-9]{64}\z/D', $target['source_version']) !== 1) {
+                || ! is_string($target['entity_source_version'] ?? null)
+                || preg_match('/\Asha256:[a-f0-9]{64}\z/D', $target['entity_source_version']) !== 1) {
                 $target = null;
             } else {
-                $target = ['entity_id' => $target['entity_id'], 'source_version' => $target['source_version']];
+                $target = ['entity_id' => $target['entity_id'], 'entity_source_version' => $target['entity_source_version']];
             }
             $questions[] = [
                 'key' => 'prerequisite:'.hash('sha256', CanonicalPipelineJson::encode([

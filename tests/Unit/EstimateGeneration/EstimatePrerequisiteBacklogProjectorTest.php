@@ -51,7 +51,7 @@ final class EstimatePrerequisiteBacklogProjectorTest extends TestCase
 
     public function test_a_real_unique_scope_exposes_a_typed_target_without_enabling_an_unimplemented_writer(): void
     {
-        $target = ['entity_id' => 'entity:roof', 'source_version' => 'sha256:'.str_repeat('a', 64)];
+        $target = ['entity_id' => 'entity:roof', 'entity_source_version' => 'sha256:'.str_repeat('a', 64)];
         $finding = $this->finding([
             ['id' => 'formula:roof', 'unit' => 'm2', 'unresolved_inputs' => ['roof_area']],
         ], inputScope: ['status' => 'single_entity', 'target' => $target]);
@@ -72,7 +72,7 @@ final class EstimatePrerequisiteBacklogProjectorTest extends TestCase
     public function test_ambiguous_missing_or_invalid_scope_never_invents_a_target(): void
     {
         foreach ([[], ['status' => 'ambiguous', 'entity_count' => 2],
-            ['status' => 'single_entity', 'target' => ['entity_id' => 'entity:roof', 'source_version' => 'invalid']],
+            ['status' => 'single_entity', 'target' => ['entity_id' => 'entity:roof', 'entity_source_version' => 'invalid']],
         ] as $inputScope) {
             $finding = $this->finding([
                 ['id' => 'formula:roof', 'unit' => 'm2', 'unresolved_inputs' => ['roof_area']],

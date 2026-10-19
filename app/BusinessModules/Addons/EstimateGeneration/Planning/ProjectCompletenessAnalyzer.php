@@ -147,13 +147,14 @@ final readonly class ProjectCompletenessAnalyzer
             }
             $workPackage = null;
             if (in_array($status, ['unknown', 'proven_missing'], true) && $applicable && $packageCount < $this->maxPackages) {
-                $scopeEntities = $this->packageScope($rule, $applicableEntityIds, $entitiesById, $factsByType);
+                $scopeEntities = $this->packageScope($applicableEntityIds, $entitiesById);
                 $workPackage = $scopeEntities !== [] ? $this->packages->build($rule, $factsByType, $scopeEntities) : null;
                 if ($workPackage === null) {
                     $limitations[] = 'completeness_package_scope_unresolved';
+                } else {
+                    $packageCount++;
                 }
-                $packageCount++;
-            } elseif (in_array($status, ['unknown', 'proven_missing'], true)) {
+            } elseif ($applicable && in_array($status, ['unknown', 'proven_missing'], true)) {
                 $limitations[] = 'completeness_package_budget_reached';
             }
             $findings[] = new CompletenessFinding(
@@ -168,7 +169,7 @@ final readonly class ProjectCompletenessAnalyzer
         return new ProjectCompletenessResult($this->catalog->version, $this->catalog->contentHash, $findings, array_values(array_unique($limitations)));
     }
 
-    private function packageScope(CompletenessRule $rule, array $entityIds, array $entitiesById, array $factsByType): array
+    private function packageScope(array $entityIds, array $entitiesById): array
     {
         $entities = [];
         foreach ($entityIds as $id) {
@@ -177,18 +178,8 @@ final readonly class ProjectCompletenessAnalyzer
             }
             $entities[$id] = $entitiesById[$id];
         }
-        $scopeFacts = [];
-        foreach ($rule->conditions as $condition) {
-            $type = (string) $condition['fact_type'];
-            $scopeFacts[$type] = array_values(array_filter($factsByType[$type] ?? [], static function (Fact $fact) use ($entities): bool {
-                $entity = $entities[$fact->entityId] ?? null;
 
-                return $entity !== null && $fact->sourceVersion === $entity->sourceVersion;
-            }));
-        }
-        [$status, , $currentIds] = $this->evaluateConditions($rule->conditions, $scopeFacts);
-
-        return $status === 'applicable' && $currentIds === $entityIds ? array_values($entities) : [];
+        return array_values($entities);
     }
 
     private function evaluateConditions(array $conditions, array $factsByType): array

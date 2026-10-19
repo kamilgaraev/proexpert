@@ -34,7 +34,7 @@ final class PrerequisiteInputDefinition
     public static function accepts(string $input, mixed $value, ?string $unit, string $resultUnit): bool
     {
         if (self::contract($input, $resultUnit) === null
-            || (! is_int($value) && ! is_string($value))
+            || (! is_int($value) && ! is_string($value) && ! is_float($value))
             || preg_match('/\A[0-9]{1,15}(?:\.[0-9]{1,8})?\z/D', (string) $value) !== 1
             || ! in_array($unit, $resultUnit === 'item' ? ['item', 'count', 'pcs'] : [$resultUnit], true)) {
             return false;
