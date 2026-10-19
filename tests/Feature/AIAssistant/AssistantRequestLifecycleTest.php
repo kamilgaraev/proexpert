@@ -1931,6 +1931,56 @@ final class AssistantRequestLifecycleTest extends TestCase
         self::assertSame(0, AICreditProviderUsage::query()->count());
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('clarifiedProjectPeriods')]
+    public function test_unquoted_project_reply_preserves_period_filters_and_fresh_exact_lookup(string $original, string $start, string $end): void
+    {
+        $reply = 'Северный дом';
+        $expected = str_replace('Старый дом', 'текущий', $original);
+        $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Уточнение проекта');
+        $conversation->update(['context' => ['last_task_type' => 'schedules',
+            'last_request' => ['message' => $original, 'context' => ['filters' => ['status' => 'confirmed']]],
+            'pending_named_project_clarification' => ['message' => $original]]]);
+        $provider = $this->createMock(LifecycleNativeResponsesProvider::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $provider->expects(self::never())->method('chat');
+        $provider->expects(self::once())->method('responses')->willReturn($this->nativeResponse('Сводка по уточнённому проекту.', [
+            'input_tokens' => 100, 'output_tokens' => 7, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true,
+        ]));
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->expects(self::once())->method('plan')->willReturnCallback(static function (string $query, array $payload) use ($expected): array {
+            self::assertSame($expected, $query);
+            self::assertSame(['status' => 'confirmed'], $payload['context']['filters']);
+
+            return ['request' => ['message' => $query] + $payload, 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []];
+        });
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->probeProviderDuringAsk = true;
+        $service->projectSearchResultOverride = ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]];
+        $payload = $this->quote(['message' => $reply, 'context' => ['filters' => [],
+            'entity_refs' => [['type' => 'project', 'id' => 104]]]], conversationId: $conversation->id);
+        $service->ask($reply, $this->organization->id, $this->actor, $conversation->id, $payload);
+        self::assertSame([['query' => $reply, 'limit' => 2, 'name_match' => 'exact']], $service->projectSearchArguments);
+        self::assertSame($reply, Message::query()->where('role', 'user')->sole()->content);
+        $context = $conversation->fresh()->context;
+        self::assertArrayNotHasKey('pending_named_project_clarification', $context);
+        self::assertSame(['status' => 'confirmed'], $context['last_request']['context']['filters']);
+        self::assertSame([102], array_column($context['last_request']['context']['entity_refs'], 'id'));
+        self::assertSame(['project'], array_column($context['last_request']['context']['entity_refs'], 'type'));
+        self::assertSame(str_replace('Старый дом', '«Северный дом»', $original), $context['last_request']['message']);
+        $override = $context['last_request']['production_period_override'];
+        self::assertSame([102, $start, $end], [$override['project_id'], $override['period_start'], $override['period_end']]);
+        self::assertSame(hash('sha256', $context['last_request']['message']), $override['message_sha256']);
+    }
+
+    public static function clarifiedProjectPeriods(): array
+    {
+        return [
+            ['Сверь выполненные работы с графиком проекта Старый дом за октябрь 2026', '2026-10-01', '2026-10-31'],
+            ['Сверь выполненные работы проекта Старый дом с графиком за октябрь 2026', '2026-10-01', '2026-10-31'],
+            ['Сверь выполненные работы с графиком проекта Старый дом с 01.10.2026 по 10.10.2026', '2026-10-01', '2026-10-10'],
+        ];
+    }
+
     public static function unresolvedProjectReplies(): array
     {
         return [['Северный дом', 'Северный дом'], ['Дом не сдан', 'Дом не сдан'], ['«Дом не сдан»', 'Дом не сдан'],

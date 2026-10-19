@@ -52,7 +52,9 @@ final class AssistantProductionSchedulePeriod
 
     private const CALENDAR_DETERMINERS = '(?:(?:весь|всего|вс[её]м|полный|полного|полном|целый|целого|целом|календарный|календарного|календарном)\s+){0,3}';
 
-    private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::MONTH.'\s+(?:19|20)\d{2}\b';
+    private const MONTH_YEAR = '(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого|предыдущего|позапрошлого|следующего|будущего)\s+года)';
+
+    private const MONTH_WITH_YEAR = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::MONTH.'\s+'.self::MONTH_YEAR.'\b';
 
     private const CALENDAR_YEAR_PERIOD = '(?<![\pL\pN.\/-])(?:('.self::PERIOD_PREFIX.')\s+)?'.self::CALENDAR_DETERMINERS.'((?:19|20)\d{2})\b(?![-.\/]\d)(?:\s+(?:год[ау]?|г\.?)(?![\pL\pN]))?';
 
@@ -420,6 +422,12 @@ final class AssistantProductionSchedulePeriod
         if (preg_match('/\b'.self::BACKWARD_OFFSET_PERIOD.'/iu', $query) === 1) {
             return preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)\s+)текущий\b/iu', '$1выбранный', $query) ?? $query;
         }
+        $query = preg_replace_callback('/\b('.self::MONTH.')\s+(этого|текущего|прошлого|предыдущего|позапрошлого)\s+года\b/iu', static function (array $match): string {
+            $relative = mb_strtolower($match[2]);
+            $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);
+
+            return $match[1].' '.((int) \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y') - $offset);
+        }, $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::ADJECTIVAL_DAY.'\b/iu', static fn (array $match): string => mb_strtolower($match[1]), $query) ?? $query;
         $query = preg_replace('/\b'.self::CURRENT_SNAPSHOT.'/iu', ' ', $query) ?? $query;
         $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;

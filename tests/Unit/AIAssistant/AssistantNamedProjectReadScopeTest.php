@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantProductionSchedulePeriod;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectClarificationIntent;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead;
 use App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectProductionScheduleReader;
@@ -14,6 +15,34 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_unquoted_project_clarification_keeps_the_original_period_and_comparison(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-20 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['за октябрь 2026' => ['2026-10-01', '2026-10-31'],
+                'с 01.10.2026 по 10.10.2026' => ['2026-10-01', '2026-10-10'],
+                'за 2026 год' => ['2026-01-01', '2026-12-31'],
+                'за последние 2 мес.' => ['2026-08-20', '2026-10-20'], '2 месяца назад' => [null, null]] as $phrase => [$start, $end]) {
+                $message = 'Сверь выполненные работы с графиком проекта Старый дом '.$phrase;
+                $context = ['last_request' => ['message' => $message], 'pending_named_project_clarification' => ['message' => $message]];
+                $query = AssistantProjectClarificationIntent::query('Северный дом', [], $context);
+                self::assertSame('Сверь выполненные работы с графиком проекта «Северный дом» '.$phrase, $query, $phrase);
+                $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+                    self::assertSame(['query' => 'Северный дом', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 102]], false);
+                });
+                self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end], AssistantRequiredProjectRead::fromPlan($bound)['arguments'], $phrase);
+            }
+            self::assertSame('Сверь выполненные работы проекта «Северный дом» с графиком за октябрь 2026',
+                AssistantNamedProjectReadScope::clarifiedQuery('Сверь выполненные работы проекта Старый дом с графиком за октябрь 2026', 'Северный дом'));
+            self::assertSame('Сверь выполненные работы с графиком проекта «Северный дом»',
+                AssistantNamedProjectReadScope::clarifiedQuery('Сверь выполненные работы с графиком проекта «Старый дом за октябрь 2026»', 'Северный дом'));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_schedule_comparison_after_name_keeps_intent_and_full_exact_priority(): void
     {
         foreach (['с графиком', 'с действующим графиком', 'с плановыми сроками'] as $comparison) {

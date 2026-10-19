@@ -169,6 +169,7 @@ final class AssistantNamedProjectReadScope
                 continue;
             }
             $old = self::name(['request' => ['message' => $slice]]);
+            $old = $old === null ? null : self::withoutScheduleComparison(AssistantProductionSchedulePeriod::withoutSuffix($old));
             $old = $old === null ? null : preg_replace('/\s+(?:и|а|но)$/iu', '', $old);
             $start = $old === null || $old === '' ? false : strpos($slice, $old, strlen($prefix));
             if ($start !== false) {

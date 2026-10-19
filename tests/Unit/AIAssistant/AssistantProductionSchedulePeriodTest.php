@@ -14,6 +14,24 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_bare_month_with_relative_year_keeps_dates_named_scope_and_literal_priority(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-12-31 21:30:00', 'UTC'));
+        try {
+            foreach (['этого' => '2027', 'текущего' => '2027', 'прошлого' => '2026', 'предыдущего' => '2026', 'позапрошлого' => '2025'] as $relative => $year) {
+                foreach (['октябрь', 'февраль'] as $month) {
+                    $start = $year.($month === 'октябрь' ? '-10-01' : '-02-01');
+                    $this->assertPeriodScope($month.' '.$relative.' года', $start, (new \DateTimeImmutable($start))->format('Y-m-t'));
+                }
+            }
+            foreach (['октябрь следующего года', 'февраль будущего года', 'октябрь текущего года и за ноябрь 2026'] as $phrase) {
+                $this->assertPeriodScope($phrase, null, null);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_numbered_backward_offsets_never_become_a_rolling_duration(): void
     {
         foreach (['2 месяца назад', 'за 2 месяца назад', 'два месяца назад', '2 месяца тому назад', '2 мес. назад',
