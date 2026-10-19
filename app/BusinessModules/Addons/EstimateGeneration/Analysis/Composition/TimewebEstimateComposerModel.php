@@ -257,7 +257,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             .'Не исправляй работу величиной другого объекта или приблизительным коэффициентом. Если подходящего основания нет, оставь замечание для уточнения. '
             .'Для add_work верни ровно operation, finding_id, work_key, русское name, derived_quantity_id, source_fact_ids. '
             .'Для replace_quantity или replace_unit верни ровно operation, finding_id, target_item_key, expected_target_fingerprint, derived_quantity_id. '
-            .'replacement_targets — серверный словарь допустимых строк текущей части: ключ словаря точно скопируй в target_item_key, значение того же ключа точно скопируй в expected_target_fingerprint без префикса. '
+            .'replacement_targets — серверный список допустимых строк текущей части: точно скопируй строковые target_item_key и expected_target_fingerprint из одной записи без префикса. '
             .'Идентификатор derived_quantity_id обозначает величину, а не строку сметы; не подставляй его вместо target_item_key и не вычисляй отпечаток самостоятельно. '
             .'Если подходящей строки нет в replacement_targets или нельзя однозначно связать её с замечанием и величиной, не возвращай замену: оставь замечание для уточнения. '
             .'Верни только JSON с единственным ключом corrections.';

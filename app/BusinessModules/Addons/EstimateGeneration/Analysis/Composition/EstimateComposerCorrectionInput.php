@@ -40,7 +40,8 @@ final readonly class EstimateComposerCorrectionInput
             foreach (is_array($estimate) ? ($estimate['sections'] ?? []) : [] as $section) {
                 foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $item) {
                     if (is_array($item) && is_string($item['key'] ?? null)) {
-                        $targets[$item['key']] = ApplyComposerCorrectionCycle::itemFingerprint($item);
+                        $targets[] = ['target_item_key' => $item['key'],
+                            'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item)];
                     }
                 }
             }
