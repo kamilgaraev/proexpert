@@ -281,7 +281,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('namedProjectScopeCases')]
-    public function test_named_project_lookup_and_reader_recheck_current_assignment_without_ui_fallback(string $name, bool $quoted): void
+    public function test_named_project_lookup_and_reader_recheck_current_assignment_without_ui_fallback(string $name, bool $quoted, bool $comparisonAfter): void
     {
         $this->project->updateQuietly(['name' => $name]);
         $this->fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'],
@@ -292,7 +292,8 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
         }
         Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id, 'name' => $name]));
         Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id, 'name' => $name]));
-        $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта '.($quoted ? '«'.$name.'»' : $name).'.',
+        $plan = ['request' => ['message' => ($comparisonAfter ? 'Сверь выполненные работы проекта ' : 'Сверь выполненные работы с графиком проекта ')
+            .($quoted ? '«'.$name.'»' : $name).($comparisonAfter ? ' с графиком' : '').'.',
             'context' => ['entity_refs' => [['type' => 'project', 'id' => $ui->id]]]]];
         $policy = app(AssistantDataAccessPolicy::class);
         $search = fn (array $arguments) => $policy->withCurrentChecks($this->fixture->member, $this->fixture->organization->id,
@@ -310,7 +311,7 @@ final class AssistantProductionScheduleSummaryTest extends TestCase
 
     public static function namedProjectScopeCases(): array
     {
-        return [['Учебный ПТО', true], ['За рекой', false], ['С видом на парк', false]];
+        return [['Учебный ПТО', true, false], ['За рекой', false, false], ['С видом на парк', false, false], ['Северный дом', false, true]];
     }
 
     public function test_missing_work_permission_does_not_turn_into_a_zero_works_summary(): void

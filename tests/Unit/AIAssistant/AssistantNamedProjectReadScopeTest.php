@@ -14,6 +14,61 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantNamedProjectReadScopeTest extends TestCase
 {
+    public function test_schedule_comparison_after_name_keeps_intent_and_full_exact_priority(): void
+    {
+        foreach (['с графиком', 'с действующим графиком', 'с плановыми сроками'] as $comparison) {
+            foreach (['', ' за октябрь 2026'] as $period) {
+                $name = 'Северный дом '.$comparison.$period;
+                $query = 'Сверь выполненные работы проекта '.$name;
+                self::assertTrue(AssistantProjectProductionScheduleReader::hasIntent($query), $query);
+                $queries = [];
+                $bound = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments) use (&$queries): array {
+                    $queries[] = $arguments;
+
+                    return $this->projectSearchResult($arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], false);
+                });
+                self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $queries[0]);
+                self::assertSame('Северный дом', $queries[array_key_last($queries)]['query']);
+                $read = AssistantRequiredProjectRead::fromPlan($bound);
+                self::assertSame(102, $read['arguments']['project_id']);
+                if ($period === '') {
+                    self::assertSame(['project_id' => 102], $read['arguments']);
+                } else {
+                    self::assertSame('2026-10-01', $read['arguments']['period_start']);
+                    self::assertSame('2026-10-31', $read['arguments']['period_end']);
+                    self::assertSame('Северный дом '.$comparison, $queries[1]['query']);
+                    $calls = 0;
+                    $periodLiteral = AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls): array {
+                        return $this->projectSearchResult(++$calls === 2 ? [['id' => 96]] : [], false);
+                    });
+                    self::assertSame(2, $calls);
+                    self::assertSame(96, AssistantRequiredProjectRead::fromPlan($periodLiteral)['arguments']['project_id']);
+                    foreach ([$this->projectSearchResult([], true), ['status' => 'error']] as $failure) {
+                        $calls = 0;
+                        $failed = AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls, $failure): array {
+                            return ++$calls === 1 ? $this->projectSearchResult([], false) : $failure;
+                        });
+                        self::assertSame(2, $calls);
+                        self::assertNull(AssistantRequiredProjectRead::fromPlan($failed));
+                    }
+                }
+                $calls = 0;
+                $literal = AssistantNamedProjectReadScope::bind($this->plan($query), function () use (&$calls): array {
+                    $calls++;
+
+                    return $this->projectSearchResult([['id' => 95]], false);
+                });
+                self::assertSame(1, $calls);
+                self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+                foreach ([$this->projectSearchResult([], true), $this->projectSearchResult([['id' => 102], ['id' => 103]], false), ['status' => 'error']] as $result) {
+                    self::assertNull(AssistantRequiredProjectRead::fromPlan(AssistantNamedProjectReadScope::bind($this->plan($query), fn (): array => $result)));
+                }
+            }
+        }
+        self::assertFalse(AssistantProjectProductionScheduleReader::hasIntent('Сверь выполненные работы проекта «Северный дом с графиком»'));
+        self::assertFalse(AssistantProjectProductionScheduleReader::matches('Сверь выполненные работы проекта Северный дом с графиком и оплатой'));
+    }
+
     public function test_project_start_period_does_not_add_a_second_project_name(): void
     {
         foreach (['с начала проекта по сегодня', 'со начала объекта по текущий день'] as $period) {

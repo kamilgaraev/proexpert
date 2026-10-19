@@ -43,13 +43,20 @@ final class AssistantNamedProjectReadScope
             try {
                 $result = $search($arguments);
                 $rows = is_array($result) ? ($result['results'] ?? null) : null;
-                if (! isset($arguments['project_id']) && ! self::hasQuotedName($query) && ! $implicitQuestion
-                    && is_array($result) && ($result['status'] ?? null) === 'success' && $rows === []
-                    && ($result['result_window']['has_more'] ?? null) === false
-                    && ($shortName = AssistantProductionSchedulePeriod::withoutSuffix($name)) !== $name && $shortName !== '') {
-                    $arguments['query'] = $nameQuery = $shortName;
-                    $result = $search($arguments);
-                    $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                if (! isset($arguments['project_id']) && ! self::hasQuotedName($query) && ! $implicitQuestion) {
+                    $periodName = AssistantProductionSchedulePeriod::withoutSuffix($name);
+                    foreach (array_unique([$periodName, self::withoutScheduleComparison($periodName)]) as $shortName) {
+                        if ($shortName === $arguments['query'] || $shortName === '') {
+                            continue;
+                        }
+                        if (! is_array($result) || ($result['status'] ?? null) !== 'success' || $rows !== []
+                            || ($result['result_window']['has_more'] ?? null) !== false) {
+                            break;
+                        }
+                        $arguments['query'] = $nameQuery = $shortName;
+                        $result = $search($arguments);
+                        $rows = is_array($result) ? ($result['results'] ?? null) : null;
+                    }
                 }
                 if (! isset($arguments['project_id']) && ! $implicitQuestion && is_array($result)
                     && ($result['status'] ?? null) === 'success' && is_array($rows)
@@ -204,6 +211,7 @@ final class AssistantNamedProjectReadScope
             return $withoutQuotes;
         }
         $name = self::name(['request' => ['message' => $query]]);
+        $name = $name === null ? null : self::withoutScheduleComparison($name);
 
         return $name === null ? $query : (preg_replace('/(\b(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)(?:\s*:\s*|\s+))'.preg_quote($name, '/').'/iu', '$1текущий', $query, 1) ?? $query);
     }
@@ -213,6 +221,13 @@ final class AssistantNamedProjectReadScope
         $intent = AssistantOperationalReaderRegistry::intent($query);
 
         return isset(AssistantOperationalReaderRegistry::TOOLS[$intent['name'] ?? '']) ? self::semanticQuery($query) : $query;
+    }
+
+    private static function withoutScheduleComparison(string $name): string
+    {
+        $parts = preg_split('/\s+с\s+(?:(?:(?:текущим|действующим|активным)\s+)?графиком|плановым(?:и)?\s+срок(?:ом|ами))(?![\pL\pN])/iu', $name, 2);
+
+        return trim((string) ($parts[0] ?? $name));
     }
 
     private static function hasQuotedName(string $query): bool
