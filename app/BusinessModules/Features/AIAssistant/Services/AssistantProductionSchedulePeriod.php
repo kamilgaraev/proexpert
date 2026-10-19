@@ -26,7 +26,7 @@ final class AssistantProductionSchedulePeriod
 
     private const DURATION_NUMBER = '(?:\d{1,2}|один|одна|одну|два|две|пара|пару|три|четыре|пять|шесть|семь|восемь|девять|десять|одиннадцать|двенадцать)';
 
-    private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|(?:прошедш|минувш)(?:ий|ую|ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
+    private const DURATION_PERIOD = '(?:за\s+(?:(?:последн(?:ий|ие|их|юю)|крайн(?:ий|ие|их|юю)|предыдущ(?:ие|их)|(?:прошедш|минувш)(?:ий|ую|ие|их))\s+)?(?:'.self::DURATION_NUMBER.'\s+)?(?:день|дня|дней|сутки|неделю|недели|недель|месяц|месяца|месяцев|год|года|лет)\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 
@@ -241,9 +241,11 @@ final class AssistantProductionSchedulePeriod
         }
         $reply = trim(preg_replace('/\s+/u', ' ', $reply) ?? $reply);
         $query = $pending['period_query'];
-        if (preg_match('/^с\s+(\d{4}-\d{2}-\d{2})\s+по\s+(\d{4}-\d{2}-\d{2})[.!?]?$/iu', $reply, $dates) === 1
-            && self::validArguments(['project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]])) {
-            return ['query' => $query, 'project_id' => $pending['project_id'], 'period_start' => $dates[1], 'period_end' => $dates[2]];
+        if (preg_match('/^'.self::EXPLICIT_RANGE.'[.!?]?$/iu', $reply) === 1) {
+            $dates = self::arguments($pending['project_id'], ['request' => ['message' => $reply]]);
+
+            return isset($dates['period_start'], $dates['period_end']) && self::validArguments($dates)
+                ? ['query' => $query] + $dates : null;
         }
         $pattern = '/\b(?:за\s+'.self::MONTH.'|(?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
         if (preg_match_all($pattern, $query) !== 1) {
@@ -321,6 +323,7 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace('/\bза\s+предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::WHOLE_PERIOD_PREFIX.'(эт(?:от|ом|у|ой)|текущ(?:ий|ем|ую|ей)|прошл(?:ый|ом|ую|ой)|предыдущ(?:ий|ем|ую|ей)|позапрошл(?:ый|ом|ую|ой))\s+(год(?:у)?|месяц(?:е)?|квартал(?:е)?|недел(?:ю|е)|день)\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[1]);
             $unit = mb_strtolower($match[2]);

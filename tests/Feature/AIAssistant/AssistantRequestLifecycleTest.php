@@ -1982,7 +1982,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     public static function periodClarificationReplies(): array
     {
-        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true]];
+        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true], ['с 01.10.2026 по 15.10.2026', false], ['с 01/10/2026 по 15/10/2026', false], ['с 01-10-2026 по 15-10-2026', false, true]];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('directProductionPeriods')]
