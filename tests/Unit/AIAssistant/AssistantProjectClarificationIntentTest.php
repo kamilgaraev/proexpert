@@ -51,6 +51,26 @@ final class AssistantProjectClarificationIntentTest extends TestCase
         }
     }
 
+    public function test_fully_quoted_project_reply_keeps_command_words_as_literal_name(): void
+    {
+        $message = 'Сверь выполненные работы с графиком проекта «Старый дом» с 01.10.2026 по 10.10.2026.';
+        $previous = ['last_request' => ['message' => $message], 'pending_named_project_clarification' => ['message' => $message]];
+        foreach (['Что дальше', 'Покажи дом', 'Сверь Север', 'Оплати счета', 'Не знаю'] as $name) {
+            foreach (['«'.$name.'»', '"'.$name.'"'] as $reply) {
+                $query = AssistantProjectClarificationIntent::query($reply, [], $previous);
+                self::assertSame('Сверь выполненные работы с графиком проекта «'.$name.'» с 01.10.2026 по 10.10.2026.', $query);
+                $bound = AssistantNamedProjectReadScope::bind(['request' => ['message' => $query,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]], static function (array $arguments) use ($name): array {
+                        self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                        return ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]];
+                    });
+                self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => [
+                    'project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-10']], AssistantRequiredProjectRead::fromPlan($bound));
+            }
+        }
+    }
+
     public function test_pending_project_does_not_replay_new_questions_writes_or_stale_state(): void
     {
         $message = 'Сверь выполненные работы с графиком проекта «Старый дом».';

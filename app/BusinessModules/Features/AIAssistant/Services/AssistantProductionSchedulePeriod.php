@@ -30,7 +30,9 @@ final class AssistantProductionSchedulePeriod
 
     private const SUBDAY_UNIT = '(?:час(?:а|ов|ы)?|минут(?:а|у|ы)?|секунд(?:а|у|ы)?)';
 
-    private const SUBDAY_PERIOD = '(?:за\s+(?:[\pL\pN-]+\s+){0,5}|(?:'.self::DURATION_MODIFIER.'\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+|'.self::DURATION_MODIFIER.'\s+)'.self::SUBDAY_UNIT.'\b';
+    private const DURATION_INTRODUCER = '(?:за|в\s+течение|на\s+протяжении)';
+
+    private const SUBDAY_PERIOD = '(?:'.self::DURATION_INTRODUCER.'\s+(?:[\pL\pN-]+\s+){0,5}|(?:'.self::DURATION_MODIFIER.'\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+|'.self::DURATION_MODIFIER.'\s+)'.self::SUBDAY_UNIT.'\b';
 
     private const BARE_CALENDAR_SELECTOR = '(?:эт(?:от|а|у)|(?:текущ|прошл|предыдущ|позапрошл|следующ|будущ)(?:ий|ый|ая|ую))';
 
@@ -60,7 +62,7 @@ final class AssistantProductionSchedulePeriod
 
     private const INDEFINITE_DURATION_NUMBER = '(?:нескольк(?:о|их)|много|немного|ряд|(?:неизвестное|неопредел[её]нное|некоторое)\s+количество)';
 
-    private const INDEFINITE_DURATION_PERIOD = '(?:(?:за|в\s+течение|на\s+протяжении)\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?'.self::INDEFINITE_DURATION_NUMBER.'\s+(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
+    private const INDEFINITE_DURATION_PERIOD = '(?:'.self::DURATION_INTRODUCER.'\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?'.self::INDEFINITE_DURATION_NUMBER.'\s+(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
     private const NUMERIC_DURATION_VALUE = '[+-]?(?:\d[\d.,\/eE_+-]*|[.,]\d+)';
 
@@ -70,15 +72,15 @@ final class AssistantProductionSchedulePeriod
 
     private const OFFSET_NUMBER = '(?:'.self::NUMERIC_DURATION_VALUE.'|'.self::DURATION_NUMBER.'|'.self::INDEFINITE_DURATION_NUMBER.'|[\pL]+(?:надцать|дцать|десят|сот)|сорок|сто|девяносто|двести|триста|четыреста|(?:тысяч|миллион|миллиард)[а-яё]*|половин[а-яё]*|полтора|полторы)';
 
-    private const QUALIFIED_DURATION_PERIOD = '(?:(?:за|в\s+течение|на\s+протяжении)\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::DURATION_MODIFIER.'\s+(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::OFFSET_NUMBER.'\s+)'.self::DURATION_QUALIFIERS.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
+    private const QUALIFIED_DURATION_PERIOD = '(?:'.self::DURATION_INTRODUCER.'\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::DURATION_MODIFIER.'\s+(?:'.self::OFFSET_NUMBER.'\s+)?|'.self::OFFSET_NUMBER.'\s+)'.self::DURATION_QUALIFIERS.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
     private const FUTURE_CALENDAR_PERIOD = '(?:'.self::PERIOD_PREPOSITION.'\s+)?(?:следующ|будущ)[а-яё]*\s+(?:'.self::OFFSET_NUMBER.'(?:\s+'.self::OFFSET_NUMBER.'){0,5}\s+)?'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
-    private const UNRESOLVED_NUMERIC_PERIOD = '(?<![\pL\pN])(?:(?:за|в\s+течение|на\s+протяжении)\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?(?:(?:[+-]?\d+\s+)?(?=\d*[.,\/eE_+-])'.self::NUMERIC_DURATION_VALUE.'|полтора|полторы|половин[а-яё]*)\s+'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
+    private const UNRESOLVED_NUMERIC_PERIOD = '(?<![\pL\pN])(?:'.self::DURATION_INTRODUCER.'\s+)?(?:'.self::DURATION_MODIFIER.'\s+)?(?:(?:[+-]?\d+\s+)?(?=\d*[.,\/eE_+-])'.self::NUMERIC_DURATION_VALUE.'|полтора|полторы|половин[а-яё]*)\s+'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.')\b';
 
     private const FORWARD_OFFSET_PERIOD = '(?:через|спустя)\s+(?:(?:'.self::DURATION_MODIFIER.'|'.self::BARE_CALENDAR_SELECTOR.')\s+)?(?:'.self::OFFSET_NUMBER.'(?:[\s—–-]+'.self::OFFSET_NUMBER.'){0,5}(?:\s+с\s+половиной)?\s+)?'.self::DURATION_QUALIFIER.'(?:'.self::TIME_UNIT.'|'.self::SUBDAY_UNIT.'|полгода)\b';
 
-    private const DURATION_PERIOD = '(?:'.self::INDEFINITE_DURATION_PERIOD.'|(?:за\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::DURATION_NUMBER.'\s+)?|(?:'.self::DURATION_MODIFIER.'\s+)?'.self::DURATION_NUMBER.'\s+|'.self::DURATION_MODIFIER.'\s+)'.self::DURATION_UNIT.'\b|за\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:за\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
+    private const DURATION_PERIOD = '(?:'.self::INDEFINITE_DURATION_PERIOD.'|(?:'.self::DURATION_INTRODUCER.'\s+(?:'.self::DURATION_MODIFIER.'\s+)?(?:'.self::DURATION_NUMBER.'\s+)?|(?:'.self::DURATION_MODIFIER.'\s+)?'.self::DURATION_NUMBER.'\s+|'.self::DURATION_MODIFIER.'\s+)'.self::DURATION_UNIT.'\b|'.self::DURATION_INTRODUCER.'\s+(?:[\pL-]+\s+){1,3}(?:день|дня|дней|сутки|суток|неделю|недели|недель|месяц|месяца|месяцев|месяцы|год|года|годы|лет|квартала|кварталов|кварталы)\b|(?:'.self::DURATION_INTRODUCER.'\s+)?(?:последн(?:ие|их)\s+)?полгода\b)';
 
     private const WEEKS_AGO_PERIOD = '(?:за\s+)?(?:\d+|'.self::DURATION_NUMBER.')\s+недел(?:ю|и|ь)\s+назад\b';
 

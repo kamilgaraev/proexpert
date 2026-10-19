@@ -1933,7 +1933,8 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     public static function unresolvedProjectReplies(): array
     {
-        return [['Северный дом', 'Северный дом'], ['Дом не сдан', 'Дом не сдан'], ['«Дом не сдан»', 'Дом не сдан']];
+        return [['Северный дом', 'Северный дом'], ['Дом не сдан', 'Дом не сдан'], ['«Дом не сдан»', 'Дом не сдан'],
+            ['«Что дальше»', 'Что дальше'], ['«Оплати счета»', 'Оплати счета']];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('periodClarificationReplies')]
