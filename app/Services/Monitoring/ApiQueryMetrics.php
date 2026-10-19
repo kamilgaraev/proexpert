@@ -39,6 +39,12 @@ final class ApiQueryMetrics
 
     private array $entityBuilds = [];
 
+    private array $accessReads = [];
+
+    private ?\WeakMap $accessReadObjects = null;
+
+    private array $accessReadOrganizations = [];
+
     private array $roleCatalogRedisGet = ['observed' => false, 'count' => 0, 'total_ms' => 0.0, 'max_ms' => 0.0];
 
     private ?array $assistantSnapshot = null;
@@ -101,6 +107,62 @@ final class ApiQueryMetrics
             return $operation();
         } finally {
             self::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint, $entityType);
+        }
+    }
+
+    public static function recordAccessRead(string $event, ?object $frame = null, ?object $store = null, ?int $organizationId = null): void
+    {
+        try {
+            $request = app()->bound('request') ? app('request') : null;
+            $metrics = $request instanceof Request ? $request->attributes->get(self::REQUEST_ATTRIBUTE) : null;
+            if (! $metrics instanceof self || ! $metrics->captureSources || ! in_array($event, [
+                'scope_memoized', 'scope_plain', 'current_reuse', 'current_plain',
+                'policy_enter', 'policy_reuse', 'policy_restore', 'policy_module_lookup', 'policy_module_load',
+                'module_lookup_memoized', 'module_lookup_plain', 'module_load_full', 'module_load_matching',
+                'entitlement_full', 'entitlement_matching',
+            ], true)) { return; }
+
+            $metrics->accessReads[$event] ??= ['count' => 0, 'frames' => 0, 'stores' => 0, 'organizations' => 0,
+                'objects_dropped' => 0, 'organizations_dropped' => 0, 'callers' => []];
+            $measurement = &$metrics->accessReads[$event];
+            $measurement['count']++;
+            $metrics->accessReadObjects ??= new \WeakMap;
+            foreach (['frames' => $frame, 'stores' => $store] as $kind => $object) {
+                if ($object === null) { continue; }
+                if (! isset($metrics->accessReadObjects[$object]) && count($metrics->accessReadObjects) >= 128) {
+                    $measurement['objects_dropped']++;
+                    continue;
+                }
+                $seen = $metrics->accessReadObjects[$object] ?? [];
+                $key = $event.':'.$kind;
+                if (! isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $metrics->accessReadObjects[$object] = $seen;
+                    $measurement[$kind]++;
+                }
+            }
+            if ($organizationId !== null && $organizationId > 0 && ! isset($metrics->accessReadOrganizations[$event][$organizationId])) {
+                if (count($metrics->accessReadOrganizations[$event] ?? []) < 64) {
+                    $metrics->accessReadOrganizations[$event][$organizationId] = true;
+                    $measurement['organizations']++;
+                } else {
+                    $measurement['organizations_dropped']++;
+                }
+            }
+            $caller = 'other';
+            $callers = [
+                \App\Domain\Authorization\Services\AuthorizationService::class => 'access_service',
+                \App\Domain\Authorization\Services\PermissionResolver::class => 'permission_resolver',
+                \App\Domain\Authorization\Services\ModulePermissionChecker::class => 'module_checker',
+                \App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class => 'assistant_policy',
+                \App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class => 'assistant_permissions',
+                \App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs::class => 'assistant_snapshot',
+                \App\Services\Entitlements\OrganizationEntitlementService::class => 'entitlement_service',
+            ];
+            $entry = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3)[2] ?? [];
+            $caller = $callers[$entry['class'] ?? ''] ?? $caller;
+            $measurement['callers'][$caller] = ($measurement['callers'][$caller] ?? 0) + 1;
+        } catch (\Throwable) {
         }
     }
 
@@ -207,6 +269,7 @@ final class ApiQueryMetrics
             'release_sha' => RuntimeReleaseSha::current(),
         ];
         if ($this->captureSources) {
+            $summary['access_reads'] = $this->accessReads;
             $summary['role_catalog_redis_get'] = $this->roleCatalogRedisGet;
             $summary['role_catalog_redis_get']['total_ms'] = round($this->roleCatalogRedisGet['total_ms'], 2);
             $summary['role_catalog_redis_get']['max_ms'] = round($this->roleCatalogRedisGet['max_ms'], 2);

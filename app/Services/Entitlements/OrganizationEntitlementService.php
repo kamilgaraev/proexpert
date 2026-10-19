@@ -7,6 +7,7 @@ namespace App\Services\Entitlements;
 use App\Models\Module;
 use App\Models\OrganizationPackageSubscription;
 use App\Services\Modules\PackageCatalogService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -18,11 +19,13 @@ class OrganizationEntitlementService
 
     public function getEffectiveModuleSlugs(int $organizationId): array
     {
+        ApiQueryMetrics::recordAccessRead('entitlement_full', $this, null, $organizationId);
         return $this->effectiveModuleQuery($organizationId)->pluck('slug')->all();
     }
 
     public function getEffectiveModuleSlugsMatching(int $organizationId, string $moduleSlug): array
     {
+        ApiQueryMetrics::recordAccessRead('entitlement_matching', $this, null, $organizationId);
         if (get_class($this) !== self::class
             || strlen($moduleSlug) > 1024
             || str_contains($moduleSlug, "\0")

@@ -28,6 +28,63 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_access_read_diagnostics_are_closed_private_request_local_and_opt_in(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $frame = new class {
+            public string $privateValue = 'private-frame-value';
+            public function __toString(): string { throw new \LogicException('frame_must_not_be_read'); }
+        };
+        $store = new Repository(new ArrayStore);
+        ApiQueryMetrics::recordAccessRead('module_load_full', $frame, $store, 923456789);
+        ApiQueryMetrics::recordAccessRead('module_load_full', $frame, $store, 923456789);
+        ApiQueryMetrics::recordAccessRead('private-event', $frame, $store, 923456789);
+        $reads = $metrics->summary()['access_reads'];
+        self::assertSame(['module_load_full'], array_keys($reads));
+        self::assertSame(['count' => 2, 'frames' => 1, 'stores' => 1, 'organizations' => 1,
+            'objects_dropped' => 0, 'organizations_dropped' => 0, 'callers' => ['other' => 2]], $reads['module_load_full']);
+        self::assertSame($reads, (new SensitiveDataRedactor)->redact(['access_reads' => $reads])['access_reads']);
+        $encoded = json_encode($reads, JSON_THROW_ON_ERROR);
+        foreach (['private', '923456789', get_class($frame), 'Repository', 'module_load_full:frames'] as $value) {
+            self::assertStringNotContainsString($value, $encoded);
+        }
+        [$request, $disabled] = $this->metrics(false);
+        app()->instance('request', $request);
+        ApiQueryMetrics::recordAccessRead('module_load_full', $frame, $store, 923456789);
+        self::assertArrayNotHasKey('access_reads', $disabled->summary());
+        [$request, $fresh] = $this->metrics();
+        app()->instance('request', $request);
+        self::assertSame([], $fresh->summary()['access_reads']);
+        $request->attributes = new class extends \Symfony\Component\HttpFoundation\ParameterBag {
+            public function get(string $key, mixed $default = null): mixed { throw new \LogicException('private-metrics-failure'); }
+        };
+        ApiQueryMetrics::recordAccessRead('module_load_full', $frame, $store, 923456789);
+        self::assertSame([], $fresh->summary()['access_reads']);
+    }
+
+    public function test_access_read_cardinality_is_bounded_without_retaining_dead_scopes(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $frames = [];
+        for ($index = 1; $index <= 140; $index++) {
+            $frames[] = $frame = new \stdClass;
+            ApiQueryMetrics::recordAccessRead('policy_enter', $frame, null, $index);
+        }
+        $reads = $metrics->summary()['access_reads']['policy_enter'];
+        self::assertSame(140, $reads['count']);
+        self::assertSame(128, $reads['frames']);
+        self::assertSame(64, $reads['organizations']);
+        self::assertSame(12, $reads['objects_dropped']);
+        self::assertSame(76, $reads['organizations_dropped']);
+        $reference = \WeakReference::create($frames[0]);
+        unset($frames, $frame);
+        self::assertNull($reference->get());
+        ApiQueryMetrics::recordAccessRead('policy_enter', new \stdClass, null, 1);
+        self::assertSame(129, $metrics->summary()['access_reads']['policy_enter']['frames']);
+    }
+
     public function test_role_catalog_redis_reads_keep_only_numeric_opt_in_request_local_aggregates(): void
     {
         [$request, $metrics] = $this->metrics();
@@ -469,6 +526,13 @@ final class ApiQuerySourceMetricsTest extends TestCase
         $phases = $metrics->summary()['processing_phases'];
         self::assertSame(4, $phases['current_access_check']['count']);
         self::assertSame(2, $phases['current_access_evaluate']['count']);
+        $reads = $metrics->summary()['access_reads'];
+        self::assertSame(2, $reads['scope_memoized']['count']);
+        self::assertSame(2, $reads['scope_memoized']['frames']);
+        self::assertSame(2, $reads['scope_memoized']['stores']);
+        self::assertSame(4, $reads['current_reuse']['count']);
+        self::assertSame(2, $reads['current_reuse']['frames']);
+        self::assertSame(2, $reads['current_reuse']['stores']);
         \Mockery::close();
     }
 
