@@ -14,6 +14,39 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_calendar_start_resolves_explicit_and_previous_periods_through_today(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-21 10:00:00', 'Europe/Moscow'));
+        try {
+            foreach (['с начала 2026 года' => '2026-01-01', 'с начала 2025 года' => '2025-01-01',
+                'с начала прошлого года' => '2025-01-01', 'с начала предыдущего года' => '2025-01-01',
+                'с начала позапрошлого года' => '2024-01-01', 'с начала 2024 года по текущий день' => '2024-01-01',
+                'с начала прошлого месяца' => '2026-09-01', 'с начала предыдущего месяца' => '2026-09-01',
+                'с начала позапрошлого месяца' => '2026-08-01', 'с начала прошлой недели' => '2026-10-12',
+                'с начала предыдущей недели' => '2026-10-12', 'с начала позапрошлой недели' => '2026-10-05',
+                'с начала текущей недели по сегодня' => '2026-10-19'] as $phrase => $start) {
+                $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => '2026-10-21'];
+                self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+                $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                    'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]],
+                    static fn (array $arguments): array => ['status' => 'success',
+                        'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+                self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+            }
+            foreach (['с начала 2027 года', 'с начала 2026 месяца', 'с начала следующего года',
+                'с начала 2025 года и с начала 2026 года', 'с начала прошлого года и вчера'] as $phrase) {
+                self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                    AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+            \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2024-03-31 10:00:00', 'Europe/Moscow'));
+            self::assertSame(['project_id' => 102, 'period_start' => '2024-02-01', 'period_end' => '2024-03-31'],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком с начала прошлого месяца']]));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_calendar_start_periods_resolve_without_inheriting_project_start(): void
     {
         foreach (['2026-10-21' => ['года' => '2026-01-01', 'месяца' => '2026-10-01', 'недели' => '2026-10-19'],
@@ -21,7 +54,7 @@ final class AssistantProductionSchedulePeriodTest extends TestCase
             \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable($today.' 10:00:00', 'Europe/Moscow'));
             try {
                 foreach ($periods as $unit => $start) {
-                    foreach (['с начала ', 'с начала текущего ', 'с начала этого '] as $prefix) {
+                    foreach ($unit === 'недели' ? ['с начала ', 'с начала текущей ', 'с начала этой '] : ['с начала ', 'с начала текущего ', 'с начала этого '] as $prefix) {
                         $phrase = $prefix.$unit;
                         $expected = ['project_id' => 102, 'period_start' => $start, 'period_end' => $today];
                         self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
