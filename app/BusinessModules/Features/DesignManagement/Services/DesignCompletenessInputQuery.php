@@ -7,11 +7,13 @@ namespace App\BusinessModules\Features\DesignManagement\Services;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision;
+use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionExclusion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentSheet;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessFingerprint;
 use Illuminate\Support\Collection;
 
 final class DesignCompletenessInputQuery
@@ -29,52 +31,70 @@ final class DesignCompletenessInputQuery
         if ($packages === []) {
             return [];
         }
-        $ids = array_map(static fn (DesignPackage $package): int => (int) $package->id, $packages);
-        $sections = DesignPackageSection::query()->whereIn('package_id', $ids)
-            ->orderBy('sort_order')->orderBy('code')->orderBy('id')->get()->groupBy('package_id');
-        $artifacts = DesignArtifact::query()->whereIn('package_id', $ids)->orderBy('id')
-            ->get([...self::ARTIFACT_FIELDS, 'package_id'])->groupBy('package_id');
-        $versions = DesignArtifactVersion::query()
+        $contexts = [];
+        $keys = [];
+        foreach ($packages as $package) {
+            $key = spl_object_id($package);
+            $contexts[$key] = new DesignCompletenessFingerprint;
+            $keys[(int) $package->id] = $key;
+        }
+        $ids = array_keys($keys);
+        $this->appendDataset($contexts, $keys, 'sections', DesignPackageSection::query()->whereIn('package_id', $ids)
+            ->orderBy('sort_order')->orderBy('code')->orderBy('id')->cursor(), self::sectionRow(...));
+        $this->appendDataset($contexts, $keys, 'artifacts', DesignArtifact::query()->whereIn('package_id', $ids)->orderBy('id')
+            ->select([...self::ARTIFACT_FIELDS, 'package_id'])->cursor(), self::artifactRow(...));
+        $this->appendDataset($contexts, $keys, 'versions', DesignArtifactVersion::query()
             ->whereHas('artifact', static fn ($query) => $query->whereIn('package_id', $ids))
             ->select(self::VERSION_FIELDS)
             ->selectSub(DesignArtifact::query()->select('package_id')->whereColumn('id', 'design_artifact_versions.artifact_id'), 'fingerprint_package_id')
-            ->orderBy('id')->get()->groupBy('fingerprint_package_id');
-        $sheets = DesignDocumentSheet::query()->whereIn('package_id', $ids)->orderBy('id')
-            ->get([...self::SHEET_FIELDS, 'package_id'])->groupBy('package_id');
-        $comments = DesignReviewComment::query()->whereIn('package_id', $ids)->orderBy('id')
-            ->get([...self::COMMENT_FIELDS, 'package_id'])->groupBy('package_id');
-        $issuesQuery = null;
+            ->orderBy('id')->cursor(), self::versionRow(...), 'fingerprint_package_id');
+        $this->appendDataset($contexts, $keys, 'sheets', DesignDocumentSheet::query()->whereIn('package_id', $ids)->orderBy('id')
+            ->select([...self::SHEET_FIELDS, 'package_id'])->cursor(), self::sheetRow(...));
+        $this->appendDataset($contexts, $keys, 'comments', DesignReviewComment::query()->whereIn('package_id', $ids)->orderBy('id')
+            ->select([...self::COMMENT_FIELDS, 'package_id'])->cursor(), self::commentRow(...));
+        $issues = DesignPackageBlockingIssueQuery::forPackages($packages)->cursor()
+            ->map(static fn ($row): QualityDefect => QualityDefect::hydrate([(array) $row])->sole());
+        $this->appendDataset($contexts, $keys, 'issues', $issues, self::issueRow(...), 'fingerprint_package_id');
+        $revisionKeys = [];
         foreach ($packages as $package) {
-            $branch = DesignPackageBlockingIssueQuery::forPackage($package)
-                ->select(['id', 'status', 'metadata', 'updated_at'])
-                ->selectRaw('? as fingerprint_package_id', [(int) $package->id])->toBase();
-            if ($issuesQuery === null) {
-                $issuesQuery = $branch;
-            } else {
-                $issuesQuery->unionAll($branch);
+            if ($package->composition_revision_id !== null) {
+                $revisionKeys[(int) $package->composition_revision_id][] = spl_object_id($package);
             }
         }
-        $issues = QualityDefect::hydrate($issuesQuery->orderBy('id')->get()
-            ->map(static fn ($row): array => (array) $row)->all())->groupBy('fingerprint_package_id');
-        $revisionIds = array_values(array_unique(array_filter(array_map(
-            static fn (DesignPackage $package) => $package->composition_revision_id, $packages
-        ), static fn ($id): bool => $id !== null)));
-        $revisions = $revisionIds === [] ? collect() : DesignCompositionRevision::query()
-            ->whereKey($revisionIds)->with('exclusions')->get()->keyBy('id');
-        $fingerprints = [];
+        $existingRevisions = $revisionKeys === [] ? [] : DesignCompositionRevision::query()
+            ->whereKey(array_keys($revisionKeys))->pluck('id')->all();
         foreach ($packages as $package) {
-            $id = $package->id;
-            $exclusions = $package->composition_revision_id === null
-                ? collect()
-                : $revisions->get($package->composition_revision_id)?->exclusions;
-            $fingerprints[spl_object_id($package)] = self::fingerprint(
-                $sections->get($id, collect()), $artifacts->get($id, collect()),
-                $versions->get($id, collect()), $sheets->get($id, collect()),
-                $comments->get($id, collect()), $issues->get($id, collect()), $exclusions,
-            );
+            $contexts[spl_object_id($package)]->beginDataset('exclusions', $package->composition_revision_id !== null
+                && ! in_array((int) $package->composition_revision_id, $existingRevisions, true));
+        }
+        if ($existingRevisions !== []) {
+            foreach (DesignCompositionExclusion::query()->whereIn('revision_id', $existingRevisions)->orderByDesc('id')->cursor() as $row) {
+                $value = self::exclusionRow($row);
+                foreach ($revisionKeys[(int) $row->revision_id] as $key) {
+                    $contexts[$key]->append($value);
+                }
+            }
+        }
+        $fingerprints = [];
+        foreach ($contexts as $key => $context) {
+            $context->endDataset();
+            $fingerprints[$key] = $context->finish();
         }
 
         return $fingerprints;
+    }
+
+    private function appendDataset(array $contexts, array $keys, string $name, iterable $rows, callable $mapper, string $column = 'package_id'): void
+    {
+        foreach ($contexts as $context) {
+            $context->beginDataset($name);
+        }
+        foreach ($rows as $row) {
+            $contexts[$keys[(int) $row->{$column}]]->append($mapper($row));
+        }
+        foreach ($contexts as $context) {
+            $context->endDataset();
+        }
     }
 
     public static function fingerprint(
@@ -87,22 +107,51 @@ final class DesignCompletenessInputQuery
         ?Collection $exclusions,
     ): string {
         return hash('sha256', json_encode([
-            'sections' => $sections->map(static fn ($item): array => [
-                'id' => $item->id, 'code' => $item->code, 'required' => $item->required,
-                'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id'])),
-            ])->values()->all(),
-            'artifacts' => $artifacts->map(static fn (DesignArtifact $item): array => $item->only(self::ARTIFACT_FIELDS))->values()->all(),
-            'versions' => $versions->map(static fn (DesignArtifactVersion $item): array => $item->only(self::VERSION_FIELDS))->values()->all(),
-            'sheets' => $sheets->map(static fn (DesignDocumentSheet $item): array => $item->only(self::SHEET_FIELDS))->values()->all(),
-            'comments' => $comments->map(static fn (DesignReviewComment $item): array => $item->only(self::COMMENT_FIELDS))->values()->all(),
-            'issues' => $issues->map(static fn ($item): array => [
-                'id' => $item->id, 'status' => $item->status, 'metadata' => $item->metadata,
-                'updated_at' => $item->updated_at?->toISOString(),
-            ])->values()->all(),
-            'exclusions' => $exclusions?->map(static fn ($item): array => [
-                'id' => $item->id, 'item_key' => $item->item_key, 'reason' => $item->reason,
-                'created_at' => $item->created_at?->toISOString(),
-            ])->values()->all(),
+            'sections' => $sections->map(self::sectionRow(...))->values()->all(),
+            'artifacts' => $artifacts->map(self::artifactRow(...))->values()->all(),
+            'versions' => $versions->map(self::versionRow(...))->values()->all(),
+            'sheets' => $sheets->map(self::sheetRow(...))->values()->all(),
+            'comments' => $comments->map(self::commentRow(...))->values()->all(),
+            'issues' => $issues->map(self::issueRow(...))->values()->all(),
+            'exclusions' => $exclusions?->map(self::exclusionRow(...))->values()->all(),
         ], JSON_THROW_ON_ERROR));
+    }
+
+    private static function sectionRow(DesignPackageSection $item): array
+    {
+        return ['id' => $item->id, 'code' => $item->code, 'required' => $item->required,
+            'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id']))];
+    }
+
+    private static function artifactRow(DesignArtifact $item): array
+    {
+        return $item->only(self::ARTIFACT_FIELDS);
+    }
+
+    private static function versionRow(DesignArtifactVersion $item): array
+    {
+        return $item->only(self::VERSION_FIELDS);
+    }
+
+    private static function sheetRow(DesignDocumentSheet $item): array
+    {
+        return $item->only(self::SHEET_FIELDS);
+    }
+
+    private static function commentRow(DesignReviewComment $item): array
+    {
+        return $item->only(self::COMMENT_FIELDS);
+    }
+
+    private static function issueRow(QualityDefect $item): array
+    {
+        return ['id' => $item->id, 'status' => $item->status, 'metadata' => $item->metadata,
+            'updated_at' => $item->updated_at?->toISOString()];
+    }
+
+    private static function exclusionRow(DesignCompositionExclusion $item): array
+    {
+        return ['id' => $item->id, 'item_key' => $item->item_key, 'reason' => $item->reason,
+            'created_at' => $item->created_at?->toISOString()];
     }
 }

@@ -201,7 +201,7 @@ final class DesignCompletenessService
         }
         $freshness = [];
         $defaultConnection = (new DesignPackage)->getConnection()->getName();
-        foreach (array_chunk($packages, 4) as $chunk) {
+        foreach (array_chunk($packages, 100) as $chunk) {
             $default = [];
             $ids = array_map(static fn (DesignPackage $package): int => (int) $package->id, $chunk);
             $duplicateIds = count(array_unique($ids)) !== count($ids);

@@ -12,6 +12,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentSheet;
+use App\BusinessModules\Features\DesignManagement\Models\DesignCompletenessCheck;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageCollection;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessInputQuery;
@@ -396,7 +397,7 @@ final class DesignPackageSecurityRegressionTest extends TestCase
     {
         $actor = $this->context(['view', 'create', 'composition.edit', 'composition.approve', 'norm_control.run']);
         $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
-        for ($index = 0; $index < 3; $index++) {
+        for ($index = 0; $index < 5; $index++) {
             $package = $this->readyPackage($actor, $project);
             self::assertSame($this->previousInputFingerprint($package), $package->latestCompletenessCheck->metadata['input_fingerprint']);
         }
@@ -404,14 +405,14 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         DB::enableQueryLog();
         try {
             $response = $this->withHeaders($actor->authHeaders())->getJson(
-                '/api/v1/admin/design-management/packages?project_id='.$project->id.'&per_page=3'
+                '/api/v1/admin/design-management/packages?project_id='.$project->id.'&per_page=5'
             );
             $queries = DB::getQueryLog();
         } finally {
             DB::disableQueryLog();
             DB::flushQueryLog();
         }
-        $response->assertOk()->assertJsonCount(3, 'data')->assertJsonPath('meta.total', 3);
+        $response->assertOk()->assertJsonCount(5, 'data')->assertJsonPath('meta.total', 5);
         foreach ($response->json('data') as $row) {
             self::assertTrue($row['completeness_is_fresh']);
         }
@@ -446,6 +447,53 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         foreach ($packages as $package) {
             self::assertSame($this->previousInputFingerprint($package), $inputQuery->fingerprints($packages->all())[spl_object_id($package)]);
         }
+    }
+
+    public function test_maximum_registry_page_keeps_single_input_and_issue_reads(): void
+    {
+        $actor = $this->context(['view']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $stamp = now();
+        $scope = ['organization_id' => $actor->organization->id, 'project_id' => $project->id];
+        $rows = [];
+        for ($index = 0; $index < 100; $index++) {
+            $rows[] = $scope + ['title' => 'Boundary '.$index, 'project_stage' => 'pd', 'created_at' => $stamp, 'updated_at' => $stamp];
+        }
+        DesignPackage::query()->insert($rows);
+        $ids = DesignPackage::query()->where('organization_id', $actor->organization->id)->where('project_id', $project->id)->pluck('id');
+        $metadata = json_encode(['rule_count' => app(DesignCompletenessService::class)->ruleCount(),
+            'input_fingerprint' => hash('sha256', json_encode(array_fill_keys(
+                ['sections', 'artifacts', 'versions', 'sheets', 'comments', 'issues', 'exclusions'], []
+            ), JSON_THROW_ON_ERROR))], JSON_THROW_ON_ERROR);
+        $checks = [];
+        foreach ($ids as $id) {
+            $checks[] = $scope + ['package_id' => $id, 'status' => 'ready', 'profile_code' => 'rf_rd_gost_21_101_2026',
+                'project_stage' => 'pd', 'checked_at' => $stamp, 'metadata' => $metadata, 'created_at' => $stamp, 'updated_at' => $stamp];
+        }
+        DesignCompletenessCheck::query()->insert($checks);
+        DB::enableQueryLog();
+        try {
+            $response = $this->withHeaders($actor->authHeaders())->getJson(
+                '/api/v1/admin/design-management/packages?project_id='.$project->id.'&per_page=100'
+            );
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $response->assertOk()->assertJsonCount(100, 'data')->assertJsonPath('meta.total', 100);
+        foreach ($response->json('data') as $row) {
+            self::assertTrue($row['completeness_is_fresh']);
+        }
+        $sheetReads = array_filter($queries, static fn (array $query): bool => str_starts_with(
+            $query['query'], 'select "id", "version_id", "status", "revision", "updated_at"'
+        ) && str_contains($query['query'], 'from "design_document_sheets"'));
+        self::assertCount(1, $sheetReads);
+        $issueReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'join lateral')
+            && str_contains($query['query'], '"quality_defects"'));
+        self::assertCount(1, $issueReads);
+        self::assertLessThan(32768, strlen(array_values($issueReads)[0]['query']));
+        self::assertLessThan(350, count(array_values($issueReads)[0]['bindings']));
     }
 
     public function test_bulk_fingerprints_preserve_shared_resolved_and_soft_deleted_issue_scope(): void
