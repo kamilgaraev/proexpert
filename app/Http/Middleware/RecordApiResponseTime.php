@@ -31,6 +31,7 @@ final class RecordApiResponseTime
             'api/v1/admin/projects/*/contracts',
             'api/v1/admin/project-command-center',
             'api/v1/admin/procurement/purchase-requests',
+            'api/v1/admin/procurement/supplier-requests',
             'api/v1/admin/design-management/packages',
             'api/v1/admin/executive-documentation/references',
             'api/v1/admin/personal-files',
