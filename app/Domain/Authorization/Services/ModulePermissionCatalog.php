@@ -6,10 +6,18 @@ namespace App\Domain\Authorization\Services;
 
 use App\Models\Module;
 use Illuminate\Database\DeadlockException;
+use Illuminate\Database\DetectsConcurrencyErrors;
+use Illuminate\Database\DetectsLostConnections;
+use PDOException;
 use Throwable;
 
 class ModulePermissionCatalog
 {
+    use DetectsConcurrencyErrors;
+    use DetectsLostConnections;
+
+    public function __construct(private readonly Module $model) {}
+
     public static function canonicalSlug(string $slug): string
     {
         return $slug === 'estimate-generation' ? 'ai-estimates' : $slug;
@@ -27,7 +35,7 @@ class ModulePermissionCatalog
             return [];
         }
 
-        $query = Module::query();
+        $query = $this->model->newQuery();
         $connection = $query->getConnection();
         $originalLevel = $connection->transactionLevel();
         $failure = null;
@@ -50,11 +58,29 @@ class ModulePermissionCatalog
         try {
             return $originalLevel > 0 ? $connection->transaction($read, 1) : $read();
         } catch (Throwable $e) {
-            if ($e !== $failure || $e instanceof DeadlockException || $connection->transactionLevel() !== $originalLevel) {
+            if ($e !== $failure || $this->isTransactionFailure($e) || $connection->transactionLevel() !== $originalLevel) {
                 throw $e;
             }
 
             return null;
         }
+    }
+
+    private function isTransactionFailure(Throwable $error): bool
+    {
+        do {
+            if ($error instanceof DeadlockException || $this->causedByConcurrencyError($error) || $this->causedByLostConnection($error)) {
+                return true;
+            }
+            if ($error instanceof PDOException) {
+                $state = (string) ($error->errorInfo[0] ?? $error->getCode());
+                if (in_array(substr($state, 0, 2), ['08', '25', '2D', '40'], true)) {
+                    return true;
+                }
+            }
+            $error = $error->getPrevious();
+        } while ($error !== null);
+
+        return false;
     }
 }

@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\UserPermissionsController;
 use App\Models\Module;
 use Illuminate\Database\DeadlockException;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -248,6 +249,103 @@ class UserPermissionsCatalogBatchTest extends TestCase
         $this->assertSame(['catalog.first'], $catalog['catalog-bound-0']->permissions);
         $this->assertSame(['catalog.last'], $catalog['catalog-bound-500']->permissions);
         $this->assertSame([500, 1], $reads);
+    }
+
+    public function test_level_zero_catalog_load_reads_the_current_database_permissions(): void
+    {
+        $this->withUnwrappedCatalog(function (ModulePermissionCatalog $catalog, $connection, Module $model): void {
+            $module = $model->newQuery()->create([
+                'slug' => 'catalog-level-zero-fixture',
+                'name' => 'catalog-level-zero-fixture',
+                'version' => '1.0.0',
+                'type' => 'feature',
+                'billing_model' => 'free',
+                'permissions' => ['catalog.zero'],
+            ]);
+            try {
+                [$result, $reads] = $this->captureModuleReads(fn () => $catalog->load(['catalog-level-zero-fixture' => ['*']]));
+                $this->assertSame(['catalog.zero'], $result['catalog-level-zero-fixture']->permissions);
+                $this->assertSame([1], $reads);
+                $this->assertSame(0, $connection->transactionLevel());
+            } finally {
+                $module->delete();
+            }
+        });
+    }
+
+    public function test_level_zero_ordinary_postgres_failure_allows_the_legacy_fallback(): void
+    {
+        $this->withUnwrappedCatalog(function (ModulePermissionCatalog $catalog, $connection): void {
+            $inject = true;
+            $connection->beforeExecuting(static function (string $sql) use ($connection, &$inject): void {
+                if ($inject && str_starts_with($sql, 'select "slug", "permissions" from "modules"')) {
+                    $inject = false;
+                    $connection->select('SELECT 1 / 0');
+                }
+            });
+            try {
+                $this->assertNull($catalog->load(['catalog-level-zero-fixture' => ['*']]));
+                $this->assertFalse($inject);
+                $this->assertSame(0, $connection->transactionLevel());
+                $this->assertSame(1, (int) $connection->selectOne('SELECT 1 AS recovered')->recovered);
+            } finally {
+                $inject = false;
+            }
+        });
+    }
+
+    public function test_level_zero_concurrency_and_connection_failures_propagate_without_legacy_reads(): void
+    {
+        $this->withUnwrappedCatalog(function (ModulePermissionCatalog $catalog, $connection): void {
+            $this->app->instance(ModulePermissionCatalog::class, $catalog);
+            foreach (['40001', '40P01', '08006'] as $state) {
+                $injection = (object) ['enabled' => true];
+                $connection->beforeExecuting(static function (string $sql) use ($connection, $state, $injection): void {
+                    if ($injection->enabled && str_starts_with($sql, 'select "slug", "permissions" from "modules"')) {
+                        $injection->enabled = false;
+                        $connection->unprepared("DO \$catalog\$ BEGIN RAISE EXCEPTION USING MESSAGE = 'Controlled catalog failure', ERRCODE = '{$state}'; END \$catalog\$;");
+                    }
+                });
+                try {
+                    [$failure, $reads] = $this->captureModuleReads(function () {
+                        try {
+                            $this->flatten(app(UserPermissionsController::class), $this->mixedPermissions());
+                        } catch (QueryException $e) {
+                            return $e;
+                        }
+
+                        return null;
+                    });
+                    $this->assertInstanceOf(QueryException::class, $failure);
+                    $this->assertSame($state, $failure->errorInfo[0]);
+                    $this->assertFalse($injection->enabled);
+                    $this->assertSame([], $reads);
+                    $this->assertSame(0, $connection->transactionLevel());
+                    $this->assertSame(1, (int) $connection->selectOne('SELECT 1 AS recovered')->recovered);
+                } finally {
+                    $injection->enabled = false;
+                }
+            }
+        });
+    }
+
+    private function withUnwrappedCatalog(callable $operation): void
+    {
+        $alias = 'permission_catalog_unwrapped';
+        $connections = config('database.connections');
+        $configuration = DB::connection()->getConfig();
+        unset($configuration['name']);
+        try {
+            config(['database.connections.'.$alias => $configuration]);
+            $connection = DB::connection($alias);
+            $this->assertSame('pgsql', $connection->getDriverName());
+            $this->assertSame(0, $connection->transactionLevel());
+            $model = (new Module)->setConnection($alias);
+            $operation(new ModulePermissionCatalog($model), $connection, $model);
+        } finally {
+            DB::purge($alias);
+            config(['database.connections' => $connections]);
+        }
     }
 
     private function seedCatalog(): void
