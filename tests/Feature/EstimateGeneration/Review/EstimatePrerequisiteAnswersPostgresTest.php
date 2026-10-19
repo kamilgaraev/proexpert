@@ -6,9 +6,13 @@ namespace Tests\Feature\EstimateGeneration\Review;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\GetEstimatePrerequisites;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\UpdateEstimatePrerequisites;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPrerequisiteController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -24,6 +28,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -48,7 +53,7 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         $refresh = $update->refresh($actor, (int) $session->project_id, (int) $session->id, 0, $request);
         self::assertSame(CanonicalPipelineJson::encode($refresh), CanonicalPipelineJson::encode($update->refresh($actor, (int) $session->project_id, (int) $session->id, 0, $request)));
         self::assertSame('0', $refresh['cost_units']);
-        self::assertSame('failed', $session->fresh()->status->value);
+        self::assertSame('input_review_required', $session->fresh()->status->value);
         self::assertSame(['retained' => 'draft'], $session->fresh()->draft_payload);
         self::assertSame('5ac504c5-5ca3-41dc-95b0-f3c8745ccc44', $session->fresh()->input_payload['qa_run_id']);
         self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
@@ -131,20 +136,33 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         }
     }
 
-    public function test_refresh_preserves_failed_recovery_status_and_retained_draft(): void
+    public function test_refresh_reopens_failed_recovery_review_and_preserves_the_draft_as_history(): void
     {
         foreach (['generating' => 'validate_draft', 'applying' => 'applying', 'processing_documents' => 'processing_documents'] as $resume => $stage) {
             [$actor, $session] = $this->fixture();
             $session->update(['resume_status' => $resume, 'processing_stage' => $stage]);
             app(UpdateEstimatePrerequisites::class)->refresh($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid());
             $after = $session->fresh();
-            self::assertSame('failed', $after->status->value);
-            self::assertSame($resume, $after->getRawOriginal('resume_status'));
-            self::assertSame($stage, $after->processing_stage);
+            self::assertSame('input_review_required', $after->status->value);
+            self::assertNull($after->getRawOriginal('resume_status'));
+            self::assertSame('input_review_required', $after->processing_stage);
             self::assertSame(['retained' => 'draft'], $after->draft_payload);
             self::assertFalse($after->input_payload['input_confirmed']);
             self::assertArrayNotHasKey('confirmed_evaluation', $after->input_payload);
             self::assertSame(1, $after->state_version);
+            config(['estimate-generation.credits.enabled' => true]);
+            try {
+                app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+                    (int) $session->id, (int) $session->organization_id, (int) $session->project_id, 1, $actor,
+                    ['request_id' => (string) Str::uuid(), 'quote_id' => (string) Str::uuid()],
+                ));
+                self::fail('Retry bypassed prerequisite input review.');
+            } catch (ValidationException $error) {
+                self::assertSame(['Сначала подготовьте документы либо проверьте исход активной операции.'], $error->errors()['quote_id']);
+            }
+            self::assertSame('input_review_required', $session->fresh()->status->value);
+            self::assertSame(1, $session->fresh()->state_version);
+            self::assertSame(0, DB::table('estimate_generation_credit_operations')->count());
             $this->assertNoPaidEffects();
         }
     }
@@ -160,6 +178,40 @@ final class EstimatePrerequisiteAnswersPostgresTest extends EstimateGenerationCa
         $proof = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->latest('id')->first();
         self::assertSame('999999999999.0003', $fact->value);
         self::assertSame($fact->value, json_decode($proof->value, true)['quantity']);
+        $this->assertNoPaidEffects();
+    }
+
+    public function test_retry_without_credits_still_requires_explicit_input_confirmation_after_refresh(): void
+    {
+        [$actor, $session] = $this->fixture();
+        config(['estimate-generation.credits.enabled' => false]);
+        Queue::fake();
+        $session->update(['input_payload' => [...$session->input_payload, 'description' => 'Проверенный план одноэтажного дома']]);
+        app(UpdateEstimatePrerequisites::class)->refresh($actor, (int) $session->project_id, (int) $session->id, 0, (string) Str::uuid());
+        try {
+            app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+                (int) $session->id, (int) $session->organization_id, (int) $session->project_id, 1, $actor,
+            ));
+            self::fail('Unconfirmed source data entered generation without credits.');
+        } catch (ValidationException $error) {
+            self::assertSame([trans_message('estimate_generation.prerequisites.input_confirmation_required')], $error->errors()['session']);
+        }
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        self::assertSame(1, $session->fresh()->state_version);
+        Queue::assertNothingPushed();
+        $confirmed = app(TransitionEstimateGenerationSession::class)->handle(
+            $session->fresh(), 1, EstimateGenerationEvent::InputConfirmed, $actor,
+        );
+        self::assertSame('ready_to_generate', $confirmed->status->value);
+        self::assertSame(2, $confirmed->state_version);
+        self::assertNull($confirmed->resume_status);
+        self::assertSame(['retained' => 'draft'], $confirmed->draft_payload);
+        [$legacyActor, $legacy] = $this->fixture();
+        $legacy->update(['status' => 'input_review_required', 'input_payload' => ['description' => 'Прежний ввод без маркера пересчёта']]);
+        $retried = app(RetryEstimateGenerationSession::class)->handle(new RetryEstimateGenerationSessionCommand(
+            (int) $legacy->id, (int) $legacy->organization_id, (int) $legacy->project_id, 0, $legacyActor,
+        ));
+        self::assertSame('generating', $retried->status->value);
         $this->assertNoPaidEffects();
     }
 

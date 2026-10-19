@@ -79,9 +79,8 @@ final readonly class UpdateEstimatePrerequisites
                 $result = [...$result, ...$this->saveAnswer($actor, $session, $requestId, $input)];
                 $payload['manual_input_revision'] = ($payload['manual_input_revision'] ?? 0) + 1;
             }
-            if ($action === 'answer' || $session->status !== EstimateGenerationStatus::Failed) {
-                $session->fill(['status' => EstimateGenerationStatus::InputReviewRequired, 'processing_stage' => 'input_review_required']);
-            }
+            $session->fill(['status' => EstimateGenerationStatus::InputReviewRequired,
+                'resume_status' => null, 'processing_stage' => 'input_review_required']);
             $payload['input_confirmed'] = false;
             unset($payload['confirmed_evaluation']);
             $receipts[$requestId] = ['fingerprint' => $fingerprint, 'actor_id' => (int) $actor->id,
