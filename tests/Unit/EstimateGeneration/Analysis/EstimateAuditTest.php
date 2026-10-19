@@ -412,10 +412,16 @@ final class EstimateAuditTest extends TestCase
         }
     }
 
-    public function test_composer_correction_applies_omission_quantity_and_unit_changes_before_reaudit(): void
+    public static function correctionTargetKeys(): array
+    {
+        return [['work:a'], ['roof/work'], ['0']];
+    }
+
+    #[DataProvider('correctionTargetKeys')]
+    public function test_composer_correction_applies_omission_quantity_and_unit_changes_before_reaudit(string $targetKey): void
     {
         foreach (['add_work', 'replace_quantity', 'replace_unit'] as $operation) {
-            $item = $this->item('work:a');
+            $item = $this->item($targetKey);
             $item['metadata'] = ['scope_entity_id' => 'entity:room', 'quantity_key' => 'finish.floor'];
             $item['quantity_basis_details'] = ['formula_key' => 'old_formula', 'formula_inputs' => ['entity_id' => 'entity:old']];
             $item['quantity_evidence'] = $item['quantity_basis_details'];
@@ -444,7 +450,7 @@ final class EstimateAuditTest extends TestCase
                 : [
                     'operation' => $operation,
                     'finding_id' => $finding['finding_id'],
-                    'target_item_key' => 'work:a',
+                    'target_item_key' => $targetKey,
                     'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item),
                     'derived_quantity_id' => 'quantity:corrected',
                 ];
