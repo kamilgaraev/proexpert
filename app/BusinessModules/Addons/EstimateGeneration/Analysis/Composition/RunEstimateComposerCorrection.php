@@ -17,7 +17,7 @@ use Throwable;
 
 final readonly class RunEstimateComposerCorrection
 {
-    public const PROMPT_CONTRACT = 'estimate-composer-correction:v5';
+    public const PROMPT_CONTRACT = 'estimate-composer-correction:v6';
 
     public function __construct(
         private AiRoleRunRepository $runs,
@@ -159,6 +159,9 @@ final readonly class RunEstimateComposerCorrection
     {
         $expected = ['operation', 'finding_id', 'target_item_key', 'expected_target_fingerprint', 'derived_quantity_id'];
         if ($this->sortedKeys($correction) !== $this->sortedKeys(array_fill_keys($expected, null))
+            || ! is_string($correction['target_item_key'] ?? null)
+            || ! is_string($correction['expected_target_fingerprint'] ?? null)
+            || ! is_string($correction['derived_quantity_id'] ?? null)
             || ! isset($items[$correction['target_item_key'] ?? ''])
             || ! hash_equals($items[$correction['target_item_key']], (string) ($correction['expected_target_fingerprint'] ?? ''))
             || ! isset($quantityIds[$correction['derived_quantity_id'] ?? ''])) {

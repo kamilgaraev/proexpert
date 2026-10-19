@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput;
 use InvalidArgumentException;
 
@@ -21,7 +22,8 @@ final readonly class EstimateComposerCorrectionInput
 
     public function fingerprint(): string
     {
-        $payload = ['audit_input' => $this->audit->canonicalPayload(false), 'findings' => $this->findings];
+        $payload = ['audit_input' => $this->audit->canonicalPayload(false), 'findings' => $this->findings,
+            'correction_contract' => RunEstimateComposerCorrection::PROMPT_CONTRACT];
         $payload['audit_input']['derived_quantities'] = $this->audit->derivedQuantities;
         if ($this->audit->wireScope?->creditOperationId !== null) {
             $payload['approved_operation_id'] = $this->audit->wireScope->creditOperationId;
@@ -33,9 +35,22 @@ final readonly class EstimateComposerCorrectionInput
     /** @return array<string,mixed> */
     public function canonicalPayload(): array
     {
+        $targets = [];
+        foreach ($this->audit->draft['local_estimates'] ?? [] as $estimate) {
+            foreach (is_array($estimate) ? ($estimate['sections'] ?? []) : [] as $section) {
+                foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $item) {
+                    if (is_array($item) && is_string($item['key'] ?? null)) {
+                        $targets[] = ['target_item_key' => $item['key'],
+                            'expected_target_fingerprint' => ApplyComposerCorrectionCycle::itemFingerprint($item)];
+                    }
+                }
+            }
+        }
+
         return [
             'audit_input' => $this->audit->canonicalPayload(),
             'findings' => $this->findings,
+            'replacement_targets' => $targets,
         ];
     }
 }
