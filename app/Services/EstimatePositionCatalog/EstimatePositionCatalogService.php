@@ -13,10 +13,6 @@ use function trans_message;
 
 class EstimatePositionCatalogService
 {
-    public function __construct(
-        private readonly PriceHistoryService $priceHistoryService
-    ) {}
-
     /**
      * Получить список позиций с пагинацией
      */
@@ -97,32 +93,30 @@ class EstimatePositionCatalogService
     public function updatePosition(int $id, int $organizationId, array $data, int $userId): EstimatePositionCatalog
     {
         try {
-            $position = $this->getPositionById($id, $organizationId);
+            return DB::transaction(function () use ($id, $organizationId, $data, $userId): EstimatePositionCatalog {
+                $position = EstimatePositionCatalog::query()
+                    ->where('id', $id)
+                    ->where('organization_id', $organizationId)
+                    ->lockForUpdate()
+                    ->first();
 
-            if (!$position) {
-                throw new \RuntimeException('Position not found');
-            }
+                if (!$position) {
+                    throw new \RuntimeException('Position not found');
+                }
 
-            // Если изменилась цена, сохранить в истории
-            if (isset($data['unit_price']) && $data['unit_price'] != $position->unit_price) {
-                $this->priceHistoryService->trackPriceChange(
-                    $position->id,
-                    $position->unit_price,
-                    $data['unit_price'],
-                    $userId,
-                    $data['price_change_reason'] ?? null
-                );
-            }
+                $position->priceChangeUserId = $userId;
+                $position->priceChangeReason = $data['price_change_reason'] ?? null;
+                unset($data['price_change_reason']);
+                $position->update($data);
 
-            $position->update($data);
+                Log::info('estimate_position_catalog.updated', [
+                    'organization_id' => $organizationId,
+                    'position_id' => $position->id,
+                    'user_id' => $userId,
+                ]);
 
-            Log::info('estimate_position_catalog.updated', [
-                'organization_id' => $organizationId,
-                'position_id' => $position->id,
-                'user_id' => $userId,
-            ]);
-
-            return $position->fresh(['category', 'measurementUnit', 'workType']);
+                return $position->fresh(['category', 'measurementUnit', 'workType']);
+            });
         } catch (\Exception $e) {
             Log::error('estimate_position_catalog.update_failed', [
                 'id' => $id,

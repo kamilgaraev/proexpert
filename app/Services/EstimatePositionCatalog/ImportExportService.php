@@ -4,11 +4,11 @@ namespace App\Services\EstimatePositionCatalog;
 
 use App\Models\EstimatePositionCatalog;
 use App\Models\MeasurementUnit;
-use App\Models\WorkType;
 use App\Services\Export\CsvExportValue;
 use App\Services\Export\ExportValueBinder;
 use App\Services\Import\BoundedSpreadsheetReader;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -42,7 +42,9 @@ class ImportExportService
                 }
 
                 try {
-                    $this->importRow($organizationId, $userId, $row);
+                    DB::transaction(function () use ($organizationId, $userId, $row): void {
+                        $this->importRow($organizationId, $userId, $row);
+                    });
                     $imported++;
                 } catch (\Exception $e) {
                     $skipped++;
@@ -97,9 +99,11 @@ class ImportExportService
         // Проверить, существует ли уже позиция с таким кодом
         $existing = EstimatePositionCatalog::where('organization_id', $organizationId)
             ->where('code', $code)
+            ->lockForUpdate()
             ->first();
 
         if ($existing) {
+            $existing->priceChangeUserId = $userId;
             // Обновить существующую
             $existing->update([
                 'name' => $name,

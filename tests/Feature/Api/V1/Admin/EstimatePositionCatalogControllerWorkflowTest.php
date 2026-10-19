@@ -9,10 +9,16 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimatePositionCatalog;
 use App\Models\EstimatePositionCatalogCategory;
+use App\Models\EstimatePositionPriceHistory;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\WorkType;
+use App\Models\User;
+use App\Services\EstimatePositionCatalog\EstimatePositionCatalogService;
+use App\Services\EstimatePositionCatalog\ImportExportService;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -20,6 +26,103 @@ use Tests\TestCase;
 class EstimatePositionCatalogControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_import_updates_price_once_and_preserves_the_import_actor(): void
+    {
+        $context = AdminApiTestContext::create();
+        $creator = User::factory()->create();
+        $unit = $this->createMeasurementUnit($context->organization);
+        $position = $this->createPosition($context->organization, $creator->id, $unit, ['unit_price' => 0]);
+        $csv = "code,name,description,type,unit,price,direct,overhead,profit\n"
+            . "{$position->code},Imported position,,work,{$unit->name},2,0,0,0\n";
+        $file = UploadedFile::fake()->createWithContent('catalog.csv', $csv);
+
+        $service = app(ImportExportService::class);
+        $result = $service->importFromExcel($context->organization->id, $file, $context->user->id);
+        $this->assertSame(['imported' => 1, 'skipped' => 0, 'errors' => []], $result);
+        $this->assertSame('2.00', $position->fresh()->unit_price);
+        $history = EstimatePositionPriceHistory::query()->where('catalog_item_id', $position->id)->get();
+        $this->assertCount(1, $history);
+        $this->assertSame($context->user->id, $history->first()->user_id);
+        $this->assertSame('0.00', $history->first()->old_price);
+        $this->assertSame('2.00', $history->first()->new_price);
+
+        $this->assertSame(1, $service->importFromExcel($context->organization->id, $file, $context->user->id)['imported']);
+        $this->assertSame(1, EstimatePositionPriceHistory::query()->where('catalog_item_id', $position->id)->count());
+    }
+
+    public function test_rejected_update_does_not_leave_price_history(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createMeasurementUnit($context->organization);
+        $position = $this->createPosition($context->organization, $context->user->id, $unit, ['unit_price' => 0]);
+        $other = $this->createPosition($context->organization, $context->user->id, $unit);
+        $rejected = false;
+
+        try {
+            app(EstimatePositionCatalogService::class)->updatePosition(
+                $position->id, $context->organization->id,
+                ['unit_price' => 1, 'code' => $other->code], $context->user->id,
+            );
+        } catch (QueryException) {
+            $rejected = true;
+        }
+
+        $this->assertTrue($rejected);
+        $this->assertSame('0.00', $position->fresh()->unit_price);
+        $this->assertSame(0, EstimatePositionPriceHistory::query()->where('catalog_item_id', $position->id)->count());
+    }
+
+    public function test_catalog_resource_preserves_unit_code_and_legacy_symbol(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createMeasurementUnit($context->organization, ['short_name' => 'qa-unit']);
+        $position = $this->createPosition($context->organization, $context->user->id, $unit);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/estimate-positions/{$position->id}")
+            ->assertOk()
+            ->assertJsonPath('data.measurement_unit.id', $unit->id)
+            ->assertJsonPath('data.measurement_unit.code', 'qa-unit')
+            ->assertJsonPath('data.measurement_unit.short_name', 'qa-unit')
+            ->assertJsonPath('data.measurement_unit.symbol', 'qa-unit');
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/estimate-positions/{$position->id}", ['name' => 'Updated unit display'])
+            ->assertOk()
+            ->assertJsonPath('data.measurement_unit.code', 'qa-unit');
+    }
+
+    public function test_price_update_writes_one_history_entry_with_actor_and_reason(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createMeasurementUnit($context->organization);
+        $position = $this->createPosition($context->organization, $context->user->id, $unit, ['unit_price' => 0]);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/estimate-positions/{$position->id}", [
+                'unit_price' => 1, 'price_change_reason' => 'Teaching price correction',
+            ])->assertOk();
+
+        $history = EstimatePositionPriceHistory::query()->where('catalog_item_id', $position->id)->get();
+        $this->assertCount(1, $history);
+        $this->assertSame('0.00', $history->first()->old_price);
+        $this->assertSame('1.00', $history->first()->new_price);
+        $this->assertSame($context->user->id, $history->first()->user_id);
+        $this->assertSame('Teaching price correction', $history->first()->change_reason);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/estimate-positions/{$position->id}", [
+                'name' => 'Name correction only', 'unit_price' => 1,
+            ])->assertOk();
+        $this->assertSame(1, EstimatePositionPriceHistory::query()->where('catalog_item_id', $position->id)->count());
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/estimate-positions/{$position->id}", ['unit_price' => 0])->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/estimate-positions/{$position->id}/price-history")
+            ->assertOk()->assertJsonCount(2, 'data');
+    }
 
     public function test_index_is_tenant_scoped_and_tolerates_admin_registry_filters(): void
     {

@@ -44,7 +44,9 @@ class EstimatePositionResource extends JsonResource
                 return $this->measurementUnit ? [
                     'id' => $this->measurementUnit->id,
                     'name' => $this->measurementUnit->name,
-                    'symbol' => $this->measurementUnit->symbol ?? null,
+                    'code' => $this->measurementUnit->short_name,
+                    'short_name' => $this->measurementUnit->short_name,
+                    'symbol' => $this->measurementUnit->short_name,
                 ] : null;
             }),
             'work_type' => $this->whenLoaded('workType', function () {
