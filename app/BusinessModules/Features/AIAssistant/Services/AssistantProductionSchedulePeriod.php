@@ -10,6 +10,8 @@ final class AssistantProductionSchedulePeriod
 {
     private const EXPLICIT_DATE = '(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4})';
 
+    private const EXPLICIT_RANGE = '(?:(?:за|в)\s+(?:весь\s+)?период\s+)?(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b';
+
     private const MONTH = '(?:январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йея]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе])';
 
     private const QUARTER_NUMBER = '(?:[1-4](?:-(?:й|ый|ой|ий|ом))?|IV|I{1,3}|перв(?:ый|ом)|втор(?:ой|ом)|трет(?:ий|ьем)|четв[её]рт(?:ый|ом))';
@@ -34,7 +36,7 @@ final class AssistantProductionSchedulePeriod
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::EXPLICIT_RANGE.'|'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:'.self::EXPLICIT_DATE.'|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -141,14 +143,14 @@ final class AssistantProductionSchedulePeriod
             return $unresolved;
         }
         $resolver = new AssistantPeriodResolver;
-        if (preg_match_all('/\b(?:с|со)\s+'.self::EXPLICIT_DATE.'\s+по\s+'.self::EXPLICIT_DATE.'\b/iu', $query, $ranges) > 0) {
+        if (preg_match_all('/\b'.self::EXPLICIT_RANGE.'/iu', $query, $ranges) > 0) {
             if (count($ranges[0]) !== 1 || self::hasOtherPeriod($query, $ranges[0][0])) {
                 return $unresolved;
             }
             if (preg_match('/\b(?:с|со)\s+(\d{4}-\d{2}-\d{2})\s+по\s+(\d{4}-\d{2}-\d{2})\b/iu', $ranges[0][0], $dates) === 1) {
                 $period = $resolver->resolve(['date_from' => $dates[1], 'date_to' => $dates[2]]);
             } else {
-                $period = $resolver->resolve(preg_replace('/^со\s+/iu', 'с ', $ranges[0][0]) ?? $ranges[0][0]);
+                $period = $resolver->resolve(preg_replace('/\bсо\s+(?=\d)/iu', 'с ', $ranges[0][0]) ?? $ranges[0][0]);
             }
         } elseif (preg_match('/\b(?:с|со|по|до|на|от)\s+\d{1,2}(?!\d)|\bза\s+\d{1,2}(?!\d)\s+'.self::MONTH.'/iu', $query) === 1) {
             return $unresolved;

@@ -14,6 +14,25 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_explicit_period_introducers_belong_to_the_single_date_range(): void
+    {
+        foreach (['за период с 2026-10-01 по 2026-10-15', 'в период с 01.10.2026 по 15.10.2026',
+            'за весь период с 01/10/2026 по 15/10/2026', 'за период со 01-10-2026 по 15-10-2026'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => '2026-10-15'];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $resolved = AssistantNamedProjectReadScope::bind(['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase]],
+                static fn (array $arguments): array => ['status' => 'success',
+                    'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments'], $phrase);
+        }
+        foreach (['с 2026-10-01 по 2026-10-15 и за период',
+            'за период с 2026-10-01 по 2026-10-15 и с 2026-09-01 по 2026-09-15'] as $phrase) {
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null],
+                AssistantProductionSchedulePeriod::arguments(102, ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+        }
+    }
+
     public function test_numbered_quarters_resolve_relative_years_and_preserve_named_scope(): void
     {
         \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-01-01 00:30:00', 'Europe/Moscow'));
