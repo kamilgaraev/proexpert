@@ -524,6 +524,30 @@ final class AssistantNamedProjectReadScopeTest extends TestCase
         self::assertNull(AssistantRequestProjectScope::fromPlan($resolved)->projectId);
     }
 
+    public function test_comparison_commands_after_project_name_preserve_named_scope(): void
+    {
+        foreach (['сравни', 'сравните', 'сопоставь', 'сопоставьте'] as $command) {
+            $query = 'По проекту Альфа '.$command.' выполненные работы с графиком';
+            $resolved = AssistantNamedProjectReadScope::bind($this->plan($query), function (array $arguments): array {
+                self::assertSame(['query' => 'Альфа', 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                return $this->projectSearchResult([['id' => 102]], false);
+            });
+            self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 102]],
+                AssistantRequiredProjectRead::fromPlan($resolved), $query);
+            self::assertStringContainsString($command.' выполненные работы', AssistantNamedProjectReadScope::semanticQuery($query));
+            $name = 'Альфа '.$command.' выполненные работы с графиком';
+            $literal = AssistantNamedProjectReadScope::bind($this->plan('Сверь выполненные работы с графиком проекта «'.$name.'»'),
+                function (array $arguments) use ($name): array {
+                    self::assertSame(['query' => $name, 'limit' => 2, 'name_match' => 'exact'], $arguments);
+
+                    return $this->projectSearchResult([['id' => 95]], false);
+                });
+            self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 95]],
+                AssistantRequiredProjectRead::fromPlan($literal));
+        }
+    }
+
     public function test_unquoted_project_name_excludes_following_question_and_preserves_name_words(): void
     {
         foreach (['Сверь выполненные работы с графиком проекта Северный дом и скажи, что осталось.',
