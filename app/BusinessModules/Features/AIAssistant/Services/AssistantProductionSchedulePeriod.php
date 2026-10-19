@@ -32,7 +32,7 @@ final class AssistantProductionSchedulePeriod
 
     public static function withoutSuffix(string $name): string
     {
-        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
+        $time = '(?:'.self::DURATION_PERIOD.'|'.self::WEEKS_AGO_PERIOD.'|'.self::CALENDAR_WEEK_PERIOD.'|(?:за|в|во|на)\s+(?:'.self::QUARTER_NUMBER.'\s+квартал[ае]?\b|'.self::MONTH.'\b|(?:эт|текущ|прошл|предыдущ|позапрошл|последн|следующ|прошедш|минувш)[а-яё]*\s+(?:\d+\s+)?'.self::TIME_UNIT.'\b|\d+\s+'.self::TIME_UNIT.'\b)'
             .'|(?:с|со)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4}|\d{1,2}\s+по\b|начала\b)|(?:за|в|во|на)\s+(?:19|20)\d{2}(?:\s+год[ау]?)?\b(?![-.\/]\d)|(?:за\s+)?(?:сегодня|вчера|позавчера)\b)';
         $parts = preg_split('/\s+(?='.$time.')/iu', $name, 2);
 
@@ -78,6 +78,16 @@ final class AssistantProductionSchedulePeriod
         if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:проект[а-яё]*|объект[а-яё]*|работ[а-яё]*|строительств[а-яё]*)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $projectStart) > 0) {
             return count($projectStart[0]) === 1 && ! self::hasOtherPeriod($query, $projectStart[0][0])
                 ? $arguments + ['period_start' => null, 'period_end' => \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d')] : $unresolved;
+        }
+        if (preg_match_all('/\b(?:за|в|во|на)\s+позапрошл(?:ый|ом)\s+(год(?:у)?|месяц(?:е)?)\b/iu', $query, $older) > 0) {
+            if (count($older[0]) !== 1 || self::hasOtherPeriod($query, $older[0][0]) || preg_match('/\b(?:19|20)\d{2}\b/u', $query) === 1) {
+                return $unresolved;
+            }
+            $today = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
+            $isYear = str_starts_with(mb_strtolower($older[1][0]), 'год');
+            $start = $isYear ? $today->setDate((int) $today->format('Y') - 2, 1, 1) : $today->modify('first day of this month')->modify('-2 months');
+
+            return $arguments + ['period_start' => $start->format('Y-m-d'), 'period_end' => $isYear ? $start->format('Y').'-12-31' : $start->format('Y-m-t')];
         }
         if (preg_match_all('/\b(?:сегодня|вчера|позавчера)\b/iu', $query, $days) > 0) {
             if (count($days[0]) !== 1 || self::hasOtherPeriod($query, $days[0][0])) {
@@ -255,15 +265,16 @@ final class AssistantProductionSchedulePeriod
             return $period?->dateFrom !== null && $period->dateTo !== null
                 ? ['period_start' => $period->dateFrom, 'period_end' => $period->dateTo] : $unresolved;
         }
-        if ($years === 0 && preg_match('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем))\s+квартал[е]?\b/iu', $query, $relative) === 1) {
+        if ($years === 0 && preg_match('/\b(?:за|в|во|на)\s+(эт(?:от|ом)|текущ(?:ий|ем)|прошл(?:ый|ом)|предыдущ(?:ий|ем)|позапрошл(?:ый|ом))\s+квартал[е]?\b/iu', $query, $relative) === 1) {
             if (self::hasOtherPeriod($query, $relative[0])) {
                 return $unresolved;
             }
             $end = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
             $start = $end->setDate((int) $end->format('Y'), intdiv((int) $end->format('n') - 1, 3) * 3 + 1, 1);
-            if (preg_match('/^(?:прошл|предыдущ)/iu', $relative[1]) === 1) {
-                $end = $start->modify('-1 day');
-                $start = $start->modify('-3 months');
+            $offset = preg_match('/^позапрошл/iu', $relative[1]) === 1 ? 2 : (preg_match('/^(?:прошл|предыдущ)/iu', $relative[1]) === 1 ? 1 : 0);
+            if ($offset > 0) {
+                $start = $start->modify('-'.($offset * 3).' months');
+                $end = $start->modify('+3 months')->modify('-1 day');
             }
 
             return ['period_start' => $start->format('Y-m-d'), 'period_end' => $end->format('Y-m-d')];
@@ -288,6 +299,11 @@ final class AssistantProductionSchedulePeriod
 
     private static function normalizedQuery(string $query): string
     {
+        $query = preg_replace_callback('/\bза\s+(этот|текущий|прошлый|предыдущий|позапрошлый)\s+день\b/iu', static function (array $match): string {
+            $relative = mb_strtolower($match[1]);
+
+            return str_starts_with($relative, 'позапрошл') ? 'позавчера' : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 'вчера' : 'сегодня');
+        }, $query) ?? $query;
         $query = preg_replace_callback('/\bза\s+(?:(?:(?:последн|крайн)(?:ий|юю)|(?:прошедш|минувш)(?:ий|ую))\s+(день|неделю|месяц|год)|(?:последн|крайн|прошедш|минувш)(?:ие|их)\s+(сутки))\b/iu', static function (array $match): string {
             return 'за 1 '.mb_strtolower($match[1] !== '' ? $match[1] : $match[2]);
         }, $query) ?? $query;
