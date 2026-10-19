@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeS
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 class NormativeWorkItemPlannerDensityTest extends TestCase
@@ -448,6 +449,130 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ));
 
             self::assertNotContains('sanitary.points', array_column($items, 'quantity_formula'), $text);
+        }
+    }
+
+    #[DataProvider('typedResidentialFixtureStatements')]
+    public function test_universal_fixture_text_does_not_select_a_different_type(string $text, array $expected): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['manual', 'document'] as $source) {
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']]];
+            if ($source === 'manual') {
+                $analysis['object']['manual_description'] = $text;
+            } else {
+                $analysis['source_documents'] = [['id' => 91, 'filename' => 'spec.pdf', 'status' => 'ready',
+                    'quality' => ['level' => 'good'], 'text' => $text,
+                    'document_understanding' => ['role_for_estimation' => 'quantity_source']]];
+            }
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame($expected, array_column($items, 'quantity_formula'), $source.' '.$text);
+            foreach ($items as $item) {
+                self::assertNull($item['quantity']);
+                self::assertSame($item['quantity_formula'], $item['metadata']['material_scenario_work_key']);
+                self::assertTrue($item['metadata']['material_assumption']['requires_confirmation']);
+                self::assertSame('not_calculated', $item['pricing_status']);
+                foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resource) {
+                    self::assertSame([], $item[$resource]);
+                }
+            }
+        }
+    }
+
+    public static function typedResidentialFixtureStatements(): array
+    {
+        return [
+            ['Установка ванны — 1 шт.', []],
+            ['Монтаж кухонной мойки — 1 шт.', []],
+            ['Монтаж водонагревателя 150 л — 1 шт.', []],
+            ['Предусмотрена установка унитаза — 1 шт.', ['sanitary.toilets']],
+            ['Установка умывальника с подводкой ХВС и ГВС.', ['sanitary.washbasins']],
+            ['Предусмотрена установка душевой кабины с пластиковым поддоном.', ['sanitary.showers']],
+            ['Душ — 1 шт.', []],
+            ['Раковина — 1 шт.', []],
+            ['Унитаз не предусмотрен. Установка умывальника.', ['sanitary.washbasins']],
+            ['Без унитаза; предусмотрена душевая кабина.', ['sanitary.showers']],
+            ['Умывальник не требуется, предусмотрена установка унитаза.', ['sanitary.toilets']],
+            ['Установка ванны. Унитаз не предусмотрен.', []],
+            ['Установка унитаза без умывальника.', ['sanitary.toilets']],
+            ['Установка розетки в ванной комнате.', []],
+        ];
+    }
+
+    public function test_confirmed_sanitary_takeoff_opens_only_its_exact_fixture_key(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            $takeoff = $this->confirmedTakeoff($key, 1, 'шт');
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                'document_context' => ['quantity_takeoffs' => [$takeoff]]];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('1', $items[0]['quantity']);
+            foreach (['review', 'no_source', 'zero'] as $invalid) {
+                $bad = $takeoff;
+                if ($invalid === 'review') {
+                    $bad['normalized_payload']['review_required'] = true;
+                } elseif ($invalid === 'no_source') {
+                    $bad['source_refs'] = [];
+                } else {
+                    $bad['quantity'] = 0;
+                }
+                $analysis['document_context']['quantity_takeoffs'] = [$bad];
+                $items = array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.'));
+                self::assertSame([], array_values($items), $key.' '.$invalid);
+            }
+        }
+    }
+
+    public function test_provenance_aware_sanitary_inference_opens_only_its_own_type(): void
+    {
+        $estimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 12);
+        foreach (['sanitary.points', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $key) {
+            $inference = ['inference_type' => 'specification_takeoff', 'scope_type' => 'plumbing',
+                'title' => 'Количество по спецификации', 'confidence' => 0.91,
+                'source_ref' => ['document_id' => 82], 'review_required' => false,
+                'normalized_payload' => ['quantity_key' => $key, 'quantity_value' => 2, 'unit' => 'шт']];
+            $analysis = ['object' => ['object_type' => 'house'],
+                'evaluation_policy' => ['mode' => 'universal', 'selected_sections' => ['water_supply']],
+                'document_context' => ['scope_inferences' => [$inference]]];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('2', $items[0]['quantity']);
+            $named = $inference;
+            $named['title'] = match ($key) {
+                'sanitary.points' => 'Установка биде',
+                'sanitary.showers' => 'Установка душевой кабины',
+                'sanitary.toilets' => 'Установка унитаза',
+                default => 'Установка умывальника',
+            };
+            $analysis['document_context']['scope_inferences'] = [$named];
+            $items = array_values(array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.')));
+            self::assertSame([$key], array_column($items, 'quantity_formula'));
+            self::assertSame('2', $items[0]['quantity']);
+            foreach (['review', 'no_source', 'zero', 'untrusted_type'] as $invalid) {
+                $bad = $inference;
+                if ($invalid === 'review') {
+                    $bad['review_required'] = true;
+                } elseif ($invalid === 'no_source') {
+                    unset($bad['source_ref']);
+                } elseif ($invalid === 'zero') {
+                    $bad['normalized_payload']['quantity_value'] = 0;
+                } else {
+                    $bad['inference_type'] = 'drawing_hint';
+                }
+                $analysis['document_context']['scope_inferences'] = [$bad];
+                $items = array_filter($this->planner()->build($estimate, $estimate['sections'][0], $analysis),
+                    static fn (array $item): bool => str_starts_with((string) ($item['quantity_formula'] ?? ''), 'sanitary.'));
+                self::assertSame([], array_values($items), $key.' '.$invalid);
+            }
         }
     }
 

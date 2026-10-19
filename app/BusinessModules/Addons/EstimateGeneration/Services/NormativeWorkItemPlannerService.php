@@ -724,12 +724,25 @@ final class NormativeWorkItemPlannerService
             return true;
         }
 
-        if ($this->hasConfirmedSanitaryPointsTakeoff($analysis)) {
+        $inference = $definition['metadata']['scope_inference'] ?? null;
+        if (is_array($inference)) {
+            return $this->isConfirmedSanitaryFixtureInference($inference, $quantityKey);
+        }
+        if ($this->hasConfirmedSanitaryFixtureTakeoff($analysis, $quantityKey)) {
             return true;
+        }
+        foreach ($this->scopeInferenceService->inferFromAnalysis($analysis) as $inference) {
+            if ($this->isConfirmedSanitaryFixtureInference($inference, $quantityKey)) {
+                return false;
+            }
+        }
+
+        if ($quantityKey === 'sanitary.points') {
+            return false;
         }
 
         foreach ($this->sanitaryFixtureEvidenceTexts($analysis) as $text) {
-            if ($this->hasLocalSanitaryFixtureStatement($text)) {
+            if ($this->hasLocalSanitaryFixtureStatement($text, $quantityKey)) {
                 return true;
             }
         }
@@ -737,24 +750,27 @@ final class NormativeWorkItemPlannerService
         return false;
     }
 
-    private function hasLocalSanitaryFixtureStatement(string $text): bool
+    private function hasLocalSanitaryFixtureStatement(string $text, string $quantityKey): bool
     {
         $statements = preg_split('~(?:[.!?;]+|\R+)~u', $text) ?: [];
-        $fixture = '(?:'
-            .'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
-            .'раковин(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
-            .'умывальник(?:а|и|ов|ом|ами)?|'
-            .'ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
-            .'душ(?:а|у|е|ем|и|ей|ам|ами|ах)?|'
-            .'смесител(?:ь|я|ю|ем|е|и|ей|ям|ями|ях)|'
-            .'биде|'
-            .'писсуар(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
-            .'мойк(?:а|и|у|е|ой|ою|ам|ами|ах)|'
-            .'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+'
-            .'(?:поддон(?:а|у|ом|е|ы|ов|ам|ами|ах)?|кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?)'
-            .')';
+        $fixture = match ($quantityKey) {
+            'sanitary.toilets' => 'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?',
+            'sanitary.washbasins' => 'умывальник(?:а|у|е|и|ов|ом|ам|ами|ах)?',
+            'sanitary.showers' => 'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?',
+            default => null,
+        };
+        if ($fixture === null) {
+            return false;
+        }
+        $negativeAction = '(?:предусмотр\p{L}*|требу\p{L}*|планиру\p{L}*|запланир\p{L}*|нуж\p{L}*|вход\p{L}*|включ\p{L}*|устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
+        $installation = '(?:устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*)';
+        $negative = '(?<![\p{L}\p{N}])(?:'
+            .'(?:без|кроме|исключ\p{L}*)\s+(?:'.$installation.'\s+)?'.$fixture.'|'
+            .'не\s+'.$negativeAction.'\s+(?:'.$installation.'\s+)?'.$fixture.'|'
+            .$fixture.'[\s:—-]+(?:не\s+'.$negativeAction.'|исключ\p{L}*|отмен\p{L}*|отсутств\p{L}*)'
+            .')(?![\p{L}\p{N}])';
         $action = '(?:'
-            .'установ\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
+            .'устан(?:ов|ав)\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
             .'комплект\p{L}*|количеств\p{L}*|'
             .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
 
@@ -770,11 +786,12 @@ final class NormativeWorkItemPlannerService
                 ' ',
                 $withoutRoomPhrases
             ) ?? $withoutRoomPhrases;
+            $positiveFixtureStatement = preg_replace('~'.$negative.'~iu', ' ', $withoutLocativeRoomReference) ?? '';
 
             if (preg_match(
                 '~(?<![\p{L}\p{N}])(?:'.$action.'.{0,80}'.$fixture.'|'.$fixture.'.{0,80}'.$action.')'
                 .'(?![\p{L}\p{N}])~iu',
-                $withoutLocativeRoomReference
+                $positiveFixtureStatement
             ) === 1) {
                 return true;
             }
@@ -784,13 +801,13 @@ final class NormativeWorkItemPlannerService
     }
 
     /** @param array<string, mixed> $analysis */
-    private function hasConfirmedSanitaryPointsTakeoff(array $analysis): bool
+    private function hasConfirmedSanitaryFixtureTakeoff(array $analysis, string $quantityKey): bool
     {
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $takeoffs = is_array($documentContext['quantity_takeoffs'] ?? null) ? $documentContext['quantity_takeoffs'] : [];
 
         foreach ($takeoffs as $takeoff) {
-            if (! is_array($takeoff) || EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff) !== 'sanitary.points') {
+            if (! is_array($takeoff) || EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff) !== $quantityKey) {
                 continue;
             }
 
@@ -809,6 +826,18 @@ final class NormativeWorkItemPlannerService
         }
 
         return false;
+    }
+
+    private function isConfirmedSanitaryFixtureInference(array $inference, string $quantityKey): bool
+    {
+        if (! $this->hasKnownInferenceTextProvenance($inference)) {
+            return false;
+        }
+        $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
+        $quantity = $this->firstNumeric($payload, ['quantity_value', 'quantity', 'value', 'value_number']);
+
+        return ($payload['quantity_key'] ?? null) === $quantityKey && $quantity !== null && $quantity > 0
+            && ($payload['review_required'] ?? false) === false;
     }
 
     /**
