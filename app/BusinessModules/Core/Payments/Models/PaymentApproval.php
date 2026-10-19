@@ -245,15 +245,11 @@ class PaymentApproval extends Model
             return $this->getPermissionLabel();
         }
 
-        return match($this->approval_role) {
-            'financial_director' => 'Финансовый директор',
-            'chief_accountant' => 'Главный бухгалтер',
-            'accountant' => 'Бухгалтер',
-            'project_manager' => 'Руководитель проекта',
-            'department_head' => 'Начальник отдела',
-            'general_director' => 'Генеральный директор',
-            default => $this->approval_role ?? trans_message('payments.approval.permission_based_step'),
-        };
+        return in_array($this->approval_role, [
+            'financial_director', 'chief_accountant', 'accountant',
+            'project_manager', 'department_head', 'general_director',
+        ], true) ? trans_message('payments.approval.roles.'.$this->approval_role)
+            : ($this->approval_role ?? trans_message('payments.approval.permission_based_step'));
     }
 
     public function getPermissionLabel(): string
@@ -270,13 +266,8 @@ class PaymentApproval extends Model
      */
     public function getStatusLabel(): string
     {
-        return match($this->status) {
-            'pending' => 'Ожидает',
-            'approved' => 'Утверждено',
-            'rejected' => 'Отклонено',
-            'skipped' => 'Пропущено',
-            default => $this->status,
-        };
+        return in_array($this->status, ['pending', 'approved', 'rejected', 'skipped'], true)
+            ? trans_message('payments.approval.statuses.'.$this->status) : $this->status;
     }
 }
 

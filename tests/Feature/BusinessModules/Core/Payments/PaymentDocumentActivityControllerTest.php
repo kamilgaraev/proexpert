@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Enums\PaymentMethod;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
+use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
@@ -151,6 +152,69 @@ final class PaymentDocumentActivityControllerTest extends TestCase
             $this->getJson("/api/v1/admin/payments/documents/{$id}/activity", $headers)->assertNotFound();
         }
     }
+    public function test_known_activity_actions_use_the_translation_catalog(): void
+    {
+        $this->assertSame('Создан', trans_message('payments.audit.actions.created'));
+        app('translator')->addLines(['payments.audit.actions.created' => 'Учебная подпись создания'], 'ru');
+
+        $this->assertSame('Учебная подпись создания', (new PaymentAuditLog(['action' => 'created']))->getActionLabel());
+        $this->assertSame('Утверждено', trans_message('payments.approval.statuses.approved'));
+        $this->assertSame('Финансовый директор', trans_message('payments.approval.roles.financial_director'));
+        app('translator')->addLines([
+            'payments.approval.statuses.approved' => 'Учебная подпись согласования',
+            'payments.approval.roles.financial_director' => 'Учебная подпись должности',
+        ], 'ru');
+        $this->assertSame('Учебная подпись согласования', (new PaymentApproval(['status' => 'approved']))->getStatusLabel());
+        $this->assertSame('Учебная подпись должности', (new PaymentApproval(['approval_role' => 'financial_director']))->getRoleLabel());
+    }
+
+    public function test_activity_bounds_each_section_and_exposes_the_next_page(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $actor = $fixture->addMember(['payments' => ['payments.transaction.view']]);
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $project->users()->attach($actor->id, ['role' => 'member', 'is_active' => true]);
+        $document = $this->document($project);
+        $this->actingAs($actor);
+        $approvals = [];
+        $transactions = [];
+        $events = [];
+        for ($index = 1; $index <= 3; $index++) {
+            $approvals[] = PaymentApproval::query()->create([
+                'payment_document_id' => $document->id, 'organization_id' => $document->organization_id,
+                'approver_user_id' => $actor->id, 'approval_level' => $index, 'approval_order' => 1,
+                'status' => 'pending', 'approval_permission' => 'payments.transaction.approve',
+            ]);
+            $transactions[] = PaymentTransaction::query()->create([
+                'payment_document_id' => $document->id, 'organization_id' => $document->organization_id,
+                'project_id' => $project->id, 'amount' => 10, 'currency' => 'RUB',
+                'payment_method' => PaymentMethod::BANK_TRANSFER, 'status' => PaymentTransactionStatus::COMPLETED,
+                'transaction_date' => '2026-10-19',
+            ]);
+            if ($index < 3) {
+                $events[] = app(PaymentAuditService::class)->log('updated', $document);
+            }
+        }
+        $headers = $this->headers($actor);
+        $path = "/api/v1/admin/payments/documents/{$document->id}/activity";
+
+        $this->getJson($path.'?per_page=1', $headers)->assertOk()
+            ->assertJsonCount(1, 'data.approvals')->assertJsonCount(1, 'data.transactions')->assertJsonCount(1, 'data.audit_logs')
+            ->assertJsonPath('data.approvals.0.id', $approvals[0]->id)
+            ->assertJsonPath('data.transactions.0.id', $transactions[2]->id)
+            ->assertJsonPath('data.audit_logs.0.id', $events[1]->id)
+            ->assertJsonPath('data.pagination.current_page', 1)->assertJsonPath('data.pagination.last_page', 3)
+            ->assertJsonPath('data.pagination.totals', ['approvals' => 3, 'transactions' => 3, 'audit_logs' => 3]);
+        $this->getJson($path.'?per_page=1&page=2', $headers)->assertOk()
+            ->assertJsonCount(1, 'data.approvals')->assertJsonCount(1, 'data.transactions')->assertJsonCount(1, 'data.audit_logs')
+            ->assertJsonPath('data.approvals.0.id', $approvals[1]->id)
+            ->assertJsonPath('data.transactions.0.id', $transactions[1]->id)
+            ->assertJsonPath('data.audit_logs.0.id', $events[0]->id)
+            ->assertJsonPath('data.pagination.current_page', 2);
+        $this->getJson($path.'?per_page=101', $headers)->assertUnprocessable();
+        $this->getJson($path.'?page=0', $headers)->assertUnprocessable();
+    }
+
     private function document(Project $project): PaymentDocument
     {
         return PaymentDocument::query()->create([

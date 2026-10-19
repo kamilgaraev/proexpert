@@ -155,8 +155,13 @@ final class PaymentDocumentController extends Controller
 
     public function activity(Request $request, int|string $id, PaymentDocumentActivityService $activity): JsonResponse
     {
+        $pagination = $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1', 'max:1000000'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
         try {
-            return AdminResponse::success($activity->forDocument($this->organizationId($request), $this->actor($request), $id));
+            return AdminResponse::success($activity->forDocument($this->organizationId($request), $this->actor($request), $id, $pagination));
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
         } catch (Throwable $e) {

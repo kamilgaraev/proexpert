@@ -18,7 +18,7 @@ final class PaymentDocumentActivityService
         private readonly PaymentTransactionAccessService $transactions,
     ) {}
 
-    public function forDocument(int $organizationId, User $actor, int|string $documentId): array
+    public function forDocument(int $organizationId, User $actor, int|string $documentId, array $pagination = []): array
     {
         $documentId = filter_var($documentId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($documentId === false) {
@@ -27,30 +27,38 @@ final class PaymentDocumentActivityService
 
         $permission = 'payments.transaction.view';
         $document = $this->documents->find($organizationId, $actor, $documentId, $permission);
+        $perPage = max(1, min(100, (int) ($pagination['per_page'] ?? 20)));
+        $page = max(1, min(1000000, (int) ($pagination['page'] ?? 1)));
 
         $approvals = PaymentApproval::query()
             ->where('organization_id', $document->organization_id)
             ->where('payment_document_id', $document->id)
             ->with('approver:id,name')
             ->orderBy('approval_level')->orderBy('approval_order')->orderBy('id')
-            ->get(['id', 'approval_role', 'approval_permission', 'approver_user_id', 'approval_level',
-                'approval_order', 'status', 'decision_comment', 'decided_at', 'created_at']);
+            ->paginate($perPage, ['id', 'approval_role', 'approval_permission', 'approver_user_id', 'approval_level',
+                'approval_order', 'status', 'decision_comment', 'decided_at', 'created_at'], 'page', $page);
         $transactions = $this->transactions->query($organizationId, $actor, $permission)
             ->where('payment_document_id', $document->id)
             ->orderByDesc('transaction_date')->orderByDesc('id')
-            ->get(['id', 'payment_document_id', 'amount', 'currency', 'status', 'payment_method',
-                'transaction_date', 'reference_number', 'notes', 'created_at']);
+            ->paginate($perPage, ['id', 'payment_document_id', 'amount', 'currency', 'status', 'payment_method',
+                'transaction_date', 'reference_number', 'notes', 'created_at'], 'page', $page);
         $history = PaymentAuditLog::forDocument($document->id)
             ->where('organization_id', $document->organization_id)
             ->with('user:id,name')
             ->orderByDesc('created_at')->orderByDesc('id')
-            ->get(['id', 'action', 'user_id', 'user_name', 'created_at']);
+            ->paginate($perPage, ['id', 'action', 'user_id', 'user_name', 'created_at'], 'page', $page);
 
         return [
             'document_id' => $document->id,
-            'approvals' => $approvals->map(fn (PaymentApproval $approval) => $this->approval($approval))->all(),
-            'transactions' => $transactions->map(fn (PaymentTransaction $transaction) => $this->transaction($transaction))->all(),
-            'audit_logs' => $history->map(fn (PaymentAuditLog $event) => $this->audit($event))->all(),
+            'approvals' => $approvals->getCollection()->map(fn (PaymentApproval $approval) => $this->approval($approval))->all(),
+            'transactions' => $transactions->getCollection()->map(fn (PaymentTransaction $transaction) => $this->transaction($transaction))->all(),
+            'audit_logs' => $history->getCollection()->map(fn (PaymentAuditLog $event) => $this->audit($event))->all(),
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'last_page' => max($approvals->lastPage(), $transactions->lastPage(), $history->lastPage()),
+                'totals' => ['approvals' => $approvals->total(), 'transactions' => $transactions->total(), 'audit_logs' => $history->total()],
+            ],
         ];
     }
 

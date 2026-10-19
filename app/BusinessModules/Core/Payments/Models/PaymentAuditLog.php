@@ -89,20 +89,10 @@ class PaymentAuditLog extends Model
      */
     public function getActionLabel(): string
     {
-        return match($this->action) {
-            'created' => 'Создан',
-            'updated' => 'Обновлен',
-            'submitted' => 'Отправлен на утверждение',
-            'approved' => 'Утвержден',
-            'rejected' => 'Отклонен',
-            'scheduled' => 'Запланирован',
-            'paid' => 'Оплачен',
-            'partially_paid' => 'Частично оплачен',
-            'cancelled' => 'Отменен',
-            'rescheduled' => 'Перенесен',
-            'deleted' => 'Удален',
-            default => $this->action,
-        };
+        return in_array($this->action, [
+            'created', 'updated', 'submitted', 'approved', 'rejected', 'scheduled',
+            'paid', 'partially_paid', 'cancelled', 'rescheduled', 'deleted',
+        ], true) ? trans_message('payments.audit.actions.'.$this->action) : $this->action;
     }
 
     /**
