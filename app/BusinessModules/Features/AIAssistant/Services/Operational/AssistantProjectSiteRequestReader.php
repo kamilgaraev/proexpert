@@ -12,9 +12,14 @@ readonly class AssistantProjectSiteRequestReader extends AssistantProjectOperati
 {
     public const TYPE = 'live_project_site_request_queue_projection';
 
+    public static function hasIntent(string $query): bool
+    {
+        return preg_match('/заявк/iu', $query) === 1;
+    }
+
     public static function matches(string $query): bool
     {
-        return preg_match('/заявк/iu', $query) === 1 && preg_match('/объект|проект|площадк/iu', $query) === 1
+        return self::hasIntent($query) && preg_match('/объект|проект|площадк/iu', $query) === 1
             && preg_match('/просроч|ответственн|исполнител/iu', $query) === 1
             && preg_match('/создай|удали|назначь|измени|одобри|согласуй|оплат|плат[её]ж|сч[её]т|бюджет|тендер|сотрудник|заказчик/iu', $query) !== 1;
     }

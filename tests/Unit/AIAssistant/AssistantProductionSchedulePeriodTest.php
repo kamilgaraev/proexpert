@@ -14,6 +14,24 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_future_relative_days_require_clarification_and_keep_literal_priority(): void
+    {
+        foreach (['завтра', 'послезавтра', 'за завтра', 'за послезавтра', 'завтра и вчера', 'за октябрь 2026 завтра'] as $phrase) {
+            $expected = ['project_id' => 102, 'period_start' => null, 'period_end' => null];
+            self::assertSame($expected, AssistantProductionSchedulePeriod::arguments(102,
+                ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            $plan = ['request' => ['message' => 'Сверь выполненные работы с графиком проекта Северный дом '.$phrase,
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]]];
+            $resolved = AssistantNamedProjectReadScope::bind($plan, static fn (array $arguments): array => ['status' => 'success',
+                'results' => $arguments['query'] === 'Северный дом' ? [['id' => 102]] : [], 'result_window' => ['has_more' => false]]);
+            self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($resolved)['arguments']);
+            $literal = AssistantNamedProjectReadScope::bind($plan, static fn (): array => ['status' => 'success',
+                'results' => [['id' => 95]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['project_id' => 95], AssistantRequiredProjectRead::fromPlan($literal)['arguments']);
+        }
+        self::assertSame('Завтраково', AssistantProductionSchedulePeriod::withoutSuffix('Завтраково'));
+    }
+
     public function test_supported_neutral_details_keep_period_without_rewriting_new_financial_intent(): void
     {
         $message = 'Сверь выполненные работы с графиком проекта «Северный дом» с 2026-10-01 по 2026-10-10';

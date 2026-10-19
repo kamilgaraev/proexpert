@@ -16,6 +16,11 @@ final class AssistantRequiredProjectReadTest extends TestCase
         $registry = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::class;
         $tool = 'get_project_production_schedule_summary';
         foreach (['Сверь выполненные работы с графиком и покажи камеры проекта',
+            'Сверь выполненные работы с графиком и покажи заявки проекта',
+            'Сверь выполненные работы с графиком и заявки на материалы',
+            'Сверь выполненные работы с графиком проекта Северный дом и покажи заявки проекта',
+            'Сверь выполненные работы с графиком проекта Северный дом, заявки на материалы',
+            'Сверь выполненные работы с графиком проекта Северный дом и заявки',
             'Сверь выполненные работы с графиком и проверь журналы работ',
             'Сверь выполненные работы с графиком и покажи нарушения охраны труда',
             'Сверь выполненные работы с графиком и покажи сотрудников проекта',
@@ -37,10 +42,14 @@ final class AssistantRequiredProjectReadTest extends TestCase
             self::assertSame($tool, $registry::intent($query)['name']);
             self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($this->plan($query)));
         }
-        $named = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::bind(
-            $this->plan('Сверь выполненные работы с графиком проекта «Камеры и журналы»'),
-            static fn (): array => ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]]);
-        self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($named));
+        foreach (['Камеры и журналы', 'Заявки', 'Заявки на материалы'] as $name) {
+            $named = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::bind(
+                $this->plan('Сверь выполненные работы с графиком проекта «'.$name.'»'),
+                static fn (): array => ['status' => 'success', 'results' => [['id' => 102]], 'result_window' => ['has_more' => false]]);
+            self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 102]], AssistantRequiredProjectRead::fromPlan($named));
+        }
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectSiteRequestReader::hasIntent('Покажи заявки проекта'));
+        self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantProjectSiteRequestReader::matches('Покажи заявки проекта'));
     }
 
     public function test_overdue_manager_question_requires_full_schedule_read(): void

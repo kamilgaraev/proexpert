@@ -87,18 +87,9 @@ final class AssistantOperationalReaderRegistry
     {
         $query = \App\BusinessModules\Features\AIAssistant\Services\AssistantNamedProjectReadScope::semanticQuery($query);
         if (AssistantProjectProductionScheduleReader::hasIntent($query)) {
-            if (! AssistantProjectProductionScheduleReader::matches($query) || preg_match('/каталог|справочник|шаблон/iu', $query) === 1) {
+            if (! AssistantProjectProductionScheduleReader::matches($query) || preg_match('/каталог|справочник|шаблон/iu', $query) === 1
+                || self::hasProjectNameContinuation($query)) {
                 return null;
-            }
-            foreach (self::TOPICS as $pattern) {
-                if (preg_match($pattern, $query) === 1) {
-                    return null;
-                }
-            }
-            foreach ([...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $reader) {
-                if ($reader::hasIntent($query)) {
-                    return null;
-                }
             }
             $withoutScheduleWording = preg_replace('/\b(?:график[а-яё]*|планов[а-яё]*\s+срок[а-яё]*)\b/iu', ' ', $query) ?? $query;
             foreach (AssistantRequiredProjectRead::READERS as $reader) {
@@ -279,6 +270,18 @@ final class AssistantOperationalReaderRegistry
         }
         foreach ([...self::ORGANIZATION_TOOLS, ...self::NAMED_TOOLS] as $class) {
             if ($class::hasIntent($query)) {
+                return true;
+            }
+        }
+
+        return self::hasOtherProjectIntent($query);
+    }
+
+    private static function hasOtherProjectIntent(string $query): bool
+    {
+        foreach (self::TOOLS as $reader) {
+            if ($reader !== AssistantProjectProductionScheduleReader::class
+                && (method_exists($reader, 'hasIntent') ? $reader::hasIntent($query) : $reader::matches($query))) {
                 return true;
             }
         }
