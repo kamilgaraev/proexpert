@@ -54,6 +54,19 @@ final class AssistantProductionSchedulePeriod
         }
         $query = self::normalizedQuery(AssistantNamedProjectReadScope::periodQuery($plan));
         $unresolved = $arguments + ['period_start' => null, 'period_end' => null];
+        if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:(?:этого|текущего)\s+)?(года|месяца|недели)\b/iu', $query, $calendarStart) > 0) {
+            if (count($calendarStart[0]) !== 1 || self::hasOtherPeriod($query, $calendarStart[0][0])) {
+                return $unresolved;
+            }
+            $today = new \DateTimeImmutable(\Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d'));
+            $start = match (mb_strtolower($calendarStart[1][0])) {
+                'года' => $today->setDate((int) $today->format('Y'), 1, 1),
+                'месяца' => $today->modify('first day of this month'),
+                default => $today->modify('-'.((int) $today->format('N') - 1).' days'),
+            };
+
+            return $arguments + ['period_start' => $start->format('Y-m-d'), 'period_end' => $today->format('Y-m-d')];
+        }
         if (preg_match_all('/\b(?:с|со)\s+начала\s+(?:проект[а-яё]*|объект[а-яё]*|работ[а-яё]*|строительств[а-яё]*)(?:\s+по\s+(?:сегодня|текущий\s+день))?\b/iu', $query, $projectStart) > 0) {
             return count($projectStart[0]) === 1 && ! self::hasOtherPeriod($query, $projectStart[0][0])
                 ? $arguments + ['period_start' => null, 'period_end' => \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y-m-d')] : $unresolved;
