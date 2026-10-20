@@ -38,7 +38,9 @@ final class AssistantProductionSchedulePeriod
 
     private const INCOMPLETE_DATE = '(?:'.self::PERIOD_PREFIX.'\s+)?\d{1,2}[.\/]\d{1,2}(?![\pL\pN\/-]|\.\d)(?=\s*(?:$|[.!?;,]|(?:и|по|до)\b))';
 
-    private const ADJECTIVAL_DAY = '('.self::RELATIVE_DAY.')шн(?:ий|его|ему|им|ем|ие|их|ими)\s+(?:день|дня|дню|дн[её]м|дне|сутки|суток|суткам|сутками|сутках)';
+    private const DATE_NOUN = 'дат(?:а|ы|е|у|ой|ою)';
+
+    private const ADJECTIVAL_DAY = '(?:('.self::RELATIVE_DAY.')шн(?:ий|его|ему|им|ем|ие|их|ими|яя|ей|юю|ею)\s+(?:день|дня|дню|дн[её]м|дне|сутки|суток|суткам|сутками|сутках|'.self::DATE_NOUN.')|текущ(?:ая|ей|ую|ею)\s+'.self::DATE_NOUN.')';
 
     private const ADJECTIVAL_DAY_PERIOD = '(?:'.self::PERIOD_PREFIX.'\s+)?'.self::ADJECTIVAL_DAY.'\b';
 
@@ -450,7 +452,7 @@ final class AssistantProductionSchedulePeriod
 
             return $match[1].' '.((int) \Carbon\CarbonImmutable::now('Europe/Moscow')->format('Y') - $offset);
         }, $query) ?? $query;
-        $query = preg_replace_callback('/\b'.self::ADJECTIVAL_DAY.'\b/iu', static fn (array $match): string => mb_strtolower($match[1]), $query) ?? $query;
+        $query = preg_replace_callback('/\b'.self::ADJECTIVAL_DAY.'\b/iu', static fn (array $match): string => ($match[1] ?? '') === '' ? 'сегодня' : mb_strtolower($match[1]), $query) ?? $query;
         $query = preg_replace('/\b'.self::CURRENT_SNAPSHOT.'/iu', ' ', $query) ?? $query;
         $query = preg_replace('/\b(?:за\s+)?предыдущ(?:ие|их)\s+(?='.self::DURATION_NUMBER.'\s+'.self::TIME_UNIT.'\b)/iu', 'за ', $query) ?? $query;
         $query = preg_replace_callback('/\b'.self::WHOLE_PERIOD_PREFIX.'(эт(?:от|ом|у|ой)|текущ(?:ий|ем|ую|ей)|прошл(?:ый|ом|ую|ой)|предыдущ(?:ий|ем|ую|ей)|позапрошл(?:ый|ом|ую|ой))\s+(год(?:у)?|месяц(?:е)?|квартал(?:е)?|недел(?:ю|е)|день)\b/iu', static function (array $match): string {

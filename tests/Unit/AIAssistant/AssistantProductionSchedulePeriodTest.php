@@ -14,6 +14,28 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_relative_date_noun_keeps_direct_named_and_literal_period_scope(): void
+    {
+        \Carbon\CarbonImmutable::setTestNow(new \Carbon\CarbonImmutable('2026-10-19 21:30:00', 'UTC'));
+        try {
+            foreach (['сегодняшнюю' => '2026-10-20', 'вчерашнюю' => '2026-10-19',
+                'позавчерашнюю' => '2026-10-18', 'текущую' => '2026-10-20'] as $adjective => $day) {
+                $phrase = 'за '.$adjective.' дату';
+                self::assertSame('Северный дом', AssistantProductionSchedulePeriod::withoutSuffix('Северный дом '.$phrase), $phrase);
+                $this->assertPeriodScope($phrase, $day, $day);
+            }
+            foreach (['за завтрашнюю дату', 'за послезавтрашнюю дату', 'на вчерашнюю дату'] as $phrase) {
+                $this->assertPeriodScope($phrase, null, null);
+            }
+            foreach (['на сегодняшнюю дату', 'на текущую дату'] as $phrase) {
+                self::assertSame(['project_id' => 102], AssistantProductionSchedulePeriod::arguments(102,
+                    ['request' => ['message' => 'Сверь выполненные работы с графиком '.$phrase]]), $phrase);
+            }
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_bare_month_and_quarter_year_reply_resumes_the_verified_project(): void
     {
         foreach (['октябрь' => ['2026-10-01', '2026-10-31'], 'весь октябрь' => ['2026-10-01', '2026-10-31'],
