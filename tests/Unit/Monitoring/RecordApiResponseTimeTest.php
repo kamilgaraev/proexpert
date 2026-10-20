@@ -169,6 +169,24 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/report-files/2/download-url-extra', false],
             ['GET', '/api/v1/landing/report-files/2/download-url', false],
             ['GET', '/api/v1/admin/act-files/2/download-url', false],
+            ['GET', '/api/v1/admin/ai-assistant/reports/private-token/download', true],
+            ['HEAD', '/api/v1/admin/ai-assistant/reports/private-token/download', false],
+            ['POST', '/api/v1/admin/ai-assistant/reports/private-token/download', false],
+            ['GET', '/api/v1/admin/ai-assistant/reports/private-token/download/extra', false],
+            ['GET', '/api/v1/admin/ai-assistant/reports/private-token/extra/download', false],
+            ['GET', '/api/v1/admin/ai-assistant/reports//download', false],
+            ['GET', '/api/v1/ai-assistant/reports/private-token/download', true],
+            ['POST', '/api/v1/ai-assistant/reports/private-token/download', false],
+            ['HEAD', '/api/v1/ai-assistant/reports/private-token/download', false],
+            ['GET', '/api/v1/ai-assistant/reports/private-token/download/extra', false],
+            ['GET', '/api/v1/ai-assistant/reports/private-token/extra/download', false],
+            ['GET', '/api/v1/ai-assistant/reports//download', false],
+            ['GET', '/api/v1/admin/ai-reports/download/private-token', true],
+            ['POST', '/api/v1/admin/ai-reports/download/private-token', false],
+            ['HEAD', '/api/v1/admin/ai-reports/download/private-token', false],
+            ['GET', '/api/v1/admin/ai-reports/download/private-token/extra', false],
+            ['GET', '/api/v1/admin/ai-reports/download/', false],
+            ['GET', '/api/v1/mobile/ai-assistant/reports/private-token/download', false],
             ['GET', '/api/v1/admin/payments/documents/calendar', true],
             ['POST', '/api/v1/admin/payments/documents/calendar', false],
             ['GET', '/api/v1/admin/payments/documents/calendar/extra', false],
@@ -201,7 +219,13 @@ final class RecordApiResponseTimeTest extends TestCase
 
     public function test_download_url_profile_excludes_file_ids_query_values_and_signed_urls(): void
     {
-        foreach (['personal-files', 'report-files'] as $resource) {
+        foreach ([
+            ['admin/personal-files/{id}/download-url', 'admin/personal-files/private-file-id/download-url'],
+            ['admin/report-files/{id}/download-url', 'admin/report-files/private-file-id/download-url'],
+            ['admin/ai-assistant/reports/{token}/download', 'admin/ai-assistant/reports/private-token/download'],
+            ['ai-assistant/reports/{token}/download', 'ai-assistant/reports/private-token/download'],
+            ['admin/ai-reports/download/{token}', 'admin/ai-reports/download/private-token'],
+        ] as [$route, $path]) {
             Facade::clearResolvedInstances();
             $captured = null;
             $this->expectLog(static function (array $context) use (&$captured): bool {
@@ -209,8 +233,8 @@ final class RecordApiResponseTimeTest extends TestCase
 
                 return true;
             });
-            $template = 'api/v1/admin/'.$resource.'/{id}/download-url';
-            $request = Request::create('/api/v1/admin/'.$resource.'/private-file-id/download-url?token=private', 'GET');
+            $template = 'api/v1/'.$route;
+            $request = Request::create('/api/v1/'.$path.'?token=private', 'GET');
             $request->setRouteResolver(static fn (): Route => new Route('GET', $template, static fn (): null => null));
             $response = new JsonResponse(['data' => ['download_url' => 'https://storage.example.test/private-file?signature=private']]);
             $actual = (new RecordApiResponseTime)->handle($request, static function () use ($request, $response): Response {

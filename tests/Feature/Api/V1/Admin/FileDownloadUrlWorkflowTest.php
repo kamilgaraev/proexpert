@@ -10,11 +10,13 @@ use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\ReportFile;
 use App\Models\User;
+use App\Models\UserAuthSession;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Auth\WebAuthTokenService;
 use App\Services\Storage\FileService;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -45,6 +47,9 @@ final class FileDownloadUrlWorkflowTest extends TestCase
                 'api/v1/admin/report-files',
                 'api/v1/admin/personal-files/{id}/download-url',
                 'api/v1/admin/report-files/{id}/download-url',
+                'api/v1/admin/ai-assistant/reports/{token}/download',
+                'api/v1/admin/ai-reports/download/{token}',
+                'api/v1/ai-assistant/reports/{token}/download',
             ], true)) {
                 $this->filePhases = $event->context['processing_phases'] ?? [];
             }
@@ -180,7 +185,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $role = OrganizationCustomRole::query()->create([
             'organization_id' => $context->organization->id, 'name' => 'Download test', 'slug' => 'download_'.Str::lower(Str::random(16)),
             'system_permissions' => [], 'module_permissions' => ['ai-assistant' => ['ai_assistant.chat']],
-            'interface_access' => ['admin'], 'is_active' => true, 'created_by' => $context->user->id,
+            'interface_access' => ['admin', 'lk'], 'is_active' => true, 'created_by' => $context->user->id,
         ]);
         UserRoleAssignment::query()->create([
             'user_id' => $context->user->id, 'role_slug' => $role->slug, 'role_type' => UserRoleAssignment::TYPE_CUSTOM,
@@ -197,7 +202,7 @@ final class FileDownloadUrlWorkflowTest extends TestCase
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('disk')->once()->andReturn(Storage::disk('s3'));
         $files->shouldNotReceive('temporaryDownloadUrl');
-        $files->shouldReceive('readCurrent')->twice()->with($personal->storage_key)->andReturnUsing(static function () {
+        $files->shouldReceive('readCurrent')->times(4)->with($personal->storage_key)->andReturnUsing(static function () {
             $stream = fopen('php://temp', 'w+');
             fwrite($stream, 'report');
             rewind($stream);
@@ -219,23 +224,43 @@ final class FileDownloadUrlWorkflowTest extends TestCase
             self::assertStringStartsWith('/api/v1/admin/ai-assistant/reports/', $url);
             $downloadUrls[] = $url;
         }
-        foreach ($downloadUrls as $url) {
-            $download = $this->withHeaders($context->authHeaders())->get($url)->assertOk();
+        $downloadUrls[] = '/api/v1/admin/ai-reports/download/'.basename(dirname($downloadUrls[0]));
+        $sessionUuid = UserAuthSession::query()->where('user_id', $context->user->id)->value('session_uuid');
+        $landingToken = app(WebAuthTokenService::class)->issue($context->user, 'lk', $sessionUuid, $context->organization->id, false);
+        $landingHeaders = ['Authorization' => 'Bearer '.$landingToken->accessToken, 'Accept' => 'application/json', 'Origin' => 'https://lk.1мост.рф'];
+        $downloads = array_map(fn (string $url): array => [$url, $context->authHeaders()], $downloadUrls);
+        $downloads[] = [str_replace('/api/v1/admin/ai-assistant/', '/api/v1/ai-assistant/', $downloadUrls[0]), $landingHeaders];
+        foreach ($downloads as [$url, $headers]) {
+            $download = $this->withHeaders($headers)->get($url)->assertOk();
+            foreach (['assistant_report_access_resolve', 'assistant_report_storage_open'] as $phase) {
+                self::assertArrayHasKey($phase, $this->filePhases);
+                self::assertSame(1, $this->filePhases[$phase]['count']);
+                foreach ($this->filePhases[$phase] as $key => $value) {
+                    self::assertContains($key, ['count', 'total_ms', 'max_ms', 'sql_count', 'sql_total_ms', 'process_cpu_ms']);
+                    self::assertTrue(is_int($value) || is_float($value));
+                    self::assertGreaterThanOrEqual(0, $value);
+                }
+            }
+            self::assertGreaterThan(0, $this->filePhases['assistant_report_access_resolve']['sql_count']);
+            self::assertSame(0, $this->filePhases['assistant_report_storage_open']['sql_count']);
+            $this->assertDownloadStoragePhases(false, false);
             self::assertSame('report', $download->streamedContent());
         }
 
+        $checkedRoutes = [...array_map(fn (string $url): array => [$url, $context->authHeaders()], $routes), ...$downloads];
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
-        foreach ([...$routes, ...$downloadUrls] as $route) {
-            $this->withHeaders($context->authHeaders())->getJson($route)->assertForbidden();
+        foreach ($checkedRoutes as [$route, $headers]) {
+            $this->withHeaders($headers)->getJson($route)->assertForbidden();
+            self::assertArrayNotHasKey('assistant_report_storage_open', $this->filePhases);
         }
         $context->user->assignedProjects()->updateExistingPivot($project->id, ['is_active' => true]);
         $this->moduleSlugs = array_values(array_diff($this->moduleSlugs, ['reports']));
-        foreach ([...$routes, ...$downloadUrls] as $route) {
-            $this->withHeaders($context->authHeaders())->getJson($route)->assertForbidden();
+        foreach ($checkedRoutes as [$route, $headers]) {
+            $this->withHeaders($headers)->getJson($route)->assertForbidden();
         }
         DB::table('ai_assistant_report_access')->where('id', $grant['report_access_id'])->update(['expires_at' => now()->subSecond()]);
-        foreach ($routes as $route) {
-            $this->withHeaders($context->authHeaders())->getJson($route)->assertGone();
+        foreach ($checkedRoutes as [$route, $headers]) {
+            $this->withHeaders($headers)->getJson($route)->assertGone();
         }
     }
 
