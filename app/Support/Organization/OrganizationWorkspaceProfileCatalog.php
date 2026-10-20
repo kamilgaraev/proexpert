@@ -377,6 +377,18 @@ final class OrganizationWorkspaceProfileCatalog
         return in_array($interactionMode, self::interactionModes($capabilityValues), true);
     }
 
+    public static function capabilitiesForInteractionModes(array $interactionModes): array
+    {
+        $capabilities = [];
+        foreach (self::PROFILES as $capability => $profile) {
+            if (array_intersect($interactionModes, $profile['interaction_modes']) !== []) {
+                $capabilities[] = $capability;
+            }
+        }
+
+        return $capabilities;
+    }
+
     public static function recommendedModules(array $capabilityValues, ?string $primaryBusinessType): array
     {
         $orderedCapabilities = self::orderCapabilities($capabilityValues, $primaryBusinessType);
