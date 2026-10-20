@@ -52,14 +52,14 @@ final readonly class FactoryDraftBuilder
     public function build(EstimateGenerationSession $session, array $capture): array
     {
         if (($session->draft_payload ?? []) !== []) {
-            throw ValidationException::withMessages(['draft' => 'Черновик уже существует. Используйте пересчёт сохранённого состава.']);
+            throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.draft_exists')]);
         }
         $snapshot = $capture['snapshot'];
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
         $payload = $session->input_payload;
         $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
         if (! (new EvaluationScenarioSourceBinding)->current($payload['scenario_selections'] ?? null, $snapshot, $decisions)) {
-            throw ValidationException::withMessages(['draft' => 'Исходные параметры сценариев изменились. Сохраните актуальные сценарии.']);
+            throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.scenarios_changed')]);
         }
         $projection = $this->quantities->simulate($snapshot, $capture['model_token'], $capture['technology'], $capture['completeness'], $decisions);
         $blocked = array_intersect(array_column($projection['warnings'], 'code'), [
@@ -67,7 +67,7 @@ final readonly class FactoryDraftBuilder
             'quantity_formula_budget_exceeded', 'stage5_projection_not_current',
         ]) !== [];
         if ($blocked || ! isset($projection['context']['input_snapshot_hash'], $projection['context']['source_version'])) {
-            throw ValidationException::withMessages(['draft' => 'Обновите бесплатную проверку исходных данных и состава.']);
+            throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.planning_not_current')]);
         }
         $quantities = $projection['quantities'];
         $planning = $projection['context'];

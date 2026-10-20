@@ -12,6 +12,32 @@ use PHPUnit\Framework\TestCase;
 
 final class NativeParameterQuestionProjectorTest extends TestCase
 {
+    public function test_separate_foundation_quantities_do_not_require_an_invented_global_aggregate_to_continue_planning(): void
+    {
+        $entity = $this->entity('beam', 'foundation_beam');
+        $snapshot = new ProjectModelSnapshot([$entity], [], [], []);
+        foreach (['foundation_beam_volume', 'foundation_slab_volume', 'foundation_volume'] as $formula) {
+            $aggregate = ['code' => 'canonical_quantity_aggregate_unresolved', 'formula' => $formula, 'quantity_ids' => ['beam:a', 'slab:b']];
+            $view = $this->project($snapshot, [$aggregate], ['structures']);
+            self::assertSame([], $view['questions']);
+            self::assertSame([], $view['limitations']);
+            self::assertSame('planning_required', \App\BusinessModules\Addons\EstimateGeneration\Application\Factory\FactoryInputInspector::summarize(['available' => true, ...$view])['outcome']);
+            $missing = $this->project($snapshot, [$aggregate, $this->warning('beam', 'foundation_beam_volume', 'height')], ['structures']);
+            self::assertCount(1, $missing['questions']);
+            foreach (['quantity_formula_budget_exceeded', 'operand_source_conflict'] as $code) {
+                $blocked = $this->project($snapshot, [$aggregate, ['code' => $code, 'formula' => $formula]], ['structures']);
+                self::assertNotEmpty($blocked['limitations']);
+            }
+            $coverage = $this->warning('beam', 'foundation_beam_volume', 'height');
+            $coverage['inputs'] = [['code' => 'geometry_coverage_unresolved']];
+            self::assertNotEmpty($this->project($snapshot, [$aggregate, $coverage], ['structures'])['limitations']);
+        }
+        foreach (['floor_area', 'sloped_roof_area', 'equipment_count', 'cable_length', 'earthwork_volume'] as $formula) {
+            $view = $this->project($snapshot, [['code' => 'canonical_quantity_aggregate_unresolved', 'formula' => $formula]], ['structures']);
+            self::assertContains('additional_review_required', $view['limitations']);
+        }
+    }
+
     public function test_all_ten_house_sections_have_native_parameter_questions_without_draft_positions(): void
     {
         $definitions = [

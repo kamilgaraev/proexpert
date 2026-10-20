@@ -109,7 +109,7 @@ final readonly class FactoryInspectionStore
                 throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
             }
             if ($stepKind === 'materialize_draft' && $checkpoint === null && ($session->draft_payload ?? []) !== []) {
-                throw ValidationException::withMessages(['draft' => 'Черновик уже существует. Используйте пересчёт сохранённого состава.']);
+                throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.draft_exists')]);
             }
             if ($run === null) {
                 $id = (string) Str::uuid();
@@ -275,7 +275,7 @@ final readonly class FactoryInspectionStore
             $built = ($this->drafts ?? app(FactoryDraftBuilder::class))->build($session, $capture);
             $draft = $built['draft'];
             if (($draft['evaluation_rows_count'] ?? 0) < 1) {
-                throw ValidationException::withMessages(['draft' => 'Принятых данных недостаточно для создания состава работ.']);
+                throw ValidationException::withMessages(['draft' => trans_message('estimate_generation.factory.draft_empty')]);
             }
             $verified = $this->planning->capture($session);
             if (! $verified['within_budget'] || ! hash_equals($capture['fingerprint'], $verified['fingerprint'])

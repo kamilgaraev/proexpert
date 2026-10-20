@@ -48,6 +48,10 @@ final class NativeParameterQuestionProjector
         $questions = $limitations = [];
         $singleStoreyHouse = $this->singleStoreyHouse($snapshot, $estimatingContext);
         foreach ($warnings as $warning) {
+            if (($warning['code'] ?? null) === 'canonical_quantity_aggregate_unresolved'
+                && in_array($warning['formula'] ?? null, ['foundation_beam_volume', 'foundation_slab_volume', 'foundation_volume'], true)) {
+                continue;
+            }
             if (($warning['code'] ?? null) !== 'canonical_quantity_unresolved') {
                 $limitations['additional_review_required'] = true;
 
