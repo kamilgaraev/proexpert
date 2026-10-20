@@ -776,6 +776,14 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         sort($amounts);
         self::assertSame(['1', '3.2'], $amounts);
         self::assertContains('canonical_quantity_aggregate_unresolved', array_column($complete['warnings'], 'code'));
+        $aggregate = array_values(array_filter($complete['warnings'], static fn (array $warning): bool => $warning['code'] === 'canonical_quantity_aggregate_unresolved' && $warning['formula'] === 'foundation_volume'))[0];
+        $keys = $aggregate['quantity_keys'];
+        sort($keys, SORT_STRING);
+        self::assertSame(array_keys($complete['quantities']), $keys);
+        self::assertCount(2, array_unique($aggregate['quantity_ids']));
+        self::assertNotSame($aggregate['quantity_ids'], $aggregate['quantity_keys']);
+        self::assertSame(2, $aggregate['total_quantities']);
+        self::assertFalse($aggregate['truncated']);
         self::assertSame([], $repository->quantities);
         self::assertSame([], $repository->currentQuantities);
     }

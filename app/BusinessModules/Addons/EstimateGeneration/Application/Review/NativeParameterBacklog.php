@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\GeometryInventory;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ScopedQuantityInputReadiness;
 use Illuminate\Validation\ValidationException;
 
 final readonly class NativeParameterBacklog
@@ -47,9 +48,12 @@ final readonly class NativeParameterBacklog
             }
         }
         sort($sections, SORT_STRING);
+        $documentVersions = GeometryInventory::currentDocumentVersions($snapshot);
+        $warnings = array_values(array_filter($simulation['warnings'], static fn (array $warning): bool => ! ScopedQuantityInputReadiness::permitsPartialPlanning($warning, $snapshot, $token, $sections,
+            $simulation['quantities'], $documentVersions, $decisions)));
 
-        return $this->projector->project($snapshot, $token, $sections, $simulation['warnings'],
-            GeometryInventory::currentDocumentVersions($snapshot), (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session),
+        return $this->projector->project($snapshot, $token, $sections, $warnings,
+            $documentVersions, (int) $session->state_version, EstimatePrerequisiteBacklog::editable($session),
             array_intersect_key($payload, array_flip(['building_type', 'floors'])));
     }
 

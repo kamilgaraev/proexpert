@@ -839,6 +839,12 @@ final readonly class CurrentProjectDerivedQuantityService
                         static fn (DerivedQuantity $quantity): string => $quantity->id,
                         $items,
                     ), 0, 100),
+                    'quantity_keys' => array_slice(array_map(
+                        static fn (DerivedQuantity $quantity): string => $quantity->logicalId ?? $quantity->id,
+                        $items,
+                    ), 0, 100),
+                    'total_quantities' => count($items),
+                    'truncated' => count($items) > 100,
                 ];
             }
         }
