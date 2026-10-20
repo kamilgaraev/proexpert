@@ -33,7 +33,7 @@ final class LegalAcceptanceTest extends TestCase
             ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-15.bank.json')))
             ->assertJsonPath('data.privacy_ready', true)->assertJsonPath('data.commercial_ready', true)
             ->assertJsonPath('data.analytics_ready', true)
-            ->assertJsonPath('data.version', '2026-10-20.analytics.1')
+            ->assertJsonPath('data.version', '2026-10-15.bank.1')
             ->assertJsonPath('data.provider.name', 'Индивидуальный предприниматель Гараев Камиль Фиркатович')
             ->assertJsonPath('data.provider.inn', '166014506751')
             ->assertJsonPath('data.provider.registration_number', '326169000250677')
