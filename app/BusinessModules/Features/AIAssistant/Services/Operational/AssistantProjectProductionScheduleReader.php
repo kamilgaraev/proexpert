@@ -20,6 +20,8 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     private const COMPLETED_WORK_FORM = '(?:'.self::COMPLETED_WORK_PARTICIPLE.'|выполненн(?:ая|ое|ый|ые|ую|ого|ой|ому|ым|ом|ых|ыми)|выполнил[аои]?|принят(?:ая|ое|ый|ые|ую|ого|ой|ому|ым|ом|ых|ыми)|принял[аои]?)';
 
+    private const FINANCIAL_EXPENSE = '(?<![\pL\pN])(?:расход(?:а|у|ом|е|ы|ов|ам|ами|ах)?|расходн[а-яё]*|(?:из)?расход(?:ова|у)[а-яё]*)(?![\pL\pN])';
+
     public function __construct(AssistantDataAccessPolicy $access, private AssistantCustomReportSource $reports, private StableReportingSourceView $stableView)
     {
         parent::__construct($access);
@@ -42,7 +44,7 @@ final readonly class AssistantProjectProductionScheduleReader extends AssistantP
 
     public static function hasExcludedTopic(string $query): bool
     {
-        return preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд|потрач|расход|затрат|прибыл|выручк|рентаб|марж|финанс/iu', $query) === 1;
+        return preg_match('/сформир|выгруз|excel|xlsx|csv|pdf|создай|удали|измени|закрой|отправь|подпиши|назначь|назначит|перенес|перенос|сдвин|обнови|добавь|добавит|поменяй|исправь|заплат|договор|оплат|стоим|смет|бюджет|наряд|потрач|'.self::FINANCIAL_EXPENSE.'|затрат|прибыл|выручк|рентаб|марж|финанс/iu', $query) === 1;
     }
 
     public function read(User $actor, int $organizationId, array $arguments): array

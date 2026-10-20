@@ -363,7 +363,7 @@ final class AssistantProductionSchedulePeriod
             return isset($dates['period_start'], $dates['period_end']) && self::validArguments($dates)
                 ? ['query' => $query] + $dates : null;
         }
-        $pattern = '/\b(?:за\s+'.self::MONTH.'|(?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)(?:\s+(?:(?:19|20)\d{2}|(?:этого|текущего|прошлого)\s+года))?/iu';
+        $pattern = '/\b(?:'.self::MONTH_PERIOD.'|(?:'.self::PERIOD_PREFIX.'\s+)?'.self::CALENDAR_DETERMINERS.self::QUARTER_NUMBER.'\s+квартал[ае]?(?:\s+'.self::MONTH_YEAR.')?)\b/iu';
         if (preg_match_all($pattern, $query) !== 1) {
             return null;
         }
@@ -489,6 +489,8 @@ final class AssistantProductionSchedulePeriod
             return 'за '.$adjective.' '.$unit;
         }, $query) ?? $query;
         $query = preg_replace('/\b((?:за|в|во|на)\s+)в(?:есь|с[её]м|сю|сей|се)\s+(?=(?:19|20)\d{2}\b(?![-.\/]\d)|'.self::MONTH.'\b|'.self::QUARTER_NUMBER.'\s+'.self::QUARTER_WORD.'\b)/iu', '$1', $query) ?? $query;
+        $query = preg_replace_callback('/\b(?:(за|в|во|на|с|со|по|до)\s+)?('.self::QUARTER_NUMBER.'\s+'.self::QUARTER_WORD.')\b/iu',
+            static fn (array $match): string => ($match[1] ?? '') === '' ? 'за '.$match[2] : $match[0], $query) ?? $query;
         $query = preg_replace_callback('/\b((?:за|в|во|на)\s+'.self::QUARTER_NUMBER.'\s+квартал[ае]?)\s+(этого|текущего|прошлого|предыдущего|позапрошлого)\s+года\b/iu', static function (array $match): string {
             $relative = mb_strtolower($match[2]);
             $offset = str_starts_with($relative, 'позапрошл') ? 2 : ((str_starts_with($relative, 'прошл') || str_starts_with($relative, 'предыдущ')) ? 1 : 0);

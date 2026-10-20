@@ -1988,10 +1988,10 @@ final class AssistantRequestLifecycleTest extends TestCase
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('periodClarificationReplies')]
-    public function test_period_year_reply_restores_the_verified_project_before_planning_and_keeps_raw_bubble(string $reply, bool $continuation, bool $alternateShape = false): void
+    public function test_period_year_reply_restores_the_verified_project_before_planning_and_keeps_raw_bubble(string $reply, bool $continuation, bool $alternateShape = false, string $period = 'за октябрь', string $periodStart = '2026-10-01', string $periodEnd = '2026-10-31'): void
     {
-        $original = 'Сверь выполненные работы с графиком проекта «Северный дом» за октябрь';
-        $semantic = 'Сверь выполненные работы с графиком проекта текущий за октябрь';
+        $original = 'Сверь выполненные работы с графиком проекта «Северный дом» '.$period;
+        $semantic = 'Сверь выполненные работы с графиком проекта текущий '.$period;
         $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Период сводки');
         $context = [
             'last_task_type' => 'schedules',
@@ -2013,8 +2013,8 @@ final class AssistantRequestLifecycleTest extends TestCase
             'input_tokens' => 100, 'output_tokens' => 7, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true,
         ]));
         $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
-        $orchestrator->expects(self::once())->method('plan')->willReturnCallback(static function (string $query, array $payload) use ($reply): array {
-            self::assertStringContainsString($reply === '2026' ? 'за октябрь 2026' : 'за октябрь', $query);
+        $orchestrator->expects(self::once())->method('plan')->willReturnCallback(static function (string $query, array $payload) use ($reply, $period): array {
+            self::assertStringContainsString($reply === '2026' ? $period.' 2026' : $period, $query);
             self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_refs']);
             self::assertSame([['type' => 'project', 'id' => 102]], $payload['context']['entity_references']);
 
@@ -2034,12 +2034,13 @@ final class AssistantRequestLifecycleTest extends TestCase
         $read = \App\BusinessModules\Features\AIAssistant\Services\AssistantRequiredProjectRead::fromPlan([
             'request' => $context['last_request'], 'production_period_override' => $context['last_request']['production_period_override'] ?? null,
         ]);
-        self::assertSame(['project_id' => 102, 'period_start' => '2026-10-01', 'period_end' => $reply === '2026' ? '2026-10-31' : '2026-10-15'], $read['arguments']);
+        self::assertSame(['project_id' => 102, 'period_start' => $periodStart, 'period_end' => $reply === '2026' ? $periodEnd : '2026-10-15'], $read['arguments']);
     }
 
     public static function periodClarificationReplies(): array
     {
-        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true], ['с 01.10.2026 по 15.10.2026', false], ['с 01/10/2026 по 15/10/2026', false], ['с 01-10-2026 по 15-10-2026', false, true]];
+        return [['2026', false], ['с 2026-10-01 по 2026-10-15', false], ['Покажи подробнее', true], ['2026', false, true], ['с 01.10.2026 по 15.10.2026', false], ['с 01/10/2026 по 15/10/2026', false], ['с 01-10-2026 по 15-10-2026', false, true],
+            ['2026', false, false, 'октябрь'], ['2026', false, false, 'первый квартал', '2026-01-01', '2026-03-31']];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('directProductionPeriods')]

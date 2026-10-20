@@ -14,6 +14,43 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantProductionSchedulePeriodTest extends TestCase
 {
+    public function test_bare_month_and_quarter_year_reply_resumes_the_verified_project(): void
+    {
+        foreach (['октябрь' => ['2026-10-01', '2026-10-31'], 'весь октябрь' => ['2026-10-01', '2026-10-31'],
+            'первый квартал' => ['2026-01-01', '2026-03-31'], 'II квартал' => ['2026-04-01', '2026-06-30']] as $phrase => [$start, $end]) {
+            $message = 'Сверь выполненные работы с графиком '.$phrase;
+            $plan = ['request' => ['message' => $message]];
+            self::assertSame(['project_id' => 102, 'period_start' => null, 'period_end' => null], AssistantProductionSchedulePeriod::arguments(102, $plan));
+            $pending = AssistantProductionSchedulePeriod::pending($plan, ['replaced' => true, 'needs_clarification' => true, 'source_refs' => [[
+                'entity_type' => AssistantProjectProductionScheduleReader::TYPE,
+                '_read_arguments' => ['project_id' => 102, 'period_start' => null, 'period_end' => null],
+            ]]]);
+            self::assertNotNull($pending);
+            $context = ['last_request' => $plan['request'], 'pending_production_period' => $pending];
+            $reply = AssistantProductionSchedulePeriod::clarification('2026', $context);
+            self::assertNotNull($reply, $phrase);
+            self::assertSame($pending['period_query'].' 2026', $reply['query']);
+            $payload = AssistantProductionSchedulePeriod::resumePayload(['context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]], $reply);
+            self::assertSame(['project_id' => 102, 'period_start' => $start, 'period_end' => $end], AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $reply['query']] + $payload])['arguments']);
+        }
+    }
+
+    public function test_schedule_divergence_is_not_a_financial_expense_topic(): void
+    {
+        foreach (['Почему выполненные работы расходятся с графиком?', 'Выполненные работы расходятся с плановыми сроками. Сверь их.'] as $query) {
+            self::assertTrue(AssistantProjectProductionScheduleReader::matches($query), $query);
+            self::assertSame('get_project_production_schedule_summary', \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query)['name'] ?? null);
+            self::assertSame(['name' => 'get_project_production_schedule_summary', 'arguments' => ['project_id' => 104]], AssistantRequiredProjectRead::fromPlan([
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 104]]]],
+            ]));
+        }
+        foreach (['расход', 'расхода', 'расходу', 'расходом', 'расходе', 'расходы', 'расходов', 'расходам', 'расходами', 'расходах', 'расходные операции', 'израсходованные деньги'] as $expense) {
+            $query = 'Сверь выполненные работы с графиком и '.$expense;
+            self::assertFalse(AssistantProjectProductionScheduleReader::matches($query), $query);
+            self::assertNotSame('get_project_production_schedule_summary', \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query)['name'] ?? null);
+        }
+    }
+
     public function test_past_planned_obligations_do_not_select_confirmed_production(): void
     {
         foreach (['Какие работы должны были быть выполнены по графику сегодня?',
