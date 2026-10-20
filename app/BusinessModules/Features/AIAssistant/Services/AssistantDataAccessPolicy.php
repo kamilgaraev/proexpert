@@ -1344,7 +1344,7 @@ final class AssistantDataAccessPolicy
         $table = $query->getModel()->getTable();
 
         return $query->whereRaw('('.$table.'.project_id, '.$table.'.performing_organization_id) IN '
-            .'(SELECT project_id, performing_organization_id FROM jsonb_to_recordset(CAST(? AS jsonb)) '
+            .'(SELECT project_id, performing_organization_id FROM pg_catalog.jsonb_to_recordset(CAST(? AS pg_catalog.jsonb)) '
             .'AS journal_visibility(project_id bigint, performing_organization_id bigint))', [json_encode($pairs, JSON_THROW_ON_ERROR)]);
     }
 

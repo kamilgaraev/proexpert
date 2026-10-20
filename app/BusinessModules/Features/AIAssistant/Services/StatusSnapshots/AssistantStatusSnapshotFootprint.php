@@ -66,6 +66,13 @@ final class AssistantStatusSnapshotFootprint
             $syntax = preg_replace("/'(?:''|[^'])*'/s", "''", $sql);
             if (preg_match('/\$[A-Za-z_0-9]*\$|--|\/\*|\bU&/i', $syntax ?? '') === 1 || preg_match("/\\bE'/i", $sql) === 1) { return ['value' => $value, 'relations' => null, 'reason' => 'unsupported_sql_literal']; }
             $identifier = '(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z_0-9]*)';
+            $journalVisibilityRecordset = 'pg_catalog.jsonb_to_recordset(CAST(? AS pg_catalog.jsonb)) '
+                .'AS journal_visibility(project_id bigint, performing_organization_id bigint)';
+            $syntax = preg_replace(
+                '/(?<![A-Za-z_0-9."])'.preg_quote($journalVisibilityRecordset, '/').'/',
+                '(CAST(? AS pg_catalog.jsonb)) AS journal_visibility',
+                $syntax ?? '',
+            );
             $syntax = preg_replace('/\bAS\s+('.$identifier.')\s*\(\s*'.$identifier.'(?:\s*,\s*'.$identifier.')*\s*\)/i', 'AS $1', $syntax ?? '');
             preg_match_all('/(?<![A-Za-z_0-9."])(?:(?<schema>'.$identifier.')\s*\.\s*)?(?<name>'.$identifier.')\s*\(/', $syntax ?? '', $matches, PREG_SET_ORDER);
             $grammar = ['from', 'join', 'where', 'select', 'on', 'having', 'union', 'array', 'distinct', 'case', 'when', 'then', 'else',
