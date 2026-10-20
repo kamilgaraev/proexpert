@@ -75,11 +75,11 @@ class UpdateRateCoefficientRequest extends FormRequest
             code: $validated['code'] ?? $currentCoefficient->code,
             description: $validated['description'] ?? $currentCoefficient->description,
             is_active: $validated['is_active'] ?? $currentCoefficient->is_active,
-            valid_from: isset($validated['valid_from'])
-                ? Carbon::parse($validated['valid_from'])
+            valid_from: array_key_exists('valid_from', $validated)
+                ? ($validated['valid_from'] !== null ? Carbon::parse($validated['valid_from']) : null)
                 : $currentCoefficient->valid_from,
-            valid_to: isset($validated['valid_to'])
-                ? Carbon::parse($validated['valid_to'])
+            valid_to: array_key_exists('valid_to', $validated)
+                ? ($validated['valid_to'] !== null ? Carbon::parse($validated['valid_to']) : null)
                 : $currentCoefficient->valid_to,
             conditions: $validated['conditions'] ?? $currentCoefficient->conditions,
             id: $currentCoefficient->id

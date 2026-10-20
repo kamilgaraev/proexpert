@@ -10,12 +10,49 @@ use App\Enums\RateCoefficient\RateCoefficientTypeEnum;
 use App\Models\Organization;
 use App\Models\RateCoefficient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class RateCoefficientControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    #[DataProvider('nullableValidityDates')]
+    public function test_update_clears_explicitly_empty_dates_and_preserves_omitted_dates(array $payload, ?string $validFrom, ?string $validTo): void
+    {
+        $context = AdminApiTestContext::create();
+        $coefficient = $this->createCoefficient($context->organization->id, [
+            'valid_from' => '2026-10-01',
+            'valid_to' => '2026-10-31',
+            'is_active' => false,
+            'value' => 0,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/rate-coefficients/{$coefficient->id}", $payload)
+            ->assertOk();
+
+        $this->assertDatabaseHas('rate_coefficients', [
+            'id' => $coefficient->id,
+            'organization_id' => $context->organization->id,
+            'valid_from' => $validFrom,
+            'valid_to' => $validTo,
+            'is_active' => false,
+            'value' => 0,
+        ]);
+    }
+
+    public static function nullableValidityDates(): array
+    {
+        return [
+            'omitted dates' => [['description' => 'Updated note'], '2026-10-01', '2026-10-31'],
+            'both null' => [['valid_from' => null, 'valid_to' => null], null, null],
+            'empty strings' => [['valid_from' => '', 'valid_to' => ''], null, null],
+            'only start cleared' => [['valid_from' => null], null, '2026-10-31'],
+            'only end cleared' => [['valid_to' => null], '2026-10-01', null],
+        ];
+    }
 
     public function test_index_filters_and_crud_are_scoped_to_current_organization(): void
     {
