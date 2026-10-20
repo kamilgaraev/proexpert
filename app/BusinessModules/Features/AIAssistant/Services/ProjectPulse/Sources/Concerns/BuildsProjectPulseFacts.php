@@ -13,6 +13,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Throwable;
 
 trait BuildsProjectPulseFacts
@@ -146,7 +147,7 @@ trait BuildsProjectPulseFacts
             ? ($row->work_location ?? '')
             : '')) ?: trim((string) ($row->location ?? ''));
         if ($location !== '') {
-            $parts[] = $location;
+            $parts[] = Str::limit($location, 160, '…');
         }
         if ($type === SiteRequestTypeEnum::PERSONNEL_REQUEST) {
             $start = empty($row->work_start_date) ? null : CarbonImmutable::parse($row->work_start_date)->format('d.m.Y');

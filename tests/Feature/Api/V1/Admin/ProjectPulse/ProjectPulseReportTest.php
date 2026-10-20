@@ -26,6 +26,36 @@ use Tests\TestCase;
 
 class ProjectPulseReportTest extends TestCase
 {
+    public function test_site_request_label_bounds_long_multibyte_locations(): void
+    {
+        $formatter = new class {
+            use \App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Concerns\BuildsProjectPulseFacts {
+                siteRequestLabel as public label;
+            }
+        };
+        $location = 'Учебная площадка: '.str_repeat('многоэтажный корпус ', 1000).'LOCATION_TAIL_SENTINEL';
+        foreach (['personnel', 'material'] as $type) {
+            $row = (object) [
+                'title' => 'Учебная заявка', 'request_type' => $type,
+                'personnel_type' => 'engineer', 'personnel_count' => 3,
+                'work_location' => $location, 'location' => $location,
+                'work_start_date' => '2026-10-21', 'work_end_date' => '2026-10-23',
+            ];
+            $label = $formatter->label($row);
+            self::assertLessThanOrEqual(500, mb_strlen($label));
+            self::assertStringContainsString('Учебная площадка:', $label);
+            self::assertStringContainsString('…', $label);
+            self::assertStringNotContainsString('LOCATION_TAIL_SENTINEL', $label);
+            self::assertSame(1, preg_match('//u', $label));
+            if ($type === 'personnel') {
+                self::assertStringContainsString('21.10.2026 — 23.10.2026', $label);
+            }
+            $row->work_location = $row->location = 'Короткое место';
+            self::assertStringContainsString('Короткое место', $formatter->label($row));
+            self::assertStringNotContainsString('…', $formatter->label($row));
+        }
+    }
+
     public function test_site_request_fact_labels_use_business_context_without_internal_numbers(): void
     {
         $context = $this->context(roleSlug: 'organization_owner');
