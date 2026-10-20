@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -91,20 +92,24 @@ final class AssistantReportAccessService
                 throw new AccessDeniedHttpException();
             }
         }
-        foreach (array_unique(array_merge(['assistant', 'reports'], $domains)) as $domain) {
-            if (! $this->policy->canReadDomain($user, $organizationId, $domain)) {
-                throw new AccessDeniedHttpException();
+        ApiQueryMetrics::measureProcessingPhase('assistant_report_domain_checks', function () use ($user, $organizationId, $domains): void {
+            foreach (array_unique(array_merge(['assistant', 'reports'], $domains)) as $domain) {
+                if (! $this->policy->canReadDomain($user, $organizationId, $domain)) {
+                    throw new AccessDeniedHttpException();
+                }
             }
-        }
-        foreach ($refs as $ref) {
-            if (! is_array($ref)) {
-                throw new AccessDeniedHttpException();
+        });
+        ApiQueryMetrics::measureProcessingPhase('assistant_report_reference_checks', function () use ($user, $organizationId, $refs): void {
+            foreach ($refs as $ref) {
+                if (! is_array($ref)) {
+                    throw new AccessDeniedHttpException();
+                }
+                $allowed = $this->policy->canReadReference($user, $organizationId, $ref);
+                if (! $allowed) {
+                    throw new AccessDeniedHttpException();
+                }
             }
-            $allowed = $this->policy->canReadReference($user, $organizationId, $ref);
-            if (! $allowed) {
-                throw new AccessDeniedHttpException();
-            }
-        }
+        });
     }
 
     public function scopeDomainReferences(User $user, int $organizationId, array $domains, ?int $projectId): array

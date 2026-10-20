@@ -150,16 +150,19 @@ final class CrmWorkflowService
 
     public function completeActivity(int $organizationId, string $activityId, array $data, ?int $actorUserId): CrmActivity
     {
-        $activity = $this->registry->findActivity($organizationId, $activityId);
-        $activity->update([
-            'status' => 'done',
-            'completed_at' => $data['completed_at'] ?? now(),
-            'result' => $data['result'] ?? $activity->result,
-            'updated_by_user_id' => $actorUserId,
-        ]);
-        $this->timeline->record($organizationId, 'activities', $activity->id, 'completed', trans_message('crm.timeline.activity_completed'), $actorUserId);
+        return DB::transaction(function () use ($organizationId, $activityId, $data, $actorUserId): CrmActivity {
+            $activity = $this->registry->findActivity($organizationId, $activityId, lockForUpdate: true);
+            $activity->update([
+                'status' => 'done',
+                'completed_at' => $data['completed_at'] ?? now(),
+                'result' => $data['result'] ?? $activity->result,
+                'updated_by_user_id' => $actorUserId,
+            ]);
+            $this->registry->refreshDealNextActivities($organizationId, [$activity->deal_id]);
+            $this->timeline->record($organizationId, 'activities', $activity->id, 'completed', trans_message('crm.timeline.activity_completed'), $actorUserId);
 
-        return $this->registry->findActivity($organizationId, $activity->id);
+            return $this->registry->findActivity($organizationId, $activity->id);
+        });
     }
 
     public function linkDeal(int $organizationId, string $dealId, array $data, ?int $actorUserId, ?User $actor = null): CrmDeal

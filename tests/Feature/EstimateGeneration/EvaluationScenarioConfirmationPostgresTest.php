@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\ReadConfirmedEvaluationExport;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetCurrentEvaluation;
@@ -491,6 +491,101 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         return [['included', '120', '100.00', '100.53', '120.63'], ['excluded', '100', '100.00', '100.53', '120.63'],
             ['not_applicable', '100', '100.00', '100.53', '100.63'], ['included', '0.03', '0.03', '0.56', '0.66'],
             ['not_applicable', '0', '0.00', '0.53', '0.63', '7']];
+    }
+
+    public function test_supplementary_work_reserves_the_full_ledger_path_through_scenario_confirmation(): void
+    {
+        [$actor, $session, $catalog] = $this->fixture();
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $room = array_column($snapshot->entities, null, 'id')['room:fixture'];
+        $requestId = (string) Str::uuid();
+        $factId = 'fact:'.hash('sha256', $requestId.'|'.$room->id.'|entity_identity');
+        $value = ['answer_kind' => 'entity_identity', 'entity_id' => $room->id, 'entity_type' => 'room',
+            'name' => 'Комната', 'identity_confirmed' => true, 'decision_id' => 'decision:'.hash('sha256', $requestId.'|'.$factId),
+            'reason' => 'Пользователь подтвердил помещение для сметного расчёта.'];
+        $hash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value));
+        $node = app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class)->insertOrGet(
+            new \App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData(...[...$scope,
+                \App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType::SourceFact,
+                \App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType::UserInput, 'input:'.$scope[2], $room->sourceVersion,
+                ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.manual_facts'],
+                ['fact_key' => 'evaluation_choice', 'fact_value' => $hash], 0.0,
+                \App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer::UserInputNormalizer->value, 'sha256:'.hash('sha256', 'manual-entity-identity:v1')]));
+        $proof = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence('evidence:'.$node->id,
+            ...[...$scope, $room->sourceVersion, 'input:'.$scope[2], 'user_input', null, null, 'input_payload.manual_facts',
+                \App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2], $hash]);
+        $identity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact($factId,
+            ...[...$scope, $room->sourceVersion, $room->id, 'entity_identity', $value, null, 0.0, 'user_input', 'confirmed', [$proof->id]]);
+        $models->saveSourceModel([], [$identity], [$proof]);
+        $models->applyDecision(new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision($value['decision_id'],
+            ...[...$scope, $room->sourceVersion, 'fact', $factId, $factId, 'user', (string) $actor->id, $value['reason'], 1, [$proof->id]]), $identity);
+        $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $template = (array) DB::table('estimate_generation_project_model_assertions')->where('organization_id', $scope[0])
+            ->where('session_id', $scope[2])->where('stable_key', 'fact:room-name')->first();
+        $projection = (array) DB::table('estimate_generation_project_model_fact_projections')->where('fact_id', $template['id'])->first();
+        unset($template['id'], $projection['id']);
+        $fillers = [];
+        for ($index = count($snapshot->facts); $index < 9983; $index++) {
+            $fillers[] = [...$template, 'stable_key' => 'fact:capacity-'.$index, 'assertion_type' => 'capacity_fixture_'.$index];
+        }
+        foreach (array_chunk($fillers, 500) as $chunk) {
+            DB::table('estimate_generation_project_model_assertions')->insert($chunk);
+        }
+        $inserted = DB::table('estimate_generation_project_model_assertions')->where('organization_id', $scope[0])
+            ->where('session_id', $scope[2])->where('stable_key', 'like', 'fact:capacity-%')->get(['id', 'assertion_type']);
+        $projections = [];
+        foreach ($inserted as $fact) {
+            $projections[] = [...$projection, 'fact_id' => $fact->id, 'fact_type' => $fact->assertion_type];
+        }
+        foreach (array_chunk($projections, 500) as $chunk) {
+            DB::table('estimate_generation_project_model_fact_projections')->insert($chunk);
+        }
+        self::assertCount(9983, $models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts);
+        $composition = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationWorkComposition::class);
+        $offered = $composition->show($actor, $scope[1], $scope[2]);
+        self::assertSame(1, $offered['maximum_additional_rows']);
+        $added = $composition->accept($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version, 'preview_fingerprint' => $offered['preview_fingerprint'],
+            'work_keys' => ['ceiling.insulation'], 'reason' => 'Добавлен пропущенный слой утепления потолка по исходному заданию.']);
+        $key = $added['added_work_item_keys'][0];
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
+            'source_fact_id' => $identity->id, 'source_fact_version' => 1,
+            'source_value_hash' => \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::valueHash($value),
+            'reason' => 'Утепление потолка относится к уже подтверждённому помещению.']);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'work_item_key' => $key, 'value' => '5', 'unit' => 'm2', 'reason' => 'Сметное допущение площади дополнительного утепления потолка.']);
+        $source = app(CataloguePriceSnapshotReader::class)->read($scope[0], 'catalog:'.$catalog->id);
+        app(SaveEvaluationPriceSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
+            'source_reference' => $source['source_reference'], 'source_hash' => $source['source_hash']]);
+        app(SaveEvaluationScopeSelection::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version, 'selected_sections' => ['finishing'],
+            'profile_id' => 'construction', 'construction_type' => 'new_construction', 'price_policy' => 'catalog']);
+        app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version, (string) Str::uuid());
+        $definitions = [];
+        foreach (['minimum', 'base', 'maximum'] as $id) {
+            $definitions[] = ['id' => $id, 'basis' => 'Согласованные сметные количества выбранного состава',
+                'quantities' => [['work_item_key' => 'preparation', 'value' => '1', 'unit' => 'm2'],
+                    ['work_item_key' => 'finishing', 'value' => '20', 'unit' => 'm2'], ['work_item_key' => $key, 'value' => '5', 'unit' => 'm2']]];
+        }
+        app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
+            'state_version' => $session->fresh()->state_version, 'definitions' => $definitions]);
+        $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version, (string) Str::uuid());
+        self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode($revision['result']['missing_requirements']));
+        $confirmed = app(ConfirmEvaluationScenario::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true]);
+        self::assertSame('0', $confirmed['cost_units']);
+        self::assertLessThanOrEqual(10000, count($models->snapshotForPlanning(...[...$scope, 10001])['snapshot']->facts));
+        $current = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
+        self::assertFalse($current['result_stale']);
+        self::assertSame('base', $current['confirmed_scenario']['scenario_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_operations')->where('session_id', $session->id)->count());
     }
 
     private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB', ?array $reserve = null, bool $linkedDelivery = false): array
