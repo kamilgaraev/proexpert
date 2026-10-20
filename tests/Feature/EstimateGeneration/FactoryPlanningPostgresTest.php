@@ -43,6 +43,62 @@ final class FactoryPlanningPostgresTest extends EstimateGenerationCanonicalPostg
 {
     private int $outboundBefore = 0;
 
+    public function test_separate_wall_and_equipment_quantities_allow_only_a_partial_unpriced_draft_without_a_global_aggregate(): void
+    {
+        $entities = [];
+        foreach (['wall-a' => '3', 'wall-b' => '4'] as $key => $length) {
+            $entities[] = ['key' => $key, 'type' => 'wall', 'coverage' => ['wall_openings' => 'covered_empty'], 'parameters' => [
+                'length' => ['value' => $length, 'unit' => 'm', 'basis' => 'measurement'],
+                'height' => ['value' => '2', 'unit' => 'm', 'basis' => 'measurement'],
+                'thickness' => ['value' => '0.14', 'unit' => 'm', 'basis' => 'measurement'],
+            ]];
+        }
+        foreach (['bath', 'basin'] as $key) {
+            $entities[] = ['key' => $key, 'type' => 'equipment', 'parameters' => [
+                'equipment_count' => ['value' => '1', 'unit' => 'count', 'basis' => 'assumption'],
+            ]];
+        }
+        [$actor, $session, $prefix, $source] = $this->fixture(['building_type' => 'Одноэтажный жилой дом', 'floors' => 1,
+            'selected_sections' => ['structures', 'finishing', 'equipment']], $entities);
+        $this->withToken(auth('api_admin')->login($actor));
+        $plan = $this->postJson($prefix.'/planning', ['request_id' => (string) Str::uuid(), 'state_version' => 1,
+            'source_checkpoint_id' => $source['checkpoint']['id']])->assertOk()->json('data');
+        $this->postJson($prefix.'/materialize', ['request_id' => (string) Str::uuid(), 'state_version' => 2,
+            'source_checkpoint_id' => $plan['checkpoint']['id']])->assertOk()->assertJsonPath('data.checkpoint.status', 'draft_materialized');
+        $draft = $session->fresh()->draft_payload;
+        self::assertFalse($draft['is_complete']);
+        self::assertFalse($draft['evaluation_result']['can_confirm_for_apply']);
+        $warnings = array_column($draft['quantity_coverage_warnings'], 'formula');
+        self::assertContains('wall_net_area', $warnings);
+        self::assertContains('equipment_count', $warnings);
+        $unknownWalls = $equipment = [];
+        foreach ($draft['local_estimates'] as $local) {
+            foreach ($local['sections'] as $section) {
+                foreach ($section['work_items'] as $item) {
+                    self::assertNull($item['unit_price']);
+                    self::assertNull($item['total_cost']);
+                    self::assertEmpty($item['resources'] ?? []);
+                    $work = $item['metadata']['composition_work_key'] ?? null;
+                    if (in_array($work, ['rough.walls', 'finish.paint', 'walls.internal', 'walls.external_volume'], true)) {
+                        self::assertNull($item['quantity']);
+                        self::assertSame('quantity_unknown', $item['pricing_blocker']);
+                        self::assertArrayNotHasKey('quantity_evidence_id', $item);
+                        $unknownWalls[] = $item;
+                    }
+                    if (in_array($work, ['equipment.purchase', 'equipment.install'], true)) {
+                        self::assertSame('1', $item['quantity']);
+                        self::assertNotEmpty($item['metadata']['scope_entity_id']);
+                        $equipment[] = $item;
+                    }
+                }
+            }
+        }
+        self::assertNotEmpty($unknownWalls);
+        self::assertCount(4, $equipment);
+        self::assertSame(500, $session->fresh()->input_payload['qa_limit_units']);
+        $this->assertNoPaidCalls($session);
+    }
+
     public static function materializationLimits(): array
     {
         return ['source bytes' => ['source_bytes', 'input_budget_exceeded'], 'work rows' => ['work_rows', 'planning_budget_exceeded']];
